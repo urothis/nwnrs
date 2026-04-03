@@ -1,22 +1,33 @@
 name: CI
-
 on:
     pull_request:
         branches: [main]
-
 env:
     CARGO_TERM_COLOR: always
-
 jobs:
+    label:
+        name: Label PR
+        runs-on: ubuntu-latest
+        permissions:
+            contents: read
+            pull-requests: write
+        steps:
+            - uses: actions/checkout@v6.0.1
+            - name: Apply labels
+              uses: actions/labeler@v6.0.1
+              with:
+                  repo-token: ${{ secrets.GITHUB_TOKEN }}
+                  configuration-path: .github/labeler.yml
     test:
         name: Test
+        needs: label
         runs-on: ${{ matrix.os }}
         strategy:
             matrix:
                 os: [ubuntu-latest, windows-latest, macos-latest]
                 rust: [stable]
         steps:
-            - uses: actions/checkout@v6
+            - uses: actions/checkout@v6.0.2
             - uses: ./.github/actions/setup-rust
               with:
                   toolchain: ${{ matrix.rust }}
@@ -31,9 +42,10 @@ jobs:
 
     lint:
         name: Lint
+        needs: label
         runs-on: ubuntu-latest
         steps:
-            - uses: actions/checkout@v6
+            - uses: actions/checkout@v6.0.2
             - uses: ./.github/actions/setup-rust
               with:
                   toolchain: stable
@@ -42,11 +54,12 @@ jobs:
 
     audit:
         name: Security Audit
+        needs: label
         runs-on: ubuntu-latest
         steps:
-            - uses: actions/checkout@v6
+            - uses: actions/checkout@v6.0.2
             - name: Setup Rust
-              uses: dtolnay/rust-toolchain@stable
+              uses: ./.github/actions/setup-rust
               with:
                   toolchain: stable
             - name: Install cargo-audit
