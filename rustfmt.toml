@@ -10,6 +10,7 @@ use_field_init_shorthand = true
 
 # Control struct formatting
 struct_field_align_threshold = 20
+struct_lit_single_line = false
 struct_lit_width = 18
 
 # Function and method formatting
