@@ -1,0 +1,19 @@
+[package]
+name = "nwn-resmemfile"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+nwn-checksums.workspace = true
+nwn-exo.workspace = true
+nwn-resman.workspace = true
+nwn-resref.workspace = true
+nwn-restype.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true

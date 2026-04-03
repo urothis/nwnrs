@@ -1,0 +1,50 @@
+use crate::{ResMemFile, ResMemFileResult};
+use nwn_checksums::EMPTY_SECURE_HASH;
+use nwn_exo::ExoResFileCompressionType;
+use nwn_resman::{Res, new_res_origin, shared_stream};
+use nwn_resref::ResRef;
+use std::io::Cursor;
+use std::sync::Arc;
+use std::time::SystemTime;
+use tracing::{debug, instrument};
+
+/// Wraps owned bytes as a one-entry in-memory resource container.
+#[instrument(level = "debug", skip_all, err)]
+pub fn read_resmemfile(
+    label: impl Into<String>,
+    resref: ResRef,
+    bytes: impl Into<Vec<u8>>,
+) -> ResMemFileResult<ResMemFile> {
+    let label = label.into();
+    let bytes = bytes.into();
+    let len = bytes.len();
+    let stream = shared_stream(Cursor::new(bytes));
+
+    let result = ResMemFile {
+        label: label.clone(),
+        len,
+        entry: Res::new_with_stream(
+            new_res_origin(format!("ResMemFile:{label}"), label.clone()),
+            resref,
+            SystemTime::UNIX_EPOCH,
+            stream,
+            len as i64,
+            0,
+            ExoResFileCompressionType::None,
+            len,
+            EMPTY_SECURE_HASH,
+        ),
+    };
+    debug!(len, "wrapped in-memory resource");
+    Ok(result)
+}
+
+/// Wraps shared bytes as a one-entry in-memory resource container.
+#[instrument(level = "debug", skip_all, err)]
+pub fn read_resmemfile_arc(
+    label: impl Into<String>,
+    resref: ResRef,
+    bytes: Arc<[u8]>,
+) -> ResMemFileResult<ResMemFile> {
+    read_resmemfile(label, resref, bytes.as_ref().to_vec())
+}

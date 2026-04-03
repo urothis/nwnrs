@@ -1,0 +1,29 @@
+[package]
+name = "nwn-game"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+nwn-erf.workspace = true
+nwn-key.workspace = true
+nwn-resman.workspace = true
+nwn-resdir.workspace = true
+nwn-resnwsync.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+nwn-checksums.workspace = true
+nwn-compressedbuf.workspace = true
+nwn-exo.workspace = true
+nwn-resref.workspace = true
+nwn-restype.workspace = true
+rusqlite.workspace = true
+
+[lints]
+workspace = true

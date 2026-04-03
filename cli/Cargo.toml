@@ -1,0 +1,34 @@
+[package]
+name = "nwn-cli"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+argh.workspace = true
+nwn-checksums.workspace = true
+nwn-compressedbuf.workspace = true
+nwn-erf.workspace = true
+nwn-exo.workspace = true
+nwn-gff.workspace = true
+nwn-gffjson.workspace = true
+nwn-key.workspace = true
+nwn-game.workspace = true
+nwn-nwsync.workspace = true
+nwn-resman.workspace = true
+nwn-resnwsync.workspace = true
+nwn-resref.workspace = true
+nwn-ssf.workspace = true
+nwn-tlk.workspace = true
+nwn-twoda.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+nwn-restype.workspace = true
+rusqlite.workspace = true
+
+[lints]
+workspace = true

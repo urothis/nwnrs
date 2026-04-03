@@ -1,0 +1,21 @@
+[package]
+name = "nwn-resman"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+nwn-checksums.workspace = true
+nwn-compressedbuf.workspace = true
+nwn-exo.workspace = true
+nwn-lru.workspace = true
+nwn-resref.workspace = true
+nwn-restype.workspace = true
+nwn-util.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true

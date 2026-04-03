@@ -1,0 +1,84 @@
+[workspace]
+default-members = ["cli"]
+members = ["cli", "crates/*"]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace.dependencies]
+# internal dependencies
+nwn-checksums = { path = "crates/checksums" }
+nwn-compressedbuf = { path = "crates/compressedbuf" }
+nwn-erf = { path = "crates/erf" }
+nwn-exo = { path = "crates/exo" }
+nwn-game = { path = "crates/game" }
+nwn-gff = { path = "crates/gff" }
+nwn-gffjson = { path = "crates/gffjson" }
+nwn-key = { path = "crates/key" }
+nwn-core = { path = "crates/core" }
+nwn-lru = { path = "crates/lru" }
+nwn-masterlist = { path = "crates/masterlist" }
+nwn-nwsync = { path = "crates/nwsync" }
+nwn-resdir = { path = "crates/resdir" }
+nwn-resfile = { path = "crates/resfile" }
+nwn-resman = { path = "crates/resman" }
+nwn-resmemfile = { path = "crates/resmemfile" }
+nwn-resnwsync = { path = "crates/resnwsync" }
+nwn-resref = { path = "crates/resref" }
+nwn-restype = { path = "crates/restype" }
+nwn-ssf = { path = "crates/ssf" }
+nwn-streamext = { path = "crates/streamext" }
+nwn-tlk = { path = "crates/tlk" }
+nwn-twoda = { path = "crates/twoda" }
+nwn-util = { path = "crates/util" }
+# external dependencies
+argh = "0.1.19"
+codepage = "0.1.2"
+encoding_rs = "0.8.35"
+flate2 = "1.1.9"
+indexmap = "2.12.1"
+md5 = "0.8.0"
+reqwest = { version = "0.12.24", default-features = false, features = ["json", "rustls-tls"] }
+rusqlite = "0.39.0"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = { version = "1.0.149", features = ["preserve_order"] }
+sha1 = "0.11.0"
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.20", features = ["env-filter", "fmt"] }
+zstd = "0.13.3"
+
+[workspace.lints.clippy]
+# Baseline safety + cleanup
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+dbg_macro = "deny"
+await_holding_lock = "deny"
+await_holding_refcell_ref = "deny"
+too_many_arguments = "allow"
+# Correctness / robustness
+indexing_slicing = "warn"
+map_err_ignore = "warn"
+result_large_err = "warn"
+mem_forget = "warn"
+cast_lossless = "warn"
+cast_possible_truncation = "warn"
+# Readability / style
+manual_ok_or = "warn"
+let_and_return = "warn"
+match_like_matches_macro = "warn"
+needless_borrow = "warn"
+unused_async = "warn"
+unused_unit = "warn"
+semicolon_if_nothing_returned = "warn"
+print_stdout = "deny"
+print_stderr = "deny"
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+missing_docs = "deny"
