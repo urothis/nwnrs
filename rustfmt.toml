@@ -33,9 +33,6 @@ hex_literal_case = "Lower"
 format_macro_matchers = true
 format_macro_bodies = true
 
-# Control attribute formatting
-normalize_doc_attributes = true
-
 # Control blank line preservation
 blank_lines_upper_bound = 2
 
