@@ -1,0 +1,1 @@
+# nwn1ee.types.rs
