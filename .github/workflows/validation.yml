@@ -15,14 +15,12 @@ jobs:
             contents: read
             pull-requests: write
         steps:
-            - uses: actions/checkout@v6
-
+            - uses: ./.github/actions/checkout
             - name: Apply labels
-              uses: actions/labeler@v5
+              uses: actions/labeler@v6.0.1
               with:
                   repo-token: ${{ secrets.GITHUB_TOKEN }}
                   configuration-path: .github/labeler.yml
-
             - uses: ./.github/actions/setup-rust
               with:
                   toolchain: stable
@@ -30,7 +28,6 @@ jobs:
             - uses: ./.github/actions/rust-lint
             - uses: ./.github/actions/rust-check
             - uses: ./.github/actions/rust-test
-
             - name: Install cargo-audit
               run: cargo install cargo-audit
             - name: Run audit

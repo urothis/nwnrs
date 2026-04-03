@@ -16,7 +16,7 @@ jobs:
                 os: [ubuntu-latest, windows-latest, macos-latest]
                 rust: [stable]
         steps:
-            - uses: actions/checkout@v6
+            - uses: ./.github/actions/checkout
             - uses: ./.github/actions/setup-rust
               with:
                   toolchain: ${{ matrix.rust }}
@@ -24,16 +24,12 @@ jobs:
             - uses: ./.github/actions/rust-test
               with:
                   verbose: true
-            - uses: ./.github/actions/rust-test
-              with:
-                  package: nwn-cli
-                  verbose: true
 
     lint:
         name: Lint
         runs-on: ubuntu-latest
         steps:
-            - uses: actions/checkout@v6
+            - uses: ./.github/actions/checkout
             - uses: ./.github/actions/setup-rust
               with:
                   toolchain: stable
@@ -44,9 +40,8 @@ jobs:
         name: Security Audit
         runs-on: ubuntu-latest
         steps:
-            - uses: actions/checkout@v6
-            - name: Setup Rust
-              uses: dtolnay/rust-toolchain@stable
+            - uses: ./.github/actions/checkout
+            - uses: ./.github/actions/setup-rust
               with:
                   toolchain: stable
             - name: Install cargo-audit
