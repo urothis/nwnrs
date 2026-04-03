@@ -13,14 +13,11 @@ struct_field_align_threshold = 20
 struct_lit_width = 18
 
 # Function and method formatting
-fn_single_line = false
 fn_params_layout = "Tall"
-short_array_element_width_threshold = 10
 
 # Import formatting
 imports_granularity = "Crate"
 group_imports = "StdExternalCrate"
-imports_layout = "Mixed"
 
 # Control comment formatting
 comment_width = 80
@@ -50,9 +47,6 @@ trailing_semicolon = false
 
 # Control chaining
 chain_width = 60
-
-# Control match formatting
-match_arm_leading_pipes = "Never"
 
 # Control array formatting
 array_width = 60
