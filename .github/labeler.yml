@@ -1,0 +1,151 @@
+# Labeler configuration for automatic PR labeling
+# This file defines rules for automatically applying labels to pull requests
+# based on the files that are modified.
+
+# CLI changes
+cli:
+  - changed-files:
+      - any-glob-to-any-file: ["cli/**/*"]
+
+# Individual crate changes
+checksums:
+  - changed-files:
+      - any-glob-to-any-file: ["crates/checksums/**/*"]
+
+compressedbuf:
+  - changed-files:
+      - any-glob-to-any-file: ["crates/compressedbuf/**/*"]
+
+core:
+  - changed-files:
+      - any-glob-to-any-file: ["crates/core/**/*"]
+
+erf:
+  - changed-files:
+      - any-glob-to-any-file: ["crates/erf/**/*"]
+
+exo:
+  - changed-files:
+      - any-glob-to-any-file: ["crates/exo/**/*"]
+
+game:
+  - changed-files:
+      - any-glob-to-any-file: ["crates/game/**/*"]
+
+gff:
+  - changed-files:
+      - any-glob-to-any-file: ["crates/gff/**/*"]
+
+gffjson:
+  - changed-files:
+      - any-glob-to-any-file: ["crates/gffjson/**/*"]
+
+key:
+  - changed-files:
+      - any-glob-to-any-file: ["crates/key/**/*"]
+
+lru:
+  - changed-files:
+      - any-glob-to-any-file: ["crates/lru/**/*"]
+
+masterlist:
+  - changed-files:
+      - any-glob-to-any-file: ["crates/masterlist/**/*"]
+
+nwsync:
+  - changed-files:
+      - any-glob-to-any-file: ["crates/nwsync/**/*"]
+
+resdir:
+  - changed-files:
+      - any-glob-to-any-file: ["crates/resdir/**/*"]
+
+resfile:
+  - changed-files:
+      - any-glob-to-any-file: ["crates/resfile/**/*"]
+
+resman:
+  - changed-files:
+      - any-glob-to-any-file: ["crates/resman/**/*"]
+
+resmemfile:
+  - changed-files:
+      - any-glob-to-any-file: ["crates/resmemfile/**/*"]
+
+resnwsync:
+  - changed-files:
+      - any-glob-to-any-file: ["crates/resnwsync/**/*"]
+
+resref:
+  - changed-files:
+      - any-glob-to-any-file: ["crates/resref/**/*"]
+
+restype:
+  - changed-files:
+      - any-glob-to-any-file: ["crates/restype/**/*"]
+
+ssf:
+  - changed-files:
+      - any-glob-to-any-file: ["crates/ssf/**/*"]
+
+streamext:
+  - changed-files:
+      - any-glob-to-any-file: ["crates/streamext/**/*"]
+
+tlk:
+  - changed-files:
+      - any-glob-to-any-file: ["crates/tlk/**/*"]
+
+twoda:
+  - changed-files:
+      - any-glob-to-any-file: ["crates/twoda/**/*"]
+
+util:
+  - changed-files:
+      - any-glob-to-any-file: ["crates/util/**/*"]
+
+# Documentation
+documentation:
+  - changed-files:
+      - any-glob-to-any-file:
+          [
+            "README.md",
+            "crates/README.md",
+            "cli/README.md",
+            "docs/**/*",
+            "**/*.md",
+          ]
+
+# CI/CD and GitHub Actions
+ci/cd:
+  - changed-files:
+      - any-glob-to-any-file:
+          [
+            ".github/workflows/**/*",
+            ".github/actions/**/*",
+            ".github/labeler.yml",
+            ".github/dependabot.yml",
+          ]
+
+# Dependencies
+dependencies:
+  - changed-files:
+      - any-glob-to-any-file:
+          ["Cargo.toml", "cli/Cargo.toml", "crates/*/Cargo.toml"]
+
+# Tests
+tests:
+  - changed-files:
+      - any-glob-to-any-file: ["**/*test*.rs", "**/tests/**/*"]
+
+# Configuration files
+config:
+  - changed-files:
+      - any-glob-to-any-file:
+          [".gitignore", "rustfmt.toml", "clippy.toml", "deny.toml"]
+
+# Breaking changes (files that might indicate breaking changes)
+breaking:
+  - changed-files:
+      - any-glob-to-any-file:
+          ["**/src/lib.rs", "**/src/main.rs", "Cargo.toml", "cli/Cargo.toml"]

@@ -1,0 +1,35 @@
+name: "Rust Test"
+description: "Run cargo test on workspace"
+
+inputs:
+  workspace:
+    description: "Test workspace or specific package"
+    required: false
+    default: "true"
+  package:
+    description: "Specific package to test"
+    required: false
+    default: ""
+  verbose:
+    description: "Run with verbose output"
+    required: false
+    default: "false"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Test
+      shell: bash
+      run: |
+        CMD="cargo test"
+        if [ "${{ inputs.workspace }}" = "true" ]; then
+          CMD="$CMD --workspace"
+        fi
+        if [ -n "${{ inputs.package }}" ]; then
+          CMD="$CMD -p ${{ inputs.package }}"
+        fi
+        if [ "${{ inputs.verbose }}" = "true" ]; then
+          CMD="$CMD --verbose"
+        fi
+        echo "Running: $CMD"
+        $CMD

@@ -147,12 +147,34 @@ fn detect_unix_native_encoding() -> Result<&'static Encoding, NativeEncodingErro
 
 #[cfg(windows)]
 fn detect_windows_native_encoding() -> Result<&'static Encoding, NativeEncodingError> {
-    let code_page = unsafe { GetACP() };
-    codepage::to_encoding(code_page).ok_or_else(|| {
-        NativeEncodingError::new(format!(
-            "unable to map Windows ANSI code page {code_page} to an encoding"
+    // Try to get code page from environment variables first (safe approach)
+    if let Ok(chcp_output) = std::process::Command::new("chcp").output() {
+        if let Ok(output_str) = String::from_utf8(chcp_output.stdout) {
+            // Parse output like "Active code page: 1252"
+            if let Some(code_page_str) = output_str
+                .lines()
+                .find(|line| line.contains("Active code page:"))
+                .and_then(|line| line.split(':').nth(1))
+                .map(|s| s.trim())
+            {
+                if let Ok(code_page) = code_page_str.parse::<u16>() {
+                    if let Some(encoding) = codepage::to_encoding(code_page) {
+                        return Ok(encoding);
+                    }
+                }
+            }
+        }
+    }
+
+    // Fallback: try common Windows code pages
+    // Most Windows systems use 1252 (Western European)
+    if let Some(encoding) = codepage::to_encoding(1252) {
+        Ok(encoding)
+    } else {
+        Err(NativeEncodingError::new(
+            "unable to determine Windows native encoding",
         ))
-    })
+    }
 }
 
 pub(crate) fn parse_locale_encoding(locale: &str) -> Option<&'static Encoding> {
@@ -168,10 +190,4 @@ pub(crate) fn parse_locale_encoding(locale: &str) -> Option<&'static Encoding> {
         .unwrap_or(without_modifier);
 
     Encoding::for_label(candidate.trim().as_bytes())
-}
-
-#[cfg(windows)]
-#[link(name = "kernel32")]
-unsafe extern "system" {
-    fn GetACP() -> u32;
 }

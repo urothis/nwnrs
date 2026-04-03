@@ -1,0 +1,55 @@
+name: CI
+
+on:
+    pull_request:
+        branches: [main]
+
+env:
+    CARGO_TERM_COLOR: always
+
+jobs:
+    test:
+        name: Test
+        runs-on: ${{ matrix.os }}
+        strategy:
+            matrix:
+                os: [ubuntu-latest, windows-latest, macos-latest]
+                rust: [stable]
+        steps:
+            - uses: actions/checkout@v6
+            - uses: ./.github/actions/setup-rust
+              with:
+                  toolchain: ${{ matrix.rust }}
+            - uses: ./.github/actions/rust-check
+            - uses: ./.github/actions/rust-test
+              with:
+                  verbose: true
+            - uses: ./.github/actions/rust-test
+              with:
+                  package: nwn-cli
+                  verbose: true
+
+    lint:
+        name: Lint
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v6
+            - uses: ./.github/actions/setup-rust
+              with:
+                  toolchain: stable
+                  components: rustfmt, clippy
+            - uses: ./.github/actions/rust-lint
+
+    audit:
+        name: Security Audit
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v6
+            - name: Setup Rust
+              uses: dtolnay/rust-toolchain@stable
+              with:
+                  toolchain: stable
+            - name: Install cargo-audit
+              run: cargo install cargo-audit
+            - name: Run audit
+              run: cargo audit

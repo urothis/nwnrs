@@ -12,13 +12,13 @@ publish = false
 # internal dependencies
 nwn-checksums = { path = "crates/checksums" }
 nwn-compressedbuf = { path = "crates/compressedbuf" }
+nwn-core = { path = "crates/core" }
 nwn-erf = { path = "crates/erf" }
 nwn-exo = { path = "crates/exo" }
 nwn-game = { path = "crates/game" }
 nwn-gff = { path = "crates/gff" }
 nwn-gffjson = { path = "crates/gffjson" }
 nwn-key = { path = "crates/key" }
-nwn-core = { path = "crates/core" }
 nwn-lru = { path = "crates/lru" }
 nwn-masterlist = { path = "crates/masterlist" }
 nwn-nwsync = { path = "crates/nwsync" }
@@ -41,8 +41,11 @@ encoding_rs = "0.8.35"
 flate2 = "1.1.9"
 indexmap = "2.12.1"
 md5 = "0.8.0"
-reqwest = { version = "0.12.24", default-features = false, features = ["json", "rustls-tls"] }
-rusqlite = "0.39.0"
+reqwest = { version = "0.12.24", default-features = false, features = [
+    "json",
+    "rustls-tls",
+] }
+rusqlite = { version = "0.39.0", features = ["bundled"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = { version = "1.0.149", features = ["preserve_order"] }
 sha1 = "0.11.0"

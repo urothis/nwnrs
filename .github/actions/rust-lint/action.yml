@@ -1,0 +1,34 @@
+name: "Rust Lint"
+description: "Run rustfmt and clippy"
+
+inputs:
+  workspace:
+    description: "Lint workspace"
+    required: false
+    default: "true"
+  check-format:
+    description: "Check formatting"
+    required: false
+    default: "true"
+  clippy:
+    description: "Run clippy"
+    required: false
+    default: "true"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Check formatting
+      if: inputs.check-format == 'true'
+      shell: bash
+      run: cargo fmt --all -- --check
+
+    - name: Run clippy
+      if: inputs.clippy == 'true'
+      shell: bash
+      run: |
+        if [ "${{ inputs.workspace }}" = "true" ]; then
+          cargo clippy --workspace -- -D warnings
+        else
+          cargo clippy -- -D warnings
+        fi

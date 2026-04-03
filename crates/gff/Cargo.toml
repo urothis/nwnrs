@@ -4,9 +4,6 @@ version.workspace = true
 edition.workspace = true
 publish.workspace = true
 
-[lib]
-path = "src/lib.rs"
-
 [dependencies]
 nwn-core.workspace = true
 tracing.workspace = true
