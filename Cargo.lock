@@ -675,7 +675,6 @@ dependencies = [
  "md5",
  "sha1",
  "tracing",
- "wasm-bindgen",
 ]
 
 [[package]]
