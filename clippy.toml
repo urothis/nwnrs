@@ -1,0 +1,32 @@
+# Clippy configuration for nwn1ee.types.rs
+# See https://doc.rust-lang.org/clippy/lint_configuration.html for more options
+
+# Deny certain lints that should never be allowed
+deny = ["unsafe_code", "unstable_features"]
+
+# Warn about these lints
+warn = []
+
+# Allow these lints (don't warn)
+allow = [
+    "missing_docs",       # We don't require documentation for all items yet
+    "too_many_arguments", # Some APIs legitimately need many parameters
+    "type_complexity",    # Complex types are sometimes necessary
+    "large_enum_variant", # Some variants need to be large
+]
+
+# Specific configuration options
+cognitive-complexity-threshold = 25
+too-many-lines-threshold = 200
+enum-variant-size-threshold = 200
+struct-field-size-threshold = 100
+
+# MSRV (Minimum Supported Rust Version)
+msrv = "1.70.0"
+
+# Allow certain patterns that are common in this codebase
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+
+# Disable some pedantic lints that are too noisy
+allow-pedantic = false

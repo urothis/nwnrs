@@ -1,0 +1,120 @@
+# Labeler configuration for automatic PR labeling
+# This file defines rules for automatically applying labels to pull requests
+# based on the files that are modified.
+
+# CLI changes
+cli:
+  - cli/**/*
+
+# Individual crate changes
+checksums:
+  - crates/checksums/**/*
+
+compressedbuf:
+  - crates/compressedbuf/**/*
+
+core:
+  - crates/core/**/*
+
+erf:
+  - crates/erf/**/*
+
+exo:
+  - crates/exo/**/*
+
+game:
+  - crates/game/**/*
+
+gff:
+  - crates/gff/**/*
+
+gffjson:
+  - crates/gffjson/**/*
+
+key:
+  - crates/key/**/*
+
+lru:
+  - crates/lru/**/*
+
+masterlist:
+  - crates/masterlist/**/*
+
+nwsync:
+  - crates/nwsync/**/*
+
+resdir:
+  - crates/resdir/**/*
+
+resfile:
+  - crates/resfile/**/*
+
+resman:
+  - crates/resman/**/*
+
+resmemfile:
+  - crates/resmemfile/**/*
+
+resnwsync:
+  - crates/resnwsync/**/*
+
+resref:
+  - crates/resref/**/*
+
+restype:
+  - crates/restype/**/*
+
+ssf:
+  - crates/ssf/**/*
+
+streamext:
+  - crates/streamext/**/*
+
+tlk:
+  - crates/tlk/**/*
+
+twoda:
+  - crates/twoda/**/*
+
+util:
+  - crates/util/**/*
+
+# Documentation
+documentation:
+  - README.md
+  - crates/README.md
+  - cli/README.md
+  - docs/**/*
+  - "**/*.md"
+
+# CI/CD and GitHub Actions
+ci/cd:
+  - .github/workflows/**/*
+  - .github/actions/**/*
+  - .github/labeler.yml
+  - .github/dependabot.yml
+
+# Dependencies
+dependencies:
+  - Cargo.toml
+  - cli/Cargo.toml
+  - crates/*/Cargo.toml
+
+# Tests
+tests:
+  - "**/*test*.rs"
+  - "**/tests/**/*"
+
+# Configuration files
+config:
+  - .gitignore
+  - rustfmt.toml
+  - clippy.toml
+  - deny.toml
+
+# Breaking changes (files that might indicate breaking changes)
+breaking:
+  - "**/src/lib.rs"
+  - "**/src/main.rs"
+  - Cargo.toml
+  - cli/Cargo.toml

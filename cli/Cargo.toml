@@ -28,7 +28,6 @@ tracing-subscriber.workspace = true
 
 [dev-dependencies]
 nwn-restype.workspace = true
-rusqlite.workspace = true
 
 [lints]
 workspace = true
