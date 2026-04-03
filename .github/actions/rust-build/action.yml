@@ -1,0 +1,35 @@
+name: "Rust Build"
+description: "Build Rust project"
+
+inputs:
+  package:
+    description: "Package to build"
+    required: false
+    default: ""
+  release:
+    description: "Build in release mode"
+    required: false
+    default: "false"
+  target:
+    description: "Target triple"
+    required: false
+    default: ""
+
+runs:
+  using: "composite"
+  steps:
+    - name: Build
+      shell: bash
+      run: |
+        CMD="cargo build"
+        if [ -n "${{ inputs.package }}" ]; then
+          CMD="$CMD -p ${{ inputs.package }}"
+        fi
+        if [ "${{ inputs.release }}" = "true" ]; then
+          CMD="$CMD --release"
+        fi
+        if [ -n "${{ inputs.target }}" ]; then
+          CMD="$CMD --target ${{ inputs.target }}"
+        fi
+        echo "Running: $CMD"
+        $CMD

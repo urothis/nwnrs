@@ -1,0 +1,29 @@
+name: "Setup Rust"
+description: "Setup Rust toolchain and cache dependencies"
+
+inputs:
+  toolchain:
+    description: "Rust toolchain version"
+    required: true
+    default: "stable"
+  components:
+    description: "Additional components to install"
+    required: false
+    default: ""
+  target:
+    description: "Target triple for cross-compilation"
+    required: false
+    default: ""
+
+runs:
+  using: "composite"
+  steps:
+    - name: Setup Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        toolchain: ${{ inputs.toolchain }}
+        components: ${{ inputs.components }}
+        targets: ${{ inputs.target }}
+
+    - name: Cache dependencies
+      uses: Swatinem/rust-cache@v2

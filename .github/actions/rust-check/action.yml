@@ -1,0 +1,20 @@
+name: "Rust Check"
+description: "Run cargo check on workspace"
+
+inputs:
+  workspace:
+    description: "Check workspace or specific package"
+    required: false
+    default: "true"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Check
+      shell: bash
+      run: |
+        if [ "${{ inputs.workspace }}" = "true" ]; then
+          cargo check --workspace
+        else
+          cargo check
+        fi
