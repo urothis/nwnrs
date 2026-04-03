@@ -5,8 +5,8 @@ on:
 env:
     CARGO_TERM_COLOR: always
 jobs:
-    validate:
-        name: Validate PR
+    label:
+        name: Label PR
         runs-on: ubuntu-latest
         permissions:
             contents: read
@@ -18,20 +18,9 @@ jobs:
               with:
                   repo-token: ${{ secrets.GITHUB_TOKEN }}
                   configuration-path: .github/labeler.yml
-            - uses: ./.github/actions/setup-rust
-              with:
-                  toolchain: stable
-                  components: rustfmt, clippy
-            - uses: ./.github/actions/rust-lint
-            - uses: ./.github/actions/rust-check
-            - uses: ./.github/actions/rust-test
-            - name: Install cargo-audit
-              run: cargo install cargo-audit
-            - name: Run audit
-              run: cargo audit
     test:
         name: Test
-        needs: validate
+        needs: label
         runs-on: ${{ matrix.os }}
         strategy:
             matrix:
@@ -50,9 +39,10 @@ jobs:
               with:
                   package: nwn-cli
                   verbose: true
+
     lint:
         name: Lint
-        needs: validate
+        needs: label
         runs-on: ubuntu-latest
         steps:
             - uses: actions/checkout@v6.0.2
@@ -61,9 +51,10 @@ jobs:
                   toolchain: stable
                   components: rustfmt, clippy
             - uses: ./.github/actions/rust-lint
+
     audit:
         name: Security Audit
-        needs: validate
+        needs: label
         runs-on: ubuntu-latest
         steps:
             - uses: actions/checkout@v6.0.2
