@@ -4,117 +4,148 @@
 
 # CLI changes
 cli:
-  - cli/**/*
+  - changed-files:
+      - any-glob-to-any-file: ["cli/**/*"]
 
 # Individual crate changes
 checksums:
-  - crates/checksums/**/*
+  - changed-files:
+      - any-glob-to-any-file: ["crates/checksums/**/*"]
 
 compressedbuf:
-  - crates/compressedbuf/**/*
+  - changed-files:
+      - any-glob-to-any-file: ["crates/compressedbuf/**/*"]
 
 core:
-  - crates/core/**/*
+  - changed-files:
+      - any-glob-to-any-file: ["crates/core/**/*"]
 
 erf:
-  - crates/erf/**/*
+  - changed-files:
+      - any-glob-to-any-file: ["crates/erf/**/*"]
 
 exo:
-  - crates/exo/**/*
+  - changed-files:
+      - any-glob-to-any-file: ["crates/exo/**/*"]
 
 game:
-  - crates/game/**/*
+  - changed-files:
+      - any-glob-to-any-file: ["crates/game/**/*"]
 
 gff:
-  - crates/gff/**/*
+  - changed-files:
+      - any-glob-to-any-file: ["crates/gff/**/*"]
 
 gffjson:
-  - crates/gffjson/**/*
+  - changed-files:
+      - any-glob-to-any-file: ["crates/gffjson/**/*"]
 
 key:
-  - crates/key/**/*
+  - changed-files:
+      - any-glob-to-any-file: ["crates/key/**/*"]
 
 lru:
-  - crates/lru/**/*
+  - changed-files:
+      - any-glob-to-any-file: ["crates/lru/**/*"]
 
 masterlist:
-  - crates/masterlist/**/*
+  - changed-files:
+      - any-glob-to-any-file: ["crates/masterlist/**/*"]
 
 nwsync:
-  - crates/nwsync/**/*
+  - changed-files:
+      - any-glob-to-any-file: ["crates/nwsync/**/*"]
 
 resdir:
-  - crates/resdir/**/*
+  - changed-files:
+      - any-glob-to-any-file: ["crates/resdir/**/*"]
 
 resfile:
-  - crates/resfile/**/*
+  - changed-files:
+      - any-glob-to-any-file: ["crates/resfile/**/*"]
 
 resman:
-  - crates/resman/**/*
+  - changed-files:
+      - any-glob-to-any-file: ["crates/resman/**/*"]
 
 resmemfile:
-  - crates/resmemfile/**/*
+  - changed-files:
+      - any-glob-to-any-file: ["crates/resmemfile/**/*"]
 
 resnwsync:
-  - crates/resnwsync/**/*
+  - changed-files:
+      - any-glob-to-any-file: ["crates/resnwsync/**/*"]
 
 resref:
-  - crates/resref/**/*
+  - changed-files:
+      - any-glob-to-any-file: ["crates/resref/**/*"]
 
 restype:
-  - crates/restype/**/*
+  - changed-files:
+      - any-glob-to-any-file: ["crates/restype/**/*"]
 
 ssf:
-  - crates/ssf/**/*
+  - changed-files:
+      - any-glob-to-any-file: ["crates/ssf/**/*"]
 
 streamext:
-  - crates/streamext/**/*
+  - changed-files:
+      - any-glob-to-any-file: ["crates/streamext/**/*"]
 
 tlk:
-  - crates/tlk/**/*
+  - changed-files:
+      - any-glob-to-any-file: ["crates/tlk/**/*"]
 
 twoda:
-  - crates/twoda/**/*
+  - changed-files:
+      - any-glob-to-any-file: ["crates/twoda/**/*"]
 
 util:
-  - crates/util/**/*
+  - changed-files:
+      - any-glob-to-any-file: ["crates/util/**/*"]
 
 # Documentation
 documentation:
-  - README.md
-  - crates/README.md
-  - cli/README.md
-  - docs/**/*
-  - "**/*.md"
+  - changed-files:
+      - any-glob-to-any-file:
+          [
+            "README.md",
+            "crates/README.md",
+            "cli/README.md",
+            "docs/**/*",
+            "**/*.md",
+          ]
 
 # CI/CD and GitHub Actions
 ci/cd:
-  - .github/workflows/**/*
-  - .github/actions/**/*
-  - .github/labeler.yml
-  - .github/dependabot.yml
+  - changed-files:
+      - any-glob-to-any-file:
+          [
+            ".github/workflows/**/*",
+            ".github/actions/**/*",
+            ".github/labeler.yml",
+            ".github/dependabot.yml",
+          ]
 
 # Dependencies
 dependencies:
-  - Cargo.toml
-  - cli/Cargo.toml
-  - crates/*/Cargo.toml
+  - changed-files:
+      - any-glob-to-any-file:
+          ["Cargo.toml", "cli/Cargo.toml", "crates/*/Cargo.toml"]
 
 # Tests
 tests:
-  - "**/*test*.rs"
-  - "**/tests/**/*"
+  - changed-files:
+      - any-glob-to-any-file: ["**/*test*.rs", "**/tests/**/*"]
 
 # Configuration files
 config:
-  - .gitignore
-  - rustfmt.toml
-  - clippy.toml
-  - deny.toml
+  - changed-files:
+      - any-glob-to-any-file:
+          [".gitignore", "rustfmt.toml", "clippy.toml", "deny.toml"]
 
 # Breaking changes (files that might indicate breaking changes)
 breaking:
-  - "**/src/lib.rs"
-  - "**/src/main.rs"
-  - Cargo.toml
-  - cli/Cargo.toml
+  - changed-files:
+      - any-glob-to-any-file:
+          ["**/src/lib.rs", "**/src/main.rs", "Cargo.toml", "cli/Cargo.toml"]
