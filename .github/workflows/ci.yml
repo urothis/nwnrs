@@ -1,8 +1,6 @@
 name: CI
 
 on:
-    push:
-        branches: [main]
     pull_request:
         branches: [main]
 
@@ -16,10 +14,7 @@ jobs:
         strategy:
             matrix:
                 os: [ubuntu-latest, windows-latest, macos-latest]
-                rust: [stable, beta]
-                include:
-                    - os: ubuntu-latest
-                      rust: nightly
+                rust: [stable]
         steps:
             - uses: actions/checkout@v6
             - uses: ./.github/actions/setup-rust
@@ -58,33 +53,3 @@ jobs:
               run: cargo install cargo-audit
             - name: Run audit
               run: cargo audit
-
-    build-release:
-        name: Build Release
-        runs-on: ${{ matrix.os }}
-        strategy:
-            matrix:
-                os: [ubuntu-latest, windows-latest, macos-latest]
-                include:
-                    - os: ubuntu-latest
-                      target: x86_64-unknown-linux-gnu
-                    - os: windows-latest
-                      target: x86_64-pc-windows-msvc
-                    - os: macos-latest
-                      target: x86_64-apple-darwin
-        steps:
-            - uses: actions/checkout@v6
-            - uses: ./.github/actions/setup-rust
-              with:
-                  toolchain: stable
-                  target: ${{ matrix.target }}
-            - uses: ./.github/actions/rust-build
-              with:
-                  package: nwn-cli
-                  release: true
-                  target: ${{ matrix.target }}
-            - name: Upload CLI binary
-              uses: actions/upload-artifact@v4
-              with:
-                  name: nwn-cli-${{ matrix.target }}
-                  path: target/${{ matrix.target }}/release/nwn-cli${{ matrix.os == 'windows-latest' && '.exe' || '' }}
