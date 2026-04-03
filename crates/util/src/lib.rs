@@ -1,9 +1,9 @@
 #![forbid(unsafe_code)]
 //! Shared support code used across the workspace.
 //!
-//! This crate houses the intentionally generic pieces that would otherwise be duplicated:
-//! encoding selection and conversion, IO helpers, endian swapping, and simple expectation-style
-//! errors for format validation.
+//! This crate houses the intentionally generic pieces that would otherwise be
+//! duplicated: encoding selection and conversion, IO helpers, endian swapping,
+//! and simple expectation-style errors for format validation.
 
 mod encoding;
 mod errors;

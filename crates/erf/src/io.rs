@@ -1,21 +1,25 @@
-use crate::{Erf, ErfError, ErfResMeta, ErfResult, ErfVersion, HEADER_SIZE, VALID_ERF_TYPES};
+use std::{
+    collections::BTreeMap,
+    fs::File,
+    io::{self, Read, Seek, SeekFrom, Write},
+    path::Path,
+    time::SystemTime,
+};
+
 use nwn_checksums::{EMPTY_SECURE_HASH, SecureHash};
 use nwn_compressedbuf::{Algorithm, compress_writer as compress_buf_writer};
 use nwn_exo::{EXO_RES_FILE_COMPRESSED_BUF_MAGIC, ExoResFileCompressionType};
 use nwn_resman::{Res, SharedReadSeek, new_res_origin, shared_stream};
 use nwn_resref::{ResRef, new_res_ref};
 use nwn_util::{from_nwn_encoding, read_bytes_or_err, to_nwn_encoding};
-use std::collections::BTreeMap;
-use std::fs::File;
-use std::io::{self, Read, Seek, SeekFrom, Write};
-use std::path::Path;
-use std::time::SystemTime;
 use tracing::{debug, instrument};
+
+use crate::{Erf, ErfError, ErfResMeta, ErfResult, ErfVersion, HEADER_SIZE, VALID_ERF_TYPES};
 
 /// Reads an ERF-family archive from a seekable reader.
 ///
-/// The returned [`Erf`] contains lazily readable [`nwn_resman::Res`] entries backed by the
-/// supplied stream.
+/// The returned [`Erf`] contains lazily readable [`nwn_resman::Res`] entries
+/// backed by the supplied stream.
 #[instrument(level = "debug", skip_all, err)]
 pub fn read_erf<R>(reader: R, filename: impl Into<String>) -> ErfResult<Erf>
 where
@@ -34,7 +38,8 @@ pub fn read_erf_from_file(path: impl AsRef<Path>) -> ErfResult<Erf> {
 
 /// Reads an ERF-family archive from a shared stream handle.
 ///
-/// This is the most direct constructor when the caller already manages stream sharing.
+/// This is the most direct constructor when the caller already manages stream
+/// sharing.
 #[instrument(level = "debug", skip_all, err, fields(path = %filename))]
 pub fn read_erf_shared(stream: SharedReadSeek, filename: String) -> ErfResult<Erf> {
     let mut io = stream
@@ -248,8 +253,9 @@ fn resource_table_offset_looks_valid<R: Read + Seek + ?Sized>(
 #[allow(clippy::too_many_arguments)]
 /// Writes an ERF-family archive.
 ///
-/// `entries` defines the archive order. For each entry, `entry_writer` must write the raw
-/// payload bytes and return the uncompressed byte length together with the payload SHA-1.
+/// `entries` defines the archive order. For each entry, `entry_writer` must
+/// write the raw payload bytes and return the uncompressed byte length together
+/// with the payload SHA-1.
 #[instrument(
     level = "debug",
     skip_all,

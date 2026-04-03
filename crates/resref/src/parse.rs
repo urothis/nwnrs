@@ -1,6 +1,7 @@
-use crate::{RESREF_MAX_LENGTH, ResRef, ResRefError, ResolvedResRef};
 use nwn_restype::ResType;
 use tracing::instrument;
+
+use crate::{RESREF_MAX_LENGTH, ResRef, ResRefError, ResolvedResRef};
 
 /// Returns `true` if `value` is a valid NWN resource name.
 pub fn is_valid_resref_part1(value: &str) -> bool {

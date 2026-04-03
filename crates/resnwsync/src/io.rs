@@ -1,17 +1,21 @@
-use crate::{
-    ManifestSha1, NWSYNC_COMPRESSED_BUF_MAGIC_STR, NWSync, NWSyncShard, ResNWSyncError,
-    ResNWSyncManifest, ResNWSyncResult,
+use std::{
+    collections::HashMap,
+    path::Path,
+    time::{Duration, UNIX_EPOCH},
 };
+
 use indexmap::IndexSet;
 use nwn_checksums::parse_secure_hash;
 use nwn_compressedbuf::make_magic;
 use nwn_resref::new_res_ref;
 use nwn_restype::ResType;
 use rusqlite::{Connection, OptionalExtension, params};
-use std::collections::HashMap;
-use std::path::Path;
-use std::time::{Duration, UNIX_EPOCH};
 use tracing::{debug, instrument};
+
+use crate::{
+    ManifestSha1, NWSYNC_COMPRESSED_BUF_MAGIC_STR, NWSync, NWSyncShard, ResNWSyncError,
+    ResNWSyncManifest, ResNWSyncResult,
+};
 
 /// Returns the integer magic for `NSYC` compressed buffers.
 #[instrument(level = "debug", skip_all, err)]
@@ -49,7 +53,7 @@ pub fn open_nwsync(path: impl AsRef<Path>) -> ResNWSyncResult<NWSync> {
         }
 
         let shard = NWSyncShard {
-            id: shard_id,
+            id:   shard_id,
             path: shard_path.clone(),
         };
         let conn = Connection::open(&shard_path)?;

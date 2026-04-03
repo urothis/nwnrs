@@ -1,9 +1,10 @@
 #![forbid(unsafe_code)]
 //! Registry of NWN resource types and file extensions.
 //!
-//! NWN stores resource kinds as numeric ids, while most user-facing workflows operate on file
-//! extensions. This crate bridges the two and also allows callers to register additional custom
-//! mappings when working with project-specific resource types.
+//! NWN stores resource kinds as numeric ids, while most user-facing workflows
+//! operate on file extensions. This crate bridges the two and also allows
+//! callers to register additional custom mappings when working with
+//! project-specific resource types.
 
 mod registry;
 mod types;

@@ -1,9 +1,10 @@
 #![forbid(unsafe_code)]
 //! JSON bridge for the [`nwn_gff`] data model.
 //!
-//! This crate defines a stable JSON representation for [`nwn_gff::GffRoot`] documents. It is
-//! primarily used by the CLI unpack/pack workflow so that GFF-family resources can be edited
-//! as human-readable JSON and rebuilt without losing type information.
+//! This crate defines a stable JSON representation for [`nwn_gff::GffRoot`]
+//! documents. It is primarily used by the CLI unpack/pack workflow so that
+//! GFF-family resources can be edited as human-readable JSON and rebuilt
+//! without losing type information.
 //!
 //! Start with [`gff_root_to_json_value`], [`gff_root_to_pretty_json_string`],
 //! [`gff_root_from_json_value`], and [`gff_root_from_json_str`].

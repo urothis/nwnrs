@@ -1,7 +1,7 @@
+use std::{fmt, io};
+
 use nwn_resman::{Res, ResContainer, ResManError, ResManResult};
 use nwn_resref::ResRef;
-use std::fmt;
-use std::io;
 
 /// Errors returned while building an in-memory resource container.
 #[derive(Debug)]
@@ -40,7 +40,7 @@ impl From<ResManError> for ResMemFileError {
 pub struct ResMemFile {
     pub(crate) label: String,
     pub(crate) entry: Res,
-    pub(crate) len: usize,
+    pub(crate) len:   usize,
 }
 
 impl ResMemFile {

@@ -1,9 +1,10 @@
 #![forbid(unsafe_code)]
 //! Single-file [`nwn_resman::ResContainer`] implementation.
 //!
-//! This crate wraps one on-disk file as a one-entry resource container. It is useful when a
-//! caller already knows the intended [`nwn_resref::ResRef`] and wants to feed a loose file into
-//! the same APIs used for directories and archives.
+//! This crate wraps one on-disk file as a one-entry resource container. It is
+//! useful when a caller already knows the intended [`nwn_resref::ResRef`] and
+//! wants to feed a loose file into the same APIs used for directories and
+//! archives.
 
 mod read;
 mod types;

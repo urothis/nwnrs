@@ -1,6 +1,4 @@
-use std::error::Error;
-use std::fmt;
-use std::str::FromStr;
+use std::{error::Error, fmt, str::FromStr};
 
 /// The lowercase hexadecimal length of a SHA-1 digest.
 pub const SECURE_HASH_HEX_LEN: usize = 40;

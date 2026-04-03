@@ -1,4 +1,5 @@
 use std::fmt;
+
 use tracing::{debug, instrument};
 
 /// Compression markers stored by EXO resource containers.

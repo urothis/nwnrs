@@ -1,5 +1,4 @@
-use std::error::Error;
-use std::fmt;
+use std::{error::Error, fmt};
 
 /// An error returned when an expected condition is not met.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -50,7 +49,7 @@ impl Error for UnknownEncodingError {}
 /// An error returned when a text conversion fails for a configured encoding.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EncodingConversionError {
-    encoding: String,
+    encoding:  String,
     operation: &'static str,
 }
 

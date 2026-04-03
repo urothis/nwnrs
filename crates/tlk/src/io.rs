@@ -1,10 +1,12 @@
-use crate::{DATA_ELEMENT_SIZE, HEADER_SIZE, SingleTlk, TlkEntry, TlkError, TlkResult};
+use std::io::{self, Cursor, Read, Seek, SeekFrom, Write};
+
 use nwn_core::{Language, StrRef};
 use nwn_lru::WeightedLru;
 use nwn_resman::{Res, shared_stream};
 use nwn_util::{from_nwn_encoding, read_bytes_or_err, to_nwn_encoding};
-use std::io::{self, Cursor, Read, Seek, SeekFrom, Write};
 use tracing::{debug, instrument};
+
+use crate::{DATA_ELEMENT_SIZE, HEADER_SIZE, SingleTlk, TlkEntry, TlkError, TlkResult};
 
 /// Reads a single-language TLK table from a reader.
 #[instrument(level = "debug", skip_all, err, fields(use_cache))]
@@ -47,7 +49,8 @@ where
 
 /// Writes a single-language TLK table.
 ///
-/// Missing string references up to [`SingleTlk::highest`] are emitted as empty entries.
+/// Missing string references up to [`SingleTlk::highest`] are emitted as empty
+/// entries.
 #[instrument(level = "debug", skip_all, err, fields(language = ?tlk.language))]
 pub fn write_single_tlk<W: Write + Seek>(writer: &mut W, tlk: &mut SingleTlk) -> TlkResult<()> {
     let max_id = u32::try_from(tlk.highest().max(0))

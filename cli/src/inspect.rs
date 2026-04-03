@@ -1,14 +1,14 @@
-use crate::util::{Kind, detect_kind, write_stdout_line};
+use std::{fs::File, io::BufReader, path::Path};
+
 use nwn_erf::prelude::*;
 use nwn_gff::prelude::*;
 use nwn_key::prelude::*;
 use nwn_ssf::prelude::*;
 use nwn_tlk::prelude::*;
 use nwn_twoda::prelude::*;
-use std::fs::File;
-use std::io::BufReader;
-use std::path::Path;
 use tracing::{debug, info, instrument};
+
+use crate::util::{Kind, detect_kind, write_stdout_line};
 
 #[instrument(level = "info", skip_all, err, fields(path = %path.display()))]
 pub(crate) fn run_inspect(path: &Path) -> Result<(), String> {

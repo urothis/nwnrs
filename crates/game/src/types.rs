@@ -1,9 +1,9 @@
+use std::{fmt, io};
+
 use nwn_erf::ErfError;
 use nwn_key::KeyError;
 use nwn_resdir::ResDirError;
 use nwn_resnwsync::ResNWSyncError;
-use std::fmt;
-use std::io;
 
 /// GFF-family extensions commonly treated as generic GFF payloads by the CLI.
 pub const GFF_EXTENSIONS: &[&str] = &[
