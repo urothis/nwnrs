@@ -29,6 +29,11 @@ Since this workspace is not published to [crates.io](https://crates.io), you can
 
 ```toml
 [dependencies]
+# You more than likely only need the prelude
+nwn-prelude = { git = "https://github.com/urothis/nwn1ee.types.rs", rev = "main" }
+
+# But if you wanna get fancy
+
 # Core types and utilities
 nwn-core = { git = "https://github.com/urothis/nwn1ee.types.rs", rev = "main" }
 nwn-resref = { git = "https://github.com/urothis/nwn1ee.types.rs", rev = "main" }
