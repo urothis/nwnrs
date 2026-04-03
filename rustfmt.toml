@@ -4,9 +4,6 @@
 # Basic formatting
 edition = "2021"
 max_width = 100
-hard_tabs = false
-tab_spaces = 4
-newline_style = "Auto"
 
 # Use field initialization shorthand
 use_field_init_shorthand = true
@@ -43,29 +40,19 @@ normalize_doc_attributes = true
 
 # Control blank line preservation
 blank_lines_upper_bound = 2
-blank_lines_lower_bound = 0
 
 # Reorder imports and items
-reorder_imports = true
-reorder_modules = true
 reorder_impl_items = true
 
 # Control trailing commas
 trailing_comma = "Vertical"
 trailing_semicolon = false
 
-# Control parentheses
-remove_nested_parens = true
-
 # Control chaining
 chain_width = 60
 
 # Control match formatting
 match_arm_leading_pipes = "Never"
-match_block_trailing_comma = false
-
-# Control where formatting
-where_single_line = false
 
 # Control array formatting
 array_width = 60
