@@ -67,9 +67,6 @@ match_block_trailing_comma = false
 # Control where formatting
 where_single_line = false
 
-# Control generic parameter formatting
-struct_lit_single_line = false
-
 # Control array formatting
 array_width = 60
 single_line_if_else_max_width = 50
