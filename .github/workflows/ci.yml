@@ -1,22 +1,44 @@
 name: CI
-
 on:
     pull_request:
         branches: [main]
-
 env:
     CARGO_TERM_COLOR: always
-
 jobs:
+    validate:
+        name: Validate PR
+        runs-on: ubuntu-latest
+        permissions:
+            contents: read
+            pull-requests: write
+        steps:
+            - uses: actions/checkout@v6.0.1
+            - name: Apply labels
+              uses: actions/labeler@v6.0.1
+              with:
+                  repo-token: ${{ secrets.GITHUB_TOKEN }}
+                  configuration-path: .github/labeler.yml
+            - uses: ./.github/actions/setup-rust
+              with:
+                  toolchain: stable
+                  components: rustfmt, clippy
+            - uses: ./.github/actions/rust-lint
+            - uses: ./.github/actions/rust-check
+            - uses: ./.github/actions/rust-test
+            - name: Install cargo-audit
+              run: cargo install cargo-audit
+            - name: Run audit
+              run: cargo audit
     test:
         name: Test
+        needs: validate
         runs-on: ${{ matrix.os }}
         strategy:
             matrix:
                 os: [ubuntu-latest, windows-latest, macos-latest]
                 rust: [stable]
         steps:
-            - uses: ./.github/actions/checkout
+            - uses: actions/checkout@v6.0.2
             - uses: ./.github/actions/setup-rust
               with:
                   toolchain: ${{ matrix.rust }}
@@ -24,24 +46,29 @@ jobs:
             - uses: ./.github/actions/rust-test
               with:
                   verbose: true
-
+            - uses: ./.github/actions/rust-test
+              with:
+                  package: nwn-cli
+                  verbose: true
     lint:
         name: Lint
+        needs: validate
         runs-on: ubuntu-latest
         steps:
-            - uses: ./.github/actions/checkout
+            - uses: actions/checkout@v6.0.2
             - uses: ./.github/actions/setup-rust
               with:
                   toolchain: stable
                   components: rustfmt, clippy
             - uses: ./.github/actions/rust-lint
-
     audit:
         name: Security Audit
+        needs: validate
         runs-on: ubuntu-latest
         steps:
-            - uses: ./.github/actions/checkout
-            - uses: ./.github/actions/setup-rust
+            - uses: actions/checkout@v6.0.2
+            - name: Setup Rust
+              uses: ./.github/actions/setup-rust
               with:
                   toolchain: stable
             - name: Install cargo-audit
