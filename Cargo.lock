@@ -675,6 +675,7 @@ dependencies = [
  "md5",
  "sha1",
  "tracing",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -828,6 +829,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "nwn-prelude"
+version = "0.1.0"
+dependencies = [
+ "nwn-checksums",
+ "nwn-compressedbuf",
+ "nwn-core",
+ "nwn-erf",
+ "nwn-exo",
+ "nwn-game",
+ "nwn-gff",
+ "nwn-gffjson",
+ "nwn-key",
+ "nwn-lru",
+ "nwn-masterlist",
+ "nwn-nwsync",
+ "nwn-resdir",
+ "nwn-resfile",
+ "nwn-resman",
+ "nwn-resmemfile",
+ "nwn-resnwsync",
+ "nwn-resref",
+ "nwn-restype",
+ "nwn-ssf",
+ "nwn-streamext",
+ "nwn-tlk",
+ "nwn-twoda",
+ "nwn-util",
+]
+
+[[package]]
 name = "nwn-resdir"
 version = "0.1.0"
 dependencies = [
@@ -953,6 +984,14 @@ dependencies = [
  "codepage",
  "encoding_rs",
  "tracing",
+]
+
+[[package]]
+name = "nwn-wasm"
+version = "0.1.0"
+dependencies = [
+ "nwn-prelude",
+ "wasm-bindgen",
 ]
 
 [[package]]

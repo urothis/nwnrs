@@ -1,0 +1,36 @@
+[package]
+name = "nwn-prelude"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+nwn-checksums.workspace = true
+nwn-compressedbuf.workspace = true
+nwn-core.workspace = true
+nwn-erf.workspace = true
+nwn-exo.workspace = true
+nwn-gff.workspace = true
+nwn-gffjson.workspace = true
+nwn-key.workspace = true
+nwn-lru.workspace = true
+nwn-masterlist.workspace = true
+nwn-nwsync.workspace = true
+nwn-resdir.workspace = true
+nwn-resfile.workspace = true
+nwn-resman.workspace = true
+nwn-resmemfile.workspace = true
+nwn-resnwsync.workspace = true
+nwn-resref.workspace = true
+nwn-restype.workspace = true
+nwn-ssf.workspace = true
+nwn-streamext.workspace = true
+nwn-tlk.workspace = true
+nwn-twoda.workspace = true
+nwn-util.workspace = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+nwn-game.workspace = true
+
+[lints]
+workspace = true
