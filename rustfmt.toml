@@ -59,21 +59,15 @@ remove_nested_parens = true
 
 # Control chaining
 chain_width = 60
-chains_overflow_last = true
 
 # Control match formatting
 match_arm_leading_pipes = "Never"
 match_block_trailing_comma = false
 
-# Control closure formatting
-closure_block_indent_threshold = 1
-
 # Control where formatting
 where_single_line = false
-where_layout = "Vertical"
 
 # Control generic parameter formatting
-generics_indent = "Block"
 struct_lit_single_line = false
 
 # Control array formatting
