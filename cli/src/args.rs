@@ -133,15 +133,43 @@ pub(crate) struct NwsyncPrintCmd {
 
 #[derive(FromArgs)]
 #[argh(subcommand, name = "fetch")]
-/// not yet implemented; matches upstream nwn_nwsync_fetch
-pub(crate) struct NwsyncFetchCmd {}
+/// synchronize a manifest server-to-server with aria2c
+pub(crate) struct NwsyncFetchCmd {
+    #[argh(positional)]
+    /// remote manifest URL to fetch
+    pub(crate) url: String,
+
+    #[argh(option, short = 'o')]
+    /// output directory for downloaded files
+    pub(crate) output: Option<PathBuf>,
+}
 
 #[derive(FromArgs)]
 #[argh(subcommand, name = "prune")]
-/// not yet implemented; matches upstream nwn_nwsync_prune
-pub(crate) struct NwsyncPruneCmd {}
+/// trim unreferenced data from nwsync repository
+pub(crate) struct NwsyncPruneCmd {
+    #[argh(positional)]
+    /// nwsync repository root
+    pub(crate) repository: PathBuf,
+
+    #[argh(switch)]
+    /// dry run - show what would be removed without actually removing
+    pub(crate) dry_run: bool,
+}
 
 #[derive(FromArgs)]
 #[argh(subcommand, name = "write")]
-/// not yet implemented; matches upstream nwn_nwsync_write
-pub(crate) struct NwsyncWriteCmd {}
+/// generate a serverside NWSync manifest from directory
+pub(crate) struct NwsyncWriteCmd {
+    #[argh(positional)]
+    /// input directory containing NWN resources
+    pub(crate) input: PathBuf,
+
+    #[argh(positional)]
+    /// output manifest file path
+    pub(crate) output: PathBuf,
+
+    #[argh(switch, short = 'f')]
+    /// overwrite existing output file
+    pub(crate) force: bool,
+}

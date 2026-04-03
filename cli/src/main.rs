@@ -34,15 +34,9 @@ fn run(cli: Cli) -> Result<(), String> {
         Command::Unpack(cmd) => unpack::run_unpack(cmd),
         Command::Nwsync(cmd) => match cmd.command {
             NwsyncCommand::Print(cmd) => nwsync::run_nwsync_print(cmd),
-            NwsyncCommand::Fetch(_) => {
-                Err("not yet implemented; matches upstream nwn_nwsync_fetch".to_string())
-            }
-            NwsyncCommand::Prune(_) => {
-                Err("not yet implemented; matches upstream nwn_nwsync_prune".to_string())
-            }
-            NwsyncCommand::Write(_) => {
-                Err("not yet implemented; matches upstream nwn_nwsync_write".to_string())
-            }
+            NwsyncCommand::Fetch(cmd) => nwsync::run_nwsync_fetch(cmd),
+            NwsyncCommand::Prune(cmd) => nwsync::run_nwsync_prune(cmd),
+            NwsyncCommand::Write(cmd) => nwsync::run_nwsync_write(cmd),
         },
     }
 }
