@@ -1,6 +1,6 @@
 [workspace]
 default-members = ["cli"]
-members = ["cli", "crates/*"]
+members = ["cli", "crates/*", "wasm"]
 resolver = "3"
 
 [workspace.package]
@@ -10,6 +10,7 @@ publish = false
 
 [workspace.dependencies]
 # internal dependencies
+nwn-prelude = { path = "crates/prelude" }
 nwn-checksums = { path = "crates/checksums" }
 nwn-compressedbuf = { path = "crates/compressedbuf" }
 nwn-core = { path = "crates/core" }
@@ -51,6 +52,7 @@ serde_json = { version = "1.0.149", features = ["preserve_order"] }
 sha1 = "0.11.0"
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.20", features = ["env-filter", "fmt"] }
+wasm-bindgen = "0.2.117"
 zstd = "0.13.3"
 
 [workspace.lints.clippy]
