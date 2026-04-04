@@ -3,7 +3,7 @@
 
 [bans]
 # The lint level for duplicate dependencies
-multiple-versions = "Deny"
+multiple-versions = "deny"
 
 [licenses]
 # List of explicitly allowed licenses
