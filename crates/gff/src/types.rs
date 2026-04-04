@@ -1,7 +1,7 @@
 use std::{fmt, io};
 
-use nwnrs_core::{BAD_STRREF, StrRef};
-use nwnrs_util::ExpectationError;
+use nwnrs_core::prelude::*;
+use nwnrs_util::prelude::*;
 
 type GffByte = u8;
 type GffChar = i8;
@@ -194,9 +194,7 @@ pub struct GffField {
 impl GffField {
     /// Creates a field from a typed value.
     pub fn new(value: GffValue) -> Self {
-        Self {
-            value,
-        }
+        Self { value }
     }
 
     /// Returns the kind of the stored value.
@@ -271,20 +269,20 @@ impl GffStruct {
 /// NWN conventionally stores the root structure with id `-1`.
 pub struct GffRoot {
     /// The four-byte document type tag.
-    pub file_type:    String,
+    pub file_type: String,
     /// The four-byte document version tag.
     pub file_version: String,
     /// The root structure.
-    pub root:         GffStruct,
+    pub root: GffStruct,
 }
 
 impl GffRoot {
     /// Creates a new root document with version `V3.2`.
     pub fn new(file_type: impl Into<String>) -> Self {
         Self {
-            file_type:    file_type.into(),
+            file_type: file_type.into(),
             file_version: "V3.2".to_string(),
-            root:         GffStruct::new(-1),
+            root: GffStruct::new(-1),
         }
     }
 

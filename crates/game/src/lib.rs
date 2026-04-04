@@ -30,5 +30,3 @@ pub mod prelude {
         new_default_resman,
     };
 }
-
-use crate::keyload::load_key;

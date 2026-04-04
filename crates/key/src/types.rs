@@ -5,11 +5,11 @@ use std::{
 };
 
 use indexmap::IndexMap;
-use nwnrs_checksums::SecureHash;
-use nwnrs_compressedbuf::CompressedBufError;
-use nwnrs_exo::ExoResFileCompressionType;
-use nwnrs_resman::{Res, ResContainer, ResManError, ResManResult, SharedReadSeek, new_res_origin};
-use nwnrs_resref::{ResRef, ResRefError};
+use nwnrs_checksums::prelude::*;
+use nwnrs_compressedbuf::prelude::*;
+use nwnrs_exo::prelude::*;
+use nwnrs_resman::prelude::*;
+use nwnrs_resref::prelude::*;
 
 pub(crate) const HEADER_SIZE: u64 = 64;
 
@@ -97,10 +97,10 @@ pub enum KeyBifVersion {
 #[derive(Debug, Clone)]
 /// Metadata for a variable resource entry stored inside a BIF.
 pub struct VariableResource {
-    pub(crate) id:                ResId,
-    pub(crate) io_offset:         u64,
-    pub(crate) io_size:           usize,
-    pub(crate) compression_type:  ExoResFileCompressionType,
+    pub(crate) id: ResId,
+    pub(crate) io_offset: u64,
+    pub(crate) io_size: usize,
+    pub(crate) compression_type: ExoResFileCompressionType,
     pub(crate) uncompressed_size: usize,
 }
 
@@ -132,11 +132,11 @@ impl VariableResource {
 }
 
 pub(crate) struct LoadedBif {
-    pub stream:             SharedReadSeek,
-    pub file_type:          String,
-    pub file_version:       KeyBifVersion,
+    pub stream: SharedReadSeek,
+    pub file_type: String,
+    pub file_version: KeyBifVersion,
     pub variable_resources: IndexMap<ResId, VariableResource>,
-    pub oid:                Option<String>,
+    pub oid: Option<String>,
 }
 
 impl fmt::Debug for LoadedBif {
@@ -151,11 +151,11 @@ impl fmt::Debug for LoadedBif {
 }
 
 pub(crate) struct BifHandle {
-    pub filename:         String,
+    pub filename: String,
     pub expected_version: KeyBifVersion,
-    pub expected_oid:     Option<String>,
-    pub resolver:         BifResolver,
-    pub loaded:           Mutex<Option<Arc<LoadedBif>>>,
+    pub expected_oid: Option<String>,
+    pub resolver: BifResolver,
+    pub loaded: Mutex<Option<Arc<LoadedBif>>>,
 }
 
 impl fmt::Debug for BifHandle {
@@ -171,7 +171,7 @@ impl fmt::Debug for BifHandle {
 #[derive(Debug, Clone)]
 pub(crate) struct KeyEntry {
     pub res_id: ResId,
-    pub sha1:   SecureHash,
+    pub sha1: SecureHash,
 }
 
 /// Decoded contents of a KEY file together with lazy BIF resolvers.
@@ -179,20 +179,20 @@ pub(crate) struct KeyEntry {
 /// The table implements [`nwnrs_resman::ResContainer`], so it can be placed
 /// directly inside a layered [`nwnrs_resman::ResMan`].
 pub struct KeyTable {
-    pub(crate) version:          KeyBifVersion,
-    pub(crate) label:            String,
-    pub(crate) build_year:       u32,
-    pub(crate) build_day:        u32,
-    pub(crate) bifs:             Vec<BifHandle>,
+    pub(crate) version: KeyBifVersion,
+    pub(crate) label: String,
+    pub(crate) build_year: u32,
+    pub(crate) build_day: u32,
+    pub(crate) bifs: Vec<BifHandle>,
     pub(crate) resref_id_lookup: IndexMap<ResRef, KeyEntry>,
-    pub(crate) oid:              Option<String>,
+    pub(crate) oid: Option<String>,
 }
 
 #[derive(Debug, Clone)]
 /// The resources stored in a single BIF referenced by a [`KeyTable`].
 pub struct KeyBifContents {
     /// The BIF filename as recorded by the KEY file.
-    pub filename:  String,
+    pub filename: String,
     /// The resources stored in that BIF, in table order.
     pub resources: Vec<ResRef>,
 }
@@ -378,9 +378,9 @@ pub struct KeyBifEntry {
     /// Optional directory component to prepend to the emitted BIF path.
     pub directory: String,
     /// Basename of the emitted BIF, without the `.bif` suffix.
-    pub name:      String,
+    pub name: String,
     /// Resource entries that should be written into the BIF.
-    pub entries:   Vec<ResRef>,
+    pub entries: Vec<ResRef>,
 }
 
 pub(crate) type WriteBifResult = (usize, Vec<(ResRef, SecureHash)>);

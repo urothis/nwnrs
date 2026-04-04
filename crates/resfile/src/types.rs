@@ -3,8 +3,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use nwnrs_resman::{Res, ResContainer, ResManError, ResManResult};
-use nwnrs_resref::ResRef;
+use nwnrs_resman::prelude::*;
+use nwnrs_resref::prelude::*;
 
 /// Errors returned while reading a single-file resource container.
 #[derive(Debug)]
@@ -59,7 +59,7 @@ impl From<nwnrs_resref::ResRefError> for ResFileError {
 /// A single file exposed as a one-entry resource container.
 #[derive(Debug, Clone)]
 pub struct ResFile {
-    pub(crate) path:  PathBuf,
+    pub(crate) path: PathBuf,
     pub(crate) label: String,
     pub(crate) entry: Res,
 }

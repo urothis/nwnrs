@@ -5,10 +5,10 @@ use std::{
 };
 
 use indexmap::IndexSet;
-use nwnrs_checksums::parse_secure_hash;
-use nwnrs_compressedbuf::make_magic;
-use nwnrs_resref::new_res_ref;
-use nwnrs_restype::ResType;
+use nwnrs_checksums::prelude::*;
+use nwnrs_compressedbuf::prelude::*;
+use nwnrs_resref::prelude::*;
+use nwnrs_restype::prelude::*;
 use rusqlite::{Connection, OptionalExtension, params};
 use tracing::{debug, instrument};
 
@@ -53,7 +53,7 @@ pub fn open_nwsync(path: impl AsRef<Path>) -> ResNWSyncResult<NWSync> {
         }
 
         let shard = NWSyncShard {
-            id:   shard_id,
+            id: shard_id,
             path: shard_path.clone(),
         };
         let conn = Connection::open(&shard_path)?;

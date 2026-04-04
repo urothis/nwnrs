@@ -787,6 +787,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "nwnrs"
+version = "0.1.0"
+dependencies = [
+ "nwnrs-checksums",
+ "nwnrs-compressedbuf",
+ "nwnrs-core",
+ "nwnrs-erf",
+ "nwnrs-exo",
+ "nwnrs-game",
+ "nwnrs-gff",
+ "nwnrs-gffjson",
+ "nwnrs-key",
+ "nwnrs-lru",
+ "nwnrs-masterlist",
+ "nwnrs-nwsync",
+ "nwnrs-resdir",
+ "nwnrs-resfile",
+ "nwnrs-resman",
+ "nwnrs-resmemfile",
+ "nwnrs-resnwsync",
+ "nwnrs-resref",
+ "nwnrs-restype",
+ "nwnrs-ssf",
+ "nwnrs-streamext",
+ "nwnrs-tlk",
+ "nwnrs-twoda",
+ "nwnrs-util",
+]
+
+[[package]]
 name = "nwnrs-checksums"
 version = "0.1.0"
 dependencies = [
@@ -800,22 +830,7 @@ name = "nwnrs-cli"
 version = "0.1.0"
 dependencies = [
  "argh",
- "nwnrs-checksums",
- "nwnrs-compressedbuf",
- "nwnrs-erf",
- "nwnrs-exo",
- "nwnrs-game",
- "nwnrs-gff",
- "nwnrs-gffjson",
- "nwnrs-key",
- "nwnrs-nwsync",
- "nwnrs-resman",
- "nwnrs-resnwsync",
- "nwnrs-resref",
- "nwnrs-restype",
- "nwnrs-ssf",
- "nwnrs-tlk",
- "nwnrs-twoda",
+ "nwnrs",
  "serde",
  "serde_json",
  "tracing",
@@ -943,36 +958,6 @@ dependencies = [
  "nwnrs-restype",
  "nwnrs-streamext",
  "tracing",
-]
-
-[[package]]
-name = "nwnrs-prelude"
-version = "0.1.0"
-dependencies = [
- "nwnrs-checksums",
- "nwnrs-compressedbuf",
- "nwnrs-core",
- "nwnrs-erf",
- "nwnrs-exo",
- "nwnrs-game",
- "nwnrs-gff",
- "nwnrs-gffjson",
- "nwnrs-key",
- "nwnrs-lru",
- "nwnrs-masterlist",
- "nwnrs-nwsync",
- "nwnrs-resdir",
- "nwnrs-resfile",
- "nwnrs-resman",
- "nwnrs-resmemfile",
- "nwnrs-resnwsync",
- "nwnrs-resref",
- "nwnrs-restype",
- "nwnrs-ssf",
- "nwnrs-streamext",
- "nwnrs-tlk",
- "nwnrs-twoda",
- "nwnrs-util",
 ]
 
 [[package]]
@@ -1111,7 +1096,7 @@ dependencies = [
 name = "nwnrs-wasm"
 version = "0.1.0"
 dependencies = [
- "nwnrs-prelude",
+ "nwnrs",
  "serde-wasm-bindgen",
  "wasm-bindgen",
 ]

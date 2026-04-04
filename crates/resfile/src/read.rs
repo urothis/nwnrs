@@ -6,10 +6,10 @@ use std::{
     time::SystemTime,
 };
 
-use nwnrs_checksums::EMPTY_SECURE_HASH;
-use nwnrs_exo::ExoResFileCompressionType;
-use nwnrs_resman::{Res, new_res_origin};
-use nwnrs_resref::{ResRef, ResolvedResRef};
+use nwnrs_checksums::prelude::*;
+use nwnrs_exo::prelude::*;
+use nwnrs_resman::prelude::*;
+use nwnrs_resref::prelude::*;
 use tracing::{debug, instrument};
 
 use crate::{ResFile, ResFileError, ResFileResult};
@@ -50,7 +50,7 @@ pub fn read_resfile_as(path: impl AsRef<Path>, resref: ResRef) -> ResFileResult<
     );
 
     let result = ResFile {
-        path:  path.to_path_buf(),
+        path: path.to_path_buf(),
         label: label.clone(),
         entry: Res::new_with_spawner(
             new_res_origin(format!("ResFile:{label}"), origin_label),

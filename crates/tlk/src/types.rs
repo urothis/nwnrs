@@ -6,10 +6,10 @@ use std::{
     path::Path,
 };
 
-use nwnrs_core::{Gender, Language, StrRef};
-use nwnrs_lru::WeightedLru;
-use nwnrs_resman::{Res, ResManError, SharedReadSeek};
-use nwnrs_util::EncodingConversionError;
+use nwnrs_core::prelude::*;
+use nwnrs_lru::prelude::*;
+use nwnrs_resman::prelude::*;
+use nwnrs_util::prelude::*;
 
 /// Size of the fixed TLK header in bytes.
 pub const HEADER_SIZE: u64 = 20;
@@ -73,11 +73,11 @@ pub type TlkResult<T> = Result<T, TlkError>;
 /// A single TLK entry.
 pub struct TlkEntry {
     /// Localized text content.
-    pub text:          String,
+    pub text: String,
     /// Associated sound resource reference.
     pub sound_res_ref: String,
     /// Sound length in seconds.
-    pub sound_length:  f32,
+    pub sound_length: f32,
 }
 
 impl TlkEntry {
@@ -134,7 +134,7 @@ impl fmt::Debug for SingleTlk {
 /// A male/female TLK pair from one layer in a TLK chain.
 pub struct TlkPair {
     /// Male table for the layer, when present.
-    pub male:   Option<SingleTlk>,
+    pub male: Option<SingleTlk>,
     /// Female table for the layer, when present.
     pub female: Option<SingleTlk>,
 }
@@ -153,15 +153,15 @@ impl SingleTlk {
     /// Creates an empty English TLK table.
     pub fn new() -> Self {
         Self {
-            language:               Language::English,
-            static_entries:         HashMap::new(),
+            language: Language::English,
+            static_entries: HashMap::new(),
             static_entries_highest: -1,
-            stream:                 None,
-            io_start_pos:           0,
-            io_entry_count:         0,
-            io_entries_offset:      0,
-            use_cache:              true,
-            io_cache:               None,
+            stream: None,
+            io_start_pos: 0,
+            io_entry_count: 0,
+            io_entries_offset: 0,
+            use_cache: true,
+            io_cache: None,
         }
     }
 
@@ -229,9 +229,9 @@ impl SingleTlk {
         self.set_entry(
             str_ref,
             TlkEntry {
-                text:          text.into(),
+                text: text.into(),
                 sound_res_ref: String::new(),
-                sound_length:  0.0,
+                sound_length: 0.0,
             },
         );
     }
@@ -250,9 +250,7 @@ impl Default for SingleTlk {
 impl Tlk {
     /// Creates a TLK chain from explicit layers.
     pub fn new(chain: Vec<TlkPair>) -> Self {
-        Self {
-            chain,
-        }
+        Self { chain }
     }
 
     /// Builds a TLK chain from resource pairs.
@@ -263,7 +261,7 @@ impl Tlk {
         let mut pairs = Vec::with_capacity(chain.len());
         for (male, female) in chain {
             pairs.push(TlkPair {
-                male:   male
+                male: male
                     .as_ref()
                     .map(|res| SingleTlk::from_res(res, use_cache))
                     .transpose()?,

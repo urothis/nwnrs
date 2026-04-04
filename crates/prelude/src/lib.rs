@@ -23,6 +23,10 @@ pub mod prelude {
     pub mod erf {
         pub use nwnrs_erf::prelude::*;
     }
+    /// Export EXO file types and traits.
+    pub mod exo {
+        pub use nwnrs_exo::prelude::*;
+    }
     #[cfg(not(target_arch = "wasm32"))]
     /// Export game-related types and traits.
     pub mod game {

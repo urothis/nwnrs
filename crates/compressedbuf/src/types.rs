@@ -1,6 +1,6 @@
 use std::{fmt, io};
 
-use nwnrs_util::ExpectationError;
+use nwnrs_util::prelude::*;
 
 pub(crate) const VERSION: u32 = 3;
 pub(crate) const ZLIB_VERSION: u32 = 1;

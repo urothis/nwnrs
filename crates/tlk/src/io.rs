@@ -1,9 +1,9 @@
 use std::io::{self, Cursor, Read, Seek, SeekFrom, Write};
 
-use nwnrs_core::{Language, StrRef};
-use nwnrs_lru::WeightedLru;
-use nwnrs_resman::{Res, shared_stream};
-use nwnrs_util::{from_nwnrs_encoding, read_bytes_or_err, to_nwnrs_encoding};
+use nwnrs_core::prelude::*;
+use nwnrs_lru::prelude::*;
+use nwnrs_resman::prelude::*;
+use nwnrs_util::prelude::*;
 use tracing::{debug, instrument};
 
 use crate::{DATA_ELEMENT_SIZE, HEADER_SIZE, SingleTlk, TlkEntry, TlkError, TlkResult};

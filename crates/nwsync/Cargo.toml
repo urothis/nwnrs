@@ -3,7 +3,7 @@ name = "nwnrs-nwsync"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
-
+license.workspace = true
 
 [dependencies]
 nwnrs-checksums.workspace = true

@@ -4,11 +4,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use nwnrs_checksums::prelude::*;
-use nwnrs_erf::prelude::*;
-use nwnrs_key::prelude::*;
-use nwnrs_resman::prelude::*;
-use nwnrs_resref::prelude::*;
+use nwnrs::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::util::{
@@ -21,13 +17,13 @@ pub(crate) struct ErfPackMetadata {
     pub(crate) source:       PathBuf,
     pub(crate) source_md5:   String,
     pub(crate) file_type:    String,
-    pub(crate) file_version: ErfVersion,
+    pub(crate) file_version: erf::ErfVersion,
     pub(crate) build_year:   i32,
     pub(crate) build_day:    i32,
     pub(crate) str_ref:      i32,
     pub(crate) loc_strings:  BTreeMap<i32, String>,
     pub(crate) oid:          Option<String>,
-    pub(crate) entry_order:  Vec<ResRef>,
+    pub(crate) entry_order:  Vec<resref::ResRef>,
     pub(crate) file_md5s:    BTreeMap<String, String>,
 }
 
@@ -111,16 +107,16 @@ struct ResourceMetadataFile {
     file_md5s:   BTreeMap<String, String>,
 }
 
-impl From<ErfVersion> for ErfPackMetadataVersion {
-    fn from(value: ErfVersion) -> Self {
+impl From<erf::ErfVersion> for ErfPackMetadataVersion {
+    fn from(value: erf::ErfVersion) -> Self {
         match value {
-            ErfVersion::V1 => Self::V1,
-            ErfVersion::E1 => Self::E1,
+            erf::ErfVersion::V1 => Self::V1,
+            erf::ErfVersion::E1 => Self::E1,
         }
     }
 }
 
-impl From<ErfPackMetadataVersion> for ErfVersion {
+impl From<ErfPackMetadataVersion> for erf::ErfVersion {
     fn from(value: ErfPackMetadataVersion) -> Self {
         match value {
             ErfPackMetadataVersion::V1 => Self::V1,
@@ -129,11 +125,11 @@ impl From<ErfPackMetadataVersion> for ErfVersion {
     }
 }
 
-impl From<KeyBifVersion> for KeyPackMetadataVersion {
-    fn from(value: KeyBifVersion) -> Self {
+impl From<key::KeyBifVersion> for KeyPackMetadataVersion {
+    fn from(value: key::KeyBifVersion) -> Self {
         match value {
-            KeyBifVersion::V1 => Self::V1,
-            KeyBifVersion::E1 => Self::E1,
+            key::KeyBifVersion::V1 => Self::V1,
+            key::KeyBifVersion::E1 => Self::E1,
         }
     }
 }
@@ -188,7 +184,7 @@ impl KeyPackMetadata {
 pub(crate) fn write_erf_pack_metadata(
     destination: &Path,
     input: &Path,
-    erf: &nwnrs_erf::Erf,
+    erf: &erf::Erf,
     force: bool,
 ) -> Result<(), String> {
     let metadata_path = destination.join(RESOURCE_METADATA_FILENAME);
@@ -196,7 +192,7 @@ pub(crate) fn write_erf_pack_metadata(
     let value = ErfPackMetadataFile {
         kind:         MetadataKind::Erf,
         source:       input.to_path_buf(),
-        source_md5:   md5_digest(
+        source_md5:   checksums::md5_digest(
             fs::read(input)
                 .map_err(|error| format!("failed to read {}: {error}", input.display()))?,
         )
@@ -208,7 +204,7 @@ pub(crate) fn write_erf_pack_metadata(
         str_ref:      erf.str_ref,
         loc_strings:  erf.loc_strings().clone(),
         oid:          erf.oid().map(str::to_string),
-        entry_order:  serialize_entry_order(&erf.contents()),
+        entry_order:  serialize_entry_order(&resman::ResContainer::contents(erf)),
         file_md5s:    snapshot_packable_files(destination)?,
     };
     fs::write(
@@ -223,7 +219,7 @@ pub(crate) fn write_erf_pack_metadata(
 pub(crate) fn write_key_pack_metadata(
     destination: &Path,
     key_path: &Path,
-    key: &nwnrs_key::KeyTable,
+    key: &key::KeyTable,
     force: bool,
 ) -> Result<(), String> {
     let metadata_path = destination.join(RESOURCE_METADATA_FILENAME);
@@ -232,7 +228,7 @@ pub(crate) fn write_key_pack_metadata(
     let mut bif_md5s = BTreeMap::new();
     for bif in &bifs {
         let source = resolve_existing_key_bif_path(key_path, bif)?;
-        let digest = md5_digest(
+        let digest = checksums::md5_digest(
             fs::read(&source)
                 .map_err(|error| format!("failed to read {}: {error}", source.display()))?,
         )
@@ -242,7 +238,7 @@ pub(crate) fn write_key_pack_metadata(
     let value = KeyPackMetadataFile {
         kind: MetadataKind::Key,
         source_key: key_path.to_path_buf(),
-        source_key_md5: md5_digest(
+        source_key_md5: checksums::md5_digest(
             fs::read(key_path)
                 .map_err(|error| format!("failed to read {}: {error}", key_path.display()))?,
         )
@@ -276,7 +272,7 @@ pub(crate) fn write_resource_metadata(
     let value = ResourceMetadataFile {
         kind:        MetadataKind::Resource,
         source:      input.to_path_buf(),
-        source_md5:  md5_digest(
+        source_md5:  checksums::md5_digest(
             fs::read(input)
                 .map_err(|error| format!("failed to read {}: {error}", input.display()))?,
         )
@@ -328,7 +324,7 @@ pub(crate) fn should_copy_original_erf(
     if current != metadata.file_md5s {
         return Ok(false);
     }
-    let source_md5 = md5_digest(
+    let source_md5 = checksums::md5_digest(
         fs::read(&metadata.source)
             .map_err(|error| format!("failed to read {}: {error}", metadata.source.display()))?,
     )
@@ -348,7 +344,7 @@ pub(crate) fn should_copy_original_key(
         return Ok(false);
     }
     let source_md5 =
-        md5_digest(fs::read(&metadata.source_key).map_err(|error| {
+        checksums::md5_digest(fs::read(&metadata.source_key).map_err(|error| {
             format!("failed to read {}: {error}", metadata.source_key.display())
         })?)
         .to_string();
@@ -357,7 +353,7 @@ pub(crate) fn should_copy_original_key(
     }
     for bif in &metadata.bifs {
         let path = resolve_existing_key_bif_path(&metadata.source_key, bif)?;
-        let digest = md5_digest(
+        let digest = checksums::md5_digest(
             fs::read(&path)
                 .map_err(|error| format!("failed to read {}: {error}", path.display()))?,
         )
@@ -438,15 +434,18 @@ fn parse_metadata_kind(text: &str, metadata_path: &Path) -> Result<MetadataKind,
         .map_err(|error| format!("failed to parse {}: {error}", metadata_path.display()))
 }
 
-fn serialize_entry_order(entry_order: &[ResRef]) -> Vec<String> {
+fn serialize_entry_order(entry_order: &[resref::ResRef]) -> Vec<String> {
     entry_order.iter().map(ToString::to_string).collect()
 }
 
-fn parse_entry_order(entries: Vec<String>, metadata_path: &Path) -> Result<Vec<ResRef>, String> {
+fn parse_entry_order(
+    entries: Vec<String>,
+    metadata_path: &Path,
+) -> Result<Vec<resref::ResRef>, String> {
     entries
         .into_iter()
         .map(|entry| {
-            new_resolved_res_ref_from_filename(&entry)
+            resref::new_resolved_res_ref_from_filename(&entry)
                 .map(Into::into)
                 .map_err(|error| {
                     format!(
@@ -488,7 +487,7 @@ fn snapshot_packable_files_inner(
             .map_err(|error| format!("failed to relativize {}: {error}", entry.path.display()))?
             .to_string_lossy()
             .replace('\\', "/");
-        let digest = md5_digest(
+        let digest = checksums::md5_digest(
             fs::read(&entry.path)
                 .map_err(|error| format!("failed to read {}: {error}", entry.path.display()))?,
         )
@@ -504,7 +503,7 @@ fn is_pack_metadata_file(path: &Path) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use nwnrs_restype::ResType;
+    use nwnrs::prelude::*;
 
     use super::*;
 
@@ -516,13 +515,13 @@ mod tests {
             source:       PathBuf::from("example.erf"),
             source_md5:   "abc123".to_string(),
             file_type:    "ERF ".to_string(),
-            file_version: ErfVersion::V1,
+            file_version: erf::ErfVersion::V1,
             build_year:   2025,
             build_day:    92,
             str_ref:      7,
             loc_strings:  BTreeMap::from([(0, "Hello".to_string())]),
             oid:          Some("0123456789abcdef01234567".to_string()),
-            entry_order:  vec![new_resolved_res_ref_from_filename("alpha.uti")?.into()],
+            entry_order:  vec![resref::new_resolved_res_ref_from_filename("alpha.uti")?.into()],
             file_md5s:    BTreeMap::from([("alpha.uti".to_string(), "deadbeef".to_string())]),
         };
 
@@ -573,7 +572,7 @@ mod tests {
         let entries = parse_entry_order(vec!["alpha.uti".to_string()], Path::new("meta.json"))?;
         assert_eq!(
             entries,
-            vec![nwnrs_resref::new_res_ref("alpha", ResType(2025))?]
+            vec![resref::new_res_ref("alpha", restype::ResType(2025))?]
         );
         Ok(())
     }

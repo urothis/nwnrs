@@ -4,7 +4,7 @@
 //! WebAssembly bindings enabled. It is intended for use in browser-based
 //! applications that need to interact with NWN1EE data and services.
 
-use nwnrs_prelude::prelude::*;
+use nwnrs::prelude::*;
 use wasm_bindgen::{JsValue, prelude::wasm_bindgen};
 
 /// Reads an `SSF` document from a byte array and returns it as a JavaScript

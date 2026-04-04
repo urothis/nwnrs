@@ -27,32 +27,36 @@ At a high level:
 
 Since this workspace is not published to [crates.io](https://crates.io), you can depend on individual crates using Git dependencies in your `Cargo.toml`:
 
-```toml
-[dependencies]
-# You more than likely only need the prelude
-nwnrs-prelude = { git = "https://github.com/urothis/nwn-rs", rev = "main" }
 
-# But if you wanna get fancy
+```toml
+# You more than likely only need the prelude
+[dependencies]
+nwnrs = { git = "https://github.com/urothis/nwn-rs" }
+```
+```rust
+use nwnrs::prelude::*;
+```
+
 
 # Core types and utilities
-nwnrs-core = { git = "https://github.com/urothis/nwn-rs", rev = "main" }
-nwnrs-resref = { git = "https://github.com/urothis/nwn-rs", rev = "main" }
-nwnrs-restype = { git = "https://github.com/urothis/nwn-rs", rev = "main" }
+nwnrs-core = { git = "https://github.com/urothis/nwn-rs" }
+nwnrs-resref = { git = "https://github.com/urothis/nwn-rs" }
+nwnrs-restype = { git = "https://github.com/urothis/nwn-rs" }
 
 # Resource management
-nwnrs-resman = { git = "https://github.com/urothis/nwn-rs", rev = "main" }
+nwnrs-resman = { git = "https://github.com/urothis/nwn-rs" }
 
 # Format codecs
-nwnrs-gff = { git = "https://github.com/urothis/nwn-rs", rev = "main" }
-nwnrs-twoda = { git = "https://github.com/urothis/nwn-rs", rev = "main" }
-nwnrs-tlk = { git = "https://github.com/urothis/nwn-rs", rev = "main" }
+nwnrs-gff = { git = "https://github.com/urothis/nwn-rs" }
+nwnrs-twoda = { git = "https://github.com/urothis/nwn-rs" }
+nwnrs-tlk = { git = "https://github.com/urothis/nwn-rs" }
 
 # Container formats
-nwnrs-erf = { git = "https://github.com/urothis/nwn-rs", rev = "main" }
-nwnrs-key = { git = "https://github.com/urothis/nwn-rs", rev = "main" }
+nwnrs-erf = { git = "https://github.com/urothis/nwn-rs" }
+nwnrs-key = { git = "https://github.com/urothis/nwn-rs" }
 
 # Game integration
-nwnrs-game = { git = "https://github.com/urothis/nwn-rs", rev = "main" }
+nwnrs-game = { git = "https://github.com/urothis/nwn-rs" }
 ```
 
 ### CLI Usage

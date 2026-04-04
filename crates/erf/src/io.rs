@@ -6,12 +6,12 @@ use std::{
     time::SystemTime,
 };
 
-use nwnrs_checksums::{EMPTY_SECURE_HASH, SecureHash};
-use nwnrs_compressedbuf::{Algorithm, compress_writer as compress_buf_writer};
-use nwnrs_exo::{EXO_RES_FILE_COMPRESSED_BUF_MAGIC, ExoResFileCompressionType};
-use nwnrs_resman::{Res, SharedReadSeek, new_res_origin, shared_stream};
-use nwnrs_resref::{ResRef, new_res_ref};
-use nwnrs_util::{from_nwnrs_encoding, read_bytes_or_err, to_nwnrs_encoding};
+use nwnrs_checksums::prelude::*;
+use nwnrs_compressedbuf::prelude::*;
+use nwnrs_exo::prelude::*;
+use nwnrs_resman::prelude::*;
+use nwnrs_resref::prelude::*;
+use nwnrs_util::prelude::*;
 use tracing::{debug, instrument};
 
 use crate::{Erf, ErfError, ErfResMeta, ErfResult, ErfVersion, HEADER_SIZE, VALID_ERF_TYPES};
@@ -388,7 +388,7 @@ where
             ExoResFileCompressionType::CompressedBuf => {
                 let mut buffer = Vec::new();
                 let (uncompressed_size, sha1) = entry_writer(rr, &mut buffer)?;
-                compress_buf_writer(writer, &buffer, compalg, EXO_RES_FILE_COMPRESSED_BUF_MAGIC)?;
+                compress_writer(writer, &buffer, compalg, EXO_RES_FILE_COMPRESSED_BUF_MAGIC)?;
                 let disk_size = usize::try_from(writer.stream_position()? - pos)
                     .map_err(|_error| ErfError::msg("ERF compressed entry size exceeds usize"))?;
                 (disk_size, uncompressed_size, sha1)

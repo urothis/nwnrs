@@ -7,11 +7,11 @@ use std::{
 };
 
 use indexmap::IndexSet;
-use nwnrs_checksums::{ParseSecureHashError, SecureHash};
-use nwnrs_compressedbuf::CompressedBufError;
-use nwnrs_exo::ExoResFileCompressionType;
-use nwnrs_resman::{Res, ResContainer, ResManError, ResManResult, new_res_origin, shared_stream};
-use nwnrs_resref::ResRef;
+use nwnrs_checksums::prelude::*;
+use nwnrs_compressedbuf::prelude::*;
+use nwnrs_exo::prelude::*;
+use nwnrs_resman::prelude::*;
+use nwnrs_resref::prelude::*;
 use rusqlite::{Connection, OptionalExtension};
 
 /// The compressed-buffer magic used by NWSync shards.
@@ -105,7 +105,7 @@ pub type ResRefSha1 = SecureHash;
 
 #[derive(Debug, Clone)]
 pub(crate) struct NWSyncShard {
-    pub(crate) id:   ShardId,
+    pub(crate) id: ShardId,
     pub(crate) path: PathBuf,
 }
 
@@ -118,10 +118,10 @@ impl fmt::Display for NWSyncShard {
 /// An opened NWSync repository.
 #[derive(Debug, Clone)]
 pub struct NWSync {
-    pub(crate) root:      PathBuf,
+    pub(crate) root: PathBuf,
     pub(crate) meta_path: PathBuf,
-    pub(crate) shards:    HashMap<ShardId, NWSyncShard>,
-    pub(crate) shardmap:  HashMap<ResRefSha1, ShardId>,
+    pub(crate) shards: HashMap<ShardId, NWSyncShard>,
+    pub(crate) shardmap: HashMap<ResRefSha1, ShardId>,
 }
 
 impl NWSync {
@@ -192,11 +192,11 @@ impl NWSync {
 /// A single NWSync manifest exposed as a resource container.
 #[derive(Debug, Clone)]
 pub struct ResNWSyncManifest {
-    pub(crate) nwsync:        NWSync,
+    pub(crate) nwsync: NWSync,
     pub(crate) manifest_sha1: ManifestSha1,
-    pub(crate) mtime:         SystemTime,
-    pub(crate) contents:      IndexSet<ResRef>,
-    pub(crate) sha1map:       HashMap<ResRef, ResRefSha1>,
+    pub(crate) mtime: SystemTime,
+    pub(crate) contents: IndexSet<ResRef>,
+    pub(crate) sha1map: HashMap<ResRef, ResRefSha1>,
 }
 
 impl ResNWSyncManifest {

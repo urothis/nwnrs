@@ -3,14 +3,11 @@ use std::{
     sync::Arc,
 };
 
-use nwnrs_resman::ResMan;
-use nwnrs_resnwsync::{ManifestSha1, new_resnwsync_manifest, open_nwsync};
+use nwnrs_resman::prelude::*;
+use nwnrs_resnwsync::prelude::*;
 use tracing::{debug, info, instrument};
 
-use crate::{
-    DEFAULT_KEYFILES, GameError, GameResult, expand_tilde, load_key, read_erf_from_file,
-    read_resdir,
-};
+use crate::prelude::*;
 
 #[allow(clippy::too_many_arguments)]
 /// Builds a conventional layered [`nwnrs_resman::ResMan`] for an NWN
@@ -81,7 +78,7 @@ pub fn new_default_resman(
 
     let additional_dirs = additional_dirs
         .iter()
-        .map(|dir| expand_tilde(dir))
+        .map(|dir| crate::expand_tilde(dir))
         .collect::<Vec<_>>();
     for dir in &additional_dirs {
         if !dir.is_dir() {
@@ -97,13 +94,13 @@ pub fn new_default_resman(
     if load_keys {
         for key in &keys {
             debug!(key, "loading key");
-            load_key(&mut result, root, &resolved_language_root, key)?;
+            crate::keyload::load_key(&mut result, root, &resolved_language_root, key)?;
         }
     }
 
     for erf in additional_erfs {
         debug!(path = %erf.display(), "loading ERF container");
-        let erf_container = read_erf_from_file(erf)?;
+        let erf_container = nwnrs_erf::read_erf_from_file(erf)?;
         result.add(Arc::new(erf_container));
     }
 
@@ -128,18 +125,18 @@ pub fn new_default_resman(
 
     if load_ovr {
         debug!("loading base override directory");
-        result.add(Arc::new(read_resdir(root.join("ovr"))?));
+        result.add(Arc::new(nwnrs_resdir::read_resdir(root.join("ovr"))?));
     }
     if load_ovr {
         debug!("loading language override directory");
-        result.add(Arc::new(read_resdir(
+        result.add(Arc::new(nwnrs_resdir::read_resdir(
             resolved_language_root.join("data").join("ovr"),
         )?));
     }
 
     for dir in additional_dirs {
         debug!(path = %dir.display(), "loading additional directory");
-        result.add(Arc::new(read_resdir(dir)?));
+        result.add(Arc::new(nwnrs_resdir::read_resdir(dir)?));
     }
 
     info!("built default resource manager");
