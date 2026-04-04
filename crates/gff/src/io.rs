@@ -10,55 +10,55 @@ use crate::{
 
 #[derive(Debug, Clone)]
 struct Header {
-    struct_offset: u32,
-    struct_count: u32,
-    field_offset: u32,
-    field_count: u32,
-    label_offset: u32,
-    label_count: u32,
-    field_data_offset: u32,
-    field_data_size: u32,
+    struct_offset:        u32,
+    struct_count:         u32,
+    field_offset:         u32,
+    field_count:          u32,
+    label_offset:         u32,
+    label_count:          u32,
+    field_data_offset:    u32,
+    field_data_size:      u32,
     field_indices_offset: u32,
-    field_indices_size: u32,
-    list_indices_offset: u32,
-    list_indices_size: u32,
+    field_indices_size:   u32,
+    list_indices_offset:  u32,
+    list_indices_size:    u32,
 }
 
 #[derive(Debug, Clone)]
 struct RawStructEntry {
-    id: i32,
+    id:             i32,
     data_or_offset: i32,
-    field_count: i32,
+    field_count:    i32,
 }
 
 #[derive(Debug, Clone)]
 struct RawFieldEntry {
-    field_kind: GffFieldKind,
-    label_index: i32,
+    field_kind:     GffFieldKind,
+    label_index:    i32,
     data_or_offset: i32,
 }
 
 #[derive(Debug, Default)]
 struct WriteState {
-    labels: Vec<String>,
-    structs: Vec<WriteStructEntry>,
-    fields: Vec<WriteFieldEntry>,
-    field_data: Vec<u8>,
+    labels:        Vec<String>,
+    structs:       Vec<WriteStructEntry>,
+    fields:        Vec<WriteFieldEntry>,
+    field_data:    Vec<u8>,
     field_indices: Vec<i32>,
-    list_indices: Vec<i32>,
+    list_indices:  Vec<i32>,
 }
 
 #[derive(Debug, Clone, Default)]
 struct WriteStructEntry {
-    id: i32,
+    id:             i32,
     data_or_offset: i32,
-    field_count: i32,
+    field_count:    i32,
 }
 
 #[derive(Debug, Clone)]
 struct WriteFieldEntry {
-    field_kind: GffFieldKind,
-    label_index: i32,
+    field_kind:     GffFieldKind,
+    label_index:    i32,
     data_or_offset: i32,
 }
 
@@ -76,18 +76,18 @@ pub fn read_gff_root<R: Read + Seek>(reader: &mut R) -> GffResult<GffRoot> {
     )?;
 
     let mut header = Header {
-        struct_offset: read_u32(reader)?,
-        struct_count: read_u32(reader)?,
-        field_offset: read_u32(reader)?,
-        field_count: read_u32(reader)?,
-        label_offset: read_u32(reader)?,
-        label_count: read_u32(reader)?,
-        field_data_offset: read_u32(reader)?,
-        field_data_size: read_u32(reader)?,
+        struct_offset:        read_u32(reader)?,
+        struct_count:         read_u32(reader)?,
+        field_offset:         read_u32(reader)?,
+        field_count:          read_u32(reader)?,
+        label_offset:         read_u32(reader)?,
+        label_count:          read_u32(reader)?,
+        field_data_offset:    read_u32(reader)?,
+        field_data_size:      read_u32(reader)?,
         field_indices_offset: read_u32(reader)?,
-        field_indices_size: read_u32(reader)?,
-        list_indices_offset: read_u32(reader)?,
-        list_indices_size: read_u32(reader)?,
+        field_indices_size:   read_u32(reader)?,
+        list_indices_offset:  read_u32(reader)?,
+        list_indices_size:    read_u32(reader)?,
     };
 
     normalize_index_offsets(reader, start, &mut header)?;
@@ -453,7 +453,10 @@ fn parse_field<R: Read + Seek>(
                         .map_err(|_error| GffError::msg("negative CExoLocString payload size"))?,
                 "invalid CExoLocString payload size",
             )?;
-            GffValue::CExoLocString(GffCExoLocString { str_ref, entries })
+            GffValue::CExoLocString(GffCExoLocString {
+                str_ref,
+                entries,
+            })
         }
         GffFieldKind::Void => {
             seek_field_data(reader, start, header, raw.data_or_offset)?;
@@ -708,9 +711,9 @@ fn read_struct_entries<R: Read + Seek>(
     (0..header.struct_count)
         .map(|_| {
             Ok(RawStructEntry {
-                id: read_i32(reader)?,
+                id:             read_i32(reader)?,
                 data_or_offset: read_i32(reader)?,
-                field_count: read_i32(reader)?,
+                field_count:    read_i32(reader)?,
             })
         })
         .collect()

@@ -107,22 +107,22 @@ pub enum ErfVersion {
 /// [`nwnrs_resman::ResContainer`] for use with [`nwnrs_resman::ResMan`].
 pub struct Erf {
     /// The archive modification time when known.
-    pub mtime: SystemTime,
+    pub mtime:              SystemTime,
     /// The four-byte archive type tag such as `ERF `, `MOD `, `HAK `, or `NWM
     /// `.
-    pub file_type: String,
+    pub file_type:          String,
     /// The archive version.
-    pub file_version: ErfVersion,
-    pub(crate) filename: String,
+    pub file_version:       ErfVersion,
+    pub(crate) filename:    String,
     /// Build year stored in the archive header.
-    pub build_year: i32,
+    pub build_year:         i32,
     /// Build day stored in the archive header.
-    pub build_day: i32,
+    pub build_day:          i32,
     /// Localized string reference stored in the archive header.
-    pub str_ref: i32,
+    pub str_ref:            i32,
     pub(crate) loc_strings: BTreeMap<i32, String>,
-    pub(crate) entries: IndexMap<ResRef, Res>,
-    pub(crate) oid: Option<String>,
+    pub(crate) entries:     IndexMap<ResRef, Res>,
+    pub(crate) oid:         Option<String>,
 }
 
 impl Erf {
@@ -176,8 +176,8 @@ impl ResContainer for Erf {
 
 #[derive(Debug)]
 pub(crate) struct ErfResMeta {
-    pub offset: u64,
-    pub disk_size: usize,
+    pub offset:            u64,
+    pub disk_size:         usize,
     pub uncompressed_size: usize,
-    pub compression: nwnrs_exo::ExoResFileCompressionType,
+    pub compression:       nwnrs_exo::ExoResFileCompressionType,
 }
