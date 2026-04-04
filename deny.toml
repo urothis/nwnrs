@@ -5,7 +5,13 @@
 # The lint level for duplicate dependencies
 multiple-versions = "deny"
 
-# THIS IS A TEMPORARY
+# forbid wildcard version requirements like foo = "*"
+wildcards = "deny"
+
+# allow path-only workspace-internal crates to omit version constraints
+allow-wildcard-paths = true
+
+# THIS IS TEMPORARY
 # Warn if a direct dep could be replaced by a std feature
 # external-default-features = "warn"
 
@@ -38,6 +44,10 @@ allow = [
 [sources]
 # Allow crates from crates.io
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+# Block unknown registries
+unknown-registry = "deny"
+ # Block git dependencies entirely
+unknown-git = "deny"
 
 [advisories]
 # The path to the advisory database. If not set, uses the RustSec
