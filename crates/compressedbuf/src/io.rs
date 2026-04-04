@@ -1,12 +1,13 @@
-use crate::{Algorithm, CompressedBufResult, VERSION, ZLIB_VERSION, ZSTD_VERSION};
-use flate2::Compression;
-use flate2::read::ZlibDecoder;
-use flate2::write::ZlibEncoder;
-use nwn_util::{ExpectationError, expect, read_bytes_or_err};
 use std::io::{self, Cursor, Read, Write};
+
+use flate2::{Compression, read::ZlibDecoder, write::ZlibEncoder};
+use nwn_util::{ExpectationError, expect, read_bytes_or_err};
 use tracing::{debug, instrument};
 
-/// Encodes a four-byte ASCII magic string into the packed integer form used by the format.
+use crate::{Algorithm, CompressedBufResult, VERSION, ZLIB_VERSION, ZSTD_VERSION};
+
+/// Encodes a four-byte ASCII magic string into the packed integer form used by
+/// the format.
 pub fn make_magic(magic: &str) -> Result<u32, ExpectationError> {
     expect(magic.len() == 4, "magic needs to be 4 bytes exactly")?;
     let bytes: [u8; 4] = magic
@@ -94,7 +95,8 @@ pub fn compress_bytes(
     Ok(output)
 }
 
-/// Reads all bytes from `reader`, compresses them, and writes the encoded buffer.
+/// Reads all bytes from `reader`, compresses them, and writes the encoded
+/// buffer.
 #[instrument(level = "debug", skip_all, err, fields(algorithm = ?algorithm, magic))]
 pub fn compress_reader<R: Read, W: Write>(
     writer: &mut W,

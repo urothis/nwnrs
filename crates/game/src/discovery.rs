@@ -1,8 +1,12 @@
-use crate::{GameError, GameResult, Platform};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
+
 use serde::Deserialize;
-use std::fs;
-use std::path::{Path, PathBuf};
 use tracing::{debug, info, instrument, warn};
+
+use crate::{GameError, GameResult, Platform};
 
 #[derive(Debug, Deserialize)]
 struct BeamdogSettings {
@@ -11,8 +15,8 @@ struct BeamdogSettings {
 
 /// Locates the NWN user directory.
 ///
-/// Resolution order is: explicit override, `NWN_HOME`, `NWN_USER_DIRECTORY`, then the
-/// platform-specific default location.
+/// Resolution order is: explicit override, `NWN_HOME`, `NWN_USER_DIRECTORY`,
+/// then the platform-specific default location.
 #[instrument(level = "info", skip_all, err, fields(override_dir))]
 pub fn find_user_root(override_dir: &str) -> GameResult<PathBuf> {
     find_user_root_impl(
@@ -25,8 +29,8 @@ pub fn find_user_root(override_dir: &str) -> GameResult<PathBuf> {
 
 /// Locates the NWN installation root.
 ///
-/// Resolution order is: explicit override, `NWN_ROOT`, Steam install heuristics, then Beamdog
-/// client settings heuristics.
+/// Resolution order is: explicit override, `NWN_ROOT`, Steam install
+/// heuristics, then Beamdog client settings heuristics.
 #[instrument(level = "info", skip_all, err, fields(override_dir))]
 pub fn find_nwn_root(override_dir: &str) -> GameResult<PathBuf> {
     find_nwn_root_impl(
@@ -77,7 +81,8 @@ where
             Ok(path)
         }
         _ => Err(GameError::msg(
-            "Could not locate NWN user directory; try --userdirectory or set NWN_HOME (NWN_USER_DIRECTORY also works, but is considered alternate)",
+            "Could not locate NWN user directory; try --userdirectory or set NWN_HOME \
+             (NWN_USER_DIRECTORY also works, but is considered alternate)",
         )),
     }
 }

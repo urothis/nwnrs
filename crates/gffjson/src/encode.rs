@@ -1,8 +1,9 @@
-use crate::{BASE64_ALPHABET, GffJsonError, GffJsonResult};
 use nwn_core::BAD_STRREF;
 use nwn_gff::{GffRoot, GffStruct, GffValue};
 use serde_json::{Map, Number, Value};
 use tracing::instrument;
+
+use crate::{BASE64_ALPHABET, GffJsonError, GffJsonResult};
 
 /// Converts a GFF struct to the JSON representation used by this crate.
 #[instrument(level = "debug", skip_all, err)]

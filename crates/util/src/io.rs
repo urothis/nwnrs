@@ -1,6 +1,8 @@
-use crate::ExpectationError;
 use std::io::{self, Read};
+
 use tracing::instrument;
+
+use crate::ExpectationError;
 
 /// Reads exactly `size` bytes or returns the underlying IO error.
 #[instrument(level = "debug", skip_all, err, fields(size))]
@@ -35,7 +37,8 @@ where
     Ok(result)
 }
 
-/// Returns `Ok(())` when `condition` is true, otherwise an [`ExpectationError`].
+/// Returns `Ok(())` when `condition` is true, otherwise an
+/// [`ExpectationError`].
 pub fn expect(condition: bool, message: impl Into<String>) -> Result<(), ExpectationError> {
     if condition {
         Ok(())

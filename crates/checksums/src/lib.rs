@@ -1,10 +1,10 @@
 #![forbid(unsafe_code)]
 //! Digest helpers used throughout the workspace.
 //!
-//! This crate provides small typed wrappers around SHA-1 and MD5 digests together with
-//! conversion helpers. SHA-1 is used heavily by NWSync manifests, KEY/BIF metadata, and
-//! archive payload tracking, while MD5 is used by the CLI metadata files that support
-//! round-tripping unpacked content.
+//! This crate provides small typed wrappers around SHA-1 and MD5 digests
+//! together with conversion helpers. SHA-1 is used heavily by NWSync manifests,
+//! KEY/BIF metadata, and archive payload tracking, while MD5 is used by the CLI
+//! metadata files that support round-tripping unpacked content.
 //!
 //! Start with [`secure_hash`], [`parse_secure_hash`], and [`md5_digest`].
 
