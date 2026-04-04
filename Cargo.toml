@@ -7,10 +7,11 @@ resolver = "3"
 version = "0.1.0"
 edition = "2024"
 publish = false
+license = "GPL-3.0"
 
 [workspace.dependencies]
 # internal dependencies
-nwnrs-prelude = { path = "crates/prelude" }
+nwnrs = { path = "crates/prelude" }
 nwnrs-checksums = { path = "crates/checksums" }
 nwnrs-compressedbuf = { path = "crates/compressedbuf" }
 nwnrs-core = { path = "crates/core" }

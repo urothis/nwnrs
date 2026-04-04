@@ -3,8 +3,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use nwnrs_resman::{Res, ResContainer, ResManError, ResManResult};
-use nwnrs_resref::ResRef;
+use nwnrs_resman::prelude::*;
+use nwnrs_resref::prelude::*;
 
 /// Errors returned while reading a single-file resource container.
 #[derive(Debug)]

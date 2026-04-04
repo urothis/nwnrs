@@ -1,7 +1,7 @@
 use std::io::{self, Cursor, Read, Write};
 
 use flate2::{Compression, read::ZlibDecoder, write::ZlibEncoder};
-use nwnrs_util::{ExpectationError, expect, read_bytes_or_err};
+use nwnrs_util::prelude::*;
 use tracing::{debug, instrument};
 
 use crate::{Algorithm, CompressedBufResult, VERSION, ZLIB_VERSION, ZSTD_VERSION};

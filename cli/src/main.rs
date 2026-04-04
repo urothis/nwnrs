@@ -1,5 +1,5 @@
 #![forbid(unsafe_code)]
-//! Command-line entrypoint for the NWN utility suite.
+//! Command-line entrypoint for NWNRS tools.
 
 mod args;
 mod inspect;

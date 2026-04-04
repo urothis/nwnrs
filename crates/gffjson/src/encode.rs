@@ -1,9 +1,9 @@
-use nwnrs_core::BAD_STRREF;
-use nwnrs_gff::{GffRoot, GffStruct, GffValue};
+use nwnrs_core::prelude::*;
+use nwnrs_gff::prelude::*;
 use serde_json::{Map, Number, Value};
 use tracing::instrument;
 
-use crate::{BASE64_ALPHABET, GffJsonError, GffJsonResult};
+use crate::prelude::*;
 
 /// Converts a GFF struct to the JSON representation used by this crate.
 #[instrument(level = "debug", skip_all, err)]
@@ -186,7 +186,7 @@ fn number_from_f64(value: f64) -> GffJsonResult<Number> {
 }
 
 fn base64_char(index: u8) -> char {
-    match BASE64_ALPHABET.get(usize::from(index)).copied() {
+    match crate::BASE64_ALPHABET.get(usize::from(index)).copied() {
         Some(byte) => char::from(byte),
         None => unreachable!("base64 alphabet index must be in range"),
     }

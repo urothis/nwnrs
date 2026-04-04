@@ -6,13 +6,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use nwnrs_checksums::prelude::*;
-use nwnrs_erf::prelude::*;
-use nwnrs_gff::prelude::*;
-use nwnrs_gffjson::prelude::*;
-use nwnrs_key::prelude::*;
-use nwnrs_resref::prelude::*;
-use nwnrs_twoda::prelude::*;
+use nwnrs::prelude::*;
 use tracing::{debug, info, instrument, warn};
 
 use crate::{
@@ -155,7 +149,7 @@ fn run_pack_erf(cmd: PackCmd) -> Result<(), String> {
     let str_ref = metadata.as_ref().map(|meta| meta.str_ref).unwrap_or(0);
     let oid = metadata.as_ref().and_then(|meta| meta.oid.as_deref());
     let mut out = Cursor::new(Vec::new());
-    write_erf(
+    erf::write_erf(
         &mut out,
         &file_type,
         version,
@@ -174,7 +168,7 @@ fn run_pack_erf(cmd: PackCmd) -> Result<(), String> {
                 .ok_or_else(|| io::Error::other(format!("no source mapping for {rr}")))?;
             let data = entry.read_bytes().map_err(io::Error::other)?;
             io.write_all(&data)?;
-            Ok((data.len(), secure_hash(&data)))
+            Ok((data.len(), checksums::secure_hash(&data)))
         },
     )
     .map_err(|error| format!("failed to pack {}: {error}", cmd.output.display()))?;
@@ -201,7 +195,7 @@ pub(crate) fn apply_erf_entry_order(
         .iter()
         .enumerate()
         .map(|(index, rr)| (rr.clone(), index))
-        .collect::<std::collections::HashMap<ResRef, usize>>();
+        .collect::<std::collections::HashMap<resref::ResRef, usize>>();
     sources.sort_by(|left, right| {
         let left_index = order.get(&left.rr).copied().unwrap_or(usize::MAX);
         let right_index = order.get(&right.rr).copied().unwrap_or(usize::MAX);
@@ -246,7 +240,7 @@ fn run_key_pack(cmd: KeyPackCmd) -> Result<(), String> {
     let bif_prefix = "data";
 
     let mut bifs = Vec::new();
-    let mut source_paths = std::collections::HashMap::<ResRef, PathBuf>::new();
+    let mut source_paths = std::collections::HashMap::<resref::ResRef, PathBuf>::new();
     for dir in sorted_dir_entries(&cmd.source)? {
         if should_skip_top_level_dir(&dir.path) {
             continue;
@@ -272,7 +266,7 @@ fn run_key_pack(cmd: KeyPackCmd) -> Result<(), String> {
                 cmd.source.join(&relative).join(resolved.to_file()),
             );
         }
-        bifs.push(KeyBifEntry {
+        bifs.push(key::KeyBifEntry {
             directory: if cmd.no_squash {
                 bif_prefix.to_string()
             } else {
@@ -284,7 +278,7 @@ fn run_key_pack(cmd: KeyPackCmd) -> Result<(), String> {
     }
 
     let (build_year, build_day) = current_build_date();
-    write_key_and_bif(
+    key::write_key_and_bif(
         version,
         exocomp,
         compalg,
@@ -301,7 +295,7 @@ fn run_key_pack(cmd: KeyPackCmd) -> Result<(), String> {
                 .ok_or_else(|| io::Error::other(format!("no source mapping for {rr}")))?;
             let data = fs::read(full_path)?;
             io.write_all(&data)?;
-            Ok((data.len(), secure_hash(&data)))
+            Ok((data.len(), checksums::secure_hash(&data)))
         },
     )
     .map_err(|error| format!("failed to pack key data: {error}"))?;
@@ -318,11 +312,11 @@ fn run_key_pack(cmd: KeyPackCmd) -> Result<(), String> {
 fn pack_gff_file(input: &Path, output: &Path, force: bool) -> Result<(), String> {
     let json = fs::read_to_string(input)
         .map_err(|error| format!("failed to read {}: {error}", input.display()))?;
-    let root = gff_root_from_json_str(&json)
+    let root = gffjson::gff_root_from_json_str(&json)
         .map_err(|error| format!("failed to parse {} as GFF JSON: {error}", input.display()))?;
     ensure_output_file_ready(output, force)?;
     let mut bytes = Cursor::new(Vec::new());
-    write_gff_root(&mut bytes, &root)
+    gff::write_gff_root(&mut bytes, &root)
         .map_err(|error| format!("failed to serialize {} as GFF: {error}", input.display()))?;
     fs::write(output, bytes.into_inner())
         .map_err(|error| format!("failed to write {}: {error}", output.display()))?;
@@ -339,11 +333,11 @@ fn pack_twoda_file(input: &Path, output: &Path, force: bool) -> Result<(), Strin
     let file = File::open(input)
         .map_err(|error| format!("failed to open {}: {error}", input.display()))?;
     let mut reader = BufReader::new(file);
-    let twoda = read_twoda(&mut reader)
+    let twoda = twoda::read_twoda(&mut reader)
         .map_err(|error| format!("failed to parse {} as 2DA text: {error}", input.display()))?;
     ensure_output_file_ready(output, force)?;
     let mut bytes = Vec::new();
-    write_twoda(&mut bytes, &twoda, false)
+    twoda::write_twoda(&mut bytes, &twoda, false)
         .map_err(|error| format!("failed to serialize {} as 2DA: {error}", input.display()))?;
     fs::write(output, bytes)
         .map_err(|error| format!("failed to write {}: {error}", output.display()))?;
@@ -358,7 +352,7 @@ pub(crate) enum PackSourceKind {
 
 #[derive(Clone)]
 pub(crate) struct PackSourceEntry {
-    pub(crate) rr:     ResRef,
+    pub(crate) rr:     resref::ResRef,
     pub(crate) source: PackSourceKind,
 }
 
@@ -378,11 +372,11 @@ impl PackSourceEntry {
             PackSourceKind::GffJson(path) => {
                 let json = fs::read_to_string(path)
                     .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
-                let root = gff_root_from_json_str(&json).map_err(|error| {
+                let root = gffjson::gff_root_from_json_str(&json).map_err(|error| {
                     format!("failed to parse {} as GFF JSON: {error}", path.display())
                 })?;
                 let mut bytes = Cursor::new(Vec::new());
-                write_gff_root(&mut bytes, &root).map_err(|error| {
+                gff::write_gff_root(&mut bytes, &root).map_err(|error| {
                     format!("failed to serialize {} as GFF: {error}", path.display())
                 })?;
                 Ok(bytes.into_inner())
@@ -482,7 +476,7 @@ fn pack_source_for_file(path: &Path) -> Result<PackSourceEntry, String> {
     }
     let file_name = path.file_name().and_then(OsStr::to_str).unwrap_or("");
     if let Some(base_name) = file_name.strip_suffix(".json") {
-        let resolved = new_resolved_res_ref_from_filename(base_name).map_err(|error| {
+        let resolved = resref::new_resolved_res_ref_from_filename(base_name).map_err(|error| {
             format!("{} is not a valid GFF JSON source: {error}", path.display())
         })?;
         if !is_gff_extension(resolved.res_ext()) {
@@ -498,7 +492,7 @@ fn pack_source_for_file(path: &Path) -> Result<PackSourceEntry, String> {
         });
     }
 
-    let resolved = new_resolved_res_ref_from_filename(file_name)
+    let resolved = resref::new_resolved_res_ref_from_filename(file_name)
         .map_err(|error| format!("{} is not a valid resref source: {error}", path.display()))?;
     Ok(PackSourceEntry {
         rr:     resolved.into(),

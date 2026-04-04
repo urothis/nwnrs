@@ -3,12 +3,13 @@ name = "nwnrs-wasm"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
+license.workspace = true
 
 [lib]
 crate-type = ["cdylib"]
 
 [dependencies]
-nwnrs-prelude.workspace = true
+nwnrs.workspace = true
 serde-wasm-bindgen.workspace = true
 wasm-bindgen.workspace = true
 

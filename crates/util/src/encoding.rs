@@ -3,7 +3,7 @@ use std::{cell::Cell, env};
 use encoding_rs::{Encoding, WINDOWS_1252};
 use tracing::instrument;
 
-use crate::{EncodingConversionError, NativeEncodingError, UnknownEncodingError};
+use crate::prelude::*;
 
 thread_local! {
     static NWNRS_ENCODING: Cell<&'static Encoding> = Cell::new(WINDOWS_1252);

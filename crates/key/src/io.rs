@@ -5,18 +5,15 @@ use std::{
     sync::Mutex,
 };
 
-use nwnrs_checksums::{EMPTY_SECURE_HASH, SecureHash};
-use nwnrs_compressedbuf::Algorithm;
-use nwnrs_exo::{EXO_RES_FILE_COMPRESSED_BUF_MAGIC, ExoResFileCompressionType};
-use nwnrs_resman::shared_stream;
-use nwnrs_resref::{ResRef, new_res_ref};
-use nwnrs_restype::ResType;
+use nwnrs_checksums::prelude::*;
+use nwnrs_compressedbuf::prelude::*;
+use nwnrs_exo::prelude::*;
+use nwnrs_resman::prelude::*;
+use nwnrs_resref::prelude::*;
+use nwnrs_restype::prelude::*;
 use tracing::{debug, instrument};
 
-use crate::{
-    BifHandle, BifResolver, HEADER_SIZE, KeyBifEntry, KeyBifVersion, KeyEntry, KeyError, KeyResult,
-    KeyTable, LoadedBif, VariableResource, WriteBifResult,
-};
+use crate::prelude::*;
 
 /// Reads a KEY file from a reader and a caller-supplied BIF resolver.
 ///
@@ -122,7 +119,7 @@ where
     for (_, filename_offset, filename_size, _) in &file_table {
         reader.seek(SeekFrom::Start(io_start + u64::from(*filename_offset)))?;
         let filename = trim_trailing_nuls(&read_bytes(&mut reader, usize::from(*filename_size))?);
-        bifs.push(BifHandle {
+        bifs.push(crate::BifHandle {
             filename:         normalize_bif_filename(&filename),
             expected_version: version,
             expected_oid:     oid.clone(),
@@ -154,7 +151,7 @@ where
         let rr = new_res_ref(res_ref_raw, ResType(res_type))?;
         resref_id_lookup.insert(
             rr,
-            KeyEntry {
+            crate::KeyEntry {
                 res_id,
                 sha1,
             },
@@ -177,7 +174,7 @@ pub(crate) fn read_bif(
     filename: &str,
     expected_version: KeyBifVersion,
     expected_oid: Option<&str>,
-) -> KeyResult<LoadedBif> {
+) -> KeyResult<crate::LoadedBif> {
     let mut reader = stream
         .lock()
         .map_err(|error| KeyError::msg(format!("bif stream lock poisoned: {error}")))?;
@@ -250,7 +247,7 @@ pub(crate) fn read_bif(
 
     drop(reader);
 
-    Ok(LoadedBif {
+    Ok(crate::LoadedBif {
         stream,
         file_type,
         file_version: version,
@@ -332,7 +329,7 @@ where
         write_u32(
             &mut file_table,
             to_u32_u64(
-                HEADER_SIZE
+                crate::HEADER_SIZE
                     + (u64::try_from(bifs.len())
                         .map_err(|_error| KeyError::msg("too many BIF entries"))?
                         * 12)
@@ -366,11 +363,14 @@ where
         &mut key_writer,
         to_u32_len(total_resref_count, "KEY resource count")?,
     )?;
-    write_u32(&mut key_writer, to_u32_u64(HEADER_SIZE, "KEY header size")?)?;
+    write_u32(
+        &mut key_writer,
+        to_u32_u64(crate::HEADER_SIZE, "KEY header size")?,
+    )?;
     write_u32(
         &mut key_writer,
         to_u32_u64(
-            HEADER_SIZE + file_table_size + filenames_size,
+            crate::HEADER_SIZE + file_table_size + filenames_size,
             "KEY resource table offset",
         )?,
     )?;
@@ -424,7 +424,7 @@ fn write_bif<F>(
     writer: &mut dyn WriteSeek,
     entries: &[ResRef],
     entry_writer: &mut F,
-) -> KeyResult<WriteBifResult>
+) -> KeyResult<crate::WriteBifResult>
 where
     F: FnMut(&ResRef, &mut dyn Write) -> KeyResult<(usize, SecureHash)>,
 {

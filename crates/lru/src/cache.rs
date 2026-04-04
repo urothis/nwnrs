@@ -2,7 +2,7 @@ use std::{fmt, hash::Hash};
 
 use tracing::{debug, instrument};
 
-use crate::{Entry, Weight, WeightedLru};
+use crate::prelude::*;
 
 impl<K, V> WeightedLru<K, V>
 where
@@ -133,7 +133,7 @@ where
             self.order.push_front(key.clone());
             self.entries.insert(
                 key,
-                Entry {
+                crate::Entry {
                     value,
                     weight,
                     usecount: 0,

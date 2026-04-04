@@ -1,9 +1,9 @@
 use std::io::{self, Read, Seek, SeekFrom, Write};
 
-use nwnrs_util::{expect, read_bytes_or_err, read_fixed_count_seq, read_str_or_err};
+use nwnrs_util::prelude::*;
 use tracing::{debug, instrument};
 
-use crate::{ENTRY_DATA_SIZE, HEADER_MAGIC, HEADER_VERSION, SsfEntry, SsfRoot, TABLE_OFFSET};
+use crate::{ENTRY_DATA_SIZE, HEADER_MAGIC, HEADER_VERSION, TABLE_OFFSET, prelude::*};
 
 /// Reads an `SSF` document from `reader`.
 #[instrument(level = "debug", skip_all, err)]

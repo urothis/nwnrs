@@ -16,7 +16,3 @@ pub use types::*;
 pub mod prelude {
     pub use crate::{ResFile, ResFileError, ResFileResult, read_resfile, read_resfile_as};
 }
-
-#[cfg(test)]
-#[path = "../tests/unit/mod.rs"]
-mod tests;

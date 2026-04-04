@@ -1,6 +1,6 @@
 use std::{error::Error, fmt};
 
-use nwnrs_util::ExpectationError;
+use nwnrs_util::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::lookup_res_ext;

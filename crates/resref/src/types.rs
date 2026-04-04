@@ -5,8 +5,8 @@ use std::{
     hash::{Hash, Hasher},
 };
 
-use nwnrs_restype::{ResType, lookup_res_ext, lookup_res_type};
-use nwnrs_util::ExpectationError;
+use nwnrs_restype::prelude::*;
+use nwnrs_util::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::is_valid_resref_part1;

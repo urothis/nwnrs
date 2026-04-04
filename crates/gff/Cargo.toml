@@ -3,6 +3,7 @@ name = "nwnrs-gff"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
+license.workspace = true
 
 [dependencies]
 nwnrs-core.workspace = true

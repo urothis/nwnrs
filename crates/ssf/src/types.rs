@@ -1,4 +1,4 @@
-use nwnrs_core::StrRef;
+use nwnrs_core::prelude::*;
 use serde::{Deserialize, Serialize};
 
 pub(crate) const HEADER_MAGIC: &str = "SSF ";
