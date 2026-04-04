@@ -5,6 +5,13 @@
 # The lint level for duplicate dependencies
 multiple-versions = "deny"
 
+# https://github.com/rustls/rustls-platform-verifier/pull/193
+skip = [
+    { name = "thiserror", version = "=1.0.69" },
+    { name = "thiserror-impl", version = "=1.0.69" },
+    { name = "windows-sys", version = "=0.45.0" },
+]
+
 [licenses]
 # Skip workspace-internal crates.
 # private = {ignore = true}
