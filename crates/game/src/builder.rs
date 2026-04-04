@@ -1,18 +1,24 @@
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
+
+use nwn_resman::ResMan;
+use nwn_resnwsync::{ManifestSha1, new_resnwsync_manifest, open_nwsync};
+use tracing::{debug, info, instrument};
+
 use crate::{
     DEFAULT_KEYFILES, GameError, GameResult, expand_tilde, load_key, read_erf_from_file,
     read_resdir,
 };
-use nwn_resman::ResMan;
-use nwn_resnwsync::{ManifestSha1, new_resnwsync_manifest, open_nwsync};
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use tracing::{debug, info, instrument};
 
 #[allow(clippy::too_many_arguments)]
-/// Builds a conventional layered [`nwn_resman::ResMan`] for an NWN installation.
+/// Builds a conventional layered [`nwn_resman::ResMan`] for an NWN
+/// installation.
 ///
-/// The resulting manager may include, in precedence order, additional directories, override
-/// directories, NWSync manifests, additional ERFs, and the selected KEY/BIF sets.
+/// The resulting manager may include, in precedence order, additional
+/// directories, override directories, NWSync manifests, additional ERFs, and
+/// the selected KEY/BIF sets.
 #[instrument(
     level = "info",
     skip(

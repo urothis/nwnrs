@@ -1,4 +1,3 @@
-use crate::{GffJsonError, GffJsonResult};
 use nwn_core::BAD_STRREF;
 use nwn_gff::{
     GffCExoLocString, GffRoot, GffStruct, GffValue, new_c_exo_loc_string, new_gff_root,
@@ -7,6 +6,8 @@ use nwn_gff::{
 use nwn_util::expect;
 use serde_json::{Map, Value};
 use tracing::instrument;
+
+use crate::{GffJsonError, GffJsonResult};
 
 /// Populates a GFF struct from its JSON representation.
 #[instrument(level = "debug", skip_all, err)]

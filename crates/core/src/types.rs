@@ -1,6 +1,4 @@
-use std::error::Error;
-use std::fmt;
-use std::str::FromStr;
+use std::{error::Error, fmt, str::FromStr};
 
 /// A TLK string reference.
 pub type StrRef = u32;
@@ -37,14 +35,14 @@ pub enum Gender {
 /// An error returned when a language identifier cannot be parsed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParseLanguageError {
-    pub(crate) input: String,
+    pub(crate) input:  String,
     pub(crate) reason: String,
 }
 
 impl ParseLanguageError {
     pub(crate) fn new(input: &str, reason: impl Into<String>) -> Self {
         Self {
-            input: input.to_string(),
+            input:  input.to_string(),
             reason: reason.into(),
         }
     }

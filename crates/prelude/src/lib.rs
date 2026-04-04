@@ -1,9 +1,9 @@
 #![forbid(unsafe_code)]
 //! Async client types for the Beamdog NWN masterlist API.
 //!
-//! This crate models the JSON payloads returned by the public masterlist service and provides
-//! a few direct fetch helpers. It is intentionally thin and keeps the response schema close to
-//! the wire format.
+//! This crate models the JSON payloads returned by the public masterlist
+//! service and provides a few direct fetch helpers. It is intentionally thin
+//! and keeps the response schema close to the wire format.
 
 /// Common imports for consumers of this crate.
 pub mod prelude {

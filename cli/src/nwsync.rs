@@ -1,16 +1,18 @@
-use crate::args::NwsyncFetchCmd;
-use crate::args::NwsyncPrintCmd;
-use crate::args::NwsyncPruneCmd;
-use crate::args::NwsyncWriteCmd;
-use crate::util::write_stdout_line;
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
+
 use nwn_nwsync::prelude::*;
 use nwn_resman::prelude::*;
 use nwn_resnwsync::prelude::*;
 use nwn_resref::prelude::*;
-use std::fs;
-use std::path::Path;
-use std::path::PathBuf;
 use tracing::{debug, info, instrument};
+
+use crate::{
+    args::{NwsyncFetchCmd, NwsyncPrintCmd, NwsyncPruneCmd, NwsyncWriteCmd},
+    util::write_stdout_line,
+};
 
 #[instrument(
     level = "info",

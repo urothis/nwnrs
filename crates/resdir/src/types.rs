@@ -1,9 +1,11 @@
+use std::{
+    fmt, io,
+    path::{Path, PathBuf},
+};
+
 use indexmap::IndexMap;
 use nwn_resman::{Res, ResContainer, ResManError, ResManResult};
 use nwn_resref::ResRef;
-use std::fmt;
-use std::io;
-use std::path::{Path, PathBuf};
 
 /// Errors returned while reading a resource directory.
 #[derive(Debug)]
@@ -58,8 +60,8 @@ impl From<nwn_resref::ResRefError> for ResDirError {
 /// A directory-backed resource container.
 #[derive(Debug, Clone)]
 pub struct ResDir {
-    pub(crate) root: PathBuf,
-    pub(crate) label: String,
+    pub(crate) root:    PathBuf,
+    pub(crate) label:   String,
     pub(crate) entries: IndexMap<ResRef, Res>,
 }
 

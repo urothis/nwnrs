@@ -1,12 +1,10 @@
+use std::{collections::BTreeMap, fmt, io, time::SystemTime};
+
 use indexmap::IndexMap;
 use nwn_compressedbuf::CompressedBufError;
 use nwn_resman::{Res, ResContainer, ResManError, ResManResult};
 use nwn_resref::{ResRef, ResRefError};
 use nwn_util::{EncodingConversionError, ExpectationError};
-use std::collections::BTreeMap;
-use std::fmt;
-use std::io;
-use std::time::SystemTime;
 
 pub(crate) const HEADER_SIZE: u64 = 160;
 pub(crate) const VALID_ERF_TYPES: [&str; 4] = ["NWM ", "MOD ", "ERF ", "HAK "];
@@ -16,7 +14,8 @@ pub(crate) const VALID_ERF_TYPES: [&str; 4] = ["NWM ", "MOD ", "ERF ", "HAK "];
 pub enum ErfError {
     /// An underlying IO operation failed.
     Io(io::Error),
-    /// Resource manager setup failed while constructing archive-backed [`Res`] entries.
+    /// Resource manager setup failed while constructing archive-backed [`Res`]
+    /// entries.
     ResMan(ResManError),
     /// A resource reference inside the archive was invalid.
     ResRef(ResRefError),
@@ -96,7 +95,8 @@ pub type ErfResult<T> = Result<T, ErfError>;
 pub enum ErfVersion {
     /// Legacy archive layout without per-entry compression metadata.
     V1,
-    /// Enhanced-edition layout with optional per-entry compression and an archive OID.
+    /// Enhanced-edition layout with optional per-entry compression and an
+    /// archive OID.
     E1,
 }
 
@@ -107,21 +107,22 @@ pub enum ErfVersion {
 /// [`nwn_resman::ResContainer`] for use with [`nwn_resman::ResMan`].
 pub struct Erf {
     /// The archive modification time when known.
-    pub mtime: SystemTime,
-    /// The four-byte archive type tag such as `ERF `, `MOD `, `HAK `, or `NWM `.
-    pub file_type: String,
+    pub mtime:              SystemTime,
+    /// The four-byte archive type tag such as `ERF `, `MOD `, `HAK `, or `NWM
+    /// `.
+    pub file_type:          String,
     /// The archive version.
-    pub file_version: ErfVersion,
-    pub(crate) filename: String,
+    pub file_version:       ErfVersion,
+    pub(crate) filename:    String,
     /// Build year stored in the archive header.
-    pub build_year: i32,
+    pub build_year:         i32,
     /// Build day stored in the archive header.
-    pub build_day: i32,
+    pub build_day:          i32,
     /// Localized string reference stored in the archive header.
-    pub str_ref: i32,
+    pub str_ref:            i32,
     pub(crate) loc_strings: BTreeMap<i32, String>,
-    pub(crate) entries: IndexMap<ResRef, Res>,
-    pub(crate) oid: Option<String>,
+    pub(crate) entries:     IndexMap<ResRef, Res>,
+    pub(crate) oid:         Option<String>,
 }
 
 impl Erf {
@@ -175,8 +176,8 @@ impl ResContainer for Erf {
 
 #[derive(Debug)]
 pub(crate) struct ErfResMeta {
-    pub offset: u64,
-    pub disk_size: usize,
+    pub offset:            u64,
+    pub disk_size:         usize,
     pub uncompressed_size: usize,
-    pub compression: nwn_exo::ExoResFileCompressionType,
+    pub compression:       nwn_exo::ExoResFileCompressionType,
 }

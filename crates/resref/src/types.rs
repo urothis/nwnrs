@@ -1,10 +1,14 @@
-use crate::is_valid_resref_part1;
+use std::{
+    cmp::Ordering,
+    error::Error,
+    fmt,
+    hash::{Hash, Hasher},
+};
+
 use nwn_restype::{ResType, lookup_res_ext, lookup_res_type};
 use nwn_util::ExpectationError;
-use std::cmp::Ordering;
-use std::error::Error;
-use std::fmt;
-use std::hash::{Hash, Hasher};
+
+use crate::is_valid_resref_part1;
 
 /// The maximum number of bytes in the name portion of a resource reference.
 pub const RESREF_MAX_LENGTH: usize = 16;
@@ -38,14 +42,14 @@ impl From<ExpectationError> for ResRefError {
 /// An NWN resource reference consisting of a name and resource type.
 #[derive(Debug, Clone)]
 pub struct ResRef {
-    res_ref: String,
+    res_ref:  String,
     res_type: ResType,
 }
 
 /// A resource reference that has been resolved to a concrete file extension.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedResRef {
-    base: ResRef,
+    base:    ResRef,
     res_ext: String,
 }
 
@@ -58,7 +62,10 @@ impl ResRef {
             format!("'{}.{}' is not a valid resref", res_ref, res_type),
         )?;
 
-        Ok(Self { res_ref, res_type })
+        Ok(Self {
+            res_ref,
+            res_type,
+        })
     }
 
     /// Resolves this resource reference to a known file extension.

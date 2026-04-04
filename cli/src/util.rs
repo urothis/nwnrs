@@ -1,14 +1,17 @@
+use std::{
+    ffi::OsStr,
+    fs::{self, File},
+    io::{self, Write},
+    path::{Path, PathBuf},
+    time::{SystemTime, UNIX_EPOCH},
+};
+
 use nwn_compressedbuf::prelude::*;
 use nwn_erf::prelude::*;
 use nwn_exo::prelude::*;
 use nwn_game::prelude::*;
 use nwn_key::prelude::*;
 use nwn_resref::prelude::*;
-use std::ffi::OsStr;
-use std::fs::{self, File};
-use std::io::{self, Write};
-use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 pub(crate) const RESOURCE_METADATA_FILENAME: &str = "resource.json";
 
@@ -24,7 +27,7 @@ pub(crate) enum Kind {
 
 pub(crate) struct DirEntryInfo {
     pub(crate) file_name: String,
-    pub(crate) path: PathBuf,
+    pub(crate) path:      PathBuf,
 }
 
 pub(crate) fn detect_kind(path: &Path) -> Option<Kind> {

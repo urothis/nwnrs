@@ -1,9 +1,9 @@
 #![forbid(unsafe_code)]
 //! Reader and writer for `2DA V2.0` tables.
 //!
-//! The representation is intentionally close to the human-edited text format: columns are named,
-//! rows are ordered, and cells are optional strings. The crate also preserves the notion of a
-//! table-wide default value.
+//! The representation is intentionally close to the human-edited text format:
+//! columns are named, rows are ordered, and cells are optional strings. The
+//! crate also preserves the notion of a table-wide default value.
 //!
 //! Use [`read_twoda`], [`write_twoda`], and [`TwoDa`] for most workflows.
 
