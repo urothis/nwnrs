@@ -4,8 +4,8 @@ use std::{
     sync::Arc,
 };
 
-use nwn_key::BifResolver;
-use nwn_resman::ResMan;
+use nwnrs_key::BifResolver;
+use nwnrs_resman::ResMan;
 use tracing::{info, instrument, warn};
 
 use crate::{GameResult, normalize_relative_path, read_key_table, shared_stream};

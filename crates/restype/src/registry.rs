@@ -1,13 +1,13 @@
 use std::{cell::RefCell, collections::HashMap};
 
-use nwn_util::expect;
+use nwnrs_util::expect;
 use tracing::instrument;
 
 use crate::{RegisterResTypeError, ResType};
 
 #[derive(Debug, Clone)]
 struct Registry {
-    types:   HashMap<ResType, String>,
+    types: HashMap<ResType, String>,
     reverse: HashMap<String, ResType>,
 }
 
@@ -187,7 +187,7 @@ pub fn reset_registry_for_tests() {
 
 fn make_registry() -> Registry {
     let mut registry = Registry {
-        types:   HashMap::new(),
+        types: HashMap::new(),
         reverse: HashMap::new(),
     };
 

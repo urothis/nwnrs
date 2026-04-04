@@ -3,10 +3,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use nwn_nwsync::prelude::*;
-use nwn_resman::prelude::*;
-use nwn_resnwsync::prelude::*;
-use nwn_resref::prelude::*;
+use nwnrs_nwsync::prelude::*;
+use nwnrs_resman::prelude::*;
+use nwnrs_resnwsync::prelude::*;
+use nwnrs_resref::prelude::*;
 use tracing::{debug, info, instrument};
 
 use crate::{
@@ -35,7 +35,7 @@ pub(crate) fn run_nwsync_print(cmd: NwsyncPrintCmd) -> Result<(), String> {
 
         if let Some(manifest) = cmd.manifest {
             debug!("printing specific manifest");
-            let manifest_sha1: nwn_checksums::SecureHash = manifest
+            let manifest_sha1: nwnrs_checksums::SecureHash = manifest
                 .parse()
                 .map_err(|error| format!("invalid manifest sha1 {manifest}: {error}"))?;
             let manifest = new_resnwsync_manifest(&nwsync, manifest_sha1).map_err(|error| {
@@ -129,7 +129,7 @@ pub(crate) fn run_nwsync_write(cmd: NwsyncWriteCmd) -> Result<(), String> {
         let data = fs::read(&path)
             .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
 
-        let sha1 = nwn_checksums::secure_hash(&data);
+        let sha1 = nwnrs_checksums::secure_hash(&data);
         let size = u32::try_from(data.len()).map_err(|_error| {
             format!(
                 "file {} is too large ({} bytes > u32::MAX)",
@@ -272,7 +272,7 @@ pub(crate) fn run_nwsync_prune(cmd: NwsyncPruneCmd) -> Result<(), String> {
     }
 
     // TODO: Implement actual removal from database
-    // This would require adding removal methods to nwn_resnwsync
+    // This would require adding removal methods to nwnrs_resnwsync
     // For now, just report what would be removed
     for sha1 in &unreferenced_sha1s {
         write_stdout_line(&format!("would remove: {sha1}"))?;

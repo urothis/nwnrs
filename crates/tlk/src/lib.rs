@@ -2,7 +2,7 @@
 //! Reader, writer, and query helpers for dialog table (`TLK`) files.
 //!
 //! The TLK format stores localized string entries keyed by
-//! [`nwn_core::StrRef`]. This crate supports standalone male/female tables,
+//! [`nwnrs_core::StrRef`]. This crate supports standalone male/female tables,
 //! overlay chains, lazy entry reads, and optional LRU caching for stream-backed
 //! access.
 //!

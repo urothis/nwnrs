@@ -1,36 +1,36 @@
 [package]
-name = "nwn-prelude"
+name = "nwnrs-prelude"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
 
 [dependencies]
-nwn-checksums.workspace = true
-nwn-compressedbuf.workspace = true
-nwn-core.workspace = true
-nwn-erf.workspace = true
-nwn-exo.workspace = true
-nwn-gff.workspace = true
-nwn-gffjson.workspace = true
-nwn-key.workspace = true
-nwn-lru.workspace = true
-nwn-masterlist.workspace = true
-nwn-nwsync.workspace = true
-nwn-resdir.workspace = true
-nwn-resfile.workspace = true
-nwn-resman.workspace = true
-nwn-resmemfile.workspace = true
-nwn-resnwsync.workspace = true
-nwn-resref.workspace = true
-nwn-restype.workspace = true
-nwn-ssf.workspace = true
-nwn-streamext.workspace = true
-nwn-tlk.workspace = true
-nwn-twoda.workspace = true
-nwn-util.workspace = true
+nwnrs-checksums.workspace = true
+nwnrs-compressedbuf.workspace = true
+nwnrs-core.workspace = true
+nwnrs-erf.workspace = true
+nwnrs-exo.workspace = true
+nwnrs-gff.workspace = true
+nwnrs-gffjson.workspace = true
+nwnrs-key.workspace = true
+nwnrs-lru.workspace = true
+nwnrs-masterlist.workspace = true
+nwnrs-nwsync.workspace = true
+nwnrs-resdir.workspace = true
+nwnrs-resfile.workspace = true
+nwnrs-resman.workspace = true
+nwnrs-resmemfile.workspace = true
+nwnrs-resnwsync.workspace = true
+nwnrs-resref.workspace = true
+nwnrs-restype.workspace = true
+nwnrs-ssf.workspace = true
+nwnrs-streamext.workspace = true
+nwnrs-tlk.workspace = true
+nwnrs-twoda.workspace = true
+nwnrs-util.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-nwn-game.workspace = true
+nwnrs-game.workspace = true
 
 [lints]
 workspace = true

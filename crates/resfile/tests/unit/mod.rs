@@ -1,15 +1,15 @@
 use std::{env, fs, time::SystemTime};
 
-use nwn_resman::ResContainer;
-use nwn_resref::new_res_ref;
-use nwn_restype::ResType;
+use nwnrs_resman::ResContainer;
+use nwnrs_resref::new_res_ref;
+use nwnrs_restype::ResType;
 
 use super::*;
 
 #[test]
 fn supports_explicit_resref_override() -> Result<(), Box<dyn std::error::Error>> {
     let root = env::temp_dir().join(format!(
-        "nwn-resfile-test-{}-{}",
+        "nwnrs-resfile-test-{}-{}",
         std::process::id(),
         SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)?

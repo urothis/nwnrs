@@ -3,8 +3,8 @@ use std::{
     sync::Arc,
 };
 
-use nwn_resman::ResMan;
-use nwn_resnwsync::{ManifestSha1, new_resnwsync_manifest, open_nwsync};
+use nwnrs_resman::ResMan;
+use nwnrs_resnwsync::{ManifestSha1, new_resnwsync_manifest, open_nwsync};
 use tracing::{debug, info, instrument};
 
 use crate::{
@@ -13,7 +13,7 @@ use crate::{
 };
 
 #[allow(clippy::too_many_arguments)]
-/// Builds a conventional layered [`nwn_resman::ResMan`] for an NWN
+/// Builds a conventional layered [`nwnrs_resman::ResMan`] for an NWN
 /// installation.
 ///
 /// The resulting manager may include, in precedence order, additional

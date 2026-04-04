@@ -1,7 +1,7 @@
 use std::{collections::HashMap, fmt, io};
 
-use nwn_checksums::{ParseSecureHashError, SecureHash};
-use nwn_resref::{ResRef, ResRefError};
+use nwnrs_checksums::{ParseSecureHashError, SecureHash};
+use nwnrs_resref::{ResRef, ResRefError};
 
 /// The default hash tree depth for NWSync manifests.
 pub const HASH_TREE_DEPTH: u32 = 2;
@@ -67,9 +67,9 @@ pub type ManifestResult<T> = Result<T, ManifestError>;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ManifestEntry {
     /// The content hash stored for this entry.
-    pub sha1:   SecureHash,
+    pub sha1: SecureHash,
     /// The uncompressed payload size.
-    pub size:   u32,
+    pub size: u32,
     /// The resource reference exposed by this entry.
     pub resref: ResRef,
 }
@@ -77,11 +77,7 @@ pub struct ManifestEntry {
 impl ManifestEntry {
     /// Creates a new manifest entry.
     pub fn new(sha1: SecureHash, size: u32, resref: ResRef) -> Self {
-        Self {
-            sha1,
-            size,
-            resref,
-        }
+        Self { sha1, size, resref }
     }
 }
 
@@ -94,10 +90,10 @@ impl fmt::Display for ManifestEntry {
 /// A parsed NWSync manifest.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Manifest {
-    pub(crate) version:         u32,
+    pub(crate) version: u32,
     pub(crate) hash_tree_depth: u32,
     /// The manifest entries in their stored order.
-    pub entries:                Vec<ManifestEntry>,
+    pub entries: Vec<ManifestEntry>,
 }
 
 impl Default for Manifest {

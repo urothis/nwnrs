@@ -37,7 +37,7 @@ jobs:
                   verbose: true
             - uses: ./.github/actions/rust-test
               with:
-                  package: nwn-cli
+                  package: nwnrs-cli
                   verbose: true
 
     lint:

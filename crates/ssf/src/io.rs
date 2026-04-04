@@ -1,6 +1,6 @@
 use std::io::{self, Read, Seek, SeekFrom, Write};
 
-use nwn_util::{expect, read_bytes_or_err, read_fixed_count_seq, read_str_or_err};
+use nwnrs_util::{expect, read_bytes_or_err, read_fixed_count_seq, read_str_or_err};
 use tracing::{debug, instrument};
 
 use crate::{ENTRY_DATA_SIZE, HEADER_MAGIC, HEADER_VERSION, SsfEntry, SsfRoot, TABLE_OFFSET};
@@ -53,9 +53,7 @@ pub fn read_ssf<R: Read + Seek>(reader: &mut R) -> io::Result<SsfRoot> {
         })
     })?;
 
-    let root = SsfRoot {
-        entries,
-    };
+    let root = SsfRoot { entries };
     debug!(entry_count = root.entries.len(), "read ssf");
     Ok(root)
 }

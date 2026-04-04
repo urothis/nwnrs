@@ -1,9 +1,9 @@
 use std::{io::Cursor, sync::Arc, time::SystemTime};
 
-use nwn_checksums::EMPTY_SECURE_HASH;
-use nwn_exo::ExoResFileCompressionType;
-use nwn_resman::{Res, new_res_origin, shared_stream};
-use nwn_resref::ResRef;
+use nwnrs_checksums::EMPTY_SECURE_HASH;
+use nwnrs_exo::ExoResFileCompressionType;
+use nwnrs_resman::{Res, new_res_origin, shared_stream};
+use nwnrs_resref::ResRef;
 use tracing::{debug, instrument};
 
 use crate::{ResMemFile, ResMemFileResult};

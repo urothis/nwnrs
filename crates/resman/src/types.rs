@@ -5,10 +5,10 @@ use std::{
     time::SystemTime,
 };
 
-use nwn_checksums::{EMPTY_SECURE_HASH, SecureHash, secure_hash};
-use nwn_compressedbuf::{CompressedBufError, decompress_bytes};
-use nwn_exo::{EXO_RES_FILE_COMPRESSED_BUF_MAGIC, ExoResFileCompressionType};
-use nwn_resref::ResRef;
+use nwnrs_checksums::{EMPTY_SECURE_HASH, SecureHash, secure_hash};
+use nwnrs_compressedbuf::{CompressedBufError, decompress_bytes};
+use nwnrs_exo::{EXO_RES_FILE_COMPRESSED_BUF_MAGIC, ExoResFileCompressionType};
+use nwnrs_resref::ResRef;
 use tracing::instrument;
 
 /// Maximum payload size that [`Res::read_all`] will retain in the per-resource
@@ -76,7 +76,7 @@ pub type ResManResult<T> = Result<T, ResManError>;
 /// identity.
 pub struct ResOrigin {
     container: String,
-    label:     String,
+    label: String,
 }
 
 impl ResOrigin {
@@ -84,7 +84,7 @@ impl ResOrigin {
     pub fn new(container: impl Into<String>, label: impl Into<String>) -> Self {
         Self {
             container: container.into(),
-            label:     label.into(),
+            label: label.into(),
         }
     }
 
@@ -116,20 +116,20 @@ pub(crate) enum ResBacking {
 
 pub(crate) struct ResMutableState {
     pub cached: bool,
-    pub cache:  Vec<u8>,
-    pub sha1:   SecureHash,
+    pub cache: Vec<u8>,
+    pub sha1: SecureHash,
 }
 
 pub(crate) struct ResInner {
-    pub mtime:             SystemTime,
-    pub io_offset:         u64,
-    pub io_size:           i64,
-    pub resref:            ResRef,
-    pub compression:       ExoResFileCompressionType,
+    pub mtime: SystemTime,
+    pub io_offset: u64,
+    pub io_size: i64,
+    pub resref: ResRef,
+    pub compression: ExoResFileCompressionType,
     pub uncompressed_size: usize,
-    pub origin:            ResOrigin,
-    pub backing:           ResBacking,
-    pub state:             Mutex<ResMutableState>,
+    pub origin: ResOrigin,
+    pub backing: ResBacking,
+    pub state: Mutex<ResMutableState>,
 }
 
 #[derive(Clone)]

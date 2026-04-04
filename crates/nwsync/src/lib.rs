@@ -3,7 +3,7 @@
 //!
 //! NWSync manifests map resource references to payload hashes and sizes. This
 //! crate handles the standalone manifest file format itself; repository access
-//! and shard lookup live in [`nwn_resnwsync`].
+//! and shard lookup live in [`nwnrs_resnwsync`].
 //!
 //! Start with [`read_manifest`], [`read_manifest_file`], [`write_manifest`],
 //! and [`write_manifest_file`].

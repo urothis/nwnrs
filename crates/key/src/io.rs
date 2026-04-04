@@ -5,12 +5,12 @@ use std::{
     sync::Mutex,
 };
 
-use nwn_checksums::{EMPTY_SECURE_HASH, SecureHash};
-use nwn_compressedbuf::Algorithm;
-use nwn_exo::{EXO_RES_FILE_COMPRESSED_BUF_MAGIC, ExoResFileCompressionType};
-use nwn_resman::shared_stream;
-use nwn_resref::{ResRef, new_res_ref};
-use nwn_restype::ResType;
+use nwnrs_checksums::{EMPTY_SECURE_HASH, SecureHash};
+use nwnrs_compressedbuf::Algorithm;
+use nwnrs_exo::{EXO_RES_FILE_COMPRESSED_BUF_MAGIC, ExoResFileCompressionType};
+use nwnrs_resman::shared_stream;
+use nwnrs_resref::{ResRef, new_res_ref};
+use nwnrs_restype::ResType;
 use tracing::{debug, instrument};
 
 use crate::{
@@ -123,11 +123,11 @@ where
         reader.seek(SeekFrom::Start(io_start + u64::from(*filename_offset)))?;
         let filename = trim_trailing_nuls(&read_bytes(&mut reader, usize::from(*filename_size))?);
         bifs.push(BifHandle {
-            filename:         normalize_bif_filename(&filename),
+            filename: normalize_bif_filename(&filename),
             expected_version: version,
-            expected_oid:     oid.clone(),
-            resolver:         resolver.clone(),
-            loaded:           Mutex::new(None),
+            expected_oid: oid.clone(),
+            resolver: resolver.clone(),
+            loaded: Mutex::new(None),
         });
     }
 
@@ -152,13 +152,7 @@ where
         };
 
         let rr = new_res_ref(res_ref_raw, ResType(res_type))?;
-        resref_id_lookup.insert(
-            rr,
-            KeyEntry {
-                res_id,
-                sha1,
-            },
-        );
+        resref_id_lookup.insert(rr, KeyEntry { res_id, sha1 });
     }
 
     Ok(KeyTable {
@@ -173,7 +167,7 @@ where
 }
 
 pub(crate) fn read_bif(
-    stream: nwn_resman::SharedReadSeek,
+    stream: nwnrs_resman::SharedReadSeek,
     filename: &str,
     expected_version: KeyBifVersion,
     expected_oid: Option<&str>,
@@ -465,7 +459,7 @@ where
             ExoResFileCompressionType::CompressedBuf => {
                 let mut buffer = Vec::new();
                 let (uncompressed_size, sha1) = entry_writer(resref, &mut buffer)?;
-                nwn_compressedbuf::compress_writer(
+                nwnrs_compressedbuf::compress_writer(
                     writer,
                     &buffer,
                     compalg,

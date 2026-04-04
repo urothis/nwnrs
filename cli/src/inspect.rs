@@ -1,11 +1,11 @@
 use std::{fs::File, io::BufReader, path::Path};
 
-use nwn_erf::prelude::*;
-use nwn_gff::prelude::*;
-use nwn_key::prelude::*;
-use nwn_ssf::prelude::*;
-use nwn_tlk::prelude::*;
-use nwn_twoda::prelude::*;
+use nwnrs_erf::prelude::*;
+use nwnrs_gff::prelude::*;
+use nwnrs_key::prelude::*;
+use nwnrs_ssf::prelude::*;
+use nwnrs_tlk::prelude::*;
+use nwnrs_twoda::prelude::*;
 use tracing::{debug, info, instrument};
 
 use crate::util::{Kind, detect_kind, write_stdout_line};

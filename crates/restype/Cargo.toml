@@ -1,12 +1,13 @@
 [package]
-name = "nwn-restype"
+name = "nwnrs-restype"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
 
 
 [dependencies]
-nwn-util.workspace = true
+nwnrs-util.workspace = true
+serde.workspace = true
 tracing.workspace = true
 
 [lints]

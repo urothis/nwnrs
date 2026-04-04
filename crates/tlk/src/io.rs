@@ -1,9 +1,9 @@
 use std::io::{self, Cursor, Read, Seek, SeekFrom, Write};
 
-use nwn_core::{Language, StrRef};
-use nwn_lru::WeightedLru;
-use nwn_resman::{Res, shared_stream};
-use nwn_util::{from_nwn_encoding, read_bytes_or_err, to_nwn_encoding};
+use nwnrs_core::{Language, StrRef};
+use nwnrs_lru::WeightedLru;
+use nwnrs_resman::{Res, shared_stream};
+use nwnrs_util::{from_nwnrs_encoding, read_bytes_or_err, to_nwnrs_encoding};
 use tracing::{debug, instrument};
 
 use crate::{DATA_ELEMENT_SIZE, HEADER_SIZE, SingleTlk, TlkEntry, TlkError, TlkResult};
@@ -104,7 +104,7 @@ pub fn write_single_tlk<W: Write + Seek>(writer: &mut W, tlk: &mut SingleTlk) ->
             write_i32(&mut entries_table, 0)?;
             write_i32(&mut entries_table, 0)?;
 
-            let text = to_nwn_encoding(&entry.text.replace('\r', ""))?;
+            let text = to_nwnrs_encoding(&entry.text.replace('\r', ""))?;
             write_i32(&mut entries_table, offset)?;
             let text_len = i32::try_from(text.len())
                 .map_err(|_error| TlkError::msg("TLK text length exceeds 32-bit range"))?;
@@ -164,7 +164,7 @@ pub(crate) fn get_from_io(tlk: &SingleTlk, str_ref: StrRef) -> TlkResult<(usize,
     stream.seek(SeekFrom::Start(
         tlk.io_start_pos + tlk.io_entries_offset + offset_to_string,
     ))?;
-    let text = from_nwn_encoding(&read_bytes_or_err(stream.as_mut(), string_size)?)?;
+    let text = from_nwnrs_encoding(&read_bytes_or_err(stream.as_mut(), string_size)?)?;
     let entry = TlkEntry {
         text,
         sound_res_ref,

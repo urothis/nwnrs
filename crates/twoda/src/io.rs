@@ -1,7 +1,7 @@
 use std::io::{Read, Write};
 
-use nwn_resman::Res;
-use nwn_util::{from_nwn_encoding, to_nwn_encoding};
+use nwnrs_resman::Res;
+use nwnrs_util::{from_nwnrs_encoding, to_nwnrs_encoding};
 use tracing::{debug, instrument};
 
 use crate::{
@@ -14,7 +14,7 @@ use crate::{
 pub fn read_twoda<R: Read>(mut reader: R) -> TwoDaResult<TwoDa> {
     let mut bytes = Vec::new();
     reader.read_to_end(&mut bytes)?;
-    let decoded = from_nwn_encoding(&bytes)?;
+    let decoded = from_nwnrs_encoding(&bytes)?;
     let normalized = decoded.replace("\r\n", "\n").replace('\r', "\n");
     let mut lines = normalized.lines().map(str::trim).peekable();
 
@@ -165,7 +165,7 @@ pub fn write_twoda<W: Write>(writer: &mut W, twoda: &TwoDa, minify: bool) -> Two
 
         for (cell_idx, cell) in row.iter().enumerate() {
             let formatted = escape_field(cell)?;
-            writer.write_all(&to_nwn_encoding(&formatted)?)?;
+            writer.write_all(&to_nwnrs_encoding(&formatted)?)?;
             if cell_idx != twoda.headers.len() - 1 {
                 let width = max_col_width
                     .get(cell_idx)

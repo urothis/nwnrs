@@ -5,13 +5,13 @@ use std::{
     path::Path,
 };
 
-use nwn_erf::prelude::*;
-use nwn_gff::prelude::*;
-use nwn_gffjson::prelude::*;
-use nwn_key::prelude::*;
-use nwn_resman::prelude::*;
-use nwn_resref::prelude::*;
-use nwn_twoda::prelude::*;
+use nwnrs_erf::prelude::*;
+use nwnrs_gff::prelude::*;
+use nwnrs_gffjson::prelude::*;
+use nwnrs_key::prelude::*;
+use nwnrs_resman::prelude::*;
+use nwnrs_resref::prelude::*;
+use nwnrs_twoda::prelude::*;
 use tracing::{debug, info, instrument, warn};
 
 use crate::{
@@ -46,8 +46,8 @@ pub(crate) fn run_unpack(cmd: UnpackCmd) -> Result<(), String> {
     match detect_kind(&cmd.input) {
         Some(Kind::Erf) => unpack_erf_to_dir(&cmd.input, &cmd.directory, cmd.force),
         Some(Kind::Key) => run_key_unpack(KeyUnpackCmd {
-            force:       cmd.force,
-            key:         cmd.input,
+            force: cmd.force,
+            key: cmd.input,
             destination: cmd.directory,
         }),
         Some(Kind::Gff) => unpack_gff_to_json(&cmd.input, &cmd.directory, cmd.force),

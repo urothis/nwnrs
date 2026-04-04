@@ -9,95 +9,95 @@
 pub mod prelude {
     /// Export checksums-related types and traits.
     pub mod checksums {
-        pub use nwn_checksums::prelude::*;
+        pub use nwnrs_checksums::prelude::*;
     }
     /// Export compressed buffer types and traits.
     pub mod compressedbuf {
-        pub use nwn_compressedbuf::prelude::*;
+        pub use nwnrs_compressedbuf::prelude::*;
     }
     /// Export core types and traits.
     pub mod core {
-        pub use nwn_core::prelude::*;
+        pub use nwnrs_core::prelude::*;
     }
     /// Export ERF archive types and traits.
     pub mod erf {
-        pub use nwn_erf::prelude::*;
+        pub use nwnrs_erf::prelude::*;
     }
     #[cfg(not(target_arch = "wasm32"))]
     /// Export game-related types and traits.
     pub mod game {
-        pub use nwn_game::prelude::*;
+        pub use nwnrs_game::prelude::*;
     }
     /// Export GFF file types and traits.
     pub mod gff {
-        pub use nwn_gff::prelude::*;
+        pub use nwnrs_gff::prelude::*;
     }
     /// Export GFF JSON serialization types and traits.
     pub mod gffjson {
-        pub use nwn_gffjson::prelude::*;
+        pub use nwnrs_gffjson::prelude::*;
     }
     /// Export key file types and traits.
     pub mod key {
-        pub use nwn_key::prelude::*;
+        pub use nwnrs_key::prelude::*;
     }
     /// Export LRU cache types and traits.
     pub mod lru {
-        pub use nwn_lru::prelude::*;
+        pub use nwnrs_lru::prelude::*;
     }
     /// Export masterlist API client types and traits.
     pub mod masterlist {
-        pub use nwn_masterlist::prelude::*;
+        pub use nwnrs_masterlist::prelude::*;
     }
     /// Export NWN sync client types and traits.
     pub mod nwsync {
-        pub use nwn_nwsync::prelude::*;
+        pub use nwnrs_nwsync::prelude::*;
     }
     /// Export resource directory types and traits.
     pub mod resdir {
-        pub use nwn_resdir::prelude::*;
+        pub use nwnrs_resdir::prelude::*;
     }
     /// Export resource file types and traits.
     pub mod resfile {
-        pub use nwn_resfile::prelude::*;
+        pub use nwnrs_resfile::prelude::*;
     }
     /// Export resource manager types and traits.
     pub mod resman {
-        pub use nwn_resman::prelude::*;
+        pub use nwnrs_resman::prelude::*;
     }
     /// Export in-memory resource file types and traits.
     pub mod resmemfile {
-        pub use nwn_resmemfile::prelude::*;
+        pub use nwnrs_resmemfile::prelude::*;
     }
     /// Export NWSync repository client types and traits.
     pub mod resnwsync {
-        pub use nwn_resnwsync::prelude::*;
+        pub use nwnrs_resnwsync::prelude::*;
     }
     /// Export resource reference types and traits.
     pub mod resref {
-        pub use nwn_resref::prelude::*;
+        pub use nwnrs_resref::prelude::*;
     }
     /// Export resource type types and traits.
     pub mod restype {
-        pub use nwn_restype::prelude::*;
+        pub use nwnrs_restype::prelude::*;
     }
     /// Export structured storage file types and traits.
     pub mod ssf {
-        pub use nwn_ssf::prelude::*;
+        pub use nwnrs_ssf::prelude::*;
     }
     /// Export stream extension traits.
     pub mod streamext {
-        pub use nwn_streamext::prelude::*;
+        pub use nwnrs_streamext::prelude::*;
     }
     /// Export TLK file types and traits.
     pub mod tlk {
-        pub use nwn_tlk::prelude::*;
+        pub use nwnrs_tlk::prelude::*;
     }
     /// Export 2DA file types and traits.
     pub mod twoda {
-        pub use nwn_twoda::prelude::*;
+        pub use nwnrs_twoda::prelude::*;
     }
     /// Export various utility types and traits.
     pub mod utils {
-        pub use nwn_util::prelude::*;
+        pub use nwnrs_util::prelude::*;
     }
 }

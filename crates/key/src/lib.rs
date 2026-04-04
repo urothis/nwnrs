@@ -4,7 +4,7 @@
 //! KEY files index one or more BIF files and provide the canonical base-game
 //! lookup table used by NWN installations. This crate opens KEY files, lazily
 //! resolves the referenced BIFs, and exposes the aggregate result as a
-//! [`KeyTable`] implementing [`nwn_resman::ResContainer`].
+//! [`KeyTable`] implementing [`nwnrs_resman::ResContainer`].
 //!
 //! The main entry points are [`read_key_table`], [`read_key_table_from_file`],
 //! and [`write_key_and_bif`].

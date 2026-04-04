@@ -7,10 +7,10 @@ use std::{
 };
 
 use indexmap::IndexMap;
-use nwn_checksums::EMPTY_SECURE_HASH;
-use nwn_exo::ExoResFileCompressionType;
-use nwn_resman::{Res, new_res_origin};
-use nwn_resref::{ResRef, ResolvedResRef};
+use nwnrs_checksums::EMPTY_SECURE_HASH;
+use nwnrs_exo::ExoResFileCompressionType;
+use nwnrs_resman::{Res, new_res_origin};
+use nwnrs_resref::{ResRef, ResolvedResRef};
 use tracing::{debug, instrument};
 
 use crate::{ResDir, ResDirError, ResDirResult};
@@ -47,7 +47,7 @@ pub fn read_resdir(path: impl AsRef<Path>) -> ResDirResult<ResDir> {
         let label_for_origin = path.display().to_string();
         let path_for_io = path.clone();
         let spawner = Arc::new(
-            move || -> io::Result<Box<dyn nwn_resman::ReadSeek + Send>> {
+            move || -> io::Result<Box<dyn nwnrs_resman::ReadSeek + Send>> {
                 Ok(Box::new(File::open(&path_for_io)?))
             },
         );
@@ -82,7 +82,7 @@ fn new_res(
     label_for_origin: String,
     resref: ResRef,
     mtime: SystemTime,
-    spawner: Arc<dyn Fn() -> io::Result<Box<dyn nwn_resman::ReadSeek + Send>> + Send + Sync>,
+    spawner: Arc<dyn Fn() -> io::Result<Box<dyn nwnrs_resman::ReadSeek + Send>> + Send + Sync>,
     io_size: i64,
 ) -> Res {
     Res::new_with_spawner(
