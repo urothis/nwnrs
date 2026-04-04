@@ -1,4 +1,4 @@
-# `nwnrs_types`
+# `nwn-rs`
 
 Rust workspace for reading, writing, inspecting, and composing Neverwinter Nights resource data.
 
@@ -16,7 +16,7 @@ The codebase is designed around one practical question: given an NWN installatio
 
 At a high level:
 
-- `nwnrs-cli` exposes the main workflows from the terminal
+- `nwnrs-cli` exposes the current main workflows
 - `nwnrs-resref`, `nwnrs-restype`, and `nwnrs-core` define the shared identity vocabulary
 - `nwnrs-resman` defines a common `Res`/`ResContainer` model and a layered `ResMan`
 - container crates such as `nwnrs-erf`, `nwnrs-key`, `nwnrs-resdir`, `nwnrs-resfile`, `nwnrs-resmemfile`, and `nwnrs-resnwsync` project different storage backends into that shared model
@@ -79,14 +79,6 @@ The workspace supports:
 - writing 2DA text back into binary-compatible output
 - opening NWSync repositories and printing manifest contents
 - building a layered `ResMan` from game roots, override directories, ERFs, and NWSync manifests
-
-## Sources
-
-Repository structure and dependency graph:
-
-- [`Cargo.toml`](./Cargo.toml)
-- [CLI](./cli/README.md)
-- [Crates](./crates/README.md)
 
 ## Contributing
 
