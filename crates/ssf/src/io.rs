@@ -53,7 +53,9 @@ pub fn read_ssf<R: Read + Seek>(reader: &mut R) -> io::Result<SsfRoot> {
         })
     })?;
 
-    let root = SsfRoot { entries };
+    let root = SsfRoot {
+        entries,
+    };
     debug!(entry_count = root.entries.len(), "read ssf");
     Ok(root)
 }

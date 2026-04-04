@@ -15,8 +15,8 @@ struct BeamdogSettings {
 
 /// Locates the NWN user directory.
 ///
-/// Resolution order is: explicit override, `nwnrs_HOME`, `nwnrs_USER_DIRECTORY`,
-/// then the platform-specific default location.
+/// Resolution order is: explicit override, `nwnrs_HOME`,
+/// `nwnrs_USER_DIRECTORY`, then the platform-specific default location.
 #[instrument(level = "info", skip_all, err, fields(override_dir))]
 pub fn find_user_root(override_dir: &str) -> GameResult<PathBuf> {
     find_user_root_impl(

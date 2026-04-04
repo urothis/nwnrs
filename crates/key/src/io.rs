@@ -123,11 +123,11 @@ where
         reader.seek(SeekFrom::Start(io_start + u64::from(*filename_offset)))?;
         let filename = trim_trailing_nuls(&read_bytes(&mut reader, usize::from(*filename_size))?);
         bifs.push(BifHandle {
-            filename: normalize_bif_filename(&filename),
+            filename:         normalize_bif_filename(&filename),
             expected_version: version,
-            expected_oid: oid.clone(),
-            resolver: resolver.clone(),
-            loaded: Mutex::new(None),
+            expected_oid:     oid.clone(),
+            resolver:         resolver.clone(),
+            loaded:           Mutex::new(None),
         });
     }
 
@@ -152,7 +152,13 @@ where
         };
 
         let rr = new_res_ref(res_ref_raw, ResType(res_type))?;
-        resref_id_lookup.insert(rr, KeyEntry { res_id, sha1 });
+        resref_id_lookup.insert(
+            rr,
+            KeyEntry {
+                res_id,
+                sha1,
+            },
+        );
     }
 
     Ok(KeyTable {

@@ -27,7 +27,7 @@ pub(crate) enum Kind {
 
 pub(crate) struct DirEntryInfo {
     pub(crate) file_name: String,
-    pub(crate) path: PathBuf,
+    pub(crate) path:      PathBuf,
 }
 
 pub(crate) fn detect_kind(path: &Path) -> Option<Kind> {

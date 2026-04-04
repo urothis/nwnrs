@@ -46,8 +46,8 @@ pub(crate) fn run_unpack(cmd: UnpackCmd) -> Result<(), String> {
     match detect_kind(&cmd.input) {
         Some(Kind::Erf) => unpack_erf_to_dir(&cmd.input, &cmd.directory, cmd.force),
         Some(Kind::Key) => run_key_unpack(KeyUnpackCmd {
-            force: cmd.force,
-            key: cmd.input,
+            force:       cmd.force,
+            key:         cmd.input,
             destination: cmd.directory,
         }),
         Some(Kind::Gff) => unpack_gff_to_json(&cmd.input, &cmd.directory, cmd.force),

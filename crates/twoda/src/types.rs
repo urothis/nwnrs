@@ -83,10 +83,10 @@ impl TwoDa {
     /// Creates an empty table.
     pub fn new() -> Self {
         Self {
-            default_value: None,
-            headers: Vec::new(),
+            default_value:      None,
+            headers:            Vec::new(),
             headers_for_lookup: Vec::new(),
-            rows: Vec::new(),
+            rows:               Vec::new(),
         }
     }
 

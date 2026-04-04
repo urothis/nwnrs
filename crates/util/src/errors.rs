@@ -1,5 +1,6 @@
-use serde::{Deserialize, Serialize};
 use std::{error::Error, fmt};
+
+use serde::{Deserialize, Serialize};
 
 /// An error returned when an expected condition is not met.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -50,7 +51,7 @@ impl Error for UnknownEncodingError {}
 /// An error returned when a text conversion fails for a configured encoding.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EncodingConversionError {
-    encoding: String,
+    encoding:  String,
     operation: &'static str,
 }
 

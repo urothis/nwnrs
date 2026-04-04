@@ -53,7 +53,7 @@ pub fn open_nwsync(path: impl AsRef<Path>) -> ResNWSyncResult<NWSync> {
         }
 
         let shard = NWSyncShard {
-            id: shard_id,
+            id:   shard_id,
             path: shard_path.clone(),
         };
         let conn = Connection::open(&shard_path)?;

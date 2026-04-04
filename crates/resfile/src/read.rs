@@ -50,7 +50,7 @@ pub fn read_resfile_as(path: impl AsRef<Path>, resref: ResRef) -> ResFileResult<
     );
 
     let result = ResFile {
-        path: path.to_path_buf(),
+        path:  path.to_path_buf(),
         label: label.clone(),
         entry: Res::new_with_spawner(
             new_res_origin(format!("ResFile:{label}"), origin_label),
