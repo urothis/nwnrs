@@ -5,6 +5,10 @@
 # The lint level for duplicate dependencies
 multiple-versions = "deny"
 
+# THIS IS A TEMPORARY
+# Warn if a direct dep could be replaced by a std feature
+# external-default-features = "warn"
+
 # https://github.com/rustls/rustls-platform-verifier/pull/193
 skip = [
     { name = "thiserror", version = "=1.0.69" },
