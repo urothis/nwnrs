@@ -6,6 +6,9 @@
 multiple-versions = "deny"
 
 [licenses]
+# Skip workspace-internal crates.
+private = {ignore = true}
+
 # List of explicitly allowed licenses
 allow = [
     "0BSD",
