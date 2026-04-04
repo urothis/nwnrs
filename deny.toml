@@ -7,7 +7,7 @@ multiple-versions = "deny"
 
 [licenses]
 # Skip workspace-internal crates.
-private = {ignore = true}
+# private = {ignore = true}
 
 # List of explicitly allowed licenses
 allow = [
