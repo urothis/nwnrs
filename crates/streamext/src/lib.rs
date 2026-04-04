@@ -1,9 +1,9 @@
 #![forbid(unsafe_code)]
 //! Stream helpers for size-prefixed binary formats.
 //!
-//! Several NWN-adjacent formats use compact little-endian length prefixes. This crate provides
-//! small generic helpers for reading and writing such values without pulling in a larger binary
-//! codec framework.
+//! Several nwnrs-adjacent formats use compact little-endian length prefixes.
+//! This crate provides small generic helpers for reading and writing such
+//! values without pulling in a larger binary codec framework.
 
 mod io;
 mod size_prefix;

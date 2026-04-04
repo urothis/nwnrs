@@ -1,8 +1,12 @@
-use crate::{GameError, GameResult, Platform};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
+
 use serde::Deserialize;
-use std::fs;
-use std::path::{Path, PathBuf};
 use tracing::{debug, info, instrument, warn};
+
+use crate::{GameError, GameResult, Platform};
 
 #[derive(Debug, Deserialize)]
 struct BeamdogSettings {
@@ -11,8 +15,8 @@ struct BeamdogSettings {
 
 /// Locates the NWN user directory.
 ///
-/// Resolution order is: explicit override, `NWN_HOME`, `NWN_USER_DIRECTORY`, then the
-/// platform-specific default location.
+/// Resolution order is: explicit override, `nwnrs_HOME`,
+/// `nwnrs_USER_DIRECTORY`, then the platform-specific default location.
 #[instrument(level = "info", skip_all, err, fields(override_dir))]
 pub fn find_user_root(override_dir: &str) -> GameResult<PathBuf> {
     find_user_root_impl(
@@ -25,11 +29,11 @@ pub fn find_user_root(override_dir: &str) -> GameResult<PathBuf> {
 
 /// Locates the NWN installation root.
 ///
-/// Resolution order is: explicit override, `NWN_ROOT`, Steam install heuristics, then Beamdog
-/// client settings heuristics.
+/// Resolution order is: explicit override, `nwnrs_ROOT`, Steam install
+/// heuristics, then Beamdog client settings heuristics.
 #[instrument(level = "info", skip_all, err, fields(override_dir))]
-pub fn find_nwn_root(override_dir: &str) -> GameResult<PathBuf> {
-    find_nwn_root_impl(
+pub fn find_nwnrs_root(override_dir: &str) -> GameResult<PathBuf> {
+    find_nwnrs_root_impl(
         override_dir,
         |key| std::env::var(key).ok(),
         current_home_dir,
@@ -56,8 +60,8 @@ where
     debug!("resolving user root");
     let result = first_nonempty_path(
         override_dir,
-        env_get("NWN_HOME").as_deref(),
-        env_get("NWN_USER_DIRECTORY").as_deref(),
+        env_get("nwnrs_HOME").as_deref(),
+        env_get("nwnrs_USER_DIRECTORY").as_deref(),
         match platform {
             Platform::MacOs => {
                 home_dir().map(|home| home.join("Documents").join("Neverwinter Nights"))
@@ -77,7 +81,8 @@ where
             Ok(path)
         }
         _ => Err(GameError::msg(
-            "Could not locate NWN user directory; try --userdirectory or set NWN_HOME (NWN_USER_DIRECTORY also works, but is considered alternate)",
+            "Could not locate NWN user directory; try --userdirectory or set nwnrs_HOME \
+             (nwnrs_USER_DIRECTORY also works, but is considered alternate)",
         )),
     }
 }
@@ -88,7 +93,7 @@ where
     err,
     fields(override_dir, platform = ?platform)
 )]
-pub(crate) fn find_nwn_root_impl<E, H>(
+pub(crate) fn find_nwnrs_root_impl<E, H>(
     override_dir: &str,
     env_get: E,
     home_dir: H,
@@ -99,7 +104,8 @@ where
     H: Fn() -> Option<PathBuf>,
 {
     debug!("resolving game root");
-    let mut result = first_nonempty_path(override_dir, env_get("NWN_ROOT").as_deref(), None, None);
+    let mut result =
+        first_nonempty_path(override_dir, env_get("nwnrs_ROOT").as_deref(), None, None);
 
     if result.is_none() {
         let steamapps = steamapps_dir(platform, &home_dir);

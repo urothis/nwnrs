@@ -1,10 +1,15 @@
+use std::{
+    cmp::Ordering,
+    error::Error,
+    fmt,
+    hash::{Hash, Hasher},
+};
+
+use nwnrs_restype::prelude::*;
+use nwnrs_util::prelude::*;
+use serde::{Deserialize, Serialize};
+
 use crate::is_valid_resref_part1;
-use nwn_restype::{ResType, lookup_res_ext, lookup_res_type};
-use nwn_util::ExpectationError;
-use std::cmp::Ordering;
-use std::error::Error;
-use std::fmt;
-use std::hash::{Hash, Hasher};
 
 /// The maximum number of bytes in the name portion of a resource reference.
 pub const RESREF_MAX_LENGTH: usize = 16;
@@ -36,16 +41,16 @@ impl From<ExpectationError> for ResRefError {
 }
 
 /// An NWN resource reference consisting of a name and resource type.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResRef {
-    res_ref: String,
+    res_ref:  String,
     res_type: ResType,
 }
 
 /// A resource reference that has been resolved to a concrete file extension.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ResolvedResRef {
-    base: ResRef,
+    base:    ResRef,
     res_ext: String,
 }
 
@@ -53,12 +58,15 @@ impl ResRef {
     /// Creates a new resource reference.
     pub fn new(res_ref: impl Into<String>, res_type: ResType) -> Result<Self, ResRefError> {
         let res_ref = res_ref.into();
-        nwn_util::expect(
+        nwnrs_util::expect(
             is_valid_resref_part1(&res_ref),
             format!("'{}.{}' is not a valid resref", res_ref, res_type),
         )?;
 
-        Ok(Self { res_ref, res_type })
+        Ok(Self {
+            res_ref,
+            res_type,
+        })
     }
 
     /// Resolves this resource reference to a known file extension.

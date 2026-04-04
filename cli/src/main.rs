@@ -1,5 +1,5 @@
 #![forbid(unsafe_code)]
-#![doc = "Command-line entrypoint for the NWN utility suite."]
+//! Command-line entrypoint for NWNRS tools.
 
 mod args;
 mod inspect;
@@ -10,8 +10,9 @@ mod pack;
 mod unpack;
 mod util;
 
-use args::{Cli, Command, NwsyncCommand};
 use std::process::ExitCode;
+
+use args::{Cli, Command, NwsyncCommand};
 use tracing::{error, instrument};
 
 fn main() -> ExitCode {

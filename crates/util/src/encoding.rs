@@ -1,30 +1,31 @@
-use crate::{EncodingConversionError, NativeEncodingError, UnknownEncodingError};
+use std::{cell::Cell, env};
+
 use encoding_rs::{Encoding, WINDOWS_1252};
-use std::cell::Cell;
-use std::env;
 use tracing::instrument;
 
+use crate::prelude::*;
+
 thread_local! {
-    static NWN_ENCODING: Cell<&'static Encoding> = Cell::new(WINDOWS_1252);
+    static NWNRS_ENCODING: Cell<&'static Encoding> = Cell::new(WINDOWS_1252);
     static NATIVE_ENCODING: Cell<Option<&'static Encoding>> = const { Cell::new(None) };
 }
 
 /// Returns the encoding currently used for NWN text data.
-pub fn get_nwn_encoding() -> &'static Encoding {
-    NWN_ENCODING.with(Cell::get)
+pub fn get_nwnrs_encoding() -> &'static Encoding {
+    NWNRS_ENCODING.with(Cell::get)
 }
 
 /// Returns the canonical label for the current NWN text encoding.
-pub fn get_nwn_encoding_name() -> &'static str {
-    get_nwn_encoding().name()
+pub fn get_nwnrs_encoding_name() -> &'static str {
+    get_nwnrs_encoding().name()
 }
 
 /// Sets the encoding used for NWN text data.
 #[instrument(level = "debug", skip_all, err, fields(label = %label))]
-pub fn set_nwn_encoding(label: &str) -> Result<(), UnknownEncodingError> {
+pub fn set_nwnrs_encoding(label: &str) -> Result<(), UnknownEncodingError> {
     let encoding =
         Encoding::for_label(label.as_bytes()).ok_or_else(|| UnknownEncodingError::new(label))?;
-    NWN_ENCODING.with(|slot| slot.set(encoding));
+    NWNRS_ENCODING.with(|slot| slot.set(encoding));
     Ok(())
 }
 
@@ -76,14 +77,14 @@ pub fn detect_system_native_encoding() -> Result<&'static Encoding, NativeEncodi
 
 /// Encodes a string using the current NWN encoding.
 #[instrument(level = "debug", skip_all, err, fields(input_len = value.len()))]
-pub fn to_nwn_encoding(value: &str) -> Result<Vec<u8>, EncodingConversionError> {
-    encode_with(get_nwn_encoding(), value, "encode text for NWN")
+pub fn to_nwnrs_encoding(value: &str) -> Result<Vec<u8>, EncodingConversionError> {
+    encode_with(get_nwnrs_encoding(), value, "encode text for NWN")
 }
 
 /// Decodes bytes using the current NWN encoding.
 #[instrument(level = "debug", skip_all, err, fields(input_len = bytes.len()))]
-pub fn from_nwn_encoding(bytes: &[u8]) -> Result<String, EncodingConversionError> {
-    decode_with(get_nwn_encoding(), bytes, "decode text from NWN")
+pub fn from_nwnrs_encoding(bytes: &[u8]) -> Result<String, EncodingConversionError> {
+    decode_with(get_nwnrs_encoding(), bytes, "decode text from NWN")
 }
 
 /// Encodes a string using the current native system encoding.

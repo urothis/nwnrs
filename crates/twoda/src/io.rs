@@ -1,18 +1,17 @@
-use crate::{
-    CELL_PADDING, CELL_PADDING_MINI, Cell, MAX_COLUMNS, TWO_DA_HEADER, TwoDa, TwoDaError,
-    TwoDaResult,
-};
-use nwn_resman::Res;
-use nwn_util::{from_nwn_encoding, to_nwn_encoding};
 use std::io::{Read, Write};
+
+use nwnrs_resman::prelude::*;
+use nwnrs_util::prelude::*;
 use tracing::{debug, instrument};
+
+use crate::{CELL_PADDING, CELL_PADDING_MINI, MAX_COLUMNS, prelude::*};
 
 /// Reads a `2DA V2.0` table from text.
 #[instrument(level = "debug", skip_all, err)]
 pub fn read_twoda<R: Read>(mut reader: R) -> TwoDaResult<TwoDa> {
     let mut bytes = Vec::new();
     reader.read_to_end(&mut bytes)?;
-    let decoded = from_nwn_encoding(&bytes)?;
+    let decoded = from_nwnrs_encoding(&bytes)?;
     let normalized = decoded.replace("\r\n", "\n").replace('\r', "\n");
     let mut lines = normalized.lines().map(str::trim).peekable();
 
@@ -79,7 +78,8 @@ pub fn read_twoda<R: Read>(mut reader: R) -> TwoDaResult<TwoDa> {
 
 /// Writes a `2DA V2.0` table to text.
 ///
-/// When `minify` is `true`, column padding is reduced to the minimum required whitespace.
+/// When `minify` is `true`, column padding is reduced to the minimum required
+/// whitespace.
 #[instrument(
     level = "debug",
     skip_all,
@@ -162,7 +162,7 @@ pub fn write_twoda<W: Write>(writer: &mut W, twoda: &TwoDa, minify: bool) -> Two
 
         for (cell_idx, cell) in row.iter().enumerate() {
             let formatted = escape_field(cell)?;
-            writer.write_all(&to_nwn_encoding(&formatted)?)?;
+            writer.write_all(&to_nwnrs_encoding(&formatted)?)?;
             if cell_idx != twoda.headers.len() - 1 {
                 let width = max_col_width
                     .get(cell_idx)

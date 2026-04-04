@@ -1,12 +1,12 @@
 #![forbid(unsafe_code)]
 //! Core NWN vocabulary shared across format crates.
 //!
-//! This crate intentionally stays small. It defines the language ids, gender selector, and
-//! dialog string reference type that appear across TLK, GFF, SSF, and higher-level resource
-//! loading code.
+//! This crate intentionally stays small. It defines the language ids, gender
+//! selector, and dialog string reference type that appear across TLK, GFF, SSF,
+//! and higher-level resource loading code.
 //!
-//! Use [`Language`] and [`resolve_language`] when you need to translate between textual and
-//! numeric language identifiers.
+//! Use [`Language`] and [`resolve_language`] when you need to translate between
+//! textual and numeric language identifiers.
 
 mod resolve;
 mod types;

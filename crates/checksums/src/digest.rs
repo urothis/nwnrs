@@ -1,6 +1,7 @@
-use crate::{Md5Digest, ParseSecureHashError, SECURE_HASH_HEX_LEN, SecureHash};
 use sha1::{Digest as _, Sha1};
 use tracing::instrument;
+
+use crate::prelude::*;
 
 /// Computes the SHA-1 digest for `data`.
 #[instrument(level = "debug", skip_all)]

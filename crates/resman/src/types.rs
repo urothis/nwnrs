@@ -1,14 +1,18 @@
-use nwn_checksums::{EMPTY_SECURE_HASH, SecureHash, secure_hash};
-use nwn_compressedbuf::{CompressedBufError, decompress_bytes};
-use nwn_exo::{EXO_RES_FILE_COMPRESSED_BUF_MAGIC, ExoResFileCompressionType};
-use nwn_resref::ResRef;
-use std::fmt;
-use std::io::{self, Read, Seek, SeekFrom};
-use std::sync::{Arc, Mutex, MutexGuard};
-use std::time::SystemTime;
+use std::{
+    fmt,
+    io::{self, Read, Seek, SeekFrom},
+    sync::{Arc, Mutex, MutexGuard},
+    time::SystemTime,
+};
+
+use nwnrs_checksums::prelude::*;
+use nwnrs_compressedbuf::prelude::*;
+use nwnrs_exo::prelude::*;
+use nwnrs_resref::prelude::*;
 use tracing::instrument;
 
-/// Maximum payload size that [`Res::read_all`] will retain in the per-resource cache.
+/// Maximum payload size that [`Res::read_all`] will retain in the per-resource
+/// cache.
 pub const MEMORY_CACHE_THRESHOLD: usize = 1024 * 1024;
 
 /// Convenience trait alias for readable, seekable streams.
@@ -68,10 +72,11 @@ pub type ResManResult<T> = Result<T, ResManError>;
 #[derive(Debug, Clone, PartialEq, Eq)]
 /// Human-readable origin information for a [`Res`].
 ///
-/// The origin is used for error messages and debug output rather than for identity.
+/// The origin is used for error messages and debug output rather than for
+/// identity.
 pub struct ResOrigin {
     container: String,
-    label: String,
+    label:     String,
 }
 
 impl ResOrigin {
@@ -79,7 +84,7 @@ impl ResOrigin {
     pub fn new(container: impl Into<String>, label: impl Into<String>) -> Self {
         Self {
             container: container.into(),
-            label: label.into(),
+            label:     label.into(),
         }
     }
 
@@ -111,27 +116,28 @@ pub(crate) enum ResBacking {
 
 pub(crate) struct ResMutableState {
     pub cached: bool,
-    pub cache: Vec<u8>,
-    pub sha1: SecureHash,
+    pub cache:  Vec<u8>,
+    pub sha1:   SecureHash,
 }
 
 pub(crate) struct ResInner {
-    pub mtime: SystemTime,
-    pub io_offset: u64,
-    pub io_size: i64,
-    pub resref: ResRef,
-    pub compression: ExoResFileCompressionType,
+    pub mtime:             SystemTime,
+    pub io_offset:         u64,
+    pub io_size:           i64,
+    pub resref:            ResRef,
+    pub compression:       ExoResFileCompressionType,
     pub uncompressed_size: usize,
-    pub origin: ResOrigin,
-    pub backing: ResBacking,
-    pub state: Mutex<ResMutableState>,
+    pub origin:            ResOrigin,
+    pub backing:           ResBacking,
+    pub state:             Mutex<ResMutableState>,
 }
 
 #[derive(Clone)]
 /// A lazily readable NWN resource payload.
 ///
-/// A `Res` remembers where a payload lives, how large it is, whether it must be decompressed,
-/// and how to reopen or share the underlying stream. Cloning a `Res` is cheap.
+/// A `Res` remembers where a payload lives, how large it is, whether it must be
+/// decompressed, and how to reopen or share the underlying stream. Cloning a
+/// `Res` is cheap.
 pub struct Res {
     pub(crate) inner: Arc<ResInner>,
 }
@@ -184,8 +190,8 @@ impl Res {
     #[allow(clippy::too_many_arguments)]
     /// Creates a resource backed by a stream factory.
     ///
-    /// This is useful when a caller wants each read to operate on a fresh stream instead of a
-    /// shared locked handle.
+    /// This is useful when a caller wants each read to operate on a fresh
+    /// stream instead of a shared locked handle.
     pub fn new_with_spawner(
         origin: ResOrigin,
         resref: ResRef,
@@ -265,7 +271,8 @@ impl Res {
 
     /// Returns the stored payload size in bytes.
     ///
-    /// A negative value indicates that the payload should be read until end-of-stream.
+    /// A negative value indicates that the payload should be read until
+    /// end-of-stream.
     pub fn io_size(&self) -> i64 {
         self.inner.io_size
     }
@@ -297,7 +304,8 @@ impl Res {
 
     /// Seeks the underlying stream to the start of this payload.
     ///
-    /// This is mainly useful for callers performing manual reads with [`with_stream`](Self::with_stream).
+    /// This is mainly useful for callers performing manual reads with
+    /// [`with_stream`](Self::with_stream).
     #[instrument(level = "debug", skip_all, err, fields(resref = %self.inner.resref))]
     pub fn seek(&self) -> ResManResult<()> {
         self.with_stream(|stream| {
@@ -308,7 +316,8 @@ impl Res {
 
     /// Reads the full payload, decompressing it when required.
     ///
-    /// When `use_cache` is `true`, small decoded payloads are retained in memory.
+    /// When `use_cache` is `true`, small decoded payloads are retained in
+    /// memory.
     #[instrument(level = "debug", skip_all, err, fields(resref = %self.inner.resref, use_cache))]
     pub fn read_all(&self, use_cache: bool) -> ResManResult<Vec<u8>> {
         if use_cache {
@@ -337,7 +346,8 @@ impl Res {
 
     /// Returns the SHA-1 digest for the decoded payload.
     ///
-    /// If the digest was not provided by the container, it is computed lazily and cached.
+    /// If the digest was not provided by the container, it is computed lazily
+    /// and cached.
     #[instrument(level = "debug", skip_all, err, fields(resref = %self.inner.resref))]
     pub fn sha1(&self) -> ResManResult<SecureHash> {
         {
@@ -355,8 +365,8 @@ impl Res {
 
     /// Runs `op` against the underlying stream.
     ///
-    /// Shared-stream resources lock the stream for the duration of the callback. Spawned
-    /// resources create a fresh stream for the call.
+    /// Shared-stream resources lock the stream for the duration of the
+    /// callback. Spawned resources create a fresh stream for the call.
     #[instrument(level = "debug", skip_all, err, fields(resref = %self.inner.resref))]
     pub fn with_stream<T, F>(&self, op: F) -> ResManResult<T>
     where

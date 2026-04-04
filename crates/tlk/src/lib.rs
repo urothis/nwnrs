@@ -1,11 +1,13 @@
 #![forbid(unsafe_code)]
 //! Reader, writer, and query helpers for dialog table (`TLK`) files.
 //!
-//! The TLK format stores localized string entries keyed by [`nwn_core::StrRef`]. This crate
-//! supports standalone male/female tables, overlay chains, lazy entry reads, and optional LRU
-//! caching for stream-backed access.
+//! The TLK format stores localized string entries keyed by
+//! [`nwnrs_core::StrRef`]. This crate supports standalone male/female tables,
+//! overlay chains, lazy entry reads, and optional LRU caching for stream-backed
+//! access.
 //!
-//! Start with [`read_single_tlk`], [`write_single_tlk`], [`SingleTlk`], and [`Tlk`].
+//! Start with [`read_single_tlk`], [`write_single_tlk`], [`SingleTlk`], and
+//! [`Tlk`].
 
 mod io;
 mod types;

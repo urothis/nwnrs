@@ -6,30 +6,30 @@ This directory contains all the workspace crates that provide the core functiona
 
 | Crate | Role |
 | --- | --- |
-| `nwn-checksums` | SHA-1 and MD5 helpers used by archive and manifest formats. |
-| `nwn-compressedbuf` | Reads and writes the EXO compressed-buffer wrapper used by several NWN formats. |
-| `nwn-core` | Shared language, gender, and string-reference types. |
-| `nwn-erf` | Reads and writes ERF-family archives: `ERF`, `MOD`, `HAK`, and `NWM`. |
-| `nwn-exo` | EXO-level constants and compression markers shared by container formats. |
-| `nwn-game` | Finds NWN installations and assembles a default layered resource manager. |
-| `nwn-gff` | Reads and writes typed `GFF V3.2` documents. |
-| `nwn-gffjson` | Converts `GFF` documents to and from a stable JSON representation. |
-| `nwn-key` | Reads `KEY` indexes, opens `BIF` payloads, and writes KEY/BIF sets. |
-| `nwn-lru` | Small weighted LRU cache used by higher-level crates. |
-| `nwn-masterlist` | Async client for the Beamdog masterlist API. |
-| `nwn-nwsync` | Reads and writes manifest files used by NWSync repositories. |
-| `nwn-resdir` | Exposes a directory tree as a `ResContainer`. |
-| `nwn-resfile` | Exposes a single on-disk file as a one-entry `ResContainer`. |
-| `nwn-resman` | Core resource abstraction: `Res`, `ResContainer`, and `ResMan`. |
-| `nwn-resmemfile` | Exposes an in-memory buffer as a one-entry `ResContainer`. |
-| `nwn-resnwsync` | Opens NWSync repositories and exposes manifests as `ResContainer`s. |
-| `nwn-resref` | Parses and formats NWN resource references. |
-| `nwn-restype` | Registry of numeric NWN resource types and file extensions. |
-| `nwn-ssf` | Reads and writes soundset (`SSF`) files. |
-| `nwn-streamext` | Size-prefixed stream helpers used by binary codecs. |
-| `nwn-tlk` | Reads, writes, and queries dialog table (`TLK`) files. |
-| `nwn-twoda` | Reads and writes `2DA V2.0` tables. |
-| `nwn-util` | Shared encoding, endian, IO, and expectation helpers. |
+| `nwnrs-checksums` | SHA-1 and MD5 helpers used by archive and manifest formats. |
+| `nwnrs-compressedbuf` | Reads and writes the EXO compressed-buffer wrapper used by several NWN formats. |
+| `nwnrs-core` | Shared language, gender, and string-reference types. |
+| `nwnrs-erf` | Reads and writes ERF-family archives: `ERF`, `MOD`, `HAK`, and `NWM`. |
+| `nwnrs-exo` | EXO-level constants and compression markers shared by container formats. |
+| `nwnrs-game` | Finds NWN installations and assembles a default layered resource manager. |
+| `nwnrs-gff` | Reads and writes typed `GFF V3.2` documents. |
+| `nwnrs-gffjson` | Converts `GFF` documents to and from a stable JSON representation. |
+| `nwnrs-key` | Reads `KEY` indexes, opens `BIF` payloads, and writes KEY/BIF sets. |
+| `nwnrs-lru` | Small weighted LRU cache used by higher-level crates. |
+| `nwnrs-masterlist` | Async client for the Beamdog masterlist API. |
+| `nwnrs-nwsync` | Reads and writes manifest files used by NWSync repositories. |
+| `nwnrs-resdir` | Exposes a directory tree as a `ResContainer`. |
+| `nwnrs-resfile` | Exposes a single on-disk file as a one-entry `ResContainer`. |
+| `nwnrs-resman` | Core resource abstraction: `Res`, `ResContainer`, and `ResMan`. |
+| `nwnrs-resmemfile` | Exposes an in-memory buffer as a one-entry `ResContainer`. |
+| `nwnrs-resnwsync` | Opens NWSync repositories and exposes manifests as `ResContainer`s. |
+| `nwnrs-resref` | Parses and formats NWN resource references. |
+| `nwnrs-restype` | Registry of numeric NWN resource types and file extensions. |
+| `nwnrs-ssf` | Reads and writes soundset (`SSF`) files. |
+| `nwnrs-streamext` | Size-prefixed stream helpers used by binary codecs. |
+| `nwnrs-tlk` | Reads, writes, and queries dialog table (`TLK`) files. |
+| `nwnrs-twoda` | Reads and writes `2DA V2.0` tables. |
+| `nwnrs-util` | Shared encoding, endian, IO, and expectation helpers. |
 
 ## Architectural Model
 
@@ -37,19 +37,19 @@ The repository is intentionally split by responsibility rather than by applicati
 
 1. Identity and primitives
 
-`nwn-core`, `nwn-restype`, `nwn-resref`, `nwn-checksums`, `nwn-util`, and `nwn-streamext` define the small reusable types that every higher layer depends on.
+`nwnrs-core`, `nwnrs-restype`, `nwnrs-resref`, `nwnrs-checksums`, `nwnrs-util`, and `nwnrs-streamext` define the small reusable types that every higher layer depends on.
 
 2. Resource backends
 
-`nwn-erf`, `nwn-key`, `nwn-resdir`, `nwn-resfile`, `nwn-resmemfile`, and `nwn-resnwsync` translate specific storage layouts into a common container interface.
+`nwnrs-erf`, `nwnrs-key`, `nwnrs-resdir`, `nwnrs-resfile`, `nwnrs-resmemfile`, and `nwnrs-resnwsync` translate specific storage layouts into a common container interface.
 
 3. Format codecs
 
-`nwn-gff`, `nwn-gffjson`, `nwn-twoda`, `nwn-tlk`, `nwn-ssf`, `nwn-nwsync`, and `nwn-compressedbuf` focus on decoding and encoding individual file formats.
+`nwnrs-gff`, `nwnrs-gffjson`, `nwnrs-twoda`, `nwnrs-tlk`, `nwnrs-ssf`, `nwnrs-nwsync`, and `nwnrs-compressedbuf` focus on decoding and encoding individual file formats.
 
 4. Composition and tooling
 
-`nwn-resman` resolves resources across multiple containers. `nwn-game` chooses a conventional load order for a real installation.
+`nwnrs-resman` resolves resources across multiple containers. `nwnrs-game` chooses a conventional load order for a real installation.
 
 ## Core Resource Model and Container Layering
 

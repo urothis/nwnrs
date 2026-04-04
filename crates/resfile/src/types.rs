@@ -1,8 +1,10 @@
-use nwn_resman::{Res, ResContainer, ResManError, ResManResult};
-use nwn_resref::ResRef;
-use std::fmt;
-use std::io;
-use std::path::{Path, PathBuf};
+use std::{
+    fmt, io,
+    path::{Path, PathBuf},
+};
+
+use nwnrs_resman::prelude::*;
+use nwnrs_resref::prelude::*;
 
 /// Errors returned while reading a single-file resource container.
 #[derive(Debug)]
@@ -12,7 +14,7 @@ pub enum ResFileError {
     /// Resource manager setup failed.
     ResMan(ResManError),
     /// Resource reference parsing failed.
-    ResRef(nwn_resref::ResRefError),
+    ResRef(nwnrs_resref::ResRefError),
     /// The input path was invalid.
     Message(String),
 }
@@ -48,8 +50,8 @@ impl From<ResManError> for ResFileError {
     }
 }
 
-impl From<nwn_resref::ResRefError> for ResFileError {
-    fn from(value: nwn_resref::ResRefError) -> Self {
+impl From<nwnrs_resref::ResRefError> for ResFileError {
+    fn from(value: nwnrs_resref::ResRefError) -> Self {
         Self::ResRef(value)
     }
 }
@@ -57,7 +59,7 @@ impl From<nwn_resref::ResRefError> for ResFileError {
 /// A single file exposed as a one-entry resource container.
 #[derive(Debug, Clone)]
 pub struct ResFile {
-    pub(crate) path: PathBuf,
+    pub(crate) path:  PathBuf,
     pub(crate) label: String,
     pub(crate) entry: Res,
 }

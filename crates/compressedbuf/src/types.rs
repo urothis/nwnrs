@@ -1,6 +1,6 @@
-use nwn_util::ExpectationError;
-use std::fmt;
-use std::io;
+use std::{fmt, io};
+
+use nwnrs_util::prelude::*;
 
 pub(crate) const VERSION: u32 = 3;
 pub(crate) const ZLIB_VERSION: u32 = 1;

@@ -1,62 +1,64 @@
+use std::io::{self, Read, Seek, SeekFrom, Write};
+
+use nwnrs_util::prelude::*;
+use tracing::{debug, instrument};
+
 use crate::{
     GffCExoLocString, GffError, GffField, GffFieldKind, GffResult, GffRoot, GffStruct, GffValue,
     HEADER_SIZE, ensure_label,
 };
-use nwn_util::{expect, from_nwn_encoding, read_bytes_or_err, read_str_or_err, to_nwn_encoding};
-use std::io::{self, Read, Seek, SeekFrom, Write};
-use tracing::{debug, instrument};
 
 #[derive(Debug, Clone)]
 struct Header {
-    struct_offset: u32,
-    struct_count: u32,
-    field_offset: u32,
-    field_count: u32,
-    label_offset: u32,
-    label_count: u32,
-    field_data_offset: u32,
-    field_data_size: u32,
+    struct_offset:        u32,
+    struct_count:         u32,
+    field_offset:         u32,
+    field_count:          u32,
+    label_offset:         u32,
+    label_count:          u32,
+    field_data_offset:    u32,
+    field_data_size:      u32,
     field_indices_offset: u32,
-    field_indices_size: u32,
-    list_indices_offset: u32,
-    list_indices_size: u32,
+    field_indices_size:   u32,
+    list_indices_offset:  u32,
+    list_indices_size:    u32,
 }
 
 #[derive(Debug, Clone)]
 struct RawStructEntry {
-    id: i32,
+    id:             i32,
     data_or_offset: i32,
-    field_count: i32,
+    field_count:    i32,
 }
 
 #[derive(Debug, Clone)]
 struct RawFieldEntry {
-    field_kind: GffFieldKind,
-    label_index: i32,
+    field_kind:     GffFieldKind,
+    label_index:    i32,
     data_or_offset: i32,
 }
 
 #[derive(Debug, Default)]
 struct WriteState {
-    labels: Vec<String>,
-    structs: Vec<WriteStructEntry>,
-    fields: Vec<WriteFieldEntry>,
-    field_data: Vec<u8>,
+    labels:        Vec<String>,
+    structs:       Vec<WriteStructEntry>,
+    fields:        Vec<WriteFieldEntry>,
+    field_data:    Vec<u8>,
     field_indices: Vec<i32>,
-    list_indices: Vec<i32>,
+    list_indices:  Vec<i32>,
 }
 
 #[derive(Debug, Clone, Default)]
 struct WriteStructEntry {
-    id: i32,
+    id:             i32,
     data_or_offset: i32,
-    field_count: i32,
+    field_count:    i32,
 }
 
 #[derive(Debug, Clone)]
 struct WriteFieldEntry {
-    field_kind: GffFieldKind,
-    label_index: i32,
+    field_kind:     GffFieldKind,
+    label_index:    i32,
     data_or_offset: i32,
 }
 
@@ -74,18 +76,18 @@ pub fn read_gff_root<R: Read + Seek>(reader: &mut R) -> GffResult<GffRoot> {
     )?;
 
     let mut header = Header {
-        struct_offset: read_u32(reader)?,
-        struct_count: read_u32(reader)?,
-        field_offset: read_u32(reader)?,
-        field_count: read_u32(reader)?,
-        label_offset: read_u32(reader)?,
-        label_count: read_u32(reader)?,
-        field_data_offset: read_u32(reader)?,
-        field_data_size: read_u32(reader)?,
+        struct_offset:        read_u32(reader)?,
+        struct_count:         read_u32(reader)?,
+        field_offset:         read_u32(reader)?,
+        field_count:          read_u32(reader)?,
+        label_offset:         read_u32(reader)?,
+        label_count:          read_u32(reader)?,
+        field_data_offset:    read_u32(reader)?,
+        field_data_size:      read_u32(reader)?,
         field_indices_offset: read_u32(reader)?,
-        field_indices_size: read_u32(reader)?,
-        list_indices_offset: read_u32(reader)?,
-        list_indices_size: read_u32(reader)?,
+        field_indices_size:   read_u32(reader)?,
+        list_indices_offset:  read_u32(reader)?,
+        list_indices_size:    read_u32(reader)?,
     };
 
     normalize_index_offsets(reader, start, &mut header)?;
@@ -419,7 +421,7 @@ fn parse_field<R: Read + Seek>(
             let size = read_i32(reader)?;
             let bytes = read_bytes_or_err(reader, to_usize(size, "CExoString length")?)?;
             let decoded =
-                from_nwn_encoding(&bytes).map_err(|error| GffError::msg(error.to_string()))?;
+                from_nwnrs_encoding(&bytes).map_err(|error| GffError::msg(error.to_string()))?;
             GffValue::CExoString(decoded)
         }
         GffFieldKind::ResRef => {
@@ -440,8 +442,8 @@ fn parse_field<R: Read + Seek>(
                 let language = read_i32(reader)?;
                 let size = read_i32(reader)?;
                 let bytes = read_bytes_or_err(reader, to_usize(size, "locstring entry length")?)?;
-                let decoded =
-                    from_nwn_encoding(&bytes).map_err(|error| GffError::msg(error.to_string()))?;
+                let decoded = from_nwnrs_encoding(&bytes)
+                    .map_err(|error| GffError::msg(error.to_string()))?;
                 entries.push((language, decoded));
             }
             let consumed = reader.stream_position()? - payload_start;
@@ -451,7 +453,10 @@ fn parse_field<R: Read + Seek>(
                         .map_err(|_error| GffError::msg("negative CExoLocString payload size"))?,
                 "invalid CExoLocString payload size",
             )?;
-            GffValue::CExoLocString(GffCExoLocString { str_ref, entries })
+            GffValue::CExoLocString(GffCExoLocString {
+                str_ref,
+                entries,
+            })
         }
         GffFieldKind::Void => {
             seek_field_data(reader, start, header, raw.data_or_offset)?;
@@ -547,7 +552,7 @@ fn collect_struct(structure: &GffStruct, state: &mut WriteState) -> GffResult<i3
             GffValue::CExoString(value) => {
                 let offset = to_i32_len(state.field_data.len(), "GFF field data offset")?;
                 let encoded =
-                    to_nwn_encoding(value).map_err(|error| GffError::msg(error.to_string()))?;
+                    to_nwnrs_encoding(value).map_err(|error| GffError::msg(error.to_string()))?;
                 state.field_data.extend_from_slice(
                     &to_i32_len(encoded.len(), "CExoString length")?.to_le_bytes(),
                 );
@@ -568,8 +573,8 @@ fn collect_struct(structure: &GffStruct, state: &mut WriteState) -> GffResult<i3
                 let offset = to_i32_len(state.field_data.len(), "GFF field data offset")?;
                 let mut payload = Vec::new();
                 for (language, text) in &value.entries {
-                    let encoded =
-                        to_nwn_encoding(text).map_err(|error| GffError::msg(error.to_string()))?;
+                    let encoded = to_nwnrs_encoding(text)
+                        .map_err(|error| GffError::msg(error.to_string()))?;
                     payload.extend_from_slice(&language.to_le_bytes());
                     payload.extend_from_slice(
                         &to_i32_len(encoded.len(), "CExoLocString entry length")?.to_le_bytes(),
@@ -706,9 +711,9 @@ fn read_struct_entries<R: Read + Seek>(
     (0..header.struct_count)
         .map(|_| {
             Ok(RawStructEntry {
-                id: read_i32(reader)?,
+                id:             read_i32(reader)?,
                 data_or_offset: read_i32(reader)?,
-                field_count: read_i32(reader)?,
+                field_count:    read_i32(reader)?,
             })
         })
         .collect()

@@ -1,7 +1,8 @@
-use crate::{Entry, Weight, WeightedLru};
-use std::fmt;
-use std::hash::Hash;
+use std::{fmt, hash::Hash};
+
 use tracing::{debug, instrument};
+
+use crate::prelude::*;
 
 impl<K, V> WeightedLru<K, V>
 where
@@ -40,7 +41,8 @@ where
         Some(&entry.value)
     }
 
-    /// Returns the cached value for `key`, inserting one with an explicit weight if needed.
+    /// Returns the cached value for `key`, inserting one with an explicit
+    /// weight if needed.
     #[instrument(level = "debug", skip_all)]
     pub fn get_or_put_with_weight<F>(&mut self, key: K, when_missing: F) -> &V
     where
@@ -61,7 +63,8 @@ where
         }
     }
 
-    /// Returns the cached value for `key`, inserting one with weight `1` if needed.
+    /// Returns the cached value for `key`, inserting one with weight `1` if
+    /// needed.
     #[instrument(level = "debug", skip_all)]
     pub fn get_or_put<F>(&mut self, key: K, when_missing: F) -> &V
     where
@@ -130,7 +133,7 @@ where
             self.order.push_front(key.clone());
             self.entries.insert(
                 key,
-                Entry {
+                crate::Entry {
                     value,
                     weight,
                     usecount: 0,

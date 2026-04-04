@@ -1,9 +1,11 @@
+use std::{
+    fmt, io,
+    path::{Path, PathBuf},
+};
+
 use indexmap::IndexMap;
-use nwn_resman::{Res, ResContainer, ResManError, ResManResult};
-use nwn_resref::ResRef;
-use std::fmt;
-use std::io;
-use std::path::{Path, PathBuf};
+use nwnrs_resman::prelude::*;
+use nwnrs_resref::prelude::*;
 
 /// Errors returned while reading a resource directory.
 #[derive(Debug)]
@@ -13,7 +15,7 @@ pub enum ResDirError {
     /// Resource manager setup failed.
     ResMan(ResManError),
     /// Resource reference parsing failed.
-    ResRef(nwn_resref::ResRefError),
+    ResRef(nwnrs_resref::ResRefError),
     /// The directory contents were invalid.
     Message(String),
 }
@@ -49,8 +51,8 @@ impl From<ResManError> for ResDirError {
     }
 }
 
-impl From<nwn_resref::ResRefError> for ResDirError {
-    fn from(value: nwn_resref::ResRefError) -> Self {
+impl From<nwnrs_resref::ResRefError> for ResDirError {
+    fn from(value: nwnrs_resref::ResRefError) -> Self {
         Self::ResRef(value)
     }
 }
@@ -58,8 +60,8 @@ impl From<nwn_resref::ResRefError> for ResDirError {
 /// A directory-backed resource container.
 #[derive(Debug, Clone)]
 pub struct ResDir {
-    pub(crate) root: PathBuf,
-    pub(crate) label: String,
+    pub(crate) root:    PathBuf,
+    pub(crate) label:   String,
     pub(crate) entries: IndexMap<ResRef, Res>,
 }
 

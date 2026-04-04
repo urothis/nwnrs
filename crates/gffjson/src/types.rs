@@ -1,7 +1,7 @@
-use nwn_gff::GffError;
-use nwn_util::ExpectationError;
-use std::error::Error;
-use std::fmt;
+use std::{error::Error, fmt};
+
+use nwnrs_gff::prelude::*;
+use nwnrs_util::prelude::*;
 
 pub(crate) const BASE64_ALPHABET: &[u8; 64] =
     b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";

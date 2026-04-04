@@ -1,26 +1,26 @@
 [package]
-name = "nwn-game"
+name = "nwnrs-game"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
-
+license.workspace = true
 
 [dependencies]
-nwn-erf.workspace = true
-nwn-key.workspace = true
-nwn-resman.workspace = true
-nwn-resdir.workspace = true
-nwn-resnwsync.workspace = true
+nwnrs-erf.workspace = true
+nwnrs-key.workspace = true
+nwnrs-resman.workspace = true
+nwnrs-resdir.workspace = true
+nwnrs-resnwsync.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
-nwn-checksums.workspace = true
-nwn-compressedbuf.workspace = true
-nwn-exo.workspace = true
-nwn-resref.workspace = true
-nwn-restype.workspace = true
+nwnrs-checksums.workspace = true
+nwnrs-compressedbuf.workspace = true
+nwnrs-exo.workspace = true
+nwnrs-resref.workspace = true
+nwnrs-restype.workspace = true
 rusqlite.workspace = true
 
 [lints]

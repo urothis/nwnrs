@@ -1,9 +1,9 @@
 [package]
-name = "nwn-lru"
+name = "nwnrs-lru"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
-
+license.workspace = true
 
 [dependencies]
 tracing.workspace = true

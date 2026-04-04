@@ -1,7 +1,7 @@
-use nwn_core::{BAD_STRREF, StrRef};
-use nwn_util::ExpectationError;
-use std::fmt;
-use std::io;
+use std::{fmt, io};
+
+use nwnrs_core::prelude::*;
+use nwnrs_util::prelude::*;
 
 type GffByte = u8;
 type GffChar = i8;
@@ -22,9 +22,9 @@ pub(crate) const HEADER_SIZE: usize = 56;
 
 /// A `CExoLocString` value.
 #[derive(Debug, Clone, PartialEq)]
-///
-/// A localized string may either reference a TLK entry via [`str_ref`](Self::str_ref) or carry
-/// inline language-specific overrides in [`entries`](Self::entries).
+/// A localized string may either reference a TLK entry via
+/// [`str_ref`](Self::str_ref) or carry inline language-specific overrides in
+/// [`entries`](Self::entries).
 pub struct GffCExoLocString {
     /// The fallback TLK string reference.
     pub str_ref: StrRef,
@@ -44,8 +44,8 @@ impl Default for GffCExoLocString {
 /// The primitive and compound value kinds supported by GFF.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u32)]
-///
-/// These correspond directly to the numeric field type ids stored in the binary format.
+/// These correspond directly to the numeric field type ids stored in the binary
+/// format.
 pub enum GffFieldKind {
     /// An unsigned 8-bit integer.
     Byte = 0,
@@ -123,7 +123,6 @@ impl GffFieldKind {
 
 /// A typed GFF field value.
 #[derive(Debug, Clone, PartialEq)]
-///
 /// The enum variants mirror the canonical `GFF V3.2` field kinds.
 pub enum GffValue {
     /// An unsigned 8-bit integer.
@@ -186,8 +185,8 @@ impl GffValue {
 
 /// A labeled GFF field.
 #[derive(Debug, Clone, PartialEq)]
-///
-/// Labels are stored on the containing [`GffStruct`]; this type only wraps the typed value.
+/// Labels are stored on the containing [`GffStruct`]; this type only wraps the
+/// typed value.
 pub struct GffField {
     value: GffValue,
 }
@@ -195,7 +194,9 @@ pub struct GffField {
 impl GffField {
     /// Creates a field from a typed value.
     pub fn new(value: GffValue) -> Self {
-        Self { value }
+        Self {
+            value,
+        }
     }
 
     /// Returns the kind of the stored value.
@@ -211,7 +212,6 @@ impl GffField {
 
 /// A GFF structure containing labeled fields.
 #[derive(Debug, Clone, PartialEq)]
-///
 /// Fields preserve insertion order and labels are unique within a structure.
 pub struct GffStruct {
     /// The structure id stored in the document.
@@ -268,24 +268,23 @@ impl GffStruct {
 
 /// A complete GFF document.
 #[derive(Debug, Clone, PartialEq)]
-///
 /// NWN conventionally stores the root structure with id `-1`.
 pub struct GffRoot {
     /// The four-byte document type tag.
-    pub file_type: String,
+    pub file_type:    String,
     /// The four-byte document version tag.
     pub file_version: String,
     /// The root structure.
-    pub root: GffStruct,
+    pub root:         GffStruct,
 }
 
 impl GffRoot {
     /// Creates a new root document with version `V3.2`.
     pub fn new(file_type: impl Into<String>) -> Self {
         Self {
-            file_type: file_type.into(),
+            file_type:    file_type.into(),
             file_version: "V3.2".to_string(),
-            root: GffStruct::new(-1),
+            root:         GffStruct::new(-1),
         }
     }
 
@@ -345,7 +344,7 @@ impl From<ExpectationError> for GffError {
 pub type GffResult<T> = Result<T, GffError>;
 
 pub(crate) fn ensure_label(label: &str) -> GffResult<()> {
-    nwn_util::expect(
+    nwnrs_util::expect(
         label.len() <= 16,
         format!("invalid GFF label length for {:?}", label),
     )?;

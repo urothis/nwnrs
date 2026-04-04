@@ -1,9 +1,9 @@
-use nwn_erf::ErfError;
-use nwn_key::KeyError;
-use nwn_resdir::ResDirError;
-use nwn_resnwsync::ResNWSyncError;
-use std::fmt;
-use std::io;
+use std::{fmt, io};
+
+use nwnrs_erf::ErfError;
+use nwnrs_key::KeyError;
+use nwnrs_resdir::ResDirError;
+use nwnrs_resnwsync::ResNWSyncError;
 
 /// GFF-family extensions commonly treated as generic GFF payloads by the CLI.
 pub const GFF_EXTENSIONS: &[&str] = &[
@@ -11,7 +11,12 @@ pub const GFF_EXTENSIONS: &[&str] = &[
     "fac", "dlg", "itp", "bic", "jrl", "gff", "gui",
 ];
 /// KEY basenames loaded by default when no explicit key list is supplied.
-pub const DEFAULT_KEYFILES: &[&str] = &["nwn_base", "nwn_base_loc", "nwn_retail", "nwn_retail_loc"];
+pub const DEFAULT_KEYFILES: &[&str] = &[
+    "nwnrs_base",
+    "nwnrs_base_loc",
+    "nwnrs_retail",
+    "nwnrs_retail_loc",
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(dead_code)]

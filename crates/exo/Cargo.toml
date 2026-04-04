@@ -1,12 +1,12 @@
 [package]
-name = "nwn-exo"
+name = "nwnrs-exo"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
-
+license.workspace = true
 
 [dependencies]
-nwn-compressedbuf.workspace = true
+nwnrs-compressedbuf.workspace = true
 tracing.workspace = true
 
 [lints]

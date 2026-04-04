@@ -1,23 +1,21 @@
-use crate::args::{KeyUnpackCmd, UnpackCmd};
-use crate::metadata::write_erf_pack_metadata;
-use crate::metadata::write_key_pack_metadata;
-use crate::metadata::write_resource_metadata;
-use crate::util::{
-    Kind, detect_kind, ensure_output_file_ready, ensure_target_dir_ready, is_gff_extension,
-    unpacked_raw_target, write_lines,
+use std::{
+    ffi::OsStr,
+    fs::{self, File},
+    io::{BufReader, Cursor},
+    path::Path,
 };
-use nwn_erf::prelude::*;
-use nwn_gff::prelude::*;
-use nwn_gffjson::prelude::*;
-use nwn_key::prelude::*;
-use nwn_resman::prelude::*;
-use nwn_resref::prelude::*;
-use nwn_twoda::prelude::*;
-use std::ffi::OsStr;
-use std::fs::{self, File};
-use std::io::{BufReader, Cursor};
-use std::path::Path;
+
+use nwnrs::prelude::{resman::ResContainer, *};
 use tracing::{debug, info, instrument, warn};
+
+use crate::{
+    args::{KeyUnpackCmd, UnpackCmd},
+    metadata::{write_erf_pack_metadata, write_key_pack_metadata, write_resource_metadata},
+    util::{
+        Kind, detect_kind, ensure_output_file_ready, ensure_target_dir_ready, is_gff_extension,
+        unpacked_raw_target, write_lines,
+    },
+};
 
 #[instrument(
     level = "info",
@@ -42,8 +40,8 @@ pub(crate) fn run_unpack(cmd: UnpackCmd) -> Result<(), String> {
     match detect_kind(&cmd.input) {
         Some(Kind::Erf) => unpack_erf_to_dir(&cmd.input, &cmd.directory, cmd.force),
         Some(Kind::Key) => run_key_unpack(KeyUnpackCmd {
-            force: cmd.force,
-            key: cmd.input,
+            force:       cmd.force,
+            key:         cmd.input,
             destination: cmd.directory,
         }),
         Some(Kind::Gff) => unpack_gff_to_json(&cmd.input, &cmd.directory, cmd.force),
@@ -72,7 +70,7 @@ pub(crate) fn run_unpack(cmd: UnpackCmd) -> Result<(), String> {
 pub(crate) fn run_key_unpack(cmd: KeyUnpackCmd) -> Result<(), String> {
     info!("unpacking key set");
     ensure_target_dir_ready(&cmd.destination, cmd.force)?;
-    let key = read_key_table_from_file(&cmd.key)
+    let key = key::read_key_table_from_file(&cmd.key)
         .map_err(|error| format!("failed to parse {} as KEY: {error}", cmd.key.display()))?;
     fs::create_dir_all(&cmd.destination)
         .map_err(|error| format!("failed to create {}: {error}", cmd.destination.display()))?;
@@ -88,7 +86,7 @@ pub(crate) fn run_key_unpack(cmd: KeyUnpackCmd) -> Result<(), String> {
             .map(|bif| crate::util::file_name_string(&bif).unwrap_or(bif)),
     )?;
 
-    for KeyBifContents {
+    for key::KeyBifContents {
         filename,
         resources,
     } in key.bif_contents().map_err(|error| {
@@ -137,7 +135,7 @@ pub(crate) fn unpack_erf_to_dir(
     destination: &Path,
     force: bool,
 ) -> Result<(), String> {
-    let erf = read_erf_from_file(input)
+    let erf = erf::read_erf_from_file(input)
         .map_err(|error| format!("failed to parse {} as ERF/MOD: {error}", input.display()))?;
     let mut extracted = 0_usize;
     for rr in erf.contents() {
@@ -169,7 +167,7 @@ pub(crate) fn unpack_erf_to_dir(
     fields(resref = %rr, output = %destination.display(), force)
 )]
 fn write_unpacked_archive_entry(
-    rr: &ResRef,
+    rr: &resref::ResRef,
     data: &[u8],
     destination: &Path,
     force: bool,
@@ -209,9 +207,9 @@ fn write_unpacked_gff_json(
     force: bool,
 ) -> Result<(), String> {
     let mut reader = Cursor::new(data);
-    let gff = read_gff_root(&mut reader)
+    let gff = gff::read_gff_root(&mut reader)
         .map_err(|error| format!("failed to parse {file_name} as GFF: {error}"))?;
-    let json = gff_root_to_pretty_json_string(&gff)
+    let json = gffjson::gff_root_to_pretty_json_string(&gff)
         .map_err(|error| format!("failed to convert {file_name} to JSON: {error}"))?;
     let extension = Path::new(file_name)
         .extension()
@@ -237,9 +235,9 @@ fn unpack_gff_to_json(input: &Path, destination: &Path, force: bool) -> Result<(
     let file = File::open(input)
         .map_err(|error| format!("failed to open {}: {error}", input.display()))?;
     let mut reader = BufReader::new(file);
-    let gff = read_gff_root(&mut reader)
+    let gff = gff::read_gff_root(&mut reader)
         .map_err(|error| format!("failed to parse {} as GFF: {error}", input.display()))?;
-    let json = gff_root_to_pretty_json_string(&gff)
+    let json = gffjson::gff_root_to_pretty_json_string(&gff)
         .map_err(|error| format!("failed to convert {} to JSON: {error}", input.display()))?;
     let file_name = input
         .file_name()
@@ -264,7 +262,7 @@ fn unpack_twoda_to_text(input: &Path, destination: &Path, force: bool) -> Result
     let file = File::open(input)
         .map_err(|error| format!("failed to open {}: {error}", input.display()))?;
     let mut reader = BufReader::new(file);
-    let twoda = read_twoda(&mut reader)
+    let twoda = twoda::read_twoda(&mut reader)
         .map_err(|error| format!("failed to parse {} as 2DA: {error}", input.display()))?;
     let file_name = input
         .file_name()
@@ -273,7 +271,7 @@ fn unpack_twoda_to_text(input: &Path, destination: &Path, force: bool) -> Result
     let target = destination.join(file_name);
     ensure_output_file_ready(&target, force)?;
     let mut output = Vec::new();
-    write_twoda(&mut output, &twoda, false)
+    twoda::write_twoda(&mut output, &twoda, false)
         .map_err(|error| format!("failed to serialize {} as 2DA: {error}", input.display()))?;
     fs::write(&target, output)
         .map_err(|error| format!("failed to write {}: {error}", target.display()))?;

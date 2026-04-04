@@ -1,18 +1,19 @@
-use crate::{Res, ResContainer, ResManError, ResManResult};
-use nwn_lru::WeightedLru;
-use nwn_resref::{ResRef, ResolvedResRef};
-use std::collections::HashSet;
-use std::fmt;
-use std::sync::Arc;
+use std::{collections::HashSet, fmt, sync::Arc};
+
+use nwnrs_lru::prelude::*;
+use nwnrs_resref::prelude::*;
 use tracing::instrument;
+
+use crate::prelude::*;
 
 /// Layered resource manager.
 ///
-/// Containers are searched from front to back, so newly added containers take precedence over
-/// earlier ones. An optional weighted LRU cache can memoize recent lookups.
+/// Containers are searched from front to back, so newly added containers take
+/// precedence over earlier ones. An optional weighted LRU cache can memoize
+/// recent lookups.
 pub struct ResMan {
     containers: Vec<Arc<dyn ResContainer>>,
-    cache: Option<WeightedLru<ResRef, Res>>,
+    cache:      Option<WeightedLru<ResRef, Res>>,
 }
 
 impl fmt::Debug for ResMan {
@@ -27,12 +28,13 @@ impl fmt::Debug for ResMan {
 impl ResMan {
     /// Creates an empty resource manager.
     ///
-    /// `cache_size_mb` controls the optional lookup cache size in megabytes. A value of `0`
-    /// disables the manager-level cache.
+    /// `cache_size_mb` controls the optional lookup cache size in megabytes. A
+    /// value of `0` disables the manager-level cache.
     pub fn new(cache_size_mb: usize) -> Self {
         Self {
             containers: Vec::new(),
-            cache: (cache_size_mb > 0).then(|| WeightedLru::new(cache_size_mb * 1024 * 1024, 1)),
+            cache:      (cache_size_mb > 0)
+                .then(|| WeightedLru::new(cache_size_mb * 1024 * 1024, 1)),
         }
     }
 
@@ -57,7 +59,8 @@ impl ResMan {
 
     /// Resolves `rr` to the highest-precedence matching resource.
     ///
-    /// When `use_cache` is `true`, successful lookups are memoized in the manager cache.
+    /// When `use_cache` is `true`, successful lookups are memoized in the
+    /// manager cache.
     #[instrument(level = "debug", skip_all, err, fields(resref = %rr, use_cache))]
     pub fn demand(&mut self, rr: &ResRef, use_cache: bool) -> ResManResult<Res> {
         if use_cache

@@ -1,16 +1,16 @@
 [package]
-name = "nwn-tlk"
+name = "nwnrs-tlk"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
-
+license.workspace = true
 
 [dependencies]
-nwn-core.workspace = true
-nwn-lru.workspace = true
-nwn-resman.workspace = true
+nwnrs-core.workspace = true
+nwnrs-lru.workspace = true
+nwnrs-resman.workspace = true
 tracing.workspace = true
-nwn-util.workspace = true
+nwnrs-util.workspace = true
 
 [lints]
 workspace = true

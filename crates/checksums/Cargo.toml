@@ -1,8 +1,9 @@
 [package]
-name = "nwn-checksums"
+name = "nwnrs-checksums"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
+license.workspace = true
 
 [dependencies]
 md5.workspace = true

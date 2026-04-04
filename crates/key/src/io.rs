@@ -1,23 +1,24 @@
-use crate::{
-    BifHandle, BifResolver, HEADER_SIZE, KeyBifEntry, KeyBifVersion, KeyEntry, KeyError, KeyResult,
-    KeyTable, LoadedBif, VariableResource, WriteBifResult,
+use std::{
+    fs::{self, File},
+    io::{self, BufWriter, Read, Seek, SeekFrom, Write},
+    path::Path,
+    sync::Mutex,
 };
-use nwn_checksums::{EMPTY_SECURE_HASH, SecureHash};
-use nwn_compressedbuf::Algorithm;
-use nwn_exo::{EXO_RES_FILE_COMPRESSED_BUF_MAGIC, ExoResFileCompressionType};
-use nwn_resman::shared_stream;
-use nwn_resref::{ResRef, new_res_ref};
-use nwn_restype::ResType;
-use std::fs::{self, File};
-use std::io::{self, BufWriter, Read, Seek, SeekFrom, Write};
-use std::path::Path;
-use std::sync::Mutex;
+
+use nwnrs_checksums::prelude::*;
+use nwnrs_compressedbuf::prelude::*;
+use nwnrs_exo::prelude::*;
+use nwnrs_resman::prelude::*;
+use nwnrs_resref::prelude::*;
+use nwnrs_restype::prelude::*;
 use tracing::{debug, instrument};
+
+use crate::prelude::*;
 
 /// Reads a KEY file from a reader and a caller-supplied BIF resolver.
 ///
-/// The resolver is stored for lazy BIF loading and is only invoked when a referenced resource
-/// is actually demanded.
+/// The resolver is stored for lazy BIF loading and is only invoked when a
+/// referenced resource is actually demanded.
 #[instrument(level = "debug", skip_all, err)]
 pub fn read_key_table<R>(
     reader: R,
@@ -30,7 +31,8 @@ where
     read_key_table_from_reader(reader, label.into(), resolver)
 }
 
-/// Opens a KEY file from disk and resolves BIF paths relative to the KEY directory.
+/// Opens a KEY file from disk and resolves BIF paths relative to the KEY
+/// directory.
 #[instrument(level = "debug", skip_all, err, fields(path = %path.as_ref().display()))]
 pub fn read_key_table_from_file(path: impl AsRef<Path>) -> KeyResult<KeyTable> {
     let path = path.as_ref();
@@ -117,12 +119,12 @@ where
     for (_, filename_offset, filename_size, _) in &file_table {
         reader.seek(SeekFrom::Start(io_start + u64::from(*filename_offset)))?;
         let filename = trim_trailing_nuls(&read_bytes(&mut reader, usize::from(*filename_size))?);
-        bifs.push(BifHandle {
-            filename: normalize_bif_filename(&filename),
+        bifs.push(crate::BifHandle {
+            filename:         normalize_bif_filename(&filename),
             expected_version: version,
-            expected_oid: oid.clone(),
-            resolver: resolver.clone(),
-            loaded: Mutex::new(None),
+            expected_oid:     oid.clone(),
+            resolver:         resolver.clone(),
+            loaded:           Mutex::new(None),
         });
     }
 
@@ -147,7 +149,13 @@ where
         };
 
         let rr = new_res_ref(res_ref_raw, ResType(res_type))?;
-        resref_id_lookup.insert(rr, KeyEntry { res_id, sha1 });
+        resref_id_lookup.insert(
+            rr,
+            crate::KeyEntry {
+                res_id,
+                sha1,
+            },
+        );
     }
 
     Ok(KeyTable {
@@ -162,11 +170,11 @@ where
 }
 
 pub(crate) fn read_bif(
-    stream: nwn_resman::SharedReadSeek,
+    stream: nwnrs_resman::SharedReadSeek,
     filename: &str,
     expected_version: KeyBifVersion,
     expected_oid: Option<&str>,
-) -> KeyResult<LoadedBif> {
+) -> KeyResult<crate::LoadedBif> {
     let mut reader = stream
         .lock()
         .map_err(|error| KeyError::msg(format!("bif stream lock poisoned: {error}")))?;
@@ -239,7 +247,7 @@ pub(crate) fn read_bif(
 
     drop(reader);
 
-    Ok(LoadedBif {
+    Ok(crate::LoadedBif {
         stream,
         file_type,
         file_version: version,
@@ -251,9 +259,9 @@ pub(crate) fn read_bif(
 #[allow(clippy::too_many_arguments)]
 /// Writes a KEY file together with its referenced BIF files.
 ///
-/// `bifs` controls both the emitted BIF set and their resource order. For each resource,
-/// `writer` must write the raw payload bytes and return the uncompressed size together with
-/// the payload SHA-1.
+/// `bifs` controls both the emitted BIF set and their resource order. For each
+/// resource, `writer` must write the raw payload bytes and return the
+/// uncompressed size together with the payload SHA-1.
 #[instrument(
     level = "debug",
     skip_all,
@@ -321,7 +329,7 @@ where
         write_u32(
             &mut file_table,
             to_u32_u64(
-                HEADER_SIZE
+                crate::HEADER_SIZE
                     + (u64::try_from(bifs.len())
                         .map_err(|_error| KeyError::msg("too many BIF entries"))?
                         * 12)
@@ -355,11 +363,14 @@ where
         &mut key_writer,
         to_u32_len(total_resref_count, "KEY resource count")?,
     )?;
-    write_u32(&mut key_writer, to_u32_u64(HEADER_SIZE, "KEY header size")?)?;
+    write_u32(
+        &mut key_writer,
+        to_u32_u64(crate::HEADER_SIZE, "KEY header size")?,
+    )?;
     write_u32(
         &mut key_writer,
         to_u32_u64(
-            HEADER_SIZE + file_table_size + filenames_size,
+            crate::HEADER_SIZE + file_table_size + filenames_size,
             "KEY resource table offset",
         )?,
     )?;
@@ -413,7 +424,7 @@ fn write_bif<F>(
     writer: &mut dyn WriteSeek,
     entries: &[ResRef],
     entry_writer: &mut F,
-) -> KeyResult<WriteBifResult>
+) -> KeyResult<crate::WriteBifResult>
 where
     F: FnMut(&ResRef, &mut dyn Write) -> KeyResult<(usize, SecureHash)>,
 {
@@ -454,7 +465,7 @@ where
             ExoResFileCompressionType::CompressedBuf => {
                 let mut buffer = Vec::new();
                 let (uncompressed_size, sha1) = entry_writer(resref, &mut buffer)?;
-                nwn_compressedbuf::compress_writer(
+                nwnrs_compressedbuf::compress_writer(
                     writer,
                     &buffer,
                     compalg,

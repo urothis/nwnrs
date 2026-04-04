@@ -1,14 +1,16 @@
+use std::{error::Error, fmt};
+
+use nwnrs_util::prelude::*;
+use serde::{Deserialize, Serialize};
+
 use crate::lookup_res_ext;
-use nwn_util::ExpectationError;
-use std::error::Error;
-use std::fmt;
 
 /// A numeric NWN resource type identifier.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct ResType(pub u16);
 
 /// Errors returned when registering a custom resource type.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RegisterResTypeError {
     /// The extension violated a registry invariant.
     Expectation(ExpectationError),

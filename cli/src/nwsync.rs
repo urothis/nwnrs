@@ -1,16 +1,15 @@
-use crate::args::NwsyncFetchCmd;
-use crate::args::NwsyncPrintCmd;
-use crate::args::NwsyncPruneCmd;
-use crate::args::NwsyncWriteCmd;
-use crate::util::write_stdout_line;
-use nwn_nwsync::prelude::*;
-use nwn_resman::prelude::*;
-use nwn_resnwsync::prelude::*;
-use nwn_resref::prelude::*;
-use std::fs;
-use std::path::Path;
-use std::path::PathBuf;
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
+
+use nwnrs::prelude::{resman::ResContainer, *};
 use tracing::{debug, info, instrument};
+
+use crate::{
+    args::{NwsyncFetchCmd, NwsyncPrintCmd, NwsyncPruneCmd, NwsyncWriteCmd},
+    util::write_stdout_line,
+};
 
 #[instrument(
     level = "info",
@@ -24,7 +23,7 @@ use tracing::{debug, info, instrument};
 pub(crate) fn run_nwsync_print(cmd: NwsyncPrintCmd) -> Result<(), String> {
     if cmd.input.is_dir() {
         info!("printing nwsync repository");
-        let nwsync = open_nwsync(&cmd.input).map_err(|error| {
+        let nwsync = resnwsync::open_nwsync(&cmd.input).map_err(|error| {
             format!(
                 "failed to open nwsync repo {}: {error}",
                 cmd.input.display()
@@ -33,17 +32,19 @@ pub(crate) fn run_nwsync_print(cmd: NwsyncPrintCmd) -> Result<(), String> {
 
         if let Some(manifest) = cmd.manifest {
             debug!("printing specific manifest");
-            let manifest_sha1: nwn_checksums::SecureHash = manifest
+            let manifest_sha1: checksums::SecureHash = manifest
                 .parse()
                 .map_err(|error| format!("invalid manifest sha1 {manifest}: {error}"))?;
-            let manifest = new_resnwsync_manifest(&nwsync, manifest_sha1).map_err(|error| {
-                format!(
-                    "failed to load manifest {} from {}: {}",
-                    manifest,
-                    cmd.input.display(),
-                    error
-                )
-            })?;
+            let manifest =
+                resnwsync::new_resnwsync_manifest(&nwsync, manifest_sha1).map_err(|error| {
+                    format!(
+                        "failed to load manifest {} from {}: {}",
+                        manifest,
+                        cmd.input.display(),
+                        error
+                    )
+                })?;
+
             let mut contents = manifest.contents();
             contents.sort();
             for rr in contents {
@@ -80,7 +81,7 @@ pub(crate) fn run_nwsync_print(cmd: NwsyncPrintCmd) -> Result<(), String> {
     }
 
     info!("printing standalone manifest");
-    let manifest = read_manifest_file(&cmd.input)
+    let manifest = nwsync::read_manifest_file(&cmd.input)
         .map_err(|error| format!("failed to read manifest {}: {error}", cmd.input.display()))?;
     for entry in manifest.entries() {
         write_stdout_line(&format!("{} {} {}", entry.sha1, entry.size, entry.resref))?;
@@ -120,14 +121,14 @@ pub(crate) fn run_nwsync_write(cmd: NwsyncWriteCmd) -> Result<(), String> {
     }
 
     // Create manifest
-    let mut manifest = Manifest::default();
+    let mut manifest = nwsync::Manifest::default();
     for (path, resref) in entries {
         debug!(path = %path.display(), resref = %resref, "processing file");
 
         let data = fs::read(&path)
             .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
 
-        let sha1 = nwn_checksums::secure_hash(&data);
+        let sha1 = checksums::secure_hash(&data);
         let size = u32::try_from(data.len()).map_err(|_error| {
             format!(
                 "file {} is too large ({} bytes > u32::MAX)",
@@ -136,7 +137,7 @@ pub(crate) fn run_nwsync_write(cmd: NwsyncWriteCmd) -> Result<(), String> {
             )
         })?;
 
-        manifest.add_entry(ManifestEntry::new(sha1, size, resref));
+        manifest.add_entry(nwsync::ManifestEntry::new(sha1, size, resref));
     }
 
     // Ensure output directory exists
@@ -154,7 +155,7 @@ pub(crate) fn run_nwsync_write(cmd: NwsyncWriteCmd) -> Result<(), String> {
     }
 
     // Write manifest
-    write_manifest_file(&cmd.output, &manifest)
+    nwsync::write_manifest_file(&cmd.output, &manifest)
         .map_err(|error| format!("failed to write manifest {}: {error}", cmd.output.display()))?;
 
     info!(
@@ -166,7 +167,7 @@ pub(crate) fn run_nwsync_write(cmd: NwsyncWriteCmd) -> Result<(), String> {
 
 fn collect_files_recursively(
     dir: &Path,
-    entries: &mut Vec<(PathBuf, ResRef)>,
+    entries: &mut Vec<(PathBuf, resref::ResRef)>,
 ) -> Result<(), String> {
     for entry in fs::read_dir(dir)
         .map_err(|error| format!("failed to read directory {}: {error}", dir.display()))?
@@ -186,7 +187,7 @@ fn collect_files_recursively(
         } else if path.is_file() {
             // Try to parse as resref
             if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
-                match new_resolved_res_ref_from_filename(filename) {
+                match resref::new_resolved_res_ref_from_filename(filename) {
                     Ok(resolved) => {
                         entries.push((path, resolved.base().clone()));
                     }
@@ -210,7 +211,7 @@ fn collect_files_recursively(
 pub(crate) fn run_nwsync_prune(cmd: NwsyncPruneCmd) -> Result<(), String> {
     info!("pruning nwsync repository");
 
-    let nwsync = open_nwsync(&cmd.repository).map_err(|error| {
+    let nwsync = resnwsync::open_nwsync(&cmd.repository).map_err(|error| {
         format!(
             "failed to open nwsync repo {}: {error}",
             cmd.repository.display()
@@ -230,7 +231,7 @@ pub(crate) fn run_nwsync_prune(cmd: NwsyncPruneCmd) -> Result<(), String> {
     // Collect all referenced SHA-1s
     let mut referenced_sha1s = std::collections::HashSet::new();
     for manifest_sha1 in &manifests {
-        let manifest = new_resnwsync_manifest(&nwsync, *manifest_sha1)
+        let manifest = resnwsync::new_resnwsync_manifest(&nwsync, *manifest_sha1)
             .map_err(|error| format!("failed to load manifest {}: {error}", manifest_sha1))?;
 
         for resref in manifest.contents() {
@@ -270,7 +271,7 @@ pub(crate) fn run_nwsync_prune(cmd: NwsyncPruneCmd) -> Result<(), String> {
     }
 
     // TODO: Implement actual removal from database
-    // This would require adding removal methods to nwn_resnwsync
+    // This would require adding removal methods to nwnrs_resnwsync
     // For now, just report what would be removed
     for sha1 in &unreferenced_sha1s {
         write_stdout_line(&format!("would remove: {sha1}"))?;

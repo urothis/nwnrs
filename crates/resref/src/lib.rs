@@ -1,9 +1,10 @@
 #![forbid(unsafe_code)]
 //! NWN resource-reference parsing and formatting.
 //!
-//! A resource reference combines a case-insensitive name with a numeric resource type. This
-//! crate validates those values, resolves known file extensions through [`nwn_restype`], and
-//! provides helpers for converting between `name.ext` filenames and typed resource references.
+//! A resource reference combines a case-insensitive name with a numeric
+//! resource type. This crate validates those values, resolves known file
+//! extensions through [`nwnrs_restype`], and provides helpers for converting
+//! between `name.ext` filenames and typed resource references.
 
 mod parse;
 mod types;

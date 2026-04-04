@@ -1,14 +1,16 @@
 [package]
-name = "nwn-wasm"
+name = "nwnrs-wasm"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
+license.workspace = true
 
 [lib]
 crate-type = ["cdylib"]
 
 [dependencies]
-nwn-prelude.workspace = true
+nwnrs.workspace = true
+serde-wasm-bindgen.workspace = true
 wasm-bindgen.workspace = true
 
 [lints]

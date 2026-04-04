@@ -1,6 +1,8 @@
-use crate::SizePrefix;
 use std::io::{self, Read, Write};
+
 use tracing::instrument;
+
+use crate::prelude::*;
 
 /// Reads a byte buffer prefixed by a little-endian length.
 #[instrument(

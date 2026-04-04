@@ -1,10 +1,14 @@
-use crate::{GameResult, normalize_relative_path, read_key_table, shared_stream};
-use nwn_key::BifResolver;
-use nwn_resman::ResMan;
-use std::fs::File;
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::{
+    fs::File,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
+
+use nwnrs_key::BifResolver;
+use nwnrs_resman::ResMan;
 use tracing::{info, instrument, warn};
+
+use crate::{GameResult, normalize_relative_path, read_key_table, shared_stream};
 
 #[instrument(
     level = "info",

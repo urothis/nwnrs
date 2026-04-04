@@ -1,14 +1,12 @@
-use nwn_compressedbuf::prelude::*;
-use nwn_erf::prelude::*;
-use nwn_exo::prelude::*;
-use nwn_game::prelude::*;
-use nwn_key::prelude::*;
-use nwn_resref::prelude::*;
-use std::ffi::OsStr;
-use std::fs::{self, File};
-use std::io::{self, Write};
-use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::{
+    ffi::OsStr,
+    fs::{self, File},
+    io::{self, Write},
+    path::{Path, PathBuf},
+    time::{SystemTime, UNIX_EPOCH},
+};
+
+use nwnrs::prelude::*;
 
 pub(crate) const RESOURCE_METADATA_FILENAME: &str = "resource.json";
 
@@ -24,7 +22,7 @@ pub(crate) enum Kind {
 
 pub(crate) struct DirEntryInfo {
     pub(crate) file_name: String,
-    pub(crate) path: PathBuf,
+    pub(crate) path:      PathBuf,
 }
 
 pub(crate) fn detect_kind(path: &Path) -> Option<Kind> {
@@ -42,7 +40,7 @@ pub(crate) fn detect_kind(path: &Path) -> Option<Kind> {
 }
 
 pub(crate) fn is_gff_extension(extension: &str) -> bool {
-    GFF_EXTENSIONS
+    game::GFF_EXTENSIONS
         .iter()
         .any(|candidate| candidate.eq_ignore_ascii_case(extension))
 }
@@ -55,35 +53,37 @@ pub(crate) fn unpacked_raw_target(destination: &Path, file_name: &str, extension
     }
 }
 
-pub(crate) fn parse_key_version(value: &str) -> Result<KeyBifVersion, String> {
+pub(crate) fn parse_key_version(value: &str) -> Result<key::KeyBifVersion, String> {
     match value.to_ascii_uppercase().as_str() {
-        "V1" => Ok(KeyBifVersion::V1),
-        "E1" => Ok(KeyBifVersion::E1),
+        "V1" => Ok(key::KeyBifVersion::V1),
+        "E1" => Ok(key::KeyBifVersion::E1),
         _ => Err(format!("unsupported key data version: {value}")),
     }
 }
 
-pub(crate) fn parse_erf_version(value: &str) -> Result<ErfVersion, String> {
+pub(crate) fn parse_erf_version(value: &str) -> Result<erf::ErfVersion, String> {
     match value.to_ascii_uppercase().as_str() {
-        "V1" => Ok(ErfVersion::V1),
-        "E1" => Ok(ErfVersion::E1),
+        "V1" => Ok(erf::ErfVersion::V1),
+        "E1" => Ok(erf::ErfVersion::E1),
         _ => Err(format!("unsupported erf data version: {value}")),
     }
 }
 
-pub(crate) fn parse_algorithm(value: &str) -> Result<Algorithm, String> {
+pub(crate) fn parse_algorithm(value: &str) -> Result<compressedbuf::Algorithm, String> {
     match value.to_ascii_lowercase().as_str() {
-        "none" => Ok(Algorithm::None),
-        "zlib" => Ok(Algorithm::Zlib),
-        "zstd" => Ok(Algorithm::Zstd),
+        "none" => Ok(compressedbuf::Algorithm::None),
+        "zlib" => Ok(compressedbuf::Algorithm::Zlib),
+        "zstd" => Ok(compressedbuf::Algorithm::Zstd),
         _ => Err(format!("unsupported compression algorithm: {value}")),
     }
 }
 
-pub(crate) fn exo_compression_from_algorithm(algorithm: Algorithm) -> ExoResFileCompressionType {
+pub(crate) fn exo_compression_from_algorithm(
+    algorithm: compressedbuf::Algorithm,
+) -> exo::ExoResFileCompressionType {
     match algorithm {
-        Algorithm::None => ExoResFileCompressionType::None,
-        _ => ExoResFileCompressionType::CompressedBuf,
+        compressedbuf::Algorithm::None => exo::ExoResFileCompressionType::None,
+        _ => exo::ExoResFileCompressionType::CompressedBuf,
     }
 }
 
@@ -178,18 +178,18 @@ pub(crate) fn entry_is_file(path: &Path, no_symlinks: bool) -> Result<bool, Stri
 pub(crate) fn collect_key_bif_entries(
     dir: &Path,
     no_symlinks: bool,
-) -> Result<Vec<ResRef>, String> {
+) -> Result<Vec<resref::ResRef>, String> {
     let mut entries = Vec::new();
     for entry in sorted_dir_entries(dir)? {
         if !entry_is_file(&entry.path, no_symlinks)? {
             continue;
         }
         let file_name = entry.path.file_name().and_then(OsStr::to_str).unwrap_or("");
-        let rr = new_resolved_res_ref_from_filename(file_name)
+        let rr = resref::new_resolved_res_ref_from_filename(file_name)
             .map_err(|error| format!("invalid source file {}: {error}", entry.path.display()))?;
         entries.push(rr.into());
     }
-    entries.sort_by(|lhs: &ResRef, rhs: &ResRef| {
+    entries.sort_by(|lhs: &resref::ResRef, rhs: &resref::ResRef| {
         lhs.resolve()
             .map(|resolved| resolved.to_file().to_ascii_uppercase())
             .cmp(
