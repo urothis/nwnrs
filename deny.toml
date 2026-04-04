@@ -58,6 +58,9 @@ unknown-git = "deny"
 # advisory database fetched from GitHub.
 db-urls = ["https://github.com/rustsec/advisory-db"]
 
+# Only warn about unmaintained crates if they are workspace members. 
+unmaintained = 'workspace' 
+
 # The lint level for security vulnerabilities
 version = 2
 
