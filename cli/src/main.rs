@@ -1,5 +1,5 @@
 #![forbid(unsafe_code)]
-#![doc = "Command-line entrypoint for the NWN utility suite."]
+//! Command-line entrypoint for the NWN utility suite.
 
 mod args;
 mod inspect;
