@@ -34,3 +34,14 @@ allow = [
 [sources]
 # Allow crates from crates.io
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+
+[advisories]
+# The path to the advisory database. If not set, uses the RustSec
+# advisory database fetched from GitHub.
+db-urls = ["https://github.com/rustsec/advisory-db"]
+
+# The lint level for security vulnerabilities
+version = 2
+
+# How to handle crates that have been yanked from crates.io
+yanked = "warn"
