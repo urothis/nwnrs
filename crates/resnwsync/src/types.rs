@@ -7,11 +7,11 @@ use std::{
 };
 
 use indexmap::IndexSet;
-use nwn_checksums::{ParseSecureHashError, SecureHash};
-use nwn_compressedbuf::CompressedBufError;
-use nwn_exo::ExoResFileCompressionType;
-use nwn_resman::{Res, ResContainer, ResManError, ResManResult, new_res_origin, shared_stream};
-use nwn_resref::ResRef;
+use nwnrs_checksums::{ParseSecureHashError, SecureHash};
+use nwnrs_compressedbuf::CompressedBufError;
+use nwnrs_exo::ExoResFileCompressionType;
+use nwnrs_resman::{Res, ResContainer, ResManError, ResManResult, new_res_origin, shared_stream};
+use nwnrs_resref::ResRef;
 use rusqlite::{Connection, OptionalExtension};
 
 /// The compressed-buffer magic used by NWSync shards.
@@ -27,7 +27,7 @@ pub enum ResNWSyncError {
     /// SHA-1 parsing failed.
     ParseSecureHash(ParseSecureHashError),
     /// Resource reference parsing failed.
-    ResRef(nwn_resref::ResRefError),
+    ResRef(nwnrs_resref::ResRefError),
     /// Resource manager setup failed.
     ResMan(ResManError),
     /// Compressed-buffer decoding failed.
@@ -76,8 +76,8 @@ impl From<ParseSecureHashError> for ResNWSyncError {
     }
 }
 
-impl From<nwn_resref::ResRefError> for ResNWSyncError {
-    fn from(value: nwn_resref::ResRefError) -> Self {
+impl From<nwnrs_resref::ResRefError> for ResNWSyncError {
+    fn from(value: nwnrs_resref::ResRefError) -> Self {
         Self::ResRef(value)
     }
 }
@@ -137,7 +137,7 @@ impl NWSync {
         let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
         let mut manifests = Vec::new();
         for row in rows {
-            manifests.push(nwn_checksums::parse_secure_hash(&row?)?);
+            manifests.push(nwnrs_checksums::parse_secure_hash(&row?)?);
         }
         Ok(manifests)
     }
@@ -169,7 +169,7 @@ impl NWSync {
                 .get(..4)
                 .is_some_and(|prefix| prefix == NWSYNC_COMPRESSED_BUF_MAGIC_STR.as_bytes())
         {
-            nwn_compressedbuf::decompress_bytes(&raw, crate::nwsync_compressed_buf_magic()?)
+            nwnrs_compressedbuf::decompress_bytes(&raw, crate::nwsync_compressed_buf_magic()?)
                 .map_err(Into::into)
         } else {
             Ok(raw)

@@ -1,5 +1,5 @@
 [package]
-name = "nwn-streamext"
+name = "nwnrs-streamext"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true

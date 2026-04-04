@@ -1,7 +1,7 @@
 use std::{fmt, io};
 
-use nwn_resman::{Res, ResContainer, ResManError, ResManResult};
-use nwn_resref::ResRef;
+use nwnrs_resman::{Res, ResContainer, ResManError, ResManResult};
+use nwnrs_resref::ResRef;
 
 /// Errors returned while building an in-memory resource container.
 #[derive(Debug)]

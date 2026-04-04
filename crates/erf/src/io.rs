@@ -6,19 +6,19 @@ use std::{
     time::SystemTime,
 };
 
-use nwn_checksums::{EMPTY_SECURE_HASH, SecureHash};
-use nwn_compressedbuf::{Algorithm, compress_writer as compress_buf_writer};
-use nwn_exo::{EXO_RES_FILE_COMPRESSED_BUF_MAGIC, ExoResFileCompressionType};
-use nwn_resman::{Res, SharedReadSeek, new_res_origin, shared_stream};
-use nwn_resref::{ResRef, new_res_ref};
-use nwn_util::{from_nwn_encoding, read_bytes_or_err, to_nwn_encoding};
+use nwnrs_checksums::{EMPTY_SECURE_HASH, SecureHash};
+use nwnrs_compressedbuf::{Algorithm, compress_writer as compress_buf_writer};
+use nwnrs_exo::{EXO_RES_FILE_COMPRESSED_BUF_MAGIC, ExoResFileCompressionType};
+use nwnrs_resman::{Res, SharedReadSeek, new_res_origin, shared_stream};
+use nwnrs_resref::{ResRef, new_res_ref};
+use nwnrs_util::{from_nwnrs_encoding, read_bytes_or_err, to_nwnrs_encoding};
 use tracing::{debug, instrument};
 
 use crate::{Erf, ErfError, ErfResMeta, ErfResult, ErfVersion, HEADER_SIZE, VALID_ERF_TYPES};
 
 /// Reads an ERF-family archive from a seekable reader.
 ///
-/// The returned [`Erf`] contains lazily readable [`nwn_resman::Res`] entries
+/// The returned [`Erf`] contains lazily readable [`nwnrs_resman::Res`] entries
 /// backed by the supplied stream.
 #[instrument(level = "debug", skip_all, err)]
 pub fn read_erf<R>(reader: R, filename: impl Into<String>) -> ErfResult<Erf>
@@ -81,7 +81,7 @@ pub fn read_erf_shared(stream: SharedReadSeek, filename: String) -> ErfResult<Er
         let id = read_i32(io.as_mut())?;
         let len = read_i32(io.as_mut())? as usize;
         let bytes = read_bytes_or_err(io.as_mut(), len)?;
-        loc_strings.insert(id, from_nwn_encoding(&bytes)?);
+        loc_strings.insert(id, from_nwnrs_encoding(&bytes)?);
     }
 
     let _is_known_erf_type = VALID_ERF_TYPES.contains(&file_type.as_str());
@@ -133,16 +133,19 @@ pub fn read_erf_shared(stream: SharedReadSeek, filename: String) -> ErfResult<Er
             EMPTY_SECURE_HASH
         };
 
-        let mut rr = match new_res_ref(res_ref_raw, nwn_restype::ResType(res_type)) {
+        let mut rr = match new_res_ref(res_ref_raw, nwnrs_restype::ResType(res_type)) {
             Ok(rr) => rr,
-            Err(_) => new_res_ref(format!("invalid_{index}"), nwn_restype::ResType(res_type))?,
+            Err(_) => new_res_ref(format!("invalid_{index}"), nwnrs_restype::ResType(res_type))?,
         };
 
         if let Some(existing) = entries.get(&rr) {
             if existing.io_offset() == meta.offset && existing.io_size() == meta.disk_size as i64 {
                 continue;
             }
-            rr = new_res_ref(format!("__erfdup__{index}"), nwn_restype::ResType(res_type))?;
+            rr = new_res_ref(
+                format!("__erfdup__{index}"),
+                nwnrs_restype::ResType(res_type),
+            )?;
         }
 
         let res = Res::new_with_stream(
@@ -287,7 +290,7 @@ where
     let mut encoded_loc_strings = Vec::with_capacity(loc_strings.len());
     let mut loc_string_size = 0_u64;
     for (id, text) in loc_strings {
-        let encoded = to_nwn_encoding(text)?;
+        let encoded = to_nwnrs_encoding(text)?;
         loc_string_size += 8 + u64::try_from(encoded.len())
             .map_err(|_error| ErfError::msg("localized string length exceeds 64-bit range"))?;
         encoded_loc_strings.push((*id, encoded));

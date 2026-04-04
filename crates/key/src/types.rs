@@ -5,11 +5,11 @@ use std::{
 };
 
 use indexmap::IndexMap;
-use nwn_checksums::SecureHash;
-use nwn_compressedbuf::CompressedBufError;
-use nwn_exo::ExoResFileCompressionType;
-use nwn_resman::{Res, ResContainer, ResManError, ResManResult, SharedReadSeek, new_res_origin};
-use nwn_resref::{ResRef, ResRefError};
+use nwnrs_checksums::SecureHash;
+use nwnrs_compressedbuf::CompressedBufError;
+use nwnrs_exo::ExoResFileCompressionType;
+use nwnrs_resman::{Res, ResContainer, ResManError, ResManResult, SharedReadSeek, new_res_origin};
+use nwnrs_resref::{ResRef, ResRefError};
 
 pub(crate) const HEADER_SIZE: u64 = 64;
 
@@ -176,8 +176,8 @@ pub(crate) struct KeyEntry {
 
 /// Decoded contents of a KEY file together with lazy BIF resolvers.
 ///
-/// The table implements [`nwn_resman::ResContainer`], so it can be placed
-/// directly inside a layered [`nwn_resman::ResMan`].
+/// The table implements [`nwnrs_resman::ResContainer`], so it can be placed
+/// directly inside a layered [`nwnrs_resman::ResMan`].
 pub struct KeyTable {
     pub(crate) version:          KeyBifVersion,
     pub(crate) label:            String,

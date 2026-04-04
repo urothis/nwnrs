@@ -1,7 +1,7 @@
 use std::{fmt, io};
 
-use nwn_resman::ResManError;
-use nwn_util::EncodingConversionError;
+use nwnrs_resman::ResManError;
+use nwnrs_util::EncodingConversionError;
 
 /// Canonical header string for `2DA V2.0` files.
 pub const TWO_DA_HEADER: &str = "2DA V2.0";

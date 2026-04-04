@@ -1,6 +1,8 @@
 use std::io::{self, Read, Seek, SeekFrom, Write};
 
-use nwn_util::{expect, from_nwn_encoding, read_bytes_or_err, read_str_or_err, to_nwn_encoding};
+use nwnrs_util::{
+    expect, from_nwnrs_encoding, read_bytes_or_err, read_str_or_err, to_nwnrs_encoding,
+};
 use tracing::{debug, instrument};
 
 use crate::{
@@ -421,7 +423,7 @@ fn parse_field<R: Read + Seek>(
             let size = read_i32(reader)?;
             let bytes = read_bytes_or_err(reader, to_usize(size, "CExoString length")?)?;
             let decoded =
-                from_nwn_encoding(&bytes).map_err(|error| GffError::msg(error.to_string()))?;
+                from_nwnrs_encoding(&bytes).map_err(|error| GffError::msg(error.to_string()))?;
             GffValue::CExoString(decoded)
         }
         GffFieldKind::ResRef => {
@@ -442,8 +444,8 @@ fn parse_field<R: Read + Seek>(
                 let language = read_i32(reader)?;
                 let size = read_i32(reader)?;
                 let bytes = read_bytes_or_err(reader, to_usize(size, "locstring entry length")?)?;
-                let decoded =
-                    from_nwn_encoding(&bytes).map_err(|error| GffError::msg(error.to_string()))?;
+                let decoded = from_nwnrs_encoding(&bytes)
+                    .map_err(|error| GffError::msg(error.to_string()))?;
                 entries.push((language, decoded));
             }
             let consumed = reader.stream_position()? - payload_start;
@@ -552,7 +554,7 @@ fn collect_struct(structure: &GffStruct, state: &mut WriteState) -> GffResult<i3
             GffValue::CExoString(value) => {
                 let offset = to_i32_len(state.field_data.len(), "GFF field data offset")?;
                 let encoded =
-                    to_nwn_encoding(value).map_err(|error| GffError::msg(error.to_string()))?;
+                    to_nwnrs_encoding(value).map_err(|error| GffError::msg(error.to_string()))?;
                 state.field_data.extend_from_slice(
                     &to_i32_len(encoded.len(), "CExoString length")?.to_le_bytes(),
                 );
@@ -573,8 +575,8 @@ fn collect_struct(structure: &GffStruct, state: &mut WriteState) -> GffResult<i3
                 let offset = to_i32_len(state.field_data.len(), "GFF field data offset")?;
                 let mut payload = Vec::new();
                 for (language, text) in &value.entries {
-                    let encoded =
-                        to_nwn_encoding(text).map_err(|error| GffError::msg(error.to_string()))?;
+                    let encoded = to_nwnrs_encoding(text)
+                        .map_err(|error| GffError::msg(error.to_string()))?;
                     payload.extend_from_slice(&language.to_le_bytes());
                     payload.extend_from_slice(
                         &to_i32_len(encoded.len(), "CExoLocString entry length")?.to_le_bytes(),

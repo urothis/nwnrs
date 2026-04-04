@@ -4,11 +4,11 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use nwn_checksums::prelude::*;
-use nwn_erf::prelude::*;
-use nwn_key::prelude::*;
-use nwn_resman::prelude::*;
-use nwn_resref::prelude::*;
+use nwnrs_checksums::prelude::*;
+use nwnrs_erf::prelude::*;
+use nwnrs_key::prelude::*;
+use nwnrs_resman::prelude::*;
+use nwnrs_resref::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::util::{
@@ -188,7 +188,7 @@ impl KeyPackMetadata {
 pub(crate) fn write_erf_pack_metadata(
     destination: &Path,
     input: &Path,
-    erf: &nwn_erf::Erf,
+    erf: &nwnrs_erf::Erf,
     force: bool,
 ) -> Result<(), String> {
     let metadata_path = destination.join(RESOURCE_METADATA_FILENAME);
@@ -223,7 +223,7 @@ pub(crate) fn write_erf_pack_metadata(
 pub(crate) fn write_key_pack_metadata(
     destination: &Path,
     key_path: &Path,
-    key: &nwn_key::KeyTable,
+    key: &nwnrs_key::KeyTable,
     force: bool,
 ) -> Result<(), String> {
     let metadata_path = destination.join(RESOURCE_METADATA_FILENAME);
@@ -504,7 +504,7 @@ fn is_pack_metadata_file(path: &Path) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use nwn_restype::ResType;
+    use nwnrs_restype::ResType;
 
     use super::*;
 
@@ -573,7 +573,7 @@ mod tests {
         let entries = parse_entry_order(vec!["alpha.uti".to_string()], Path::new("meta.json"))?;
         assert_eq!(
             entries,
-            vec![nwn_resref::new_res_ref("alpha", ResType(2025))?]
+            vec![nwnrs_resref::new_res_ref("alpha", ResType(2025))?]
         );
         Ok(())
     }

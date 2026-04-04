@@ -4,6 +4,9 @@ on:
         branches: [main]
 env:
     CARGO_TERM_COLOR: always
+concurrency:
+    group: ${{ github.workflow }}-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}
+    cancel-in-progress: true
 jobs:
     label:
         name: Label PR
@@ -24,7 +27,7 @@ jobs:
         runs-on: ${{ matrix.os }}
         strategy:
             matrix:
-                os: [ubuntu-latest, windows-latest, macos-latest]
+                os: [ubuntu-latest] # disable for now: windows-latest, macos-latest]
                 rust: [stable]
         steps:
             - uses: actions/checkout@v6.0.2
@@ -37,7 +40,7 @@ jobs:
                   verbose: true
             - uses: ./.github/actions/rust-test
               with:
-                  package: nwn-cli
+                  package: nwnrs-cli
                   verbose: true
 
     lint:

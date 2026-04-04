@@ -18,9 +18,9 @@ pub mod prelude {
     pub use crate::{
         EncodingConversionError, ExpectationError, NativeEncodingError, SwappableEndian,
         UnknownEncodingError, clear_native_encoding, detect_system_native_encoding, expect,
-        from_native_encoding, from_nwn_encoding, get_native_encoding, get_native_encoding_name,
-        get_nwn_encoding, get_nwn_encoding_name, map_with_index, read_bytes_or_err,
-        read_fixed_count_seq, read_str_or_err, set_native_encoding, set_nwn_encoding, swap_endian,
-        to_native_encoding, to_nwn_encoding,
+        from_native_encoding, from_nwnrs_encoding, get_native_encoding, get_native_encoding_name,
+        get_nwnrs_encoding, get_nwnrs_encoding_name, map_with_index, read_bytes_or_err,
+        read_fixed_count_seq, read_str_or_err, set_native_encoding, set_nwnrs_encoding,
+        swap_endian, to_native_encoding, to_nwnrs_encoding,
     };
 }

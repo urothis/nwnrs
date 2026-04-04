@@ -6,13 +6,13 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use nwn_checksums::prelude::*;
-use nwn_erf::prelude::*;
-use nwn_gff::prelude::*;
-use nwn_gffjson::prelude::*;
-use nwn_key::prelude::*;
-use nwn_resref::prelude::*;
-use nwn_twoda::prelude::*;
+use nwnrs_checksums::prelude::*;
+use nwnrs_erf::prelude::*;
+use nwnrs_gff::prelude::*;
+use nwnrs_gffjson::prelude::*;
+use nwnrs_key::prelude::*;
+use nwnrs_resref::prelude::*;
+use nwnrs_twoda::prelude::*;
 use tracing::{debug, info, instrument, warn};
 
 use crate::{

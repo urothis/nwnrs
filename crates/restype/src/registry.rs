@@ -1,6 +1,6 @@
 use std::{cell::RefCell, collections::HashMap};
 
-use nwn_util::expect;
+use nwnrs_util::expect;
 use tracing::instrument;
 
 use crate::{RegisterResTypeError, ResType};

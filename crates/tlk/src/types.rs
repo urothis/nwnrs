@@ -6,10 +6,10 @@ use std::{
     path::Path,
 };
 
-use nwn_core::{Gender, Language, StrRef};
-use nwn_lru::WeightedLru;
-use nwn_resman::{Res, ResManError, SharedReadSeek};
-use nwn_util::EncodingConversionError;
+use nwnrs_core::{Gender, Language, StrRef};
+use nwnrs_lru::WeightedLru;
+use nwnrs_resman::{Res, ResManError, SharedReadSeek};
+use nwnrs_util::EncodingConversionError;
 
 /// Size of the fixed TLK header in bytes.
 pub const HEADER_SIZE: u64 = 20;

@@ -3,7 +3,7 @@
 //!
 //! This crate opens the SQLite-backed NWSync repository layout, maps manifest
 //! hashes to shard payloads, and exposes individual manifests as
-//! [`nwn_resman::ResContainer`] values.
+//! [`nwnrs_resman::ResContainer`] values.
 //!
 //! Use [`open_nwsync`] to open a repository and [`new_resnwsync_manifest`] to
 //! materialize a specific manifest as a container.

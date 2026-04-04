@@ -1,7 +1,7 @@
 use std::{fmt, io};
 
-use nwn_core::{BAD_STRREF, StrRef};
-use nwn_util::ExpectationError;
+use nwnrs_core::{BAD_STRREF, StrRef};
+use nwnrs_util::ExpectationError;
 
 type GffByte = u8;
 type GffChar = i8;
@@ -344,7 +344,7 @@ impl From<ExpectationError> for GffError {
 pub type GffResult<T> = Result<T, GffError>;
 
 pub(crate) fn ensure_label(label: &str) -> GffResult<()> {
-    nwn_util::expect(
+    nwnrs_util::expect(
         label.len() <= 16,
         format!("invalid GFF label length for {:?}", label),
     )?;

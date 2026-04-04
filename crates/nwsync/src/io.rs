@@ -5,9 +5,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use nwn_checksums::SecureHash;
-use nwn_resref::{ResRef, new_res_ref};
-use nwn_restype::ResType;
+use nwnrs_checksums::SecureHash;
+use nwnrs_resref::{ResRef, new_res_ref};
+use nwnrs_restype::ResType;
 use tracing::{debug, instrument};
 
 use crate::{

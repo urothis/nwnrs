@@ -1,5 +1,5 @@
-use nwn_core::BAD_STRREF;
-use nwn_gff::{GffRoot, GffStruct, GffValue};
+use nwnrs_core::BAD_STRREF;
+use nwnrs_gff::{GffRoot, GffStruct, GffValue};
 use serde_json::{Map, Number, Value};
 use tracing::instrument;
 

@@ -5,10 +5,10 @@ use std::{
 };
 
 use indexmap::IndexSet;
-use nwn_checksums::parse_secure_hash;
-use nwn_compressedbuf::make_magic;
-use nwn_resref::new_res_ref;
-use nwn_restype::ResType;
+use nwnrs_checksums::parse_secure_hash;
+use nwnrs_compressedbuf::make_magic;
+use nwnrs_resref::new_res_ref;
+use nwnrs_restype::ResType;
 use rusqlite::{Connection, OptionalExtension, params};
 use tracing::{debug, instrument};
 

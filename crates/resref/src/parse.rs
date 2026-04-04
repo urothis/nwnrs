@@ -1,4 +1,4 @@
-use nwn_restype::ResType;
+use nwnrs_restype::ResType;
 use tracing::instrument;
 
 use crate::{RESREF_MAX_LENGTH, ResRef, ResRefError, ResolvedResRef};

@@ -3,8 +3,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use nwn_resman::{Res, ResContainer, ResManError, ResManResult};
-use nwn_resref::ResRef;
+use nwnrs_resman::{Res, ResContainer, ResManError, ResManResult};
+use nwnrs_resref::ResRef;
 
 /// Errors returned while reading a single-file resource container.
 #[derive(Debug)]
@@ -14,7 +14,7 @@ pub enum ResFileError {
     /// Resource manager setup failed.
     ResMan(ResManError),
     /// Resource reference parsing failed.
-    ResRef(nwn_resref::ResRefError),
+    ResRef(nwnrs_resref::ResRefError),
     /// The input path was invalid.
     Message(String),
 }
@@ -50,8 +50,8 @@ impl From<ResManError> for ResFileError {
     }
 }
 
-impl From<nwn_resref::ResRefError> for ResFileError {
-    fn from(value: nwn_resref::ResRefError) -> Self {
+impl From<nwnrs_resref::ResRefError> for ResFileError {
+    fn from(value: nwnrs_resref::ResRefError) -> Self {
         Self::ResRef(value)
     }
 }

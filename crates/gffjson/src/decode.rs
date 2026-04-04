@@ -1,9 +1,9 @@
-use nwn_core::BAD_STRREF;
-use nwn_gff::{
+use nwnrs_core::BAD_STRREF;
+use nwnrs_gff::{
     GffCExoLocString, GffRoot, GffStruct, GffValue, new_c_exo_loc_string, new_gff_root,
     new_gff_struct,
 };
-use nwn_util::expect;
+use nwnrs_util::expect;
 use serde_json::{Map, Value};
 use tracing::instrument;
 

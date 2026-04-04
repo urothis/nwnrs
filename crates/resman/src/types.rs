@@ -5,10 +5,10 @@ use std::{
     time::SystemTime,
 };
 
-use nwn_checksums::{EMPTY_SECURE_HASH, SecureHash, secure_hash};
-use nwn_compressedbuf::{CompressedBufError, decompress_bytes};
-use nwn_exo::{EXO_RES_FILE_COMPRESSED_BUF_MAGIC, ExoResFileCompressionType};
-use nwn_resref::ResRef;
+use nwnrs_checksums::{EMPTY_SECURE_HASH, SecureHash, secure_hash};
+use nwnrs_compressedbuf::{CompressedBufError, decompress_bytes};
+use nwnrs_exo::{EXO_RES_FILE_COMPRESSED_BUF_MAGIC, ExoResFileCompressionType};
+use nwnrs_resref::ResRef;
 use tracing::instrument;
 
 /// Maximum payload size that [`Res::read_all`] will retain in the per-resource

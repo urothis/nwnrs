@@ -5,13 +5,13 @@ use std::{
     path::Path,
 };
 
-use nwn_erf::prelude::*;
-use nwn_gff::prelude::*;
-use nwn_gffjson::prelude::*;
-use nwn_key::prelude::*;
-use nwn_resman::prelude::*;
-use nwn_resref::prelude::*;
-use nwn_twoda::prelude::*;
+use nwnrs_erf::prelude::*;
+use nwnrs_gff::prelude::*;
+use nwnrs_gffjson::prelude::*;
+use nwnrs_key::prelude::*;
+use nwnrs_resman::prelude::*;
+use nwnrs_resref::prelude::*;
+use nwnrs_twoda::prelude::*;
 use tracing::{debug, info, instrument, warn};
 
 use crate::{

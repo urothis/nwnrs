@@ -7,17 +7,17 @@ The command-line interface for inspecting, packing, unpacking, and managing NWN 
 Build or run the CLI from the workspace root:
 
 ```bash
-cargo run -p nwn-cli -- inspect path/to/module.mod
-cargo run -p nwn-cli -- unpack path/to/module.mod -d out/
-cargo run -p nwn-cli -- pack out/ rebuilt.mod
-cargo run -p nwn-cli -- nwsync print path/to/repository --manifest <sha1>
+cargo run -p nwnrs-cli -- inspect path/to/module.mod
+cargo run -p nwnrs-cli -- unpack path/to/module.mod -d out/
+cargo run -p nwnrs-cli -- pack out/ rebuilt.mod
+cargo run -p nwnrs-cli -- nwsync print path/to/repository --manifest <sha1>
 ```
 
 Useful patterns:
 
 - unpack a GFF-family resource to JSON, edit it, then pack it back
 - unpack a KEY/BIF set, preserve `resource.json`, and repack without losing archive ordering
-- open a game install with `nwn-game`, then query resources through `nwn-resman`
+- open a game install with `nwnrs-game`, then query resources through `nwnrs-resman`
 
 ## CLI Behavior and Supported Commands
 

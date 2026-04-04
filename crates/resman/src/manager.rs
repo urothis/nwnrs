@@ -1,7 +1,7 @@
 use std::{collections::HashSet, fmt, sync::Arc};
 
-use nwn_lru::WeightedLru;
-use nwn_resref::{ResRef, ResolvedResRef};
+use nwnrs_lru::WeightedLru;
+use nwnrs_resref::{ResRef, ResolvedResRef};
 use tracing::instrument;
 
 use crate::{Res, ResContainer, ResManError, ResManResult};

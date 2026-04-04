@@ -5,12 +5,12 @@ use std::{
     sync::Mutex,
 };
 
-use nwn_checksums::{EMPTY_SECURE_HASH, SecureHash};
-use nwn_compressedbuf::Algorithm;
-use nwn_exo::{EXO_RES_FILE_COMPRESSED_BUF_MAGIC, ExoResFileCompressionType};
-use nwn_resman::shared_stream;
-use nwn_resref::{ResRef, new_res_ref};
-use nwn_restype::ResType;
+use nwnrs_checksums::{EMPTY_SECURE_HASH, SecureHash};
+use nwnrs_compressedbuf::Algorithm;
+use nwnrs_exo::{EXO_RES_FILE_COMPRESSED_BUF_MAGIC, ExoResFileCompressionType};
+use nwnrs_resman::shared_stream;
+use nwnrs_resref::{ResRef, new_res_ref};
+use nwnrs_restype::ResType;
 use tracing::{debug, instrument};
 
 use crate::{
@@ -173,7 +173,7 @@ where
 }
 
 pub(crate) fn read_bif(
-    stream: nwn_resman::SharedReadSeek,
+    stream: nwnrs_resman::SharedReadSeek,
     filename: &str,
     expected_version: KeyBifVersion,
     expected_oid: Option<&str>,
@@ -465,7 +465,7 @@ where
             ExoResFileCompressionType::CompressedBuf => {
                 let mut buffer = Vec::new();
                 let (uncompressed_size, sha1) = entry_writer(resref, &mut buffer)?;
-                nwn_compressedbuf::compress_writer(
+                nwnrs_compressedbuf::compress_writer(
                     writer,
                     &buffer,
                     compalg,

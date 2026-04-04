@@ -1,5 +1,5 @@
 [package]
-name = "nwn-wasm"
+name = "nwnrs-wasm"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
@@ -8,7 +8,8 @@ publish.workspace = true
 crate-type = ["cdylib"]
 
 [dependencies]
-nwn-prelude.workspace = true
+nwnrs-prelude.workspace = true
+serde-wasm-bindgen.workspace = true
 wasm-bindgen.workspace = true
 
 [lints]

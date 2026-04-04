@@ -1,10 +1,10 @@
 use std::{collections::BTreeMap, fmt, io, time::SystemTime};
 
 use indexmap::IndexMap;
-use nwn_compressedbuf::CompressedBufError;
-use nwn_resman::{Res, ResContainer, ResManError, ResManResult};
-use nwn_resref::{ResRef, ResRefError};
-use nwn_util::{EncodingConversionError, ExpectationError};
+use nwnrs_compressedbuf::CompressedBufError;
+use nwnrs_resman::{Res, ResContainer, ResManError, ResManResult};
+use nwnrs_resref::{ResRef, ResRefError};
+use nwnrs_util::{EncodingConversionError, ExpectationError};
 
 pub(crate) const HEADER_SIZE: u64 = 160;
 pub(crate) const VALID_ERF_TYPES: [&str; 4] = ["NWM ", "MOD ", "ERF ", "HAK "];
@@ -104,7 +104,7 @@ pub enum ErfVersion {
 /// A decoded ERF-family archive.
 ///
 /// The entry map preserves archive order and the archive itself implements
-/// [`nwn_resman::ResContainer`] for use with [`nwn_resman::ResMan`].
+/// [`nwnrs_resman::ResContainer`] for use with [`nwnrs_resman::ResMan`].
 pub struct Erf {
     /// The archive modification time when known.
     pub mtime:              SystemTime,
@@ -179,5 +179,5 @@ pub(crate) struct ErfResMeta {
     pub offset:            u64,
     pub disk_size:         usize,
     pub uncompressed_size: usize,
-    pub compression:       nwn_exo::ExoResFileCompressionType,
+    pub compression:       nwnrs_exo::ExoResFileCompressionType,
 }

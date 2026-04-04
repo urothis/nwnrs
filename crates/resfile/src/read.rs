@@ -6,10 +6,10 @@ use std::{
     time::SystemTime,
 };
 
-use nwn_checksums::EMPTY_SECURE_HASH;
-use nwn_exo::ExoResFileCompressionType;
-use nwn_resman::{Res, new_res_origin};
-use nwn_resref::{ResRef, ResolvedResRef};
+use nwnrs_checksums::EMPTY_SECURE_HASH;
+use nwnrs_exo::ExoResFileCompressionType;
+use nwnrs_resman::{Res, new_res_origin};
+use nwnrs_resref::{ResRef, ResolvedResRef};
 use tracing::{debug, instrument};
 
 use crate::{ResFile, ResFileError, ResFileResult};
@@ -44,7 +44,7 @@ pub fn read_resfile_as(path: impl AsRef<Path>, resref: ResRef) -> ResFileResult<
     let path_for_io = path.to_path_buf();
     let origin_label = label.clone();
     let spawner = Arc::new(
-        move || -> io::Result<Box<dyn nwn_resman::ReadSeek + Send>> {
+        move || -> io::Result<Box<dyn nwnrs_resman::ReadSeek + Send>> {
             Ok(Box::new(File::open(&path_for_io)?))
         },
     );
