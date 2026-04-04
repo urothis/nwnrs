@@ -41,7 +41,7 @@ argh = "0.1.19"
 codepage = "0.1.2"
 encoding_rs = "0.8.35"
 flate2 = "1.1.9"
-indexmap = "2.12.1"
+indexmap = "2.13.1"
 md5 = "0.8.0"
 reqwest = { version = "0.13.2", default-features = false, features = [
     "json",
@@ -50,10 +50,10 @@ reqwest = { version = "0.13.2", default-features = false, features = [
 rusqlite = { version = "0.39.0", features = ["bundled"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = { version = "1.0.149", features = ["preserve_order"] }
-serde-wasm-bindgen = "0.6"
+serde-wasm-bindgen = "0.6.5"
 sha1 = "0.11.0"
-tracing = "0.1.41"
-tracing-subscriber = { version = "0.3.20", features = ["env-filter", "fmt"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt"] }
 wasm-bindgen = "0.2.117"
 zstd = "0.13.3"
 
