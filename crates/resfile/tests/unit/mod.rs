@@ -1,10 +1,10 @@
-use super::*;
+use std::{env, fs, time::SystemTime};
+
 use nwn_resman::ResContainer;
 use nwn_resref::new_res_ref;
 use nwn_restype::ResType;
-use std::env;
-use std::fs;
-use std::time::SystemTime;
+
+use super::*;
 
 #[test]
 fn supports_explicit_resref_override() -> Result<(), Box<dyn std::error::Error>> {

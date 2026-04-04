@@ -1,14 +1,18 @@
-use crate::{ResFile, ResFileError, ResFileResult};
+use std::{
+    fs::{self, File},
+    io,
+    path::Path,
+    sync::Arc,
+    time::SystemTime,
+};
+
 use nwn_checksums::EMPTY_SECURE_HASH;
 use nwn_exo::ExoResFileCompressionType;
 use nwn_resman::{Res, new_res_origin};
 use nwn_resref::{ResRef, ResolvedResRef};
-use std::fs::{self, File};
-use std::io;
-use std::path::Path;
-use std::sync::Arc;
-use std::time::SystemTime;
 use tracing::{debug, instrument};
+
+use crate::{ResFile, ResFileError, ResFileResult};
 
 /// Reads a resource file using its filename-derived resource reference.
 #[instrument(level = "debug", skip_all, err, fields(path = %path.as_ref().display()))]
@@ -46,7 +50,7 @@ pub fn read_resfile_as(path: impl AsRef<Path>, resref: ResRef) -> ResFileResult<
     );
 
     let result = ResFile {
-        path: path.to_path_buf(),
+        path:  path.to_path_buf(),
         label: label.clone(),
         entry: Res::new_with_spawner(
             new_res_origin(format!("ResFile:{label}"), origin_label),

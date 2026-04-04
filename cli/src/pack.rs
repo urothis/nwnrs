@@ -1,14 +1,11 @@
-use crate::args::{KeyPackCmd, PackCmd};
-use crate::metadata::{
-    ErfPackMetadata, copy_original_key_set, read_erf_pack_metadata, read_key_pack_metadata,
-    should_copy_original_erf, should_copy_original_key,
+use std::{
+    collections::HashSet,
+    ffi::OsStr,
+    fs::{self, File},
+    io::{self, BufReader, Cursor},
+    path::{Path, PathBuf},
 };
-use crate::util::{
-    Kind, RESOURCE_METADATA_FILENAME, collect_key_bif_entries, current_build_date, detect_kind,
-    ensure_output_file_ready, ensure_target_dir_ready, entry_is_dir, entry_is_file,
-    exo_compression_from_algorithm, infer_erf_type, is_gff_extension, parse_algorithm,
-    parse_erf_version, parse_key_version, should_skip_top_level_dir, sorted_dir_entries,
-};
+
 use nwn_checksums::prelude::*;
 use nwn_erf::prelude::*;
 use nwn_gff::prelude::*;
@@ -16,12 +13,21 @@ use nwn_gffjson::prelude::*;
 use nwn_key::prelude::*;
 use nwn_resref::prelude::*;
 use nwn_twoda::prelude::*;
-use std::collections::HashSet;
-use std::ffi::OsStr;
-use std::fs::{self, File};
-use std::io::{self, BufReader, Cursor};
-use std::path::{Path, PathBuf};
 use tracing::{debug, info, instrument, warn};
+
+use crate::{
+    args::{KeyPackCmd, PackCmd},
+    metadata::{
+        ErfPackMetadata, copy_original_key_set, read_erf_pack_metadata, read_key_pack_metadata,
+        should_copy_original_erf, should_copy_original_key,
+    },
+    util::{
+        Kind, RESOURCE_METADATA_FILENAME, collect_key_bif_entries, current_build_date, detect_kind,
+        ensure_output_file_ready, ensure_target_dir_ready, entry_is_dir, entry_is_file,
+        exo_compression_from_algorithm, infer_erf_type, is_gff_extension, parse_algorithm,
+        parse_erf_version, parse_key_version, should_skip_top_level_dir, sorted_dir_entries,
+    },
+};
 
 #[instrument(
     level = "info",
@@ -352,7 +358,7 @@ pub(crate) enum PackSourceKind {
 
 #[derive(Clone)]
 pub(crate) struct PackSourceEntry {
-    pub(crate) rr: ResRef,
+    pub(crate) rr:     ResRef,
     pub(crate) source: PackSourceKind,
 }
 
@@ -487,7 +493,7 @@ fn pack_source_for_file(path: &Path) -> Result<PackSourceEntry, String> {
             ));
         }
         return Ok(PackSourceEntry {
-            rr: resolved.into(),
+            rr:     resolved.into(),
             source: PackSourceKind::GffJson(path.to_path_buf()),
         });
     }
@@ -495,7 +501,7 @@ fn pack_source_for_file(path: &Path) -> Result<PackSourceEntry, String> {
     let resolved = new_resolved_res_ref_from_filename(file_name)
         .map_err(|error| format!("{} is not a valid resref source: {error}", path.display()))?;
     Ok(PackSourceEntry {
-        rr: resolved.into(),
+        rr:     resolved.into(),
         source: PackSourceKind::File(path.to_path_buf()),
     })
 }

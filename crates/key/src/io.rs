@@ -1,23 +1,27 @@
-use crate::{
-    BifHandle, BifResolver, HEADER_SIZE, KeyBifEntry, KeyBifVersion, KeyEntry, KeyError, KeyResult,
-    KeyTable, LoadedBif, VariableResource, WriteBifResult,
+use std::{
+    fs::{self, File},
+    io::{self, BufWriter, Read, Seek, SeekFrom, Write},
+    path::Path,
+    sync::Mutex,
 };
+
 use nwn_checksums::{EMPTY_SECURE_HASH, SecureHash};
 use nwn_compressedbuf::Algorithm;
 use nwn_exo::{EXO_RES_FILE_COMPRESSED_BUF_MAGIC, ExoResFileCompressionType};
 use nwn_resman::shared_stream;
 use nwn_resref::{ResRef, new_res_ref};
 use nwn_restype::ResType;
-use std::fs::{self, File};
-use std::io::{self, BufWriter, Read, Seek, SeekFrom, Write};
-use std::path::Path;
-use std::sync::Mutex;
 use tracing::{debug, instrument};
+
+use crate::{
+    BifHandle, BifResolver, HEADER_SIZE, KeyBifEntry, KeyBifVersion, KeyEntry, KeyError, KeyResult,
+    KeyTable, LoadedBif, VariableResource, WriteBifResult,
+};
 
 /// Reads a KEY file from a reader and a caller-supplied BIF resolver.
 ///
-/// The resolver is stored for lazy BIF loading and is only invoked when a referenced resource
-/// is actually demanded.
+/// The resolver is stored for lazy BIF loading and is only invoked when a
+/// referenced resource is actually demanded.
 #[instrument(level = "debug", skip_all, err)]
 pub fn read_key_table<R>(
     reader: R,
@@ -30,7 +34,8 @@ where
     read_key_table_from_reader(reader, label.into(), resolver)
 }
 
-/// Opens a KEY file from disk and resolves BIF paths relative to the KEY directory.
+/// Opens a KEY file from disk and resolves BIF paths relative to the KEY
+/// directory.
 #[instrument(level = "debug", skip_all, err, fields(path = %path.as_ref().display()))]
 pub fn read_key_table_from_file(path: impl AsRef<Path>) -> KeyResult<KeyTable> {
     let path = path.as_ref();
@@ -118,11 +123,11 @@ where
         reader.seek(SeekFrom::Start(io_start + u64::from(*filename_offset)))?;
         let filename = trim_trailing_nuls(&read_bytes(&mut reader, usize::from(*filename_size))?);
         bifs.push(BifHandle {
-            filename: normalize_bif_filename(&filename),
+            filename:         normalize_bif_filename(&filename),
             expected_version: version,
-            expected_oid: oid.clone(),
-            resolver: resolver.clone(),
-            loaded: Mutex::new(None),
+            expected_oid:     oid.clone(),
+            resolver:         resolver.clone(),
+            loaded:           Mutex::new(None),
         });
     }
 
@@ -147,7 +152,13 @@ where
         };
 
         let rr = new_res_ref(res_ref_raw, ResType(res_type))?;
-        resref_id_lookup.insert(rr, KeyEntry { res_id, sha1 });
+        resref_id_lookup.insert(
+            rr,
+            KeyEntry {
+                res_id,
+                sha1,
+            },
+        );
     }
 
     Ok(KeyTable {
@@ -251,9 +262,9 @@ pub(crate) fn read_bif(
 #[allow(clippy::too_many_arguments)]
 /// Writes a KEY file together with its referenced BIF files.
 ///
-/// `bifs` controls both the emitted BIF set and their resource order. For each resource,
-/// `writer` must write the raw payload bytes and return the uncompressed size together with
-/// the payload SHA-1.
+/// `bifs` controls both the emitted BIF set and their resource order. For each
+/// resource, `writer` must write the raw payload bytes and return the
+/// uncompressed size together with the payload SHA-1.
 #[instrument(
     level = "debug",
     skip_all,

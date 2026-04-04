@@ -1,8 +1,9 @@
-use crate::{EncodingConversionError, NativeEncodingError, UnknownEncodingError};
+use std::{cell::Cell, env};
+
 use encoding_rs::{Encoding, WINDOWS_1252};
-use std::cell::Cell;
-use std::env;
 use tracing::instrument;
+
+use crate::{EncodingConversionError, NativeEncodingError, UnknownEncodingError};
 
 thread_local! {
     static NWN_ENCODING: Cell<&'static Encoding> = Cell::new(WINDOWS_1252);

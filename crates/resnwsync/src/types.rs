@@ -1,3 +1,11 @@
+use std::{
+    collections::HashMap,
+    fmt,
+    io::{self, Cursor},
+    path::{Path, PathBuf},
+    time::SystemTime,
+};
+
 use indexmap::IndexSet;
 use nwn_checksums::{ParseSecureHashError, SecureHash};
 use nwn_compressedbuf::CompressedBufError;
@@ -5,11 +13,6 @@ use nwn_exo::ExoResFileCompressionType;
 use nwn_resman::{Res, ResContainer, ResManError, ResManResult, new_res_origin, shared_stream};
 use nwn_resref::ResRef;
 use rusqlite::{Connection, OptionalExtension};
-use std::collections::HashMap;
-use std::fmt;
-use std::io::{self, Cursor};
-use std::path::{Path, PathBuf};
-use std::time::SystemTime;
 
 /// The compressed-buffer magic used by NWSync shards.
 pub const NWSYNC_COMPRESSED_BUF_MAGIC_STR: &str = "NSYC";
@@ -102,7 +105,7 @@ pub type ResRefSha1 = SecureHash;
 
 #[derive(Debug, Clone)]
 pub(crate) struct NWSyncShard {
-    pub(crate) id: ShardId,
+    pub(crate) id:   ShardId,
     pub(crate) path: PathBuf,
 }
 
@@ -115,10 +118,10 @@ impl fmt::Display for NWSyncShard {
 /// An opened NWSync repository.
 #[derive(Debug, Clone)]
 pub struct NWSync {
-    pub(crate) root: PathBuf,
+    pub(crate) root:      PathBuf,
     pub(crate) meta_path: PathBuf,
-    pub(crate) shards: HashMap<ShardId, NWSyncShard>,
-    pub(crate) shardmap: HashMap<ResRefSha1, ShardId>,
+    pub(crate) shards:    HashMap<ShardId, NWSyncShard>,
+    pub(crate) shardmap:  HashMap<ResRefSha1, ShardId>,
 }
 
 impl NWSync {
@@ -144,7 +147,8 @@ impl NWSync {
         self.shardmap.keys().copied().collect()
     }
 
-    /// Reads a resource payload by hash, decompressing `NSYC` buffers when needed.
+    /// Reads a resource payload by hash, decompressing `NSYC` buffers when
+    /// needed.
     pub fn read_resref_data(&self, sha1: ResRefSha1) -> ResNWSyncResult<Vec<u8>> {
         let Some(shard_id) = self.shardmap.get(&sha1).copied() else {
             return Err(ResNWSyncError::msg(format!("not found: {sha1}")));
@@ -188,11 +192,11 @@ impl NWSync {
 /// A single NWSync manifest exposed as a resource container.
 #[derive(Debug, Clone)]
 pub struct ResNWSyncManifest {
-    pub(crate) nwsync: NWSync,
+    pub(crate) nwsync:        NWSync,
     pub(crate) manifest_sha1: ManifestSha1,
-    pub(crate) mtime: SystemTime,
-    pub(crate) contents: IndexSet<ResRef>,
-    pub(crate) sha1map: HashMap<ResRef, ResRefSha1>,
+    pub(crate) mtime:         SystemTime,
+    pub(crate) contents:      IndexSet<ResRef>,
+    pub(crate) sha1map:       HashMap<ResRef, ResRefSha1>,
 }
 
 impl ResNWSyncManifest {

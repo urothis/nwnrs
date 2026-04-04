@@ -1,14 +1,18 @@
-use crate::{
-    HASH_TREE_DEPTH, MAGIC, Manifest, ManifestEntry, ManifestError, ManifestResult, VERSION,
+use std::{
+    collections::HashMap,
+    fs::File,
+    io::{self, BufReader, BufWriter, Read, Write},
+    path::{Path, PathBuf},
 };
+
 use nwn_checksums::SecureHash;
 use nwn_resref::{ResRef, new_res_ref};
 use nwn_restype::ResType;
-use std::collections::HashMap;
-use std::fs::File;
-use std::io::{self, BufReader, BufWriter, Read, Write};
-use std::path::{Path, PathBuf};
 use tracing::{debug, instrument};
+
+use crate::{
+    HASH_TREE_DEPTH, MAGIC, Manifest, ManifestEntry, ManifestError, ManifestResult, VERSION,
+};
 
 /// Returns the on-disk payload path for a hashed manifest entry.
 #[instrument(

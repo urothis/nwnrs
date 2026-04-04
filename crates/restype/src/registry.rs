@@ -1,12 +1,13 @@
-use crate::{RegisterResTypeError, ResType};
+use std::{cell::RefCell, collections::HashMap};
+
 use nwn_util::expect;
-use std::cell::RefCell;
-use std::collections::HashMap;
 use tracing::instrument;
+
+use crate::{RegisterResTypeError, ResType};
 
 #[derive(Debug, Clone)]
 struct Registry {
-    types: HashMap<ResType, String>,
+    types:   HashMap<ResType, String>,
     reverse: HashMap<String, ResType>,
 }
 
@@ -159,7 +160,8 @@ pub fn lookup_res_ext(res_type: ResType) -> Option<String> {
     REGISTRY.with(|registry| registry.borrow().types.get(&res_type).cloned())
 }
 
-/// Returns the registered resource type for `extension`, panicking if it is unknown.
+/// Returns the registered resource type for `extension`, panicking if it is
+/// unknown.
 #[instrument(level = "debug", skip_all, fields(extension = %extension))]
 pub fn get_res_type(extension: &str) -> ResType {
     match lookup_res_type(extension) {
@@ -185,7 +187,7 @@ pub fn reset_registry_for_tests() {
 
 fn make_registry() -> Registry {
     let mut registry = Registry {
-        types: HashMap::new(),
+        types:   HashMap::new(),
         reverse: HashMap::new(),
     };
 

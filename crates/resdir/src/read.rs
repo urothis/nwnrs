@@ -1,15 +1,19 @@
-use crate::{ResDir, ResDirError, ResDirResult};
+use std::{
+    fs::{self, File},
+    io,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::SystemTime,
+};
+
 use indexmap::IndexMap;
 use nwn_checksums::EMPTY_SECURE_HASH;
 use nwn_exo::ExoResFileCompressionType;
 use nwn_resman::{Res, new_res_origin};
 use nwn_resref::{ResRef, ResolvedResRef};
-use std::fs::{self, File};
-use std::io;
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::time::SystemTime;
 use tracing::{debug, instrument};
+
+use crate::{ResDir, ResDirError, ResDirResult};
 
 /// Reads a directory tree as a flat resource container.
 #[instrument(level = "debug", skip_all, err, fields(path = %path.as_ref().display()))]

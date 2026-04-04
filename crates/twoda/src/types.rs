@@ -1,7 +1,7 @@
+use std::{fmt, io};
+
 use nwn_resman::ResManError;
 use nwn_util::EncodingConversionError;
-use std::fmt;
-use std::io;
 
 /// Canonical header string for `2DA V2.0` files.
 pub const TWO_DA_HEADER: &str = "2DA V2.0";
@@ -83,10 +83,10 @@ impl TwoDa {
     /// Creates an empty table.
     pub fn new() -> Self {
         Self {
-            default_value: None,
-            headers: Vec::new(),
+            default_value:      None,
+            headers:            Vec::new(),
             headers_for_lookup: Vec::new(),
-            rows: Vec::new(),
+            rows:               Vec::new(),
         }
     }
 
@@ -107,7 +107,8 @@ impl TwoDa {
         }
     }
 
-    /// Returns the cell at `row` and `column`, falling back to the table default.
+    /// Returns the cell at `row` and `column`, falling back to the table
+    /// default.
     pub fn cell(&self, row: usize, column: &str) -> Cell {
         let mut result = self.default_value.clone();
         if let Some(row_data) = self.rows.get(row)
@@ -123,7 +124,8 @@ impl TwoDa {
         result
     }
 
-    /// Returns the cell at `row` and `column`, substituting `default` when it is missing.
+    /// Returns the cell at `row` and `column`, substituting `default` when it
+    /// is missing.
     pub fn cell_or(&self, row: usize, column: &str, default: &str) -> String {
         self.cell(row, column)
             .unwrap_or_else(|| default.to_string())

@@ -1,8 +1,9 @@
 #![forbid(unsafe_code)]
 //! Reader and writer for soundset (`SSF`) files.
 //!
-//! SSF files are small, fixed-layout tables that map soundset slots to resource references and
-//! dialog string references. This crate keeps the representation deliberately simple.
+//! SSF files are small, fixed-layout tables that map soundset slots to resource
+//! references and dialog string references. This crate keeps the representation
+//! deliberately simple.
 mod io;
 mod types;
 

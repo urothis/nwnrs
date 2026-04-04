@@ -1,11 +1,10 @@
-use crate::args::{KeyUnpackCmd, UnpackCmd};
-use crate::metadata::write_erf_pack_metadata;
-use crate::metadata::write_key_pack_metadata;
-use crate::metadata::write_resource_metadata;
-use crate::util::{
-    Kind, detect_kind, ensure_output_file_ready, ensure_target_dir_ready, is_gff_extension,
-    unpacked_raw_target, write_lines,
+use std::{
+    ffi::OsStr,
+    fs::{self, File},
+    io::{BufReader, Cursor},
+    path::Path,
 };
+
 use nwn_erf::prelude::*;
 use nwn_gff::prelude::*;
 use nwn_gffjson::prelude::*;
@@ -13,11 +12,16 @@ use nwn_key::prelude::*;
 use nwn_resman::prelude::*;
 use nwn_resref::prelude::*;
 use nwn_twoda::prelude::*;
-use std::ffi::OsStr;
-use std::fs::{self, File};
-use std::io::{BufReader, Cursor};
-use std::path::Path;
 use tracing::{debug, info, instrument, warn};
+
+use crate::{
+    args::{KeyUnpackCmd, UnpackCmd},
+    metadata::{write_erf_pack_metadata, write_key_pack_metadata, write_resource_metadata},
+    util::{
+        Kind, detect_kind, ensure_output_file_ready, ensure_target_dir_ready, is_gff_extension,
+        unpacked_raw_target, write_lines,
+    },
+};
 
 #[instrument(
     level = "info",
@@ -42,8 +46,8 @@ pub(crate) fn run_unpack(cmd: UnpackCmd) -> Result<(), String> {
     match detect_kind(&cmd.input) {
         Some(Kind::Erf) => unpack_erf_to_dir(&cmd.input, &cmd.directory, cmd.force),
         Some(Kind::Key) => run_key_unpack(KeyUnpackCmd {
-            force: cmd.force,
-            key: cmd.input,
+            force:       cmd.force,
+            key:         cmd.input,
             destination: cmd.directory,
         }),
         Some(Kind::Gff) => unpack_gff_to_json(&cmd.input, &cmd.directory, cmd.force),

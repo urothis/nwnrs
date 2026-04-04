@@ -1,7 +1,8 @@
-use crate::lookup_res_ext;
+use std::{error::Error, fmt};
+
 use nwn_util::ExpectationError;
-use std::error::Error;
-use std::fmt;
+
+use crate::lookup_res_ext;
 
 /// A numeric NWN resource type identifier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]

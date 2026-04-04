@@ -1,12 +1,12 @@
-use crate::{ResMemFile, ResMemFileResult};
+use std::{io::Cursor, sync::Arc, time::SystemTime};
+
 use nwn_checksums::EMPTY_SECURE_HASH;
 use nwn_exo::ExoResFileCompressionType;
 use nwn_resman::{Res, new_res_origin, shared_stream};
 use nwn_resref::ResRef;
-use std::io::Cursor;
-use std::sync::Arc;
-use std::time::SystemTime;
 use tracing::{debug, instrument};
+
+use crate::{ResMemFile, ResMemFileResult};
 
 /// Wraps owned bytes as a one-entry in-memory resource container.
 #[instrument(level = "debug", skip_all, err)]

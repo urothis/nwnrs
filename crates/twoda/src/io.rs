@@ -1,11 +1,13 @@
+use std::io::{Read, Write};
+
+use nwn_resman::Res;
+use nwn_util::{from_nwn_encoding, to_nwn_encoding};
+use tracing::{debug, instrument};
+
 use crate::{
     CELL_PADDING, CELL_PADDING_MINI, Cell, MAX_COLUMNS, TWO_DA_HEADER, TwoDa, TwoDaError,
     TwoDaResult,
 };
-use nwn_resman::Res;
-use nwn_util::{from_nwn_encoding, to_nwn_encoding};
-use std::io::{Read, Write};
-use tracing::{debug, instrument};
 
 /// Reads a `2DA V2.0` table from text.
 #[instrument(level = "debug", skip_all, err)]
@@ -79,7 +81,8 @@ pub fn read_twoda<R: Read>(mut reader: R) -> TwoDaResult<TwoDa> {
 
 /// Writes a `2DA V2.0` table to text.
 ///
-/// When `minify` is `true`, column padding is reduced to the minimum required whitespace.
+/// When `minify` is `true`, column padding is reduced to the minimum required
+/// whitespace.
 #[instrument(
     level = "debug",
     skip_all,
