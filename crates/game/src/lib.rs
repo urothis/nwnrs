@@ -9,9 +9,7 @@
 //! The primary entry points are [`find_nwnrs_root`], [`find_user_root`], and
 //! [`new_default_resman`].
 
-use nwnrs_erf::read_erf_from_file;
 use nwnrs_key::read_key_table;
-use nwnrs_resdir::read_resdir;
 use nwnrs_resman::shared_stream;
 
 mod builder;
