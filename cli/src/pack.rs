@@ -119,7 +119,7 @@ fn run_pack_erf(cmd: PackCmd) -> Result<(), String> {
         .unwrap_or(infer_erf_type(
             cmd.output.as_path(),
             cmd.erf_type.as_deref(),
-        )?);
+        ));
     let sources = collect_generic_pack_sources(&cmd.input, true, 1, cmd.recurse, cmd.no_symlinks)?;
     let sources = apply_erf_entry_order(metadata.as_ref(), sources);
 
