@@ -64,14 +64,18 @@ pub(crate) fn run_nwsync_print(cmd: NwsyncPrintCmd) -> Result<(), String> {
                 error
             )
         })?;
-        manifests.sort_by_key(|sha1| sha1.to_string());
+        // clippy prefers the implicit method reference form over |sha1| sha1.to_string();
+        // ToString::to_string receives each manifest sha1 as its implicit `self` argument
+        manifests.sort_by_key(std::string::ToString::to_string);
         write_stdout_line(&format!("root {}", nwsync.root().display()))?;
         write_stdout_line(&format!("manifests {}", manifests.len()))?;
         for sha1 in manifests {
             write_stdout_line(&format!("manifest {sha1}"))?;
         }
         let mut resrefs = nwsync.get_all_resrefs();
-        resrefs.sort_by_key(|sha1| sha1.to_string());
+        // clippy prefers the implicit method reference form over |sha1| sha1.to_string();
+        // ToString::to_string receives each resref sha1 as its implicit `self` argument
+        resrefs.sort_by_key(std::string::ToString::to_string);
         write_stdout_line(&format!("resrefs {}", resrefs.len()))?;
         return Ok(());
     }
@@ -232,7 +236,8 @@ pub(crate) fn run_nwsync_prune(cmd: NwsyncPruneCmd) -> Result<(), String> {
     let mut referenced_sha1s = std::collections::HashSet::new();
     for manifest_sha1 in &manifests {
         let manifest = resnwsync::new_resnwsync_manifest(&nwsync, *manifest_sha1)
-            .map_err(|error| format!("failed to load manifest {}: {error}", manifest_sha1))?;
+            // clippy::uninlined_format_args: variables used directly in format string instead of as trailing args
+            .map_err(|error| format!("failed to load manifest {manifest_sha1}: {error}"))?;
 
         for resref in manifest.contents() {
             if let Some(sha1) = manifest.sha1_for(&resref) {
