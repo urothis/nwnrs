@@ -15,8 +15,10 @@ jobs:
       - uses: actions/checkout@v6.0.2
       - name: Setup Rust
         uses: ./.github/actions/setup-rust
+      - name: binstall
+        uses: cargo-bins/cargo-binstall@main
       - name: Install cargo-deny
-        run: cargo install cargo-deny
+        run: cargo binstall cargo-deny --no-confirm
       - name: Run deny
         run: cargo deny check
   label:
