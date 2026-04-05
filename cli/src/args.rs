@@ -160,7 +160,7 @@ pub(crate) struct NwsyncPruneCmd {
 
 #[derive(FromArgs)]
 #[argh(subcommand, name = "write")]
-/// generate a serverside NWSync manifest from directory
+/// generate a serverside `NWSync` manifest from directory
 pub(crate) struct NwsyncWriteCmd {
     #[argh(positional)]
     /// input directory containing NWN resources
