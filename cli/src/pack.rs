@@ -136,7 +136,7 @@ fn run_pack_erf(cmd: PackCmd) -> Result<(), String> {
         .map(|entry| entry.rr.clone())
         .collect::<Vec<_>>();
     let (build_year, build_day) = metadata
-        .as_ref().map_or_else(current_build_date, |meta| (meta.build_year.cast_unsigned(), meta.build_day as u32));
+        .as_ref().map_or_else(current_build_date, |meta| (meta.build_year.cast_unsigned(), meta.build_day.cast_unsigned()));
     let loc_strings = metadata
         .as_ref()
         .map(|meta| meta.loc_strings.clone())
