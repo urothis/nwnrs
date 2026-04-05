@@ -1,6 +1,8 @@
+# nwnrs-wasm
+
 We have not exported anything via macro yet.
 
-Documentation: https://wasm-bindgen.github.io/wasm-bindgen/reference/types/exported-rust-types.html
+Documentation: [wasm-bindgen exported rust types](https://wasm-bindgen.github.io/wasm-bindgen/reference/types/exported-rust-types.html)
 
 ```rust
 #[wasm_bindgen]
