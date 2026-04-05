@@ -27,17 +27,19 @@ At a high level:
 
 Since this workspace is not published to [crates.io](https://crates.io), you can depend on individual crates using Git dependencies in your `Cargo.toml`:
 
-
 ```toml
 # You more than likely only need the prelude
 [dependencies]
 nwnrs = { git = "https://github.com/urothis/nwn-rs" }
 ```
+
 ```rust
 use nwnrs::prelude::*;
 ```
 
+Or depend on individual crates directly:
 
+```toml
 # Core types and utilities
 nwnrs-core = { git = "https://github.com/urothis/nwn-rs" }
 nwnrs-resref = { git = "https://github.com/urothis/nwn-rs" }
