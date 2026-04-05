@@ -83,6 +83,7 @@ pub enum GffFieldKind {
 
 impl GffFieldKind {
     /// Returns `true` if this kind is stored out-of-line in the binary format.
+    #[must_use] 
     pub fn is_complex(self) -> bool {
         matches!(
             self,
@@ -161,6 +162,7 @@ pub enum GffValue {
 
 impl GffValue {
     /// Returns the field kind for this value.
+    #[must_use] 
     pub fn kind(&self) -> GffFieldKind {
         match self {
             Self::Byte(_) => GffFieldKind::Byte,
@@ -193,6 +195,7 @@ pub struct GffField {
 
 impl GffField {
     /// Creates a field from a typed value.
+    #[must_use] 
     pub fn new(value: GffValue) -> Self {
         Self {
             value,
@@ -200,11 +203,13 @@ impl GffField {
     }
 
     /// Returns the kind of the stored value.
+    #[must_use] 
     pub fn kind(&self) -> GffFieldKind {
         self.value.kind()
     }
 
     /// Returns the stored field value.
+    #[must_use] 
     pub fn value(&self) -> &GffValue {
         &self.value
     }
@@ -221,6 +226,7 @@ pub struct GffStruct {
 
 impl GffStruct {
     /// Creates an empty structure with the given id.
+    #[must_use] 
     pub fn new(id: i32) -> Self {
         Self {
             id,
@@ -229,6 +235,7 @@ impl GffStruct {
     }
 
     /// Returns the fields in their stored order.
+    #[must_use] 
     pub fn fields(&self) -> &[(String, GffField)] {
         self.fields.as_slice()
     }
@@ -253,6 +260,7 @@ impl GffStruct {
     }
 
     /// Returns a field by label.
+    #[must_use] 
     pub fn get_field(&self, label: &str) -> Option<&GffField> {
         self.fields
             .iter()
@@ -289,6 +297,7 @@ impl GffRoot {
     }
 
     /// Returns the fields on the root structure.
+    #[must_use] 
     pub fn fields(&self) -> &[(String, GffField)] {
         self.root.fields()
     }
@@ -352,16 +361,19 @@ pub(crate) fn ensure_label(label: &str) -> GffResult<()> {
 }
 
 /// Creates an empty GFF structure with the given structure id.
+#[must_use] 
 pub fn new_gff_struct(id: i32) -> GffStruct {
     GffStruct::new(id)
 }
 
 /// Creates a new root document with the given four-byte file type tag.
+#[must_use] 
 pub fn new_gff_root(file_type: &str) -> GffRoot {
     GffRoot::new(file_type)
 }
 
 /// Creates an empty localized string with [`BAD_STRREF`] and no inline entries.
+#[must_use] 
 pub fn new_c_exo_loc_string() -> GffCExoLocString {
     GffCExoLocString::default()
 }
