@@ -24,6 +24,3 @@ runs:
         toolchain: ${{ inputs.toolchain }}
         components: ${{ inputs.components }}
         targets: ${{ inputs.target }}
-
-    - name: Cache dependencies
-      uses: Swatinem/rust-cache@v2

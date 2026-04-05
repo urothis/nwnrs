@@ -37,12 +37,16 @@ nwnrs-tlk = { path = "crates/tlk" }
 nwnrs-twoda = { path = "crates/twoda" }
 nwnrs-util = { path = "crates/util" }
 # external dependencies
-argh = "0.1.19"
-codepage = "0.1.2"
-encoding_rs = "0.8.35"
-flate2 = "1.1.9"
-indexmap = "2.13.1"
-md5 = "0.8.0"
+argh = { version = "0.1.19", default-features = false, features = ["help"] }
+codepage = { version = "0.1.2", default-features = false }
+encoding_rs = { version = "0.8.35", default-features = false, features = [
+    "alloc",
+] }
+flate2 = { version = "1.1.9", default-features = false, features = [
+    "rust_backend",
+] }
+indexmap = { version = "2.13.1", default-features = false }
+md5 = { version = "0.8.0", default-features = false }
 reqwest = { version = "0.13.2", default-features = false, features = [
     "json",
     "rustls",
@@ -50,12 +54,22 @@ reqwest = { version = "0.13.2", default-features = false, features = [
 rusqlite = { version = "0.39.0", features = ["bundled"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = { version = "1.0.149", features = ["preserve_order"] }
-serde-wasm-bindgen = "0.6.5"
-sha1 = "0.11.0"
-tracing = "0.1.44"
+serde-wasm-bindgen = { version = "0.6.5", default-features = false, features = [
+] }
+sha1 = { version = "0.11.0", default-features = false }
+tracing = { version = "0.1.44", default-features = false, features = [
+    "attributes",
+    "std",
+] }
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt"] }
-wasm-bindgen = "0.2.117"
-zstd = "0.13.3"
+wasm-bindgen = { version = "0.2.117", default-features = false, features = [
+    "std",
+] }
+zstd = { version = "0.13.3", default-features = false, features = [
+    "arrays",
+    "legacy",
+    "zdict_builder",
+] }
 
 [workspace.lints.clippy]
 # Baseline safety + cleanup
