@@ -1,69 +1,69 @@
 name: CI
 on:
-  pull_request:
-    branches: [main]
+    pull_request:
+        branches: [main]
 env:
-  CARGO_TERM_COLOR: always
+    CARGO_TERM_COLOR: always
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}
-  cancel-in-progress: true
+    group: ${{ github.workflow }}-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}
+    cancel-in-progress: true
 jobs:
-  deny:
-    name: Deny
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6.0.2
-      - name: Setup Rust
-        uses: ./.github/actions/setup-rust
-      - name: binstall
-        uses: cargo-bins/cargo-binstall@main
-      - name: Install cargo-deny
-        run: cargo binstall cargo-deny --no-confirm
-      - name: Run deny
-        run: cargo deny check
-  label:
-    name: Label PR
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pull-requests: write
-    steps:
-      - uses: actions/checkout@v6.0.2
-      - name: Apply labels
-        uses: actions/labeler@v6.0.1
-        with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          configuration-path: .github/labeler.yml
-  test:
-    name: Test
-    needs: [label, deny]
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest] # disable for now: windows-latest, macos-latest]
-        rust: [stable]
-    steps:
-      - uses: actions/checkout@v6.0.2
-      - uses: ./.github/actions/setup-rust
-        with:
-          toolchain: ${{ matrix.rust }}
-      - uses: ./.github/actions/rust-check
-      - uses: ./.github/actions/rust-test
-        with:
-          verbose: true
-      - uses: ./.github/actions/rust-test
-        with:
-          package: nwnrs-cli
-          verbose: true
+    deny:
+        name: Deny
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v6.0.2
+            - name: Setup Rust
+              uses: ./.github/actions/setup-rust
+            - name: binstall
+              uses: cargo-bins/cargo-binstall@main
+            - name: Install cargo-deny
+              run: cargo binstall cargo-deny --no-confirm
+            - name: Run deny
+              run: cargo deny check
+    label:
+        name: Label PR
+        runs-on: ubuntu-latest
+        permissions:
+            contents: read
+            pull-requests: write
+        steps:
+            - uses: actions/checkout@v6.0.1
+            - name: Apply labels
+              uses: actions/labeler@v6.0.1
+              with:
+                  repo-token: ${{ secrets.GITHUB_TOKEN }}
+                  configuration-path: .github/labeler.yml
+    test:
+        name: Test
+        needs: [label, deny]
+        runs-on: ${{ matrix.os }}
+        strategy:
+            matrix:
+                os: [ubuntu-latest] # disable for now: windows-latest, macos-latest]
+                rust: [stable]
+        steps:
+            - uses: actions/checkout@v6.0.2
+            - uses: ./.github/actions/setup-rust
+              with:
+                  toolchain: ${{ matrix.rust }}
+            - uses: ./.github/actions/rust-check
+            - uses: ./.github/actions/rust-test
+              with:
+                  verbose: true
+            - uses: ./.github/actions/rust-test
+              with:
+                  package: nwnrs-cli
+                  verbose: true
 
-  lint:
-    name: Lint
-    needs: [label, deny]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6.0.2
-      - uses: ./.github/actions/setup-rust
-        with:
-          toolchain: nightly
-          components: rustfmt, clippy
-      - uses: ./.github/actions/rust-lint
+    lint:
+        name: Lint
+        needs: [label, deny]
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v6.0.2
+            - uses: ./.github/actions/setup-rust
+              with:
+                  toolchain: nightly
+                  components: rustfmt, clippy
+            - uses: ./.github/actions/rust-lint
