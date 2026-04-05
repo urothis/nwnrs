@@ -147,7 +147,7 @@ pub(crate) fn sorted_dir_entries(dir: &Path) -> Result<Vec<DirEntryInfo>, String
 pub(crate) fn should_skip_top_level_dir(path: &Path) -> bool {
     matches!(
         path.file_name().and_then(OsStr::to_str),
-        Some(".git") | Some(".svn")
+        Some(".git" | ".svn")
     )
 }
 

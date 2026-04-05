@@ -179,7 +179,7 @@ fn collect_files_recursively(
             // Skip common directories
             if matches!(
                 path.file_name().and_then(|n| n.to_str()),
-                Some(".git") | Some(".svn")
+                Some(".git" | ".svn")
             ) {
                 continue;
             }
