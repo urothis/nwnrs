@@ -23,7 +23,7 @@ pub struct SsfRoot {
 }
 
 /// Creates an empty `SSF` document.
-#[must_use] 
+#[must_use]
 pub fn new_ssf() -> SsfRoot {
     SsfRoot::default()
 }

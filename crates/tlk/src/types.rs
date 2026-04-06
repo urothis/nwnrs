@@ -82,7 +82,7 @@ pub struct TlkEntry {
 
 impl TlkEntry {
     /// Returns `true` when the entry contains either text or a sound reference.
-    #[must_use] 
+    #[must_use]
     pub fn has_value(&self) -> bool {
         !self.text.is_empty() || !self.sound_res_ref.is_empty()
     }
@@ -152,7 +152,7 @@ pub struct Tlk {
 
 impl SingleTlk {
     /// Creates an empty English TLK table.
-    #[must_use] 
+    #[must_use]
     pub fn new() -> Self {
         Self {
             language:               Language::English,
@@ -180,7 +180,7 @@ impl SingleTlk {
     }
 
     /// Returns the highest string reference known to this table.
-    #[must_use] 
+    #[must_use]
     pub fn highest(&self) -> i32 {
         let io_highest = i32::try_from(self.io_entry_count.saturating_sub(1)).unwrap_or(i32::MAX);
         io_highest.max(self.static_entries_highest)
@@ -252,7 +252,7 @@ impl Default for SingleTlk {
 
 impl Tlk {
     /// Creates a TLK chain from explicit layers.
-    #[must_use] 
+    #[must_use]
     pub fn new(chain: Vec<TlkPair>) -> Self {
         Self {
             chain,

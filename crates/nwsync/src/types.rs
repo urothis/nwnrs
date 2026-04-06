@@ -76,7 +76,7 @@ pub struct ManifestEntry {
 
 impl ManifestEntry {
     /// Creates a new manifest entry.
-    #[must_use] 
+    #[must_use]
     pub fn new(sha1: SecureHash, size: u32, resref: ResRef) -> Self {
         Self {
             sha1,
@@ -109,7 +109,7 @@ impl Default for Manifest {
 
 impl Manifest {
     /// Creates a new empty manifest.
-    #[must_use] 
+    #[must_use]
     pub fn new(hash_tree_depth: u32) -> Self {
         Self {
             version: VERSION,
@@ -119,7 +119,7 @@ impl Manifest {
     }
 
     /// Returns the stored manifest version.
-    #[must_use] 
+    #[must_use]
     pub fn version(&self) -> u32 {
         self.version
     }
@@ -143,7 +143,7 @@ impl Manifest {
     }
 
     /// Returns the manifest entries.
-    #[must_use] 
+    #[must_use]
     pub fn entries(&self) -> &[ManifestEntry] {
         &self.entries
     }
@@ -154,13 +154,13 @@ impl Manifest {
     }
 
     /// Returns the total size of all entries.
-    #[must_use] 
+    #[must_use]
     pub fn total_size(&self) -> i64 {
         self.entries.iter().map(|entry| i64::from(entry.size)).sum()
     }
 
     /// Returns the deduplicated size keyed by hash.
-    #[must_use] 
+    #[must_use]
     pub fn deduplicated_size(&self) -> i64 {
         let mut unique = HashMap::<SecureHash, u32>::new();
         for entry in &self.entries {

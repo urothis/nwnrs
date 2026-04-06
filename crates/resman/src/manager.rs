@@ -30,7 +30,7 @@ impl ResMan {
     ///
     /// `cache_size_mb` controls the optional lookup cache size in megabytes. A
     /// value of `0` disables the manager-level cache.
-    #[must_use] 
+    #[must_use]
     pub fn new(cache_size_mb: usize) -> Self {
         Self {
             containers: Vec::new(),
@@ -118,7 +118,7 @@ impl ResMan {
     }
 
     /// Returns the current container search order.
-    #[must_use] 
+    #[must_use]
     pub fn containers(&self) -> &[Arc<dyn ResContainer>] {
         &self.containers
     }

@@ -64,8 +64,9 @@ pub(crate) fn run_nwsync_print(cmd: NwsyncPrintCmd) -> Result<(), String> {
                 error
             )
         })?;
-        // clippy prefers the implicit method reference form over |sha1| sha1.to_string();
-        // ToString::to_string receives each manifest sha1 as its implicit `self` argument
+        // clippy prefers the implicit method reference form over |sha1|
+        // sha1.to_string(); ToString::to_string receives each manifest sha1 as
+        // its implicit `self` argument
         manifests.sort_by_key(std::string::ToString::to_string);
         write_stdout_line(&format!("root {}", nwsync.root().display()))?;
         write_stdout_line(&format!("manifests {}", manifests.len()))?;
@@ -73,8 +74,9 @@ pub(crate) fn run_nwsync_print(cmd: NwsyncPrintCmd) -> Result<(), String> {
             write_stdout_line(&format!("manifest {sha1}"))?;
         }
         let mut resrefs = nwsync.get_all_resrefs();
-        // clippy prefers the implicit method reference form over |sha1| sha1.to_string();
-        // ToString::to_string receives each resref sha1 as its implicit `self` argument
+        // clippy prefers the implicit method reference form over |sha1|
+        // sha1.to_string(); ToString::to_string receives each resref sha1 as
+        // its implicit `self` argument
         resrefs.sort_by_key(std::string::ToString::to_string);
         write_stdout_line(&format!("resrefs {}", resrefs.len()))?;
         return Ok(());
@@ -236,7 +238,8 @@ pub(crate) fn run_nwsync_prune(cmd: NwsyncPruneCmd) -> Result<(), String> {
     let mut referenced_sha1s = std::collections::HashSet::new();
     for manifest_sha1 in &manifests {
         let manifest = resnwsync::new_resnwsync_manifest(&nwsync, *manifest_sha1)
-            // clippy::uninlined_format_args: variables used directly in format string instead of as trailing args
+            // clippy::uninlined_format_args: variables used directly in format string instead of as
+            // trailing args
             .map_err(|error| format!("failed to load manifest {manifest_sha1}: {error}"))?;
 
         for resref in manifest.contents() {

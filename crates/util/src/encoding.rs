@@ -16,7 +16,7 @@ pub fn get_nwnrs_encoding() -> &'static Encoding {
 }
 
 /// Returns the canonical label for the current NWN text encoding.
-#[must_use] 
+#[must_use]
 pub fn get_nwnrs_encoding_name() -> &'static str {
     get_nwnrs_encoding().name()
 }

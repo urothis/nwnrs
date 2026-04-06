@@ -45,25 +45,25 @@ pub struct ResMemFile {
 
 impl ResMemFile {
     /// Returns the display label used for this container.
-    #[must_use] 
+    #[must_use]
     pub fn label(&self) -> &str {
         &self.label
     }
 
     /// Returns the byte length of the stored payload.
-    #[must_use] 
+    #[must_use]
     pub fn len(&self) -> usize {
         self.len
     }
 
     /// Returns whether the stored payload is empty.
-    #[must_use] 
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
 
     /// Returns the contained resource entry.
-    #[must_use] 
+    #[must_use]
     pub fn res(&self) -> Res {
         self.entry.clone()
     }

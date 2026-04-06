@@ -89,13 +89,13 @@ impl ResOrigin {
     }
 
     /// Returns the high-level container name.
-    #[must_use] 
+    #[must_use]
     pub fn container(&self) -> &str {
         &self.container
     }
 
     /// Returns the container-local label for the resource.
-    #[must_use] 
+    #[must_use]
     pub fn label(&self) -> &str {
         &self.label
     }
@@ -257,19 +257,19 @@ impl Res {
     }
 
     /// Returns the resource reference identifying this payload.
-    #[must_use] 
+    #[must_use]
     pub fn resref(&self) -> ResRef {
         self.inner.resref.clone()
     }
 
     /// Returns the modification time recorded for this resource.
-    #[must_use] 
+    #[must_use]
     pub fn mtime(&self) -> SystemTime {
         self.inner.mtime
     }
 
     /// Returns the byte offset of the stored payload inside the backing stream.
-    #[must_use] 
+    #[must_use]
     pub fn io_offset(&self) -> u64 {
         self.inner.io_offset
     }
@@ -278,37 +278,37 @@ impl Res {
     ///
     /// A negative value indicates that the payload should be read until
     /// end-of-stream.
-    #[must_use] 
+    #[must_use]
     pub fn io_size(&self) -> i64 {
         self.inner.io_size
     }
 
     /// Returns whether the decoded payload is currently cached in memory.
-    #[must_use] 
+    #[must_use]
     pub fn cached(&self) -> bool {
         self.lock_state().map(|state| state.cached).unwrap_or(false)
     }
 
     /// Returns the expected size after decompression.
-    #[must_use] 
+    #[must_use]
     pub fn uncompressed_size(&self) -> usize {
         self.inner.uncompressed_size
     }
 
     /// Returns the EXO compression marker for this payload.
-    #[must_use] 
+    #[must_use]
     pub fn compression_algorithm(&self) -> ExoResFileCompressionType {
         self.inner.compression
     }
 
     /// Returns the descriptive origin for this payload.
-    #[must_use] 
+    #[must_use]
     pub fn origin(&self) -> ResOrigin {
         self.inner.origin.clone()
     }
 
     /// Returns `true` when this resource is backed by a shared stream handle.
-    #[must_use] 
+    #[must_use]
     pub fn io_owned(&self) -> bool {
         matches!(self.inner.backing, ResBacking::Shared(_))
     }
