@@ -35,21 +35,10 @@ This directory contains all the workspace crates that provide the core functiona
 
 The repository is intentionally split by responsibility rather than by application feature.
 
-1. Identity and primitives
-
-`nwnrs-core`, `nwnrs-restype`, `nwnrs-resref`, `nwnrs-checksums`, `nwnrs-util`, and `nwnrs-streamext` define the small reusable types that every higher layer depends on.
-
-2. Resource backends
-
-`nwnrs-erf`, `nwnrs-key`, `nwnrs-resdir`, `nwnrs-resfile`, `nwnrs-resmemfile`, and `nwnrs-resnwsync` translate specific storage layouts into a common container interface.
-
-3. Format codecs
-
-`nwnrs-gff`, `nwnrs-gffjson`, `nwnrs-twoda`, `nwnrs-tlk`, `nwnrs-ssf`, `nwnrs-nwsync`, and `nwnrs-compressedbuf` focus on decoding and encoding individual file formats.
-
-4. Composition and tooling
-
-`nwnrs-resman` resolves resources across multiple containers. `nwnrs-game` chooses a conventional load order for a real installation.
+1. Identity and primitives — `nwnrs-core`, `nwnrs-restype`, `nwnrs-resref`, `nwnrs-checksums`, `nwnrs-util`, and `nwnrs-streamext` define the small reusable types that every higher layer depends on.
+2. Resource backends — `nwnrs-erf`, `nwnrs-key`, `nwnrs-resdir`, `nwnrs-resfile`, `nwnrs-resmemfile`, and `nwnrs-resnwsync` translate specific storage layouts into a common container interface.
+3. Format codecs — `nwnrs-gff`, `nwnrs-gffjson`, `nwnrs-twoda`, `nwnrs-tlk`, `nwnrs-ssf`, `nwnrs-nwsync`, and `nwnrs-compressedbuf` focus on decoding and encoding individual file formats.
+4. Composition and tooling — `nwnrs-resman` resolves resources across multiple containers. `nwnrs-game` chooses a conventional load order for a real installation.
 
 ## Core Resource Model and Container Layering
 
