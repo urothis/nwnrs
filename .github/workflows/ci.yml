@@ -51,7 +51,6 @@ jobs:
             - uses: ./.github/actions/rust-test
               with:
                   workspace: true
-                  verbose: true
 
     lint:
         name: Lint
