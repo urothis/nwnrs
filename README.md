@@ -21,6 +21,7 @@ At a high level:
 - `nwnrs-resman` defines a common `Res`/`ResContainer` model and a layered `ResMan`
 - container crates such as `nwnrs-erf`, `nwnrs-key`, `nwnrs-resdir`, `nwnrs-resfile`, `nwnrs-resmemfile`, and `nwnrs-resnwsync` project different storage backends into that shared model
 - format crates such as `nwnrs-gff`, `nwnrs-twoda`, `nwnrs-tlk`, `nwnrs-ssf`, and `nwnrs-nwsync` provide typed parsers and writers
+- `nwnrs-nwscript` provides the NWScript frontend and compiler pipeline: source loading, preprocessing, lexing, parsing, semantic analysis, optimization, and `NCS`/`NDB` emission
 - `nwnrs-game` composes those pieces into a default game-facing resource-loading stack
 
 ## Usage
@@ -87,6 +88,7 @@ The workspace supports:
 
 - inspecting ERF, KEY, GFF, 2DA, TLK, and SSF files
 - compiling NWScript `.nss` files to `.ncs` and optional `.ndb`
+- parsing and semantically analyzing NWScript source through the `nwnrs-nwscript` crate
 - unpacking ERF archives and KEY/BIF sets into directory form
 - opening NWSync repositories and printing manifest contents
 - building a layered `ResMan` from game roots, override directories, ERFs, and NWSync manifests

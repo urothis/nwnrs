@@ -16,7 +16,7 @@ This directory contains all the workspace crates that provide the core functiona
 | `nwnrs-key` | Reads `KEY` indexes, opens `BIF` payloads, and writes KEY/BIF sets. |
 | `nwnrs-lru` | Small weighted LRU cache used by higher-level crates. |
 | `nwnrs-masterlist` | Async client for the Beamdog masterlist API. |
-| `nwnrs-nwscript` | In-progress pure Rust NWScript compiler support, including `NCS` and `NDB` primitives. |
+| `nwnrs-nwscript` | Pure Rust NWScript frontend and compiler pipeline, including preprocessing, parsing, semantic analysis, optimization, and `NCS`/`NDB` support. |
 | `nwnrs-nwsync` | Reads and writes manifest files used by NWSync repositories. |
 | `nwnrs-resdir` | Exposes a directory tree as a `ResContainer`. |
 | `nwnrs-resfile` | Exposes a single on-disk file as a one-entry `ResContainer`. |
@@ -38,7 +38,8 @@ The repository is intentionally split by responsibility rather than by applicati
 1. Identity and primitives — `nwnrs-core`, `nwnrs-restype`, `nwnrs-resref`, `nwnrs-checksums`, `nwnrs-util`, and `nwnrs-streamext` define the small reusable types that every higher layer depends on.
 2. Resource backends — `nwnrs-erf`, `nwnrs-key`, `nwnrs-resdir`, `nwnrs-resfile`, `nwnrs-resmemfile`, and `nwnrs-resnwsync` translate specific storage layouts into a common container interface.
 3. Format codecs — `nwnrs-gff`, `nwnrs-twoda`, `nwnrs-tlk`, `nwnrs-ssf`, `nwnrs-nwsync`, and `nwnrs-compressedbuf` focus on decoding and encoding individual file formats.
-4. Composition and tooling — `nwnrs-resman` resolves resources across multiple containers. `nwnrs-game` chooses a conventional load order for a real installation.
+4. Language tooling — `nwnrs-nwscript` provides the NWScript compiler stack, from source resolution and preprocessing through parsing, semantic analysis, optimization, and code generation.
+5. Composition and tooling — `nwnrs-resman` resolves resources across multiple containers. `nwnrs-game` chooses a conventional load order for a real installation.
 
 ## Core Resource Model and Container Layering
 
@@ -55,6 +56,18 @@ The repository is intentionally split by responsibility rather than by applicati
 - [`tlk/src/io.rs`](./tlk/src/io.rs)
 - [`ssf/src/io.rs`](./ssf/src/io.rs)
 - [`nwsync/src/io.rs`](./nwsync/src/io.rs)
+
+## NWScript Compiler Stack
+
+- [`nwscript/src/source.rs`](./nwscript/src/source.rs)
+- [`nwscript/src/preprocess.rs`](./nwscript/src/preprocess.rs)
+- [`nwscript/src/lexer.rs`](./nwscript/src/lexer.rs)
+- [`nwscript/src/parser.rs`](./nwscript/src/parser.rs)
+- [`nwscript/src/sema.rs`](./nwscript/src/sema.rs)
+- [`nwscript/src/ir.rs`](./nwscript/src/ir.rs)
+- [`nwscript/src/codegen.rs`](./nwscript/src/codegen.rs)
+- [`nwscript/src/ncs.rs`](./nwscript/src/ncs.rs)
+- [`nwscript/src/ndb.rs`](./nwscript/src/ndb.rs)
 
 ## Archive and Repository Containers
 
