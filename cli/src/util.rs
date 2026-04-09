@@ -169,31 +169,6 @@ pub(crate) fn entry_is_file(path: &Path, no_symlinks: bool) -> Result<bool, Stri
     Ok(meta.is_file())
 }
 
-pub(crate) fn collect_key_bif_entries(
-    dir: &Path,
-    no_symlinks: bool,
-) -> Result<Vec<resref::ResRef>, String> {
-    let mut entries = Vec::new();
-    for entry in sorted_dir_entries(dir)? {
-        if !entry_is_file(&entry.path, no_symlinks)? {
-            continue;
-        }
-        let file_name = entry.path.file_name().and_then(OsStr::to_str).unwrap_or("");
-        let rr = resref::new_resolved_res_ref_from_filename(file_name)
-            .map_err(|error| format!("invalid source file {}: {error}", entry.path.display()))?;
-        entries.push(rr.into());
-    }
-    entries.sort_by(|lhs: &resref::ResRef, rhs: &resref::ResRef| {
-        lhs.resolve()
-            .map(|resolved| resolved.to_file().to_ascii_uppercase())
-            .cmp(
-                &rhs.resolve()
-                    .map(|resolved| resolved.to_file().to_ascii_uppercase()),
-            )
-    });
-    Ok(entries)
-}
-
 pub(crate) fn infer_erf_type(path: &Path, explicit: Option<&str>) -> Result<String, String> {
     if let Some(value) = explicit {
         let mut type_name = value.to_ascii_uppercase();

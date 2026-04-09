@@ -1,5 +1,4 @@
 use std::{
-    collections::HashSet,
     ffi::OsStr,
     fs,
     io::{self, BufReader, Cursor},
@@ -11,13 +10,14 @@ use tracing::{debug, info, instrument, warn};
 
 use crate::{
     args::{KeyPackCmd, PackCmd},
+    compile::{CompileScriptOptions, compile_script_file},
     metadata::{
         ErfPackMetadata, ResourcePackMetadata, copy_original_key_set, read_erf_pack_metadata,
         read_key_pack_metadata, read_resource_pack_metadata, should_copy_original_erf,
         should_copy_original_key, should_copy_original_resource,
     },
     util::{
-        Kind, RESOURCE_METADATA_FILENAME, collect_key_bif_entries, current_build_date, detect_kind,
+        Kind, RESOURCE_METADATA_FILENAME, current_build_date, detect_kind,
         ensure_output_file_ready, ensure_target_dir_ready, entry_is_dir, entry_is_file,
         exo_compression_from_algorithm, infer_erf_type, parse_algorithm, parse_erf_version,
         parse_key_version, should_skip_top_level_dir, sorted_dir_entries,
@@ -120,13 +120,7 @@ fn run_pack_erf(cmd: PackCmd) -> Result<(), String> {
         )?);
     let sources = collect_generic_pack_sources(&cmd.input, true, 1, cmd.recurse, cmd.no_symlinks)?;
     let sources = apply_erf_entry_order(metadata.as_ref(), sources);
-
-    let mut seen = HashSet::new();
-    for entry in &sources {
-        if !seen.insert(entry.rr.clone()) {
-            return Err(format!("duplicate resref {}", entry.source_label()));
-        }
-    }
+    let sources = normalize_pack_sources(sources)?;
     debug!(entry_count = sources.len(), "resolved archive pack sources");
 
     let refs = sources
@@ -389,7 +383,7 @@ fn run_key_pack(cmd: KeyPackCmd) -> Result<(), String> {
     let bif_prefix = "data";
 
     let mut bifs = Vec::new();
-    let mut source_paths = std::collections::HashMap::<resref::ResRef, PathBuf>::new();
+    let mut source_entries = std::collections::HashMap::<resref::ResRef, PackSourceEntry>::new();
     for dir in sorted_dir_entries(&cmd.source)? {
         if should_skip_top_level_dir(&dir.path) {
             continue;
@@ -405,15 +399,25 @@ fn run_key_pack(cmd: KeyPackCmd) -> Result<(), String> {
             .filter(|value| !value.is_empty())
             .ok_or_else(|| format!("invalid source directory name: {relative}"))?
             .to_string();
-        let entries = collect_key_bif_entries(&cmd.source.join(&relative), cmd.no_symlinks)?;
-        for rr in &entries {
-            let resolved = rr
-                .resolve()
-                .ok_or_else(|| format!("cannot resolve source file for {rr}"))?;
-            source_paths.insert(
-                rr.clone(),
-                cmd.source.join(&relative).join(resolved.to_file()),
-            );
+        let mut entries = Vec::new();
+        for entry in sorted_dir_entries(&cmd.source.join(&relative))? {
+            if !entry_is_file(&entry.path, cmd.no_symlinks)? {
+                continue;
+            }
+            if is_pack_metadata_file(&entry.path) {
+                continue;
+            }
+            match pack_source_for_file(&entry.path, &cmd.source) {
+                Ok(source) => entries.push(source),
+                Err(error) => {
+                    warn!(error = %error, path = %entry.path.display(), "skipping invalid key pack file");
+                }
+            }
+        }
+        let entries = normalize_pack_sources(entries)?;
+        let refs = entries.iter().map(|entry| entry.rr.clone()).collect::<Vec<_>>();
+        for entry in entries {
+            source_entries.insert(entry.rr.clone(), entry);
         }
         bifs.push(key::KeyBifEntry {
             directory: if cmd.no_squash {
@@ -425,7 +429,7 @@ fn run_key_pack(cmd: KeyPackCmd) -> Result<(), String> {
             recorded_filename: None,
             drives: 0,
             bif_oid: None,
-            entries,
+            entries: refs,
         });
     }
 
@@ -442,10 +446,10 @@ fn run_key_pack(cmd: KeyPackCmd) -> Result<(), String> {
         build_day,
         None,
         |rr, io| {
-            let full_path = source_paths
+            let entry = source_entries
                 .get(rr)
                 .ok_or_else(|| io::Error::other(format!("no source mapping for {rr}")))?;
-            let data = fs::read(full_path)?;
+            let data = entry.read_bytes().map_err(io::Error::other)?;
             io.write_all(&data)?;
             Ok((data.len(), checksums::secure_hash(&data)))
         },
@@ -458,6 +462,7 @@ fn run_key_pack(cmd: KeyPackCmd) -> Result<(), String> {
 #[derive(Clone)]
 pub(crate) enum PackSourceKind {
     File(PathBuf),
+    CompiledScript { path: PathBuf, bytes: Vec<u8> },
 }
 
 #[derive(Clone)]
@@ -470,6 +475,7 @@ impl PackSourceEntry {
     fn source_label(&self) -> String {
         match &self.source {
             PackSourceKind::File(path) => path.display().to_string(),
+            PackSourceKind::CompiledScript { path, .. } => path.display().to_string(),
         }
     }
 
@@ -477,7 +483,13 @@ impl PackSourceEntry {
         match &self.source {
             PackSourceKind::File(path) => fs::read(path)
                 .map_err(|error| format!("failed to read {}: {error}", path.display())),
+            PackSourceKind::CompiledScript { bytes, .. } => Ok(bytes.clone()),
         }
+    }
+
+    fn prefers_over(&self, other: &Self) -> bool {
+        matches!(self.source, PackSourceKind::CompiledScript { .. })
+            && matches!(other.source, PackSourceKind::File(_))
     }
 }
 
@@ -489,8 +501,14 @@ pub(crate) fn collect_generic_pack_sources(
     no_symlinks: bool,
 ) -> Result<Vec<PackSourceEntry>, String> {
     let mut out = Vec::new();
+    let pack_root = if path.is_dir() {
+        path.to_path_buf()
+    } else {
+        path.parent().unwrap_or_else(|| Path::new(".")).to_path_buf()
+    };
     collect_generic_pack_entry(
         path,
+        &pack_root,
         explicit,
         recurse_level,
         max_recurse_level,
@@ -502,6 +520,7 @@ pub(crate) fn collect_generic_pack_sources(
 
 fn collect_generic_pack_entry(
     path: &Path,
+    pack_root: &Path,
     explicit: bool,
     recurse_level: usize,
     max_recurse_level: usize,
@@ -516,7 +535,7 @@ fn collect_generic_pack_entry(
         if is_pack_metadata_file(path) {
             return Ok(());
         }
-        match pack_source_for_file(path) {
+        match pack_source_for_file(path, pack_root) {
             Ok(source) => out.push(source),
             Err(error) => {
                 if explicit {
@@ -539,6 +558,7 @@ fn collect_generic_pack_entry(
             if entry_is_dir(&entry.path, no_symlinks)? {
                 collect_generic_pack_entry(
                     &entry.path,
+                    pack_root,
                     false,
                     recurse_level + 1,
                     max_recurse_level,
@@ -549,7 +569,7 @@ fn collect_generic_pack_entry(
                 if is_pack_metadata_file(&entry.path) {
                     continue;
                 }
-                match pack_source_for_file(&entry.path) {
+                match pack_source_for_file(&entry.path, pack_root) {
                     Ok(source) => out.push(source),
                     Err(error) => {
                         warn!(error = %error, path = %entry.path.display(), "skipping invalid file during pack");
@@ -563,13 +583,52 @@ fn collect_generic_pack_entry(
     Err(format!("no idea what to do about: {}", path.display()))
 }
 
-fn pack_source_for_file(path: &Path) -> Result<PackSourceEntry, String> {
+fn pack_source_for_file(path: &Path, pack_root: &Path) -> Result<PackSourceEntry, String> {
     if is_pack_metadata_file(path) {
         return Err(format!(
             "{} is pack metadata, not a resource",
             path.display()
         ));
     }
+    if is_nwscript_langspec_file(path) {
+        return Err(format!(
+            "{} is a NWScript langspec file, not a packable resource",
+            path.display()
+        ));
+    }
+
+    if path
+        .extension()
+        .and_then(OsStr::to_str)
+        .is_some_and(|value| value.eq_ignore_ascii_case("nss"))
+    {
+        let stem = path
+            .file_stem()
+            .and_then(OsStr::to_str)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| format!("invalid script source filename: {}", path.display()))?;
+        let resolved = resref::new_resolved_res_ref_from_filename(&format!("{stem}.ncs"))
+            .map_err(|error| format!("{} is not a valid script source: {error}", path.display()))?;
+        let include_dirs = pack_script_search_roots(path, pack_root);
+        let artifacts = compile_script_file(
+            path,
+            &CompileScriptOptions {
+                debug:               false,
+                no_entrypoint_check: false,
+                langspec:            None,
+                include_dirs:        &include_dirs,
+                optimization:        nwscript::OptimizationLevel::O0,
+            },
+        )?;
+        return Ok(PackSourceEntry {
+            rr:     resolved.into(),
+            source: PackSourceKind::CompiledScript {
+                path:  path.to_path_buf(),
+                bytes: artifacts.ncs,
+            },
+        });
+    }
+
     let file_name = path.file_name().and_then(OsStr::to_str).unwrap_or("");
     let resolved = resref::new_resolved_res_ref_from_filename(file_name)
         .map_err(|error| format!("{} is not a valid resref source: {error}", path.display()))?;
@@ -583,6 +642,67 @@ fn is_pack_metadata_file(path: &Path) -> bool {
     path.file_name().and_then(OsStr::to_str) == Some(RESOURCE_METADATA_FILENAME)
 }
 
+fn is_nwscript_langspec_file(path: &Path) -> bool {
+    let Some(file_name) = path.file_name().and_then(OsStr::to_str) else {
+        return false;
+    };
+    file_name.eq_ignore_ascii_case("nwscript.nss")
+        || file_name.eq_ignore_ascii_case(nwscript::DEFAULT_LANGSPEC_SCRIPT_NAME)
+}
+
+fn pack_script_search_roots(path: &Path, pack_root: &Path) -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    let mut current = path.parent();
+    while let Some(dir) = current {
+        if !dir.as_os_str().is_empty() && !roots.iter().any(|root| root == dir) {
+            roots.push(dir.to_path_buf());
+        }
+        if dir == pack_root {
+            break;
+        }
+        current = dir.parent();
+    }
+    if !pack_root.as_os_str().is_empty() && !roots.iter().any(|root| root == pack_root) {
+        roots.push(pack_root.to_path_buf());
+    }
+    roots
+}
+
+fn normalize_pack_sources(sources: Vec<PackSourceEntry>) -> Result<Vec<PackSourceEntry>, String> {
+    let mut normalized = Vec::new();
+
+    for source in sources {
+        if let Some(index) = normalized
+            .iter()
+            .position(|existing: &PackSourceEntry| existing.rr == source.rr)
+        {
+            let existing = normalized
+                .get(index)
+                .ok_or_else(|| "duplicate source index out of bounds".to_string())?;
+            if source.prefers_over(existing) {
+                let slot = normalized
+                    .get_mut(index)
+                    .ok_or_else(|| "duplicate source index out of bounds".to_string())?;
+                *slot = source;
+                continue;
+            }
+            if existing.prefers_over(&source) {
+                continue;
+            }
+            return Err(format!(
+                "duplicate resref {} from {} and {}",
+                existing.rr,
+                existing.source_label(),
+                source.source_label()
+            ));
+        }
+
+        normalized.push(source);
+    }
+
+    Ok(normalized)
+}
+
 #[cfg(test)]
 mod tests {
     use std::{
@@ -590,6 +710,8 @@ mod tests {
         path::PathBuf,
         time::{SystemTime, UNIX_EPOCH},
     };
+
+    use nwnrs::prelude::resman::ResContainer;
 
     use super::*;
     use crate::args::PackCmd;
@@ -659,6 +781,115 @@ mod tests {
             fs::read(&input).expect("read input"),
             fs::read(&output).expect("read output")
         );
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    fn minimal_langspec() -> &'static str {
+        r#"
+#define ENGINE_NUM_STRUCTURES 0
+
+int TRUE = 1;
+int FALSE = 0;
+"#
+    }
+
+    #[test]
+    fn pack_compiles_nwscript_sources_into_erf_entries() {
+        let temp_dir = unique_test_dir("erf-pack-nwscript");
+        let input = temp_dir.join("src");
+        let output = temp_dir.join("test.mod");
+        let scripts = input.join("nss");
+        fs::create_dir_all(&scripts).expect("create script dir");
+        fs::write(input.join("nwscript.nss"), minimal_langspec()).expect("write langspec");
+        fs::write(
+            scripts.join("helper.nss"),
+            "int helper() { return TRUE; }",
+        )
+        .expect("write include");
+        fs::write(
+            scripts.join("test.nss"),
+            "#include \"helper\"\nint StartingConditional() { return helper(); }",
+        )
+        .expect("write script");
+        fs::write(scripts.join("test.ncs"), b"stale").expect("write stale ncs");
+
+        run_pack(PackCmd {
+            force:            true,
+            data_version:     "V1".to_string(),
+            data_compression: "none".to_string(),
+            no_squash:        false,
+            no_symlinks:      false,
+            recurse:          2,
+            erf_type:         None,
+            input:            input.clone(),
+            output:           output.clone(),
+        })
+        .expect("pack mod with scripts");
+
+        let archive = erf::read_erf_from_file(&output).expect("read packed archive");
+        let compiled_res = archive
+            .demand(&resref::new_res_ref("test", restype::ResType(2010)).expect("build ncs rr"))
+            .expect("read compiled script resource");
+        let compiled = compiled_res
+            .read_all(false)
+            .expect("read compiled script bytes");
+        assert_ne!(compiled, b"stale".to_vec());
+        assert!(
+            nwscript::decode_ncs_instructions(&compiled).is_ok(),
+            "compiled bytes should decode as NCS"
+        );
+        assert!(
+            archive
+                .demand(
+                    &resref::new_res_ref("helper", restype::ResType(2010))
+                        .expect("build helper ncs rr"),
+                )
+                .is_err(),
+            "include-only helper should not be packed as standalone NCS"
+        );
+
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn pack_compiles_nwscript_sources_into_key_bif_entries() {
+        let temp_dir = unique_test_dir("key-pack-nwscript");
+        let input = temp_dir.join("src");
+        let output = temp_dir.join("scripts.key");
+        let bif_dir = input.join("scripts");
+        fs::create_dir_all(&bif_dir).expect("create bif source dir");
+        fs::write(input.join("nwscript.nss"), minimal_langspec()).expect("write langspec");
+        fs::write(
+            bif_dir.join("hello.nss"),
+            "void main() { int value = TRUE; }",
+        )
+        .expect("write script");
+
+        run_pack(PackCmd {
+            force:            true,
+            data_version:     "V1".to_string(),
+            data_compression: "none".to_string(),
+            no_squash:        false,
+            no_symlinks:      false,
+            recurse:          2,
+            erf_type:         None,
+            input:            input.clone(),
+            output:           output.clone(),
+        })
+        .expect("pack key with scripts");
+
+        let key = key::read_key_table_from_file(&output).expect("read packed key");
+        let compiled_res = key
+            .demand(&resref::new_res_ref("hello", restype::ResType(2010)).expect("build ncs rr"))
+            .expect("read compiled script resource");
+        let compiled = compiled_res
+            .read_all(false)
+            .expect("read compiled script bytes");
+        assert!(
+            nwscript::decode_ncs_instructions(&compiled).is_ok(),
+            "compiled bytes should decode as NCS"
+        );
+
         let _ = fs::remove_dir_all(temp_dir);
     }
 }

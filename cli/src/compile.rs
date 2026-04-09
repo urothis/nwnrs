@@ -12,6 +12,14 @@ use crate::{
     util::{ensure_output_file_ready, write_stdout_line},
 };
 
+pub(crate) struct CompileScriptOptions<'a> {
+    pub(crate) debug:               bool,
+    pub(crate) no_entrypoint_check: bool,
+    pub(crate) langspec:            Option<&'a Path>,
+    pub(crate) include_dirs:        &'a [PathBuf],
+    pub(crate) optimization:        nwscript::OptimizationLevel,
+}
+
 #[instrument(level = "info", skip_all, err, fields(input = %cmd.input.display()))]
 pub(crate) fn run_compile(cmd: CompileCmd) -> Result<(), String> {
     info!("compiling NWScript source");
@@ -34,69 +42,16 @@ pub(crate) fn run_compile(cmd: CompileCmd) -> Result<(), String> {
         ensure_output_file_ready(&ndb_output, cmd.force)?;
     }
 
-    let langspec_path = resolve_langspec_path(&cmd)?;
-    let langspec_bytes = fs::read(&langspec_path)
-        .map_err(|error| format!("failed to read {}: {error}", langspec_path.display()))?;
-    let langspec =
-        nwscript::parse_langspec_bytes(&langspec_path.display().to_string(), &langspec_bytes)
-            .map_err(|error| format!("failed to parse {}: {error}", langspec_path.display()))?;
-
-    let mut search_roots = Vec::new();
-    if let Some(parent) = cmd.input.parent() {
-        search_roots.push(parent.to_path_buf());
-    }
-    search_roots.extend(cmd.include_dir.iter().cloned());
-    let resolver = FilesystemScriptResolver::new(search_roots);
-
-    let root_name = cmd
-        .input
-        .file_name()
-        .and_then(OsStr::to_str)
-        .ok_or_else(|| {
-            format!(
-                "input file name is not valid UTF-8: {}",
-                cmd.input.display()
-            )
-        })?;
-    let bundle =
-        nwscript::load_source_bundle(&resolver, root_name, nwscript::SourceLoadOptions::default())
-            .map_err(|error| {
-                format!(
-                    "failed to load source bundle for {}: {error}",
-                    cmd.input.display()
-                )
-            })?;
-    let script = nwscript::parse_source_bundle(&bundle, Some(&langspec))
-        .map_err(|error| format!("failed to parse {}: {error}", cmd.input.display()))?;
-
-    let artifacts = if cmd.debug {
-        nwscript::compile_script_with_source_map(
-            &script,
-            &bundle.source_map,
-            bundle.root_id,
-            Some(&langspec),
-            nwscript::CompileOptions {
-                semantic: nwscript::SemanticOptions {
-                    require_entrypoint:       !cmd.no_entrypoint_check,
-                    allow_conditional_script: true,
-                },
-                optimization,
-            },
-        )
-    } else {
-        nwscript::compile_script(
-            &script,
-            Some(&langspec),
-            nwscript::CompileOptions {
-                semantic: nwscript::SemanticOptions {
-                    require_entrypoint:       !cmd.no_entrypoint_check,
-                    allow_conditional_script: true,
-                },
-                optimization,
-            },
-        )
-    }
-    .map_err(|error| format!("failed to compile {}: {error}", cmd.input.display()))?;
+    let artifacts = compile_script_file(
+        &cmd.input,
+        &CompileScriptOptions {
+            debug:               cmd.debug,
+            no_entrypoint_check: cmd.no_entrypoint_check,
+            langspec:            cmd.langspec.as_deref(),
+            include_dirs:        &cmd.include_dir,
+            optimization,
+        },
+    )?;
 
     fs::write(&output, artifacts.ncs)
         .map_err(|error| format!("failed to write {}: {error}", output.display()))?;
@@ -125,25 +80,93 @@ fn parse_optimization_level(value: &str) -> Result<nwscript::OptimizationLevel, 
     }
 }
 
-fn resolve_langspec_path(cmd: &CompileCmd) -> Result<PathBuf, String> {
-    if let Some(path) = &cmd.langspec {
+pub(crate) fn compile_script_file(
+    input: &Path,
+    options: &CompileScriptOptions<'_>,
+) -> Result<nwscript::CompileArtifacts, String> {
+    if !input.is_file() {
+        return Err(format!("input source does not exist: {}", input.display()));
+    }
+
+    let langspec_path = resolve_langspec_path(input, options.langspec, options.include_dirs)?;
+    let langspec_bytes = fs::read(&langspec_path)
+        .map_err(|error| format!("failed to read {}: {error}", langspec_path.display()))?;
+    let langspec =
+        nwscript::parse_langspec_bytes(&langspec_path.display().to_string(), &langspec_bytes)
+            .map_err(|error| format!("failed to parse {}: {error}", langspec_path.display()))?;
+
+    let search_roots = script_search_roots(input, options.include_dirs);
+    let resolver = FilesystemScriptResolver::new(search_roots);
+    let root_name = input.file_name().and_then(OsStr::to_str).ok_or_else(|| {
+        format!("input file name is not valid UTF-8: {}", input.display())
+    })?;
+    let bundle =
+        nwscript::load_source_bundle(&resolver, root_name, nwscript::SourceLoadOptions::default())
+            .map_err(|error| {
+                format!("failed to load source bundle for {}: {error}", input.display())
+            })?;
+    let script = nwscript::parse_source_bundle(&bundle, Some(&langspec))
+        .map_err(|error| format!("failed to parse {}: {error}", input.display()))?;
+
+    let compile_options = nwscript::CompileOptions {
+        semantic: nwscript::SemanticOptions {
+            require_entrypoint:       !options.no_entrypoint_check,
+            allow_conditional_script: true,
+        },
+        optimization: options.optimization,
+    };
+
+    if options.debug {
+        nwscript::compile_script_with_source_map(
+            &script,
+            &bundle.source_map,
+            bundle.root_id,
+            Some(&langspec),
+            compile_options,
+        )
+    } else {
+        nwscript::compile_script(&script, Some(&langspec), compile_options)
+    }
+    .map_err(|error| format!("failed to compile {}: {error}", input.display()))
+}
+
+fn resolve_langspec_path(
+    input: &Path,
+    explicit: Option<&Path>,
+    include_dirs: &[PathBuf],
+) -> Result<PathBuf, String> {
+    if let Some(path) = explicit {
         if !path.is_file() {
             return Err(format!("langspec file does not exist: {}", path.display()));
         }
-        return Ok(path.clone());
+        return Ok(path.to_path_buf());
     }
 
-    let parent = cmd.input.parent().unwrap_or_else(|| Path::new("."));
-    for candidate in [
-        parent.join("nwscript.nss"),
-        parent.join(nwscript::DEFAULT_LANGSPEC_SCRIPT_NAME),
-    ] {
-        if candidate.is_file() {
-            return Ok(candidate);
+    for root in script_search_roots(input, include_dirs) {
+        for candidate in [
+            root.join("nwscript.nss"),
+            root.join(nwscript::DEFAULT_LANGSPEC_SCRIPT_NAME),
+        ] {
+            if candidate.is_file() {
+                return Ok(candidate);
+            }
         }
     }
 
     Err("failed to find nwscript.nss; pass --langspec explicitly".to_string())
+}
+
+fn script_search_roots(input: &Path, include_dirs: &[PathBuf]) -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    if let Some(parent) = input.parent() {
+        roots.push(parent.to_path_buf());
+    }
+    for dir in include_dirs {
+        if !dir.as_os_str().is_empty() && !roots.contains(dir) {
+            roots.push(dir.clone());
+        }
+    }
+    roots
 }
 
 struct FilesystemScriptResolver {
