@@ -1,7 +1,6 @@
 use std::io::Cursor;
 
-use nwnrs::prelude::tlk;
-use nwnrs::prelude::core::Language;
+use nwnrs::prelude::{core::Language, tlk};
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::JsValue;
 
@@ -14,29 +13,29 @@ use crate::{
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TlkEntryDto {
     /// The localized text.
-    pub text: String,
+    pub text:              String,
     /// Original encoded text bytes when present.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub raw_text: Option<Vec<u8>>,
+    pub raw_text:          Option<Vec<u8>>,
     /// The associated sound resource reference.
-    pub sound_res_ref: String,
+    pub sound_res_ref:     String,
     /// Raw 16-byte sound resource slot.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub raw_sound_res_ref: Vec<u8>,
     /// The sound length in seconds.
-    pub sound_length: f32,
+    pub sound_length:      f32,
     /// Raw IEEE-754 bits for the stored sound length field.
     #[serde(default)]
     pub sound_length_bits: u32,
     /// Raw TLK entry flags.
     #[serde(default)]
-    pub flags: i32,
+    pub flags:             i32,
     /// Stored volume variance field.
     #[serde(default)]
-    pub volume_variance: i32,
+    pub volume_variance:   i32,
     /// Stored pitch variance field.
     #[serde(default)]
-    pub pitch_variance: i32,
+    pub pitch_variance:    i32,
 }
 
 fn dto_to_tlk(value: &SingleTlkDto) -> Result<tlk::SingleTlk, JsValue> {
@@ -55,7 +54,8 @@ fn dto_to_tlk(value: &SingleTlkDto) -> Result<tlk::SingleTlk, JsValue> {
                     ))
                 })?
             };
-            let mut next = tlk::TlkEntry::new(&entry.text, &entry.sound_res_ref, entry.sound_length);
+            let mut next =
+                tlk::TlkEntry::new(&entry.text, &entry.sound_res_ref, entry.sound_length);
             next.raw_text = entry.raw_text.clone();
             next.raw_sound_res_ref = raw_sound_res_ref;
             next.sound_length_bits = if entry.sound_length_bits == 0 {
@@ -82,10 +82,10 @@ pub struct SingleTlkDto {
     /// The NWN language id.
     pub language_id: u32,
     /// Sparse TLK entries by strref position.
-    pub entries: Vec<Option<TlkEntryDto>>,
+    pub entries:     Vec<Option<TlkEntryDto>>,
     /// Internal provenance metadata for unchanged write-backs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub lossless: Option<LosslessDtoMetadata>,
+    pub lossless:    Option<LosslessDtoMetadata>,
 }
 
 fn tlk_to_dto(value: &mut tlk::SingleTlk) -> Result<SingleTlkDto, JsValue> {
@@ -101,15 +101,15 @@ fn tlk_to_dto(value: &mut tlk::SingleTlk) -> Result<SingleTlkDto, JsValue> {
                     .map_err(|error| js_error("failed to read TLK entry", error))
                     .map(|entry| {
                         entry.map(|entry| TlkEntryDto {
-                            text: entry.text,
-                            raw_text: entry.raw_text,
-                            sound_res_ref: entry.sound_res_ref,
+                            text:              entry.text,
+                            raw_text:          entry.raw_text,
+                            sound_res_ref:     entry.sound_res_ref,
                             raw_sound_res_ref: entry.raw_sound_res_ref.to_vec(),
-                            sound_length: entry.sound_length,
+                            sound_length:      entry.sound_length,
                             sound_length_bits: entry.sound_length_bits,
-                            flags: entry.flags,
-                            volume_variance: entry.volume_variance,
-                            pitch_variance: entry.pitch_variance,
+                            flags:             entry.flags,
+                            volume_variance:   entry.volume_variance,
+                            pitch_variance:    entry.pitch_variance,
                         })
                     })
             })

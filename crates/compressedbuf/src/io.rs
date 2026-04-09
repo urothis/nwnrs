@@ -76,7 +76,10 @@ pub fn read_payload_reader<R: Read>(
     }
 
     let (algorithm_header, payload) = match algorithm {
-        Algorithm::None => (AlgorithmHeader::None, read_bytes_or_err(reader, uncompressed_size)?),
+        Algorithm::None => (
+            AlgorithmHeader::None,
+            read_bytes_or_err(reader, uncompressed_size)?,
+        ),
         Algorithm::Zlib => {
             let version = read_u32(reader)?;
             expect(
@@ -87,7 +90,12 @@ pub fn read_payload_reader<R: Read>(
             let mut decoder = ZlibDecoder::new(reader);
             let mut payload = Vec::with_capacity(uncompressed_size);
             decoder.read_to_end(&mut payload)?;
-            (AlgorithmHeader::Zlib { version }, payload)
+            (
+                AlgorithmHeader::Zlib {
+                    version,
+                },
+                payload,
+            )
         }
         Algorithm::Zstd => {
             let version = read_u32(reader)?;
@@ -158,7 +166,10 @@ pub fn compress_writer<W: Write + ?Sized>(
     algorithm: Algorithm,
     magic: u32,
 ) -> CompressedBufResult<()> {
-    write_payload_writer(writer, &CompressedBufPayload::new(magic, algorithm, data.to_vec()))
+    write_payload_writer(
+        writer,
+        &CompressedBufPayload::new(magic, algorithm, data.to_vec()),
+    )
 }
 
 /// Encodes a provenance-rich payload back into memory.
@@ -200,7 +211,12 @@ pub fn write_payload_writer<W: Write + ?Sized>(
 
     match (&payload.algorithm, &payload.algorithm_header) {
         (Algorithm::None, AlgorithmHeader::None) => writer.write_all(&payload.data)?,
-        (Algorithm::Zlib, AlgorithmHeader::Zlib { version }) => {
+        (
+            Algorithm::Zlib,
+            AlgorithmHeader::Zlib {
+                version,
+            },
+        ) => {
             write_u32(writer, *version)?;
             let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
             encoder.write_all(&payload.data)?;
@@ -220,7 +236,11 @@ pub fn write_payload_writer<W: Write + ?Sized>(
             let encoded = zstd::stream::encode_all(Cursor::new(&payload.data), 0)?;
             writer.write_all(&encoded)?;
         }
-        _ => return Err(CompressedBufError::msg("algorithm header does not match algorithm")),
+        _ => {
+            return Err(CompressedBufError::msg(
+                "algorithm header does not match algorithm",
+            ))
+        }
     }
 
     debug!(algorithm = ?payload.algorithm, len = payload.data.len(), "compressed buffer payload");
@@ -239,7 +259,10 @@ fn write_u32<W: Write + ?Sized>(writer: &mut W, value: u32) -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{Algorithm, AlgorithmHeader, CompressedBufPayload, make_magic, read_payload_bytes, write_payload_bytes};
+    use crate::{
+        Algorithm, AlgorithmHeader, CompressedBufPayload, make_magic, read_payload_bytes,
+        write_payload_bytes,
+    };
 
     #[test]
     fn payload_roundtrip_reuses_original_bytes_when_unchanged() {
@@ -269,7 +292,7 @@ mod tests {
         assert_eq!(
             reparsed.algorithm_header,
             AlgorithmHeader::Zstd {
-                version: 1,
+                version:    1,
                 dictionary: 0,
             }
         );
@@ -279,12 +302,12 @@ mod tests {
     #[test]
     fn payload_rejects_mismatched_algorithm_header() {
         let payload = CompressedBufPayload {
-            magic: make_magic("TEST").expect("magic"),
-            header_version: 3,
-            algorithm: Algorithm::Zlib,
+            magic:            make_magic("TEST").expect("magic"),
+            header_version:   3,
+            algorithm:        Algorithm::Zlib,
             algorithm_header: AlgorithmHeader::None,
-            data: b"fixture".to_vec(),
-            original_bytes: None,
+            data:             b"fixture".to_vec(),
+            original_bytes:   None,
         };
 
         let error = write_payload_bytes(&payload).expect_err("expected mismatched header failure");

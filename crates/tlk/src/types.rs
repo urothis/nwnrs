@@ -73,23 +73,23 @@ pub type TlkResult<T> = Result<T, TlkError>;
 /// A single TLK entry.
 pub struct TlkEntry {
     /// Localized text content.
-    pub text: String,
+    pub text:              String,
     /// Original encoded text bytes when this entry was read from disk.
-    pub raw_text: Option<Vec<u8>>,
+    pub raw_text:          Option<Vec<u8>>,
     /// Associated sound resource reference.
-    pub sound_res_ref: String,
+    pub sound_res_ref:     String,
     /// Raw 16-byte sound resource slot.
     pub raw_sound_res_ref: [u8; 16],
     /// Sound length in seconds.
-    pub sound_length: f32,
+    pub sound_length:      f32,
     /// Raw IEEE-754 bits for the stored sound length field.
     pub sound_length_bits: u32,
     /// Raw TLK entry flags.
-    pub flags: i32,
+    pub flags:             i32,
     /// Stored volume variance field.
-    pub volume_variance: i32,
+    pub volume_variance:   i32,
     /// Stored pitch variance field.
-    pub pitch_variance: i32,
+    pub pitch_variance:    i32,
 }
 
 impl TlkEntry {
@@ -105,10 +105,7 @@ impl TlkEntry {
         let mut raw_sound_res_ref = [0_u8; 16];
         let bytes = sound_res_ref.as_bytes();
         let count = bytes.len().min(raw_sound_res_ref.len());
-        if let (Some(dst), Some(src)) = (
-            raw_sound_res_ref.get_mut(..count),
-            bytes.get(..count),
-        ) {
+        if let (Some(dst), Some(src)) = (raw_sound_res_ref.get_mut(..count), bytes.get(..count)) {
             dst.copy_from_slice(src);
         }
         Self {
@@ -157,7 +154,8 @@ impl TlkEntry {
             .and_then(|bytes| from_nwnrs_encoding(bytes).ok())
             .is_some_and(|decoded| decoded == self.text);
         let raw_sound_matches = raw_sound == self.sound_res_ref;
-        let raw_length_matches = f32::from_bits(self.sound_length_bits).to_bits() == self.sound_length.to_bits();
+        let raw_length_matches =
+            f32::from_bits(self.sound_length_bits).to_bits() == self.sound_length.to_bits();
 
         if raw_text_matches
             && raw_sound_matches
@@ -259,7 +257,7 @@ impl fmt::Debug for SingleTlk {
 /// A male/female TLK pair from one layer in a TLK chain.
 pub struct TlkPair {
     /// Male table for the layer, when present.
-    pub male: Option<SingleTlk>,
+    pub male:   Option<SingleTlk>,
     /// Female table for the layer, when present.
     pub female: Option<SingleTlk>,
 }
@@ -278,17 +276,17 @@ impl SingleTlk {
     /// Creates an empty English TLK table.
     pub fn new() -> Self {
         Self {
-            language: Language::English,
-            static_entries: HashMap::new(),
+            language:               Language::English,
+            static_entries:         HashMap::new(),
             static_entries_highest: -1,
-            stream: None,
-            io_start_pos: 0,
-            io_entry_count: 0,
-            io_entries_offset: 0,
-            source_bytes: None,
-            source_language: None,
-            use_cache: true,
-            io_cache: None,
+            stream:                 None,
+            io_start_pos:           0,
+            io_entry_count:         0,
+            io_entries_offset:      0,
+            source_bytes:           None,
+            source_language:        None,
+            use_cache:              true,
+            io_cache:               None,
         }
     }
 
@@ -353,10 +351,7 @@ impl SingleTlk {
 
     /// Convenience helper that sets only the text portion of an entry.
     pub fn set_text(&mut self, str_ref: StrRef, text: impl Into<String>) {
-        self.set_entry(
-            str_ref,
-            TlkEntry::new(text, String::new(), 0.0),
-        );
+        self.set_entry(str_ref, TlkEntry::new(text, String::new(), 0.0));
     }
 
     fn get_from_io(&self, str_ref: StrRef) -> TlkResult<(usize, TlkEntry)> {
@@ -371,7 +366,10 @@ impl Default for SingleTlk {
 }
 
 pub(crate) fn decode_sound_res_ref(bytes: &[u8]) -> String {
-    let end = bytes.iter().position(|byte| *byte == 0).unwrap_or(bytes.len());
+    let end = bytes
+        .iter()
+        .position(|byte| *byte == 0)
+        .unwrap_or(bytes.len());
     String::from_utf8_lossy(bytes.get(..end).unwrap_or(&[]))
         .trim_matches(|ch: char| ch == '\u{00c0}' || ch.is_ascii_whitespace())
         .to_string()
@@ -380,7 +378,9 @@ pub(crate) fn decode_sound_res_ref(bytes: &[u8]) -> String {
 impl Tlk {
     /// Creates a TLK chain from explicit layers.
     pub fn new(chain: Vec<TlkPair>) -> Self {
-        Self { chain }
+        Self {
+            chain,
+        }
     }
 
     /// Builds a TLK chain from resource pairs.
@@ -391,7 +391,7 @@ impl Tlk {
         let mut pairs = Vec::with_capacity(chain.len());
         for (male, female) in chain {
             pairs.push(TlkPair {
-                male: male
+                male:   male
                     .as_ref()
                     .map(|res| SingleTlk::from_res(res, use_cache))
                     .transpose()?,

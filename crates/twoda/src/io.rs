@@ -18,9 +18,10 @@ pub fn read_twoda<R: Read>(mut reader: R) -> TwoDaResult<TwoDa> {
     let source_lines = split_source_lines(&decoded);
 
     let mut twoda = TwoDa::new();
-    let mut next_nonempty = source_lines.iter().enumerate().filter(|(_, line)| {
-        !line.text.trim().is_empty()
-    });
+    let mut next_nonempty = source_lines
+        .iter()
+        .enumerate()
+        .filter(|(_, line)| !line.text.trim().is_empty());
 
     let Some((header_idx, header_line)) = next_nonempty.next() else {
         return Err(TwoDaError::msg("EOF while reading 2da"));
@@ -29,12 +30,12 @@ pub fn read_twoda<R: Read>(mut reader: R) -> TwoDaResult<TwoDa> {
         return Err(TwoDaError::msg("invalid 2da header"));
     }
     let mut layout_lines = vec![TwoDaSourceLine::HeaderMagic {
-        raw: header_line.text.to_string(),
+        raw:         header_line.text.to_string(),
         line_ending: header_line.line_ending.to_string(),
     }];
     for line in source_lines.iter().take(header_idx) {
         layout_lines.push(TwoDaSourceLine::Blank {
-            raw: line.text.to_string(),
+            raw:         line.text.to_string(),
             line_ending: line.line_ending.to_string(),
         });
     }
@@ -48,17 +49,20 @@ pub fn read_twoda<R: Read>(mut reader: R) -> TwoDaResult<TwoDa> {
         .take(second_idx.saturating_sub(header_idx + 1))
     {
         layout_lines.push(TwoDaSourceLine::Blank {
-            raw: line.text.to_string(),
+            raw:         line.text.to_string(),
             line_ending: line.line_ending.to_string(),
         });
     }
 
     if let Some(default_layout) = parse_default_line(second_line)? {
-        twoda.default_value = default_layout.value.as_ref().and_then(|token| token.value.clone());
+        twoda.default_value = default_layout
+            .value
+            .as_ref()
+            .and_then(|token| token.value.clone());
         layout_lines.push(TwoDaSourceLine::Default {
-            prefix: default_layout.prefix,
-            value: default_layout.value,
-            trailing: default_layout.trailing,
+            prefix:      default_layout.prefix,
+            value:       default_layout.value,
+            trailing:    default_layout.trailing,
             line_ending: second_line.line_ending.to_string(),
         });
 
@@ -71,7 +75,7 @@ pub fn read_twoda<R: Read>(mut reader: R) -> TwoDaResult<TwoDa> {
             .take(header_row_idx.saturating_sub(second_idx + 1))
         {
             layout_lines.push(TwoDaSourceLine::Blank {
-                raw: line.text.to_string(),
+                raw:         line.text.to_string(),
                 line_ending: line.line_ending.to_string(),
             });
         }
@@ -82,10 +86,10 @@ pub fn read_twoda<R: Read>(mut reader: R) -> TwoDaResult<TwoDa> {
         }
         twoda.set_columns(headers.into_iter().map(Option::unwrap).collect())?;
         layout_lines.push(TwoDaSourceLine::HeaderRow {
-            leading: header_layout.leading,
-            columns: twoda.headers.clone(),
-            separators: header_layout.separators,
-            trailing: header_layout.trailing,
+            leading:     header_layout.leading,
+            columns:     twoda.headers.clone(),
+            separators:  header_layout.separators,
+            trailing:    header_layout.trailing,
             line_ending: header_row_line.line_ending.to_string(),
         });
 
@@ -100,10 +104,10 @@ pub fn read_twoda<R: Read>(mut reader: R) -> TwoDaResult<TwoDa> {
         }
         twoda.set_columns(headers.into_iter().map(Option::unwrap).collect())?;
         layout_lines.push(TwoDaSourceLine::HeaderRow {
-            leading: header_layout.leading,
-            columns: twoda.headers.clone(),
-            separators: header_layout.separators,
-            trailing: header_layout.trailing,
+            leading:     header_layout.leading,
+            columns:     twoda.headers.clone(),
+            separators:  header_layout.separators,
+            trailing:    header_layout.trailing,
             line_ending: second_line.line_ending.to_string(),
         });
 
@@ -119,7 +123,9 @@ pub fn read_twoda<R: Read>(mut reader: R) -> TwoDaResult<TwoDa> {
     );
     twoda.source_snapshot = Some(twoda.snapshot());
     twoda.source_bytes = Some(bytes);
-    twoda.source_layout = Some(TwoDaSourceLayout { lines: layout_lines });
+    twoda.source_layout = Some(TwoDaSourceLayout {
+        lines: layout_lines,
+    });
     Ok(twoda)
 }
 
@@ -277,25 +283,29 @@ fn append_data_line(
 ) -> TwoDaResult<()> {
     if line.text.trim().is_empty() {
         layout_lines.push(TwoDaSourceLine::Blank {
-            raw: line.text.to_string(),
+            raw:         line.text.to_string(),
             line_ending: line.line_ending.to_string(),
         });
         return Ok(());
     }
 
     let layout = parse_row_line(line, twoda.headers.len())?;
-    let mut row = layout.cells.iter().map(|cell| cell.value.clone()).collect::<Vec<_>>();
+    let mut row = layout
+        .cells
+        .iter()
+        .map(|cell| cell.value.clone())
+        .collect::<Vec<_>>();
     while row.len() < twoda.headers.len() {
         row.push(None);
     }
     twoda.row_labels.push(layout.label.clone());
     twoda.rows.push(row);
     layout_lines.push(TwoDaSourceLine::DataRow {
-        row_index: twoda.rows.len() - 1,
+        row_index:   twoda.rows.len() - 1,
         after_label: layout.after_label,
-        cells: layout.cells,
-        separators: layout.separators,
-        trailing: layout.trailing,
+        cells:       layout.cells,
+        separators:  layout.separators,
+        trailing:    layout.trailing,
         line_ending: line.line_ending.to_string(),
     });
     Ok(())
@@ -324,8 +334,13 @@ fn write_twoda_with_layout<W: Write>(
             None
         }
     });
-    let Some((_header_leading, _original_columns, _header_separators, _header_trailing, header_line_ending)) =
-        header_layout
+    let Some((
+        _header_leading,
+        _original_columns,
+        _header_separators,
+        _header_trailing,
+        header_line_ending,
+    )) = header_layout
     else {
         return Err(TwoDaError::msg("missing 2DA header layout"));
     };
@@ -354,8 +369,14 @@ fn write_twoda_with_layout<W: Write>(
         }
 
         match line {
-            TwoDaSourceLine::HeaderMagic { raw, line_ending }
-            | TwoDaSourceLine::Blank { raw, line_ending } => {
+            TwoDaSourceLine::HeaderMagic {
+                raw,
+                line_ending,
+            }
+            | TwoDaSourceLine::Blank {
+                raw,
+                line_ending,
+            } => {
                 writer.write_all(raw.as_bytes())?;
                 writer.write_all(line_ending.as_bytes())?;
             }
@@ -443,7 +464,8 @@ fn write_string_tokens<W: Write>(
     for (idx, column) in columns.iter().enumerate() {
         writer.write_all(column.as_bytes())?;
         if idx + 1 < columns.len() {
-            writer.write_all(select_separator(separators, idx, original_columns.len()).as_bytes())?;
+            writer
+                .write_all(select_separator(separators, idx, original_columns.len()).as_bytes())?;
         }
     }
     writer.write_all(trailing.as_bytes())?;
@@ -533,11 +555,7 @@ fn write_extra_rows<W: Write>(
     Ok(())
 }
 
-fn write_default_line<W: Write>(
-    writer: &mut W,
-    value: Cell,
-    line_ending: &str,
-) -> TwoDaResult<()> {
+fn write_default_line<W: Write>(writer: &mut W, value: Cell, line_ending: &str) -> TwoDaResult<()> {
     writer.write_all(b"DEFAULT: ")?;
     write_token(writer, value, None, false)?;
     writer.write_all(line_ending.as_bytes())?;
@@ -549,13 +567,21 @@ fn preferred_line_ending(layout: &TwoDaSourceLayout) -> &str {
         .lines
         .iter()
         .find_map(|line| match line {
-            TwoDaSourceLine::HeaderMagic { line_ending, .. }
-            | TwoDaSourceLine::Blank { line_ending, .. }
-            | TwoDaSourceLine::Default { line_ending, .. }
-            | TwoDaSourceLine::HeaderRow { line_ending, .. }
-            | TwoDaSourceLine::DataRow { line_ending, .. } if !line_ending.is_empty() => {
-                Some(line_ending.as_str())
+            TwoDaSourceLine::HeaderMagic {
+                line_ending, ..
             }
+            | TwoDaSourceLine::Blank {
+                line_ending, ..
+            }
+            | TwoDaSourceLine::Default {
+                line_ending, ..
+            }
+            | TwoDaSourceLine::HeaderRow {
+                line_ending, ..
+            }
+            | TwoDaSourceLine::DataRow {
+                line_ending, ..
+            } if !line_ending.is_empty() => Some(line_ending.as_str()),
             _ => None,
         })
         .unwrap_or("\n")
@@ -587,29 +613,29 @@ fn default_cell_separator() -> String {
 }
 
 struct SourceLine<'a> {
-    text: &'a str,
+    text:        &'a str,
     line_ending: &'a str,
 }
 
 struct ParsedDefaultLine {
-    prefix: String,
-    value: Option<TwoDaTokenLayout>,
+    prefix:   String,
+    value:    Option<TwoDaTokenLayout>,
     trailing: String,
 }
 
 struct ParsedHeaderLine {
-    leading: String,
-    columns: Vec<Cell>,
+    leading:    String,
+    columns:    Vec<Cell>,
     separators: Vec<String>,
-    trailing: String,
+    trailing:   String,
 }
 
 struct ParsedRowLine {
-    label: String,
+    label:       String,
     after_label: String,
-    cells: Vec<TwoDaTokenLayout>,
-    separators: Vec<String>,
-    trailing: String,
+    cells:       Vec<TwoDaTokenLayout>,
+    separators:  Vec<String>,
+    trailing:    String,
 }
 
 fn split_source_lines(text: &str) -> Vec<SourceLine<'_>> {
@@ -634,7 +660,7 @@ fn split_source_lines(text: &str) -> Vec<SourceLine<'_>> {
         }
         if bytes.get(idx) == Some(&b'\n') {
             lines.push(SourceLine {
-                text: &text[start..idx],
+                text:        &text[start..idx],
                 line_ending: "\n",
             });
             idx += 1;
@@ -645,7 +671,7 @@ fn split_source_lines(text: &str) -> Vec<SourceLine<'_>> {
     }
     if start < text.len() || text.is_empty() {
         lines.push(SourceLine {
-            text: &text[start..],
+            text:        &text[start..],
             line_ending: "",
         });
     }
@@ -686,10 +712,10 @@ fn parse_default_line(line: &SourceLine<'_>) -> TwoDaResult<Option<ParsedDefault
 fn parse_header_line(line: &SourceLine<'_>, maxcount: usize) -> TwoDaResult<ParsedHeaderLine> {
     let parsed = parse_token_sequence(line.text, maxcount)?;
     Ok(ParsedHeaderLine {
-        leading: parsed.leading,
-        columns: parsed.tokens.into_iter().map(|token| token.value).collect(),
+        leading:    parsed.leading,
+        columns:    parsed.tokens.into_iter().map(|token| token.value).collect(),
         separators: parsed.separators,
-        trailing: parsed.trailing,
+        trailing:   parsed.trailing,
     })
 }
 
@@ -712,10 +738,10 @@ fn parse_row_line(line: &SourceLine<'_>, header_count: usize) -> TwoDaResult<Par
 }
 
 struct ParsedTokenSequence {
-    leading: String,
-    tokens: Vec<TwoDaTokenLayout>,
+    leading:    String,
+    tokens:     Vec<TwoDaTokenLayout>,
     separators: Vec<String>,
-    trailing: String,
+    trailing:   String,
 }
 
 fn parse_token_sequence(line: &str, maxcount: usize) -> TwoDaResult<ParsedTokenSequence> {
@@ -726,7 +752,11 @@ fn parse_token_sequence(line: &str, maxcount: usize) -> TwoDaResult<ParsedTokenS
     let mut separators = Vec::new();
     while cursor < line.len() && tokens.len() < maxcount {
         let (raw, value, quoted, next) = parse_one_token(line, cursor)?;
-        tokens.push(TwoDaTokenLayout { value, quoted, raw });
+        tokens.push(TwoDaTokenLayout {
+            value,
+            quoted,
+            raw,
+        });
         let next_ws = consume_ws(line, next);
         separators.push(line[next..next_ws].to_string());
         cursor = next_ws;
@@ -822,9 +852,7 @@ mod tests {
         value
             .set_columns(vec!["NEW".to_string()])
             .expect("rename header");
-        value
-            .set_row_label(0, "custom0")
-            .expect("rename row label");
+        value.set_row_label(0, "custom0").expect("rename row label");
 
         let mut output = Vec::new();
         write_twoda(&mut output, &value, false).expect("write twoda");
@@ -841,17 +869,12 @@ mod tests {
         value
             .set_columns(vec!["COL0".to_string(), "COL1".to_string()])
             .expect("add column");
-        value.set_row(
-            0,
-            vec![Some("alpha".to_string()), Some("beta".to_string())],
-        );
+        value.set_row(0, vec![Some("alpha".to_string()), Some("beta".to_string())]);
         value.set_row(
             1,
             vec![Some("gamma".to_string()), Some("delta".to_string())],
         );
-        value
-            .set_row_label(1, "newrow")
-            .expect("set new row label");
+        value.set_row_label(1, "newrow").expect("set new row label");
 
         let mut output = Vec::new();
         write_twoda(&mut output, &value, false).expect("write twoda");

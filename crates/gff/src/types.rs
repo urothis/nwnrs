@@ -188,7 +188,7 @@ impl GffValue {
 /// Labels are stored on the containing [`GffStruct`]; this type only wraps the
 /// typed value.
 pub struct GffField {
-    pub(crate) value: GffValue,
+    pub(crate) value:      GffValue,
     pub(crate) provenance: Option<GffFieldProvenance>,
 }
 
@@ -221,10 +221,10 @@ impl GffField {
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct GffFieldProvenance {
-    pub(crate) label_bytes: [u8; 16],
-    pub(crate) original_value: GffValue,
+    pub(crate) label_bytes:        [u8; 16],
+    pub(crate) original_value:     GffValue,
     pub(crate) raw_data_or_offset: i32,
-    pub(crate) raw_field_data: Option<Vec<u8>>,
+    pub(crate) raw_field_data:     Option<Vec<u8>>,
 }
 
 /// A GFF structure containing labeled fields.
@@ -232,8 +232,8 @@ pub(crate) struct GffFieldProvenance {
 /// Fields preserve insertion order and labels are unique within a structure.
 pub struct GffStruct {
     /// The structure id stored in the document.
-    pub id: i32,
-    pub(crate) fields: Vec<(String, GffField)>,
+    pub id:                i32,
+    pub(crate) fields:     Vec<(String, GffField)>,
     pub(crate) provenance: Option<GffStructProvenance>,
 }
 
@@ -295,30 +295,30 @@ impl GffStruct {
 /// NWN conventionally stores the root structure with id `-1`.
 pub struct GffRoot {
     /// The four-byte document type tag.
-    pub file_type: String,
+    pub file_type:              String,
     /// The four-byte document version tag.
-    pub file_version: String,
+    pub file_version:           String,
     /// The root structure.
-    pub root: GffStruct,
-    pub(crate) source_bytes: Option<Vec<u8>>,
+    pub root:                   GffStruct,
+    pub(crate) source_bytes:    Option<Vec<u8>>,
     pub(crate) source_snapshot: Option<GffRootSnapshot>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct GffRootSnapshot {
-    pub(crate) file_type: String,
+    pub(crate) file_type:    String,
     pub(crate) file_version: String,
-    pub(crate) root: GffStruct,
+    pub(crate) root:         GffStruct,
 }
 
 impl GffRoot {
     /// Creates a new root document with version `V3.2`.
     pub fn new(file_type: impl Into<String>) -> Self {
         Self {
-            file_type: file_type.into(),
-            file_version: "V3.2".to_string(),
-            root: GffStruct::new(-1),
-            source_bytes: None,
+            file_type:       file_type.into(),
+            file_version:    "V3.2".to_string(),
+            root:            GffStruct::new(-1),
+            source_bytes:    None,
             source_snapshot: None,
         }
     }
@@ -335,9 +335,9 @@ impl GffRoot {
 
     pub(crate) fn snapshot(&self) -> GffRootSnapshot {
         GffRootSnapshot {
-            file_type: self.file_type.clone(),
+            file_type:    self.file_type.clone(),
             file_version: self.file_version.clone(),
-            root: self.root.clone(),
+            root:         self.root.clone(),
         }
     }
 }

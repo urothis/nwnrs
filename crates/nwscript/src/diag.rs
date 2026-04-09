@@ -262,7 +262,9 @@ pub struct UnknownCompilerErrorCode {
 impl UnknownCompilerErrorCode {
     /// Creates a new unknown-code error.
     pub fn new(code: i32) -> Self {
-        Self { code }
+        Self {
+            code,
+        }
     }
 
     /// Returns the unrecognized numeric code.

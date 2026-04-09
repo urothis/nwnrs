@@ -3,8 +3,7 @@
 use std::{
     collections::HashMap,
     error::Error,
-    fs,
-    io,
+    fs, io,
     path::Path,
     sync::{Mutex, OnceLock},
 };
@@ -19,13 +18,14 @@ pub fn test_error(message: impl Into<String>) -> io::Error {
     io::Error::other(message.into())
 }
 
-/// Returns the NWScript testing asset root without requiring the source files to be checked in.
+/// Returns the NWScript testing asset root without requiring the source files
+/// to be checked in.
 pub fn assets_root() -> std::path::PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../assets/testing/nwscript")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/testing/nwscript")
 }
 
-/// Loads one NWScript source file from disk when present, otherwise fetches it from the pinned remote assets.
+/// Loads one NWScript source file from disk when present, otherwise fetches it
+/// from the pinned remote assets.
 pub fn load_nss_bytes(assets: &Path, path: &str) -> Result<Vec<u8>, Box<dyn Error>> {
     let mut candidates = vec![path.to_string()];
     let lowercase = path.to_ascii_lowercase();
@@ -81,7 +81,8 @@ pub fn load_nss_bytes(assets: &Path, path: &str) -> Result<Vec<u8>, Box<dyn Erro
     Err(last_error.unwrap_or_else(|| test_error(format!("missing nwscript asset: {path}")).into()))
 }
 
-/// Returns whether the pinned remote NWScript assets are temporarily unavailable in this environment.
+/// Returns whether the pinned remote NWScript assets are temporarily
+/// unavailable in this environment.
 pub fn remote_assets_unavailable(error: &(dyn Error + 'static)) -> bool {
     error
         .downcast_ref::<reqwest::Error>()
@@ -89,9 +90,7 @@ pub fn remote_assets_unavailable(error: &(dyn Error + 'static)) -> bool {
 }
 
 /// Converts transient remote asset failures into a skipped test.
-pub fn skip_if_remote_assets_unavailable(
-    error: Box<dyn Error>,
-) -> Result<(), Box<dyn Error>> {
+pub fn skip_if_remote_assets_unavailable(error: Box<dyn Error>) -> Result<(), Box<dyn Error>> {
     if remote_assets_unavailable(error.as_ref()) {
         tracing::warn!("skipping nwscript remote asset test: {error}");
         return Ok(());

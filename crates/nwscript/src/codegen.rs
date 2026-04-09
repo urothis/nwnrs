@@ -6,13 +6,14 @@ use crate::{
     AssignmentOp, BinaryOp, BuiltinFunction, BuiltinType, BuiltinValue, HirBlock, HirCallTarget,
     HirExpr, HirExprKind, HirFunction, HirLocalId, HirLocalKind, HirModule, HirStmt, LangSpec,
     Literal, NCS_OPERATION_BASE_SIZE, NcsAuxCode, NcsInstruction, NcsOpcode, Ndb, NdbFile,
-    NdbFunction, NdbLine, NdbStruct, NdbStructField, NdbType, NdbVariable, Script, SourceId,
-    SourceMap, SemanticOptions, SemanticType, SourceBundle, UnaryOp, analyze_script_with_options,
-    encode_ncs_instructions, lower_to_hir, parse_source_bundle, write_ndb, nwscript_string_hash,
+    NdbFunction, NdbLine, NdbStruct, NdbStructField, NdbType, NdbVariable, Script, SemanticOptions,
+    SemanticType, SourceBundle, SourceId, SourceMap, UnaryOp, analyze_script_with_options,
+    encode_ncs_instructions, lower_to_hir, nwscript_string_hash,
     opt::{
         ConstValue, build_constant_env, evaluate_const_expr, meld_instructions,
         optimization_needs_hir_passes, optimization_needs_post_codegen_passes, optimize_hir,
     },
+    parse_source_bundle, write_ndb,
 };
 
 /// Optimization levels accepted by the pure-Rust compiler pipeline.
@@ -33,7 +34,7 @@ pub enum OptimizationLevel {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct CompileOptions {
     /// Entry-point validation policy forwarded to semantic analysis.
-    pub semantic: SemanticOptions,
+    pub semantic:     SemanticOptions,
     /// Optimization level for code generation.
     pub optimization: OptimizationLevel,
 }
@@ -41,7 +42,7 @@ pub struct CompileOptions {
 impl Default for CompileOptions {
     fn default() -> Self {
         Self {
-            semantic: SemanticOptions::default(),
+            semantic:     SemanticOptions::default(),
             optimization: OptimizationLevel::O0,
         }
     }
@@ -60,7 +61,7 @@ pub struct CompileArtifacts {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CodegenError {
     /// Optional source span associated with the failure.
-    pub span: Option<crate::Span>,
+    pub span:    Option<crate::Span>,
     /// Human-readable error text.
     pub message: String,
 }
@@ -89,19 +90,23 @@ impl From<crate::NdbError> for CodegenError {
 }
 
 fn usize_to_i32(value: usize, what: &str) -> Result<i32, CodegenError> {
-    i32::try_from(value).map_err(|_error| CodegenError::new(None, format!("{what} exceeds i32 range")))
+    i32::try_from(value)
+        .map_err(|_error| CodegenError::new(None, format!("{what} exceeds i32 range")))
 }
 
 fn usize_to_u32(value: usize, what: &str) -> Result<u32, CodegenError> {
-    u32::try_from(value).map_err(|_error| CodegenError::new(None, format!("{what} exceeds u32 range")))
+    u32::try_from(value)
+        .map_err(|_error| CodegenError::new(None, format!("{what} exceeds u32 range")))
 }
 
 fn usize_to_u16(value: usize, what: &str) -> Result<u16, CodegenError> {
-    u16::try_from(value).map_err(|_error| CodegenError::new(None, format!("{what} exceeds u16 range")))
+    u16::try_from(value)
+        .map_err(|_error| CodegenError::new(None, format!("{what} exceeds u16 range")))
 }
 
 fn usize_to_u8(value: usize, what: &str) -> Result<u8, CodegenError> {
-    u8::try_from(value).map_err(|_error| CodegenError::new(None, format!("{what} exceeds u8 range")))
+    u8::try_from(value)
+        .map_err(|_error| CodegenError::new(None, format!("{what} exceeds u8 range")))
 }
 
 /// One compilation failure across analysis, lowering, or code generation.
@@ -145,7 +150,8 @@ impl From<CodegenError> for CompileError {
     }
 }
 
-/// Compiles one parsed script through semantic analysis, HIR lowering, and `O0` NCS emission.
+/// Compiles one parsed script through semantic analysis, HIR lowering, and `O0`
+/// NCS emission.
 pub fn compile_script(
     script: &Script,
     langspec: Option<&LangSpec>,
@@ -177,7 +183,13 @@ pub fn compile_source_bundle(
             format!("failed to parse source bundle during compile: {error}"),
         ))
     })?;
-    compile_script_with_source_map(&script, &bundle.source_map, bundle.root_id, langspec, options)
+    compile_script_with_source_map(
+        &script,
+        &bundle.source_map,
+        bundle.root_id,
+        langspec,
+        options,
+    )
 }
 
 fn compile_script_with_debug(
@@ -191,7 +203,10 @@ fn compile_script_with_debug(
     let hir = lower_to_hir(script, &semantic, langspec)?;
     if optimization_not_o0(options.optimization) {
         let ncs = compile_hir_to_ncs(&hir, langspec, options.optimization)?;
-        return Ok(CompileArtifacts { ncs, ndb: None });
+        return Ok(CompileArtifacts {
+            ncs,
+            ndb: None,
+        });
     }
 
     let output = O0Compiler::new(&hir, langspec, source_map)?.compile()?;
@@ -205,7 +220,10 @@ fn compile_script_with_debug(
         }
         _ => None,
     };
-    Ok(CompileArtifacts { ncs, ndb })
+    Ok(CompileArtifacts {
+        ncs,
+        ndb,
+    })
 }
 
 /// Compiles one lowered HIR module to `NCS`.
@@ -238,34 +256,34 @@ struct LabelId(u32);
 
 struct ResolvedAssembly {
     instructions: Vec<NcsInstruction>,
-    offsets: BTreeMap<LabelId, u32>,
+    offsets:      BTreeMap<LabelId, u32>,
 }
 
 struct FunctionDebugInfo {
     start: LabelId,
-    end: LabelId,
+    end:   LabelId,
 }
 
 struct VariableDebugInfo {
-    name: String,
-    ty: SemanticType,
-    start: LabelId,
-    end: Option<LabelId>,
+    name:      String,
+    ty:        SemanticType,
+    start:     LabelId,
+    end:       Option<LabelId>,
     stack_loc: u32,
 }
 
 struct LineDebugInfo {
     source_id: SourceId,
-    line_num: usize,
-    start: LabelId,
-    end: LabelId,
+    line_num:  usize,
+    start:     LabelId,
+    end:       LabelId,
 }
 
 struct OpenLineDebug {
     source_id: SourceId,
-    line_num: usize,
-    refs: usize,
-    start: LabelId,
+    line_num:  usize,
+    refs:      usize,
+    start:     LabelId,
 }
 
 #[derive(Default)]
@@ -275,25 +293,22 @@ struct LineDebugTracker {
 }
 
 struct CodegenOutput {
-    instructions: Vec<NcsInstruction>,
+    instructions:  Vec<NcsInstruction>,
     label_offsets: BTreeMap<LabelId, u32>,
-    functions: BTreeMap<String, FunctionDebugInfo>,
-    variables: Vec<VariableDebugInfo>,
-    lines: Vec<LineDebugInfo>,
+    functions:     BTreeMap<String, FunctionDebugInfo>,
+    variables:     Vec<VariableDebugInfo>,
+    lines:         Vec<LineDebugInfo>,
 }
 
 enum AssemblyItem {
     Label(LabelId),
     Instruction(NcsInstruction),
-    RelativeJump {
-        opcode: NcsOpcode,
-        target: LabelId,
-    },
+    RelativeJump { opcode: NcsOpcode, target: LabelId },
 }
 
 #[derive(Default)]
 struct Assembler {
-    items: Vec<AssemblyItem>,
+    items:      Vec<AssemblyItem>,
     next_label: u32,
 }
 
@@ -313,7 +328,10 @@ impl Assembler {
     }
 
     fn push_jump(&mut self, opcode: NcsOpcode, target: LabelId) {
-        self.items.push(AssemblyItem::RelativeJump { opcode, target });
+        self.items.push(AssemblyItem::RelativeJump {
+            opcode,
+            target,
+        });
     }
 
     fn finalize(self) -> Result<ResolvedAssembly, CodegenError> {
@@ -327,7 +345,9 @@ impl Assembler {
                 AssemblyItem::Instruction(instruction) => {
                     offset += instruction.encoded_len();
                 }
-                AssemblyItem::RelativeJump { .. } => {
+                AssemblyItem::RelativeJump {
+                    ..
+                } => {
                     offset += NCS_OPERATION_BASE_SIZE + 4;
                 }
             }
@@ -342,7 +362,10 @@ impl Assembler {
                     offset += instruction.encoded_len();
                     instructions.push(instruction);
                 }
-                AssemblyItem::RelativeJump { opcode, target } => {
+                AssemblyItem::RelativeJump {
+                    opcode,
+                    target,
+                } => {
                     let target_offset = offsets.get(&target).copied().ok_or_else(|| {
                         CodegenError::new(None, format!("unresolved code label {:?}", target))
                     })?;
@@ -372,55 +395,55 @@ impl Assembler {
 }
 
 struct O0Compiler<'a> {
-    hir: &'a HirModule,
-    builtin_functions: BTreeMap<String, (u16, &'a BuiltinFunction)>,
-    builtin_constants: BTreeMap<String, BuiltinValue>,
-    constant_env: BTreeMap<String, ConstValue>,
-    structs: BTreeMap<String, &'a crate::HirStruct>,
-    functions: BTreeMap<String, &'a HirFunction>,
-    entry_function: Option<&'a HirFunction>,
-    global_layout: BTreeMap<String, ValueLayout>,
-    global_size: usize,
-    function_labels: BTreeMap<String, LabelId>,
+    hir:                  &'a HirModule,
+    builtin_functions:    BTreeMap<String, (u16, &'a BuiltinFunction)>,
+    builtin_constants:    BTreeMap<String, BuiltinValue>,
+    constant_env:         BTreeMap<String, ConstValue>,
+    structs:              BTreeMap<String, &'a crate::HirStruct>,
+    functions:            BTreeMap<String, &'a HirFunction>,
+    entry_function:       Option<&'a HirFunction>,
+    global_layout:        BTreeMap<String, ValueLayout>,
+    global_size:          usize,
+    function_labels:      BTreeMap<String, LabelId>,
     function_exit_labels: BTreeMap<String, LabelId>,
-    function_end_labels: BTreeMap<String, LabelId>,
-    globals_label: Option<LabelId>,
-    globals_end_label: Option<LabelId>,
-    variable_debug: Vec<VariableDebugInfo>,
-    line_debug: LineDebugTracker,
-    source_map: Option<&'a SourceMap>,
-    assembler: Assembler,
+    function_end_labels:  BTreeMap<String, LabelId>,
+    globals_label:        Option<LabelId>,
+    globals_end_label:    Option<LabelId>,
+    variable_debug:       Vec<VariableDebugInfo>,
+    line_debug:           LineDebugTracker,
+    source_map:           Option<&'a SourceMap>,
+    assembler:            Assembler,
 }
 
 #[derive(Clone)]
 struct ValueLayout {
-    ty: SemanticType,
+    ty:     SemanticType,
     offset: usize,
-    size: usize,
+    size:   usize,
 }
 
 #[derive(Clone)]
 struct FieldLayout {
-    ty: SemanticType,
+    ty:     SemanticType,
     offset: usize,
-    size: usize,
+    size:   usize,
 }
 
 #[derive(Clone)]
 struct FunctionLayout {
     return_layout: Option<ValueLayout>,
-    locals: BTreeMap<HirLocalId, ValueLayout>,
-    locals_size: usize,
+    locals:        BTreeMap<HirLocalId, ValueLayout>,
+    locals_size:   usize,
 }
 
 struct FunctionEmitter<'a, 'b> {
-    compiler: &'b mut O0Compiler<'a>,
-    function: &'a HirFunction,
-    layout: FunctionLayout,
-    temp_bytes: usize,
-    break_targets: Vec<LabelId>,
+    compiler:         &'b mut O0Compiler<'a>,
+    function:         &'a HirFunction,
+    layout:           FunctionLayout,
+    temp_bytes:       usize,
+    break_targets:    Vec<LabelId>,
     continue_targets: Vec<LabelId>,
-    scope_stack: Vec<Vec<usize>>,
+    scope_stack:      Vec<Vec<usize>>,
 }
 
 impl<'a> O0Compiler<'a> {
@@ -557,14 +580,17 @@ impl<'a> O0Compiler<'a> {
 
         let assembly = self.assembler.finalize()?;
         Ok(CodegenOutput {
-            instructions: assembly.instructions,
+            instructions:  assembly.instructions,
             label_offsets: assembly.offsets,
-            functions: self
+            functions:     self
                 .function_labels
                 .iter()
                 .map(|(name, start)| {
                     let end = self.function_end_labels.get(name).copied().ok_or_else(|| {
-                        CodegenError::new(None, format!("missing function end label for {:?}", name))
+                        CodegenError::new(
+                            None,
+                            format!("missing function end label for {:?}", name),
+                        )
                     })?;
                     Ok::<_, CodegenError>((
                         name.clone(),
@@ -575,8 +601,8 @@ impl<'a> O0Compiler<'a> {
                     ))
                 })
                 .collect::<Result<_, _>>()?,
-            variables: self.variable_debug,
-            lines: self.line_debug.entries,
+            variables:     self.variable_debug,
+            lines:         self.line_debug.entries,
         })
     }
 
@@ -623,7 +649,10 @@ impl<'a> O0Compiler<'a> {
                 let start = self.assembler.new_label();
                 self.assembler.place_label(start);
                 let layout = self.global_layout.get(&global.name).ok_or_else(|| {
-                    CodegenError::new(Some(global.span), format!("unknown global {:?}", global.name))
+                    CodegenError::new(
+                        Some(global.span),
+                        format!("unknown global {:?}", global.name),
+                    )
                 })?;
                 self.variable_debug.push(VariableDebugInfo {
                     name: global.name.clone(),
@@ -638,7 +667,7 @@ impl<'a> O0Compiler<'a> {
             .push(simple_instruction(NcsOpcode::SaveBasePointer));
 
         let mut emitter = GlobalEmitter {
-            compiler: self,
+            compiler:   self,
             temp_bytes: 0,
         };
         for global in &emitter.compiler.hir.globals {
@@ -677,7 +706,10 @@ impl<'a> O0Compiler<'a> {
             .compiler
             .assembler
             .push(simple_instruction(NcsOpcode::RestoreBasePointer));
-        emitter.compiler.assembler.push(simple_instruction(NcsOpcode::Ret));
+        emitter
+            .compiler
+            .assembler
+            .push(simple_instruction(NcsOpcode::Ret));
         Ok(())
     }
 
@@ -724,7 +756,10 @@ impl<'a> O0Compiler<'a> {
         }
         for parameter in &function.parameters {
             let slot = layout.locals.get(&parameter.local).ok_or_else(|| {
-                CodegenError::new(Some(function.span), format!("unknown local slot {:?}", parameter.local))
+                CodegenError::new(
+                    Some(function.span),
+                    format!("unknown local slot {:?}", parameter.local),
+                )
             })?;
             self.variable_debug.push(VariableDebugInfo {
                 name: parameter.name.clone(),
@@ -749,21 +784,32 @@ impl<'a> O0Compiler<'a> {
             emitter.compiler.assembler.place_label(exit);
             let final_line_start = emitter.compiler.assembler.new_label();
             emitter.compiler.assembler.place_label(final_line_start);
-            emitter.compiler.start_line_end_at(body.span, final_line_start);
+            emitter
+                .compiler
+                .start_line_end_at(body.span, final_line_start);
             if function.return_type == SemanticType::Void {
                 emitter.emit_function_epilogue();
             }
-            emitter.compiler.assembler.push(simple_instruction(NcsOpcode::Ret));
+            emitter
+                .compiler
+                .assembler
+                .push(simple_instruction(NcsOpcode::Ret));
             let final_line_end = emitter.compiler.assembler.new_label();
             emitter.compiler.assembler.place_label(final_line_end);
             emitter.compiler.end_line_end_at(body.span, final_line_end);
         } else if function.return_type == SemanticType::Void {
             emitter.compiler.assembler.place_label(exit);
             emitter.emit_function_epilogue();
-            emitter.compiler.assembler.push(simple_instruction(NcsOpcode::Ret));
+            emitter
+                .compiler
+                .assembler
+                .push(simple_instruction(NcsOpcode::Ret));
         } else {
             emitter.compiler.assembler.place_label(exit);
-            emitter.compiler.assembler.push(simple_instruction(NcsOpcode::Ret));
+            emitter
+                .compiler
+                .assembler
+                .push(simple_instruction(NcsOpcode::Ret));
         }
         Ok(())
     }
@@ -823,18 +869,22 @@ impl<'a> O0Compiler<'a> {
 
     fn emit_stack_alloc(&mut self, ty: &SemanticType) -> Result<(), CodegenError> {
         match ty {
-            SemanticType::Int => self
-                .assembler
-                .push(simple_aux_instruction(NcsOpcode::RunstackAdd, NcsAuxCode::TypeInteger)),
-            SemanticType::Float => self
-                .assembler
-                .push(simple_aux_instruction(NcsOpcode::RunstackAdd, NcsAuxCode::TypeFloat)),
-            SemanticType::String => self
-                .assembler
-                .push(simple_aux_instruction(NcsOpcode::RunstackAdd, NcsAuxCode::TypeString)),
-            SemanticType::Object => self
-                .assembler
-                .push(simple_aux_instruction(NcsOpcode::RunstackAdd, NcsAuxCode::TypeObject)),
+            SemanticType::Int => self.assembler.push(simple_aux_instruction(
+                NcsOpcode::RunstackAdd,
+                NcsAuxCode::TypeInteger,
+            )),
+            SemanticType::Float => self.assembler.push(simple_aux_instruction(
+                NcsOpcode::RunstackAdd,
+                NcsAuxCode::TypeFloat,
+            )),
+            SemanticType::String => self.assembler.push(simple_aux_instruction(
+                NcsOpcode::RunstackAdd,
+                NcsAuxCode::TypeString,
+            )),
+            SemanticType::Object => self.assembler.push(simple_aux_instruction(
+                NcsOpcode::RunstackAdd,
+                NcsAuxCode::TypeObject,
+            )),
             SemanticType::EngineStructure(name) => self.assembler.push(simple_aux_instruction(
                 NcsOpcode::RunstackAdd,
                 aux_for_engine_structure(name, self.hir, &self.structs)?,
@@ -873,9 +923,7 @@ impl<'a> O0Compiler<'a> {
 
     fn start_line(&mut self, source_id: SourceId, line_num: usize, label: LabelId) {
         match &mut self.line_debug.current {
-            Some(current)
-                if current.source_id == source_id && current.line_num == line_num =>
-            {
+            Some(current) if current.source_id == source_id && current.line_num == line_num => {
                 current.refs += 1;
             }
             _ => {
@@ -922,9 +970,9 @@ impl<'a> O0Compiler<'a> {
         };
         self.line_debug.entries.push(LineDebugInfo {
             source_id: current.source_id,
-            line_num: current.line_num,
-            start: current.start,
-            end: label,
+            line_num:  current.line_num,
+            start:     current.start,
+            end:       label,
         });
     }
 
@@ -949,7 +997,7 @@ impl<'a> O0Compiler<'a> {
 }
 
 struct GlobalEmitter<'a, 'b> {
-    compiler: &'b mut O0Compiler<'a>,
+    compiler:   &'b mut O0Compiler<'a>,
     temp_bytes: usize,
 }
 
@@ -959,17 +1007,16 @@ impl<'a> GlobalEmitter<'a, '_> {
     }
 
     fn emit_store_global(&mut self, name: &str, span: crate::Span) -> Result<(), CodegenError> {
-        let layout = self
-            .compiler
-            .global_layout
-            .get(name)
-            .ok_or_else(|| CodegenError::new(Some(span), format!("unknown global {:?}", name)))?;
+        let layout =
+            self.compiler.global_layout.get(name).ok_or_else(|| {
+                CodegenError::new(Some(span), format!("unknown global {:?}", name))
+            })?;
         let offset = usize_to_i32(layout.offset, "global offset")?
             - usize_to_i32(self.compiler.global_size, "global size")?;
         self.compiler.assembler.push(NcsInstruction {
-            opcode: NcsOpcode::AssignmentBase,
+            opcode:  NcsOpcode::AssignmentBase,
             auxcode: NcsAuxCode::TypeVoid,
-            extra: assignment_extra(offset, layout.size),
+            extra:   assignment_extra(offset, layout.size),
         });
         Ok(())
     }
@@ -979,9 +1026,11 @@ impl<'a> GlobalEmitter<'a, '_> {
         if size > 0 {
             self.temp_bytes = self.temp_bytes.saturating_sub(size);
             self.compiler.assembler.push(NcsInstruction {
-                opcode: NcsOpcode::ModifyStackPointer,
+                opcode:  NcsOpcode::ModifyStackPointer,
                 auxcode: NcsAuxCode::None,
-                extra: (-usize_to_i32(size, "stack pop size")?).to_be_bytes().to_vec(),
+                extra:   (-usize_to_i32(size, "stack pop size")?)
+                    .to_be_bytes()
+                    .to_vec(),
             });
         }
         Ok(())
@@ -1057,14 +1106,16 @@ impl<'a> FunctionEmitter<'a, '_> {
                 self.compiler.start_line_at(statement.span, stmt_start);
                 let cond_start = self.compiler.assembler.new_label();
                 self.compiler.assembler.place_label(cond_start);
-                self.compiler.start_line_at(statement.condition.span, cond_start);
+                self.compiler
+                    .start_line_at(statement.condition.span, cond_start);
                 let else_label = self.compiler.assembler.new_label();
                 let end_label = self.compiler.assembler.new_label();
                 self.emit_expr(&statement.condition)?;
                 self.emit_branch_zero(else_label)?;
                 let cond_end = self.compiler.assembler.new_label();
                 self.compiler.assembler.place_label(cond_end);
-                self.compiler.end_line_at(statement.condition.span, cond_end);
+                self.compiler
+                    .end_line_at(statement.condition.span, cond_end);
                 self.emit_stmt(&statement.then_branch)?;
                 self.compiler.assembler.push_jump(NcsOpcode::Jmp, end_label);
                 self.compiler.assembler.place_label(else_label);
@@ -1111,9 +1162,9 @@ impl<'a> FunctionEmitter<'a, '_> {
                     let offset = usize_to_i32(retval.offset, "return slot offset")?
                         - usize_to_i32(self.current_stack_bytes(), "current stack bytes")?;
                     self.compiler.assembler.push(NcsInstruction {
-                        opcode: NcsOpcode::Assignment,
+                        opcode:  NcsOpcode::Assignment,
                         auxcode: NcsAuxCode::TypeVoid,
-                        extra: assignment_extra(offset, retval.size),
+                        extra:   assignment_extra(offset, retval.size),
                     });
                 }
                 self.emit_function_epilogue();
@@ -1154,7 +1205,9 @@ impl<'a> FunctionEmitter<'a, '_> {
                 self.emit_stmt(&statement.body)?;
                 self.continue_targets.pop();
                 self.break_targets.pop();
-                self.compiler.assembler.push_jump(NcsOpcode::Jmp, cond_label);
+                self.compiler
+                    .assembler
+                    .push_jump(NcsOpcode::Jmp, cond_label);
                 self.compiler.assembler.place_label(end_label);
                 let stmt_end = self.compiler.assembler.new_label();
                 self.compiler.assembler.place_label(stmt_end);
@@ -1180,7 +1233,9 @@ impl<'a> FunctionEmitter<'a, '_> {
                 self.compiler.start_line_at(statement.span, continue_start);
                 self.emit_expr(&statement.condition)?;
                 self.emit_branch_zero(end_label)?;
-                self.compiler.assembler.push_jump(NcsOpcode::Jmp, body_label);
+                self.compiler
+                    .assembler
+                    .push_jump(NcsOpcode::Jmp, body_label);
                 self.compiler.assembler.place_label(end_label);
                 let continue_end = self.compiler.assembler.new_label();
                 self.compiler.assembler.place_label(continue_end);
@@ -1216,7 +1271,9 @@ impl<'a> FunctionEmitter<'a, '_> {
                     self.emit_expr(update)?;
                     self.emit_pop_type(&update.ty)?;
                 }
-                self.compiler.assembler.push_jump(NcsOpcode::Jmp, cond_label);
+                self.compiler
+                    .assembler
+                    .push_jump(NcsOpcode::Jmp, cond_label);
                 self.compiler.assembler.place_label(end_label);
                 let end = self.compiler.assembler.new_label();
                 self.compiler.assembler.place_label(end);
@@ -1232,7 +1289,10 @@ impl<'a> FunctionEmitter<'a, '_> {
                 self.compiler.assembler.place_label(start);
                 self.compiler.start_line_at(*span, start);
                 let Some(target) = self.break_targets.last().copied() else {
-                    return Err(CodegenError::new(Some(*span), "break used outside loop or switch"));
+                    return Err(CodegenError::new(
+                        Some(*span),
+                        "break used outside loop or switch",
+                    ));
                 };
                 self.compiler.assembler.push_jump(NcsOpcode::Jmp, target);
                 let end = self.compiler.assembler.new_label();
@@ -1299,12 +1359,14 @@ impl<'a> FunctionEmitter<'a, '_> {
             .ok_or_else(|| CodegenError::new(Some(span), format!("unknown local {:?}", local_id)))
     }
 
-    fn local_stack_loc(&self, local_id: HirLocalId, span: crate::Span) -> Result<u32, CodegenError> {
-        let slot = self
-            .layout
-            .locals
-            .get(&local_id)
-            .ok_or_else(|| CodegenError::new(Some(span), format!("unknown local slot {:?}", local_id)))?;
+    fn local_stack_loc(
+        &self,
+        local_id: HirLocalId,
+        span: crate::Span,
+    ) -> Result<u32, CodegenError> {
+        let slot = self.layout.locals.get(&local_id).ok_or_else(|| {
+            CodegenError::new(Some(span), format!("unknown local slot {:?}", local_id))
+        })?;
         usize_to_u32(slot.offset, "local stack location")
     }
 
@@ -1325,12 +1387,13 @@ impl<'a> FunctionEmitter<'a, '_> {
         let switch_eval_start = self.compiler.assembler.new_label();
         self.compiler.assembler.place_label(switch_eval_start);
         self.compiler.variable_debug.push(VariableDebugInfo {
-            name: "#switcheval".to_string(),
-            ty: SemanticType::Int,
-            start: switch_eval_start,
-            end: Some(body_end),
+            name:      "#switcheval".to_string(),
+            ty:        SemanticType::Int,
+            start:     switch_eval_start,
+            end:       Some(body_end),
             stack_loc: usize_to_u32(
-                self.current_stack_bytes().saturating_sub(switch_result_size),
+                self.current_stack_bytes()
+                    .saturating_sub(switch_result_size),
                 "switch stack location",
             )?,
         });
@@ -1368,7 +1431,12 @@ impl<'a> FunctionEmitter<'a, '_> {
                 &SemanticType::Int,
                 Some(statement.span),
             )?;
-            self.emit_binary(BinaryOp::EqualEqual, &SemanticType::Int, &SemanticType::Int, Some(statement.span))?;
+            self.emit_binary(
+                BinaryOp::EqualEqual,
+                &SemanticType::Int,
+                &SemanticType::Int,
+                Some(statement.span),
+            )?;
             self.emit_branch_zero(after_compare)?;
             self.compiler.assembler.push_jump(NcsOpcode::Jmp, *label);
             self.compiler.assembler.place_label(after_compare);
@@ -1409,21 +1477,28 @@ impl<'a> FunctionEmitter<'a, '_> {
     }
 
     fn emit_expr(&mut self, expr: &HirExpr) -> Result<(), CodegenError> {
-        emit_expr_common(self.compiler, &mut self.temp_bytes, Some(&self.layout), expr)
+        emit_expr_common(
+            self.compiler,
+            &mut self.temp_bytes,
+            Some(&self.layout),
+            expr,
+        )
     }
 
-    fn emit_store_local(&mut self, local: HirLocalId, span: crate::Span) -> Result<(), CodegenError> {
-        let layout = self
-            .layout
-            .locals
-            .get(&local)
-            .ok_or_else(|| CodegenError::new(Some(span), format!("unknown local slot {:?}", local)))?;
+    fn emit_store_local(
+        &mut self,
+        local: HirLocalId,
+        span: crate::Span,
+    ) -> Result<(), CodegenError> {
+        let layout = self.layout.locals.get(&local).ok_or_else(|| {
+            CodegenError::new(Some(span), format!("unknown local slot {:?}", local))
+        })?;
         let offset = usize_to_i32(layout.offset, "local slot offset")?
             - usize_to_i32(self.current_stack_bytes(), "current stack bytes")?;
         self.compiler.assembler.push(NcsInstruction {
-            opcode: NcsOpcode::Assignment,
+            opcode:  NcsOpcode::Assignment,
             auxcode: NcsAuxCode::TypeVoid,
-            extra: assignment_extra(offset, layout.size),
+            extra:   assignment_extra(offset, layout.size),
         });
         Ok(())
     }
@@ -1442,9 +1517,9 @@ impl<'a> FunctionEmitter<'a, '_> {
 
     fn emit_copy_top_value(&mut self, size: usize) -> Result<(), CodegenError> {
         self.compiler.assembler.push(NcsInstruction {
-            opcode: NcsOpcode::RunstackCopy,
+            opcode:  NcsOpcode::RunstackCopy,
             auxcode: NcsAuxCode::TypeVoid,
-            extra: assignment_extra(-usize_to_i32(size, "copy size")?, size),
+            extra:   assignment_extra(-usize_to_i32(size, "copy size")?, size),
         });
         self.temp_bytes += size;
         Ok(())
@@ -1488,9 +1563,9 @@ impl<'a> FunctionEmitter<'a, '_> {
         if size > 0 {
             self.temp_bytes = self.temp_bytes.saturating_sub(size);
             self.compiler.assembler.push(NcsInstruction {
-                opcode: NcsOpcode::ModifyStackPointer,
+                opcode:  NcsOpcode::ModifyStackPointer,
                 auxcode: NcsAuxCode::None,
-                extra: (-i32::try_from(size).ok().unwrap_or(i32::MAX))
+                extra:   (-i32::try_from(size).ok().unwrap_or(i32::MAX))
                     .to_be_bytes()
                     .to_vec(),
             });
@@ -1502,9 +1577,9 @@ impl<'a> FunctionEmitter<'a, '_> {
         if cleanup > 0 {
             self.temp_bytes = 0;
             self.compiler.assembler.push(NcsInstruction {
-                opcode: NcsOpcode::ModifyStackPointer,
+                opcode:  NcsOpcode::ModifyStackPointer,
                 auxcode: NcsAuxCode::None,
-                extra: (-i32::try_from(cleanup).ok().unwrap_or(i32::MAX))
+                extra:   (-i32::try_from(cleanup).ok().unwrap_or(i32::MAX))
                     .to_be_bytes()
                     .to_vec(),
             });
@@ -1512,7 +1587,12 @@ impl<'a> FunctionEmitter<'a, '_> {
     }
 
     fn current_stack_bytes(&self) -> usize {
-        let locals = self.layout.locals.values().map(|layout| layout.size).sum::<usize>();
+        let locals = self
+            .layout
+            .locals
+            .values()
+            .map(|layout| layout.size)
+            .sum::<usize>();
         let params_and_ret = self
             .layout
             .return_layout
@@ -1542,7 +1622,9 @@ fn emit_expr_common(
     expr: &HirExpr,
 ) -> Result<(), CodegenError> {
     match &expr.kind {
-        HirExprKind::Literal(literal) => emit_push_literal(compiler, temp_bytes, literal, &expr.ty, Some(expr.span)),
+        HirExprKind::Literal(literal) => {
+            emit_push_literal(compiler, temp_bytes, literal, &expr.ty, Some(expr.span))
+        }
         HirExprKind::Value(value) => match value {
             crate::HirValueRef::Local(local) => {
                 let layout = layout.ok_or_else(|| {
@@ -1555,9 +1637,9 @@ fn emit_expr_common(
                 let offset = usize_to_i32(slot.offset, "local load offset")?
                     - usize_to_i32(frame_bytes + *temp_bytes, "local frame bytes")?;
                 compiler.assembler.push(NcsInstruction {
-                    opcode: NcsOpcode::RunstackCopy,
+                    opcode:  NcsOpcode::RunstackCopy,
                     auxcode: NcsAuxCode::TypeVoid,
-                    extra: assignment_extra(offset, slot.size),
+                    extra:   assignment_extra(offset, slot.size),
                 });
                 *temp_bytes += slot.size;
                 Ok(())
@@ -1569,16 +1651,19 @@ fn emit_expr_common(
                 let offset = usize_to_i32(slot.offset, "global load offset")?
                     - usize_to_i32(compiler.global_size, "global size")?;
                 compiler.assembler.push(NcsInstruction {
-                    opcode: NcsOpcode::RunstackCopyBase,
+                    opcode:  NcsOpcode::RunstackCopyBase,
                     auxcode: NcsAuxCode::TypeVoid,
-                    extra: assignment_extra(offset, slot.size),
+                    extra:   assignment_extra(offset, slot.size),
                 });
                 *temp_bytes += slot.size;
                 Ok(())
             }
             crate::HirValueRef::BuiltinConstant(name) => {
                 let value = compiler.builtin_constants.get(name).ok_or_else(|| {
-                    CodegenError::new(Some(expr.span), format!("unknown builtin constant {:?}", name))
+                    CodegenError::new(
+                        Some(expr.span),
+                        format!("unknown builtin constant {:?}", name),
+                    )
                 })?;
                 let literal = literal_from_builtin_value(value).ok_or_else(|| {
                     CodegenError::new(
@@ -1589,16 +1674,22 @@ fn emit_expr_common(
                 emit_push_literal(compiler, temp_bytes, &literal, &expr.ty, Some(expr.span))
             }
         },
-        HirExprKind::Call { target, arguments } => emit_call(compiler, temp_bytes, layout, expr, target, arguments),
-        HirExprKind::FieldAccess { base, field } => {
+        HirExprKind::Call {
+            target,
+            arguments,
+        } => emit_call(compiler, temp_bytes, layout, expr, target, arguments),
+        HirExprKind::FieldAccess {
+            base,
+            field,
+        } => {
             emit_expr_common(compiler, temp_bytes, layout, base)?;
             let base_size = size_of_type(&base.ty, &compiler.structs)?;
             let field_layout = field_layout(&base.ty, field, &compiler.structs, Some(expr.span))?;
             debug_assert_eq!(field_layout.ty, expr.ty);
             compiler.assembler.push(NcsInstruction {
-                opcode: NcsOpcode::RunstackCopy,
+                opcode:  NcsOpcode::RunstackCopy,
                 auxcode: NcsAuxCode::TypeVoid,
-                extra: assignment_extra(
+                extra:   assignment_extra(
                     usize_to_i32(field_layout.offset, "field offset")?
                         - usize_to_i32(base_size, "base size")?,
                     field_layout.size,
@@ -1607,13 +1698,18 @@ fn emit_expr_common(
             *temp_bytes += field_layout.size;
             *temp_bytes = temp_bytes.saturating_sub(base_size);
             compiler.assembler.push(NcsInstruction {
-                opcode: NcsOpcode::ModifyStackPointer,
+                opcode:  NcsOpcode::ModifyStackPointer,
                 auxcode: NcsAuxCode::None,
-                extra: (-usize_to_i32(base_size, "base size")?).to_be_bytes().to_vec(),
+                extra:   (-usize_to_i32(base_size, "base size")?)
+                    .to_be_bytes()
+                    .to_vec(),
             });
             Ok(())
         }
-        HirExprKind::Unary { op, expr: inner } => {
+        HirExprKind::Unary {
+            op,
+            expr: inner,
+        } => {
             if matches!(
                 op,
                 UnaryOp::PreIncrement
@@ -1667,7 +1763,11 @@ fn emit_expr_common(
             });
             Ok(())
         }
-        HirExprKind::Binary { op, left, right } => {
+        HirExprKind::Binary {
+            op,
+            left,
+            right,
+        } => {
             emit_expr_common(compiler, temp_bytes, layout, left)?;
             emit_expr_common(compiler, temp_bytes, layout, right)?;
             let opcode = opcode_for_binary(*op);
@@ -1684,11 +1784,17 @@ fn emit_expr_common(
             });
             Ok(())
         }
-        HirExprKind::Conditional { .. } => Err(CodegenError::new(
+        HirExprKind::Conditional {
+            ..
+        } => Err(CodegenError::new(
             Some(expr.span),
             "conditional expression code generation is not implemented yet",
         )),
-        HirExprKind::Assignment { op, left, right } => {
+        HirExprKind::Assignment {
+            op,
+            left,
+            right,
+        } => {
             if *op == AssignmentOp::Assign {
                 emit_expr_common(compiler, temp_bytes, layout, right)?;
                 emit_store_target(compiler, temp_bytes, layout, left, right.span)?;
@@ -1714,13 +1820,14 @@ fn emit_expr_common(
             let aux = aux_for_binary(&left.ty, &right.ty, compiler.hir, &compiler.structs)?;
             let left_size = size_of_type(&left.ty, &compiler.structs)?;
             let right_size = size_of_type(&right.ty, &compiler.structs)?;
-            let result_size = size_of_binary_result(binary_op, &left.ty, &right.ty, &compiler.structs)?;
+            let result_size =
+                size_of_binary_result(binary_op, &left.ty, &right.ty, &compiler.structs)?;
             *temp_bytes = temp_bytes.saturating_sub(left_size + right_size);
             *temp_bytes += result_size;
             compiler.assembler.push(NcsInstruction {
-                opcode: opcode_for_binary(binary_op),
+                opcode:  opcode_for_binary(binary_op),
                 auxcode: aux,
-                extra: Vec::new(),
+                extra:   Vec::new(),
             });
             emit_store_target(compiler, temp_bytes, layout, left, expr.span)
         }
@@ -1738,11 +1845,14 @@ fn emit_call(
     let base_temp = *temp_bytes;
     match target {
         HirCallTarget::Builtin(name) => {
-            let (id, function) = compiler
-                .builtin_functions
-                .get(name)
-                .copied()
-                .ok_or_else(|| CodegenError::new(Some(expr.span), format!("unknown builtin {:?}", name)))?;
+            let (id, function) =
+                compiler
+                    .builtin_functions
+                    .get(name)
+                    .copied()
+                    .ok_or_else(|| {
+                        CodegenError::new(Some(expr.span), format!("unknown builtin {:?}", name))
+                    })?;
             for (index, argument) in arguments.iter().enumerate() {
                 if function
                     .parameters
@@ -1758,7 +1868,10 @@ fn emit_call(
                 if matches!(parameter.ty, BuiltinType::Action) {
                     return Err(CodegenError::new(
                         Some(expr.span),
-                        format!("builtin {:?} requires an action default that is not supported", name),
+                        format!(
+                            "builtin {:?} requires an action default that is not supported",
+                            name
+                        ),
                     ));
                 }
                 let default = parameter.default.as_ref().ok_or_else(|| {
@@ -1780,9 +1893,12 @@ fn emit_call(
             let return_size = size_of_type(&expr.ty, &compiler.structs)?;
             *temp_bytes = base_temp + return_size;
             compiler.assembler.push(NcsInstruction {
-                opcode: NcsOpcode::ExecuteCommand,
+                opcode:  NcsOpcode::ExecuteCommand,
                 auxcode: NcsAuxCode::None,
-                extra: builtin_call_extra(id, usize_to_u8(function.parameters.len(), "builtin argc")?),
+                extra:   builtin_call_extra(
+                    id,
+                    usize_to_u8(function.parameters.len(), "builtin argc")?,
+                ),
             });
             Ok(())
         }
@@ -1806,13 +1922,12 @@ fn emit_call(
                 })?;
                 emit_expr_common(compiler, temp_bytes, layout, default)?;
             }
-            let label = compiler
-                .function_labels
-                .get(name)
-                .copied()
-                .ok_or_else(|| {
-                    CodegenError::new(Some(expr.span), format!("missing function label for {:?}", name))
-                })?;
+            let label = compiler.function_labels.get(name).copied().ok_or_else(|| {
+                CodegenError::new(
+                    Some(expr.span),
+                    format!("missing function label for {:?}", name),
+                )
+            })?;
             compiler.assembler.push_jump(NcsOpcode::Jsr, label);
             let return_size = size_of_type(&function.return_type, &compiler.structs)?;
             *temp_bytes = base_temp + return_size;
@@ -1827,19 +1942,16 @@ fn emit_action_parameter(
     layout: Option<&FunctionLayout>,
     argument: &HirExpr,
 ) -> Result<(), CodegenError> {
-    let stack_bytes = layout
-        .map(function_frame_bytes)
-        .unwrap_or(0)
-        + *temp_bytes;
+    let stack_bytes = layout.map(function_frame_bytes).unwrap_or(0) + *temp_bytes;
 
     // Upstream emits STORESTATE with aux byte 0x10 before a JMP over the
     // embedded action body. Our NCS model does not have a dedicated STORESTATE
     // aux variant, so we preserve the raw byte value via the matching enum
     // discriminant.
     compiler.assembler.push(NcsInstruction {
-        opcode: NcsOpcode::StoreState,
+        opcode:  NcsOpcode::StoreState,
         auxcode: NcsAuxCode::TypeEngst0,
-        extra: store_state_extra(
+        extra:   store_state_extra(
             usize_to_u32(compiler.global_size, "global size")?,
             usize_to_u32(stack_bytes, "stack size")?,
         ),
@@ -1874,9 +1986,9 @@ fn emit_store_target(
                     "local assignment frame size",
                 )?;
             compiler.assembler.push(NcsInstruction {
-                opcode: NcsOpcode::Assignment,
+                opcode:  NcsOpcode::Assignment,
                 auxcode: NcsAuxCode::TypeVoid,
-                extra: assignment_extra(offset, slot.size),
+                extra:   assignment_extra(offset, slot.size),
             });
             Ok(())
         }
@@ -1888,13 +2000,16 @@ fn emit_store_target(
             let offset = usize_to_i32(slot.offset, "global assignment offset")?
                 - usize_to_i32(compiler.global_size, "global size")?;
             compiler.assembler.push(NcsInstruction {
-                opcode: NcsOpcode::AssignmentBase,
+                opcode:  NcsOpcode::AssignmentBase,
                 auxcode: NcsAuxCode::TypeVoid,
-                extra: assignment_extra(offset, slot.size),
+                extra:   assignment_extra(offset, slot.size),
             });
             Ok(())
         }
-        HirExprKind::FieldAccess { base, field } => match &base.kind {
+        HirExprKind::FieldAccess {
+            base,
+            field,
+        } => match &base.kind {
             HirExprKind::Value(crate::HirValueRef::Local(local)) => {
                 let layout = layout.ok_or_else(|| {
                     CodegenError::new(Some(span), "local field assignment used outside a function")
@@ -1911,9 +2026,9 @@ fn emit_store_target(
                     "local field assignment frame size",
                 )?;
                 compiler.assembler.push(NcsInstruction {
-                    opcode: NcsOpcode::Assignment,
+                    opcode:  NcsOpcode::Assignment,
                     auxcode: NcsAuxCode::TypeVoid,
-                    extra: assignment_extra(offset, field_layout.size),
+                    extra:   assignment_extra(offset, field_layout.size),
                 });
                 Ok(())
             }
@@ -1928,9 +2043,9 @@ fn emit_store_target(
                     "global field assignment offset",
                 )? - usize_to_i32(compiler.global_size, "global size")?;
                 compiler.assembler.push(NcsInstruction {
-                    opcode: NcsOpcode::AssignmentBase,
+                    opcode:  NcsOpcode::AssignmentBase,
                     auxcode: NcsAuxCode::TypeVoid,
-                    extra: assignment_extra(offset, field_layout.size),
+                    extra:   assignment_extra(offset, field_layout.size),
                 });
                 Ok(())
             }
@@ -1955,46 +2070,46 @@ fn emit_push_literal(
 ) -> Result<(), CodegenError> {
     match literal {
         Literal::Integer(value) => compiler.assembler.push(NcsInstruction {
-            opcode: NcsOpcode::Constant,
+            opcode:  NcsOpcode::Constant,
             auxcode: NcsAuxCode::TypeInteger,
-            extra: value.to_be_bytes().to_vec(),
+            extra:   value.to_be_bytes().to_vec(),
         }),
         Literal::Float(value) => compiler.assembler.push(NcsInstruction {
-            opcode: NcsOpcode::Constant,
+            opcode:  NcsOpcode::Constant,
             auxcode: NcsAuxCode::TypeFloat,
-            extra: value.to_bits().to_be_bytes().to_vec(),
+            extra:   value.to_bits().to_be_bytes().to_vec(),
         }),
         Literal::String(value) => compiler.assembler.push(NcsInstruction {
-            opcode: NcsOpcode::Constant,
+            opcode:  NcsOpcode::Constant,
             auxcode: NcsAuxCode::TypeString,
-            extra: string_extra(value)?,
+            extra:   string_extra(value)?,
         }),
         Literal::ObjectSelf => compiler.assembler.push(NcsInstruction {
-            opcode: NcsOpcode::Constant,
+            opcode:  NcsOpcode::Constant,
             auxcode: NcsAuxCode::TypeObject,
-            extra: 0_i32.to_be_bytes().to_vec(),
+            extra:   0_i32.to_be_bytes().to_vec(),
         }),
         Literal::ObjectInvalid => compiler.assembler.push(NcsInstruction {
-            opcode: NcsOpcode::Constant,
+            opcode:  NcsOpcode::Constant,
             auxcode: NcsAuxCode::TypeObject,
-            extra: 1_i32.to_be_bytes().to_vec(),
+            extra:   1_i32.to_be_bytes().to_vec(),
         }),
         Literal::LocationInvalid => compiler.assembler.push(NcsInstruction {
-            opcode: NcsOpcode::Constant,
+            opcode:  NcsOpcode::Constant,
             auxcode: NcsAuxCode::TypeEngst2,
-            extra: 0_u32.to_be_bytes().to_vec(),
+            extra:   0_u32.to_be_bytes().to_vec(),
         }),
         Literal::Json(value) => compiler.assembler.push(NcsInstruction {
-            opcode: NcsOpcode::Constant,
+            opcode:  NcsOpcode::Constant,
             auxcode: NcsAuxCode::TypeEngst7,
-            extra: string_extra(value)?,
+            extra:   string_extra(value)?,
         }),
         Literal::Vector(values) => {
             for value in values {
                 compiler.assembler.push(NcsInstruction {
-                    opcode: NcsOpcode::Constant,
+                    opcode:  NcsOpcode::Constant,
                     auxcode: NcsAuxCode::TypeFloat,
-                    extra: value.to_bits().to_be_bytes().to_vec(),
+                    extra:   value.to_bits().to_be_bytes().to_vec(),
                 });
             }
         }
@@ -2247,9 +2362,9 @@ fn size_of_type(
         | SemanticType::EngineStructure(_) => Ok(4),
         SemanticType::Vector => Ok(12),
         SemanticType::Struct(name) => {
-            let structure = structs.get(name).ok_or_else(|| {
-                CodegenError::new(None, format!("unknown structure {:?}", name))
-            })?;
+            let structure = structs
+                .get(name)
+                .ok_or_else(|| CodegenError::new(None, format!("unknown structure {:?}", name)))?;
             let mut size = 0usize;
             for field in &structure.fields {
                 size += size_of_type(&field.ty, structs)?;
@@ -2285,9 +2400,9 @@ fn field_layout(
             })
         }
         SemanticType::Struct(name) => {
-            let structure = structs.get(name).ok_or_else(|| {
-                CodegenError::new(span, format!("unknown structure {:?}", name))
-            })?;
+            let structure = structs
+                .get(name)
+                .ok_or_else(|| CodegenError::new(span, format!("unknown structure {:?}", name)))?;
             let mut offset = 0usize;
             for candidate in &structure.fields {
                 let size = size_of_type(&candidate.ty, structs)?;
@@ -2307,7 +2422,10 @@ fn field_layout(
         }
         _ => Err(CodegenError::new(
             span,
-            format!("field access requires a vector or struct base, got {:?}", base),
+            format!(
+                "field access requires a vector or struct base, got {:?}",
+                base
+            ),
         )),
     }
 }
@@ -2325,7 +2443,9 @@ fn string_extra(value: &str) -> Result<Vec<u8>, CodegenError> {
 fn assignment_extra(offset: i32, size: usize) -> Vec<u8> {
     let mut bytes = Vec::with_capacity(6);
     bytes.extend_from_slice(&offset.to_be_bytes());
-    let size = usize_to_u16(size, "assignment size").ok().unwrap_or(u16::MAX);
+    let size = usize_to_u16(size, "assignment size")
+        .ok()
+        .unwrap_or(u16::MAX);
     bytes.extend_from_slice(&size.to_be_bytes());
     bytes
 }
@@ -2346,9 +2466,9 @@ fn store_state_extra(global_size: u32, stack_size: u32) -> Vec<u8> {
 
 fn emit_copy_top_bytes(compiler: &mut O0Compiler<'_>, temp_bytes: &mut usize, size: usize) {
     compiler.assembler.push(NcsInstruction {
-        opcode: NcsOpcode::RunstackCopy,
+        opcode:  NcsOpcode::RunstackCopy,
         auxcode: NcsAuxCode::TypeVoid,
-        extra: assignment_extra(-i32::try_from(size).ok().unwrap_or(i32::MAX), size),
+        extra:   assignment_extra(-i32::try_from(size).ok().unwrap_or(i32::MAX), size),
     });
     *temp_bytes += size;
 }
@@ -2357,9 +2477,9 @@ fn emit_drop_bytes(compiler: &mut O0Compiler<'_>, temp_bytes: &mut usize, size: 
     if size > 0 {
         *temp_bytes = temp_bytes.saturating_sub(size);
         compiler.assembler.push(NcsInstruction {
-            opcode: NcsOpcode::ModifyStackPointer,
+            opcode:  NcsOpcode::ModifyStackPointer,
             auxcode: NcsAuxCode::None,
-            extra: (-i32::try_from(size).ok().unwrap_or(i32::MAX))
+            extra:   (-i32::try_from(size).ok().unwrap_or(i32::MAX))
                 .to_be_bytes()
                 .to_vec(),
         });
@@ -2416,7 +2536,7 @@ fn build_ndb(
         .into_iter()
         .filter_map(|file_id| {
             source_map.get(file_id).map(|file| NdbFile {
-                name: file.name.clone(),
+                name:    file.name.clone(),
                 is_root: file.id == root_id,
             })
         })
@@ -2427,14 +2547,14 @@ fn build_ndb(
         .iter()
         .map(|structure| {
             Ok::<_, CodegenError>(NdbStruct {
-                label: structure.name.clone(),
+                label:  structure.name.clone(),
                 fields: structure
                     .fields
                     .iter()
                     .map(|field| {
                         Ok(NdbStructField {
                             label: field.name.clone(),
-                            ty: debug_type_for_semantic(&field.ty, hir, langspec)?,
+                            ty:    debug_type_for_semantic(&field.ty, hir, langspec)?,
                         })
                     })
                     .collect::<Result<Vec<_>, CodegenError>>()?,
@@ -2448,22 +2568,25 @@ fn build_ndb(
         .filter(|function| !function.is_builtin)
         .map(|function| {
             let info = output.functions.get(&function.name).ok_or_else(|| {
-                CodegenError::new(Some(function.span), format!("missing debug range for {:?}", function.name))
+                CodegenError::new(
+                    Some(function.span),
+                    format!("missing debug range for {:?}", function.name),
+                )
             })?;
             Ok::<_, CodegenError>(NdbFunction {
-                label: function.name.clone(),
+                label:        function.name.clone(),
                 binary_start: output
                     .label_offsets
                     .get(&info.start)
                     .copied()
                     .unwrap_or_default(),
-                binary_end: output
+                binary_end:   output
                     .label_offsets
                     .get(&info.end)
                     .copied()
                     .unwrap_or_default(),
-                return_type: debug_type_for_semantic(&function.return_type, hir, langspec)?,
-                args: function
+                return_type:  debug_type_for_semantic(&function.return_type, hir, langspec)?,
+                args:         function
                     .parameters
                     .iter()
                     .map(|parameter| debug_type_for_semantic(&parameter.ty, hir, langspec))
@@ -2477,18 +2600,18 @@ fn build_ndb(
         .iter()
         .map(|variable| {
             Ok::<_, CodegenError>(NdbVariable {
-                label: variable.name.clone(),
-                ty: debug_type_for_semantic(&variable.ty, hir, langspec)?,
+                label:        variable.name.clone(),
+                ty:           debug_type_for_semantic(&variable.ty, hir, langspec)?,
                 binary_start: output
                     .label_offsets
                     .get(&variable.start)
                     .copied()
                     .unwrap_or_default(),
-                binary_end: variable
+                binary_end:   variable
                     .end
                     .and_then(|end| output.label_offsets.get(&end).copied())
                     .unwrap_or(u32::MAX),
-                stack_loc: variable.stack_loc,
+                stack_loc:    variable.stack_loc,
             })
         })
         .collect::<Result<Vec<_>, CodegenError>>()?;
@@ -2521,7 +2644,9 @@ fn debug_type_for_semantic(
                 .structs
                 .iter()
                 .position(|structure| structure.name == *name)
-                .ok_or_else(|| CodegenError::new(None, format!("unknown debug structure {:?}", name)))?;
+                .ok_or_else(|| {
+                    CodegenError::new(None, format!("unknown debug structure {:?}", name))
+                })?;
             NdbType::Struct(index)
         }
         SemanticType::Vector => NdbType::Unknown,
@@ -2536,10 +2661,12 @@ fn engine_structure_index(name: &str, langspec: Option<&LangSpec>) -> Result<u8,
             .iter()
             .position(|candidate| candidate.eq_ignore_ascii_case(name))
     {
-        return u8::try_from(index)
-            .map_err(|_error| {
-                CodegenError::new(None, format!("engine structure index out of range for {:?}", name))
-            });
+        return u8::try_from(index).map_err(|_error| {
+            CodegenError::new(
+                None,
+                format!("engine structure index out of range for {:?}", name),
+            )
+        });
     }
 
     let fallback = [
@@ -2578,123 +2705,122 @@ fn simple_aux_instruction(opcode: NcsOpcode, auxcode: NcsAuxCode) -> NcsInstruct
 
 #[cfg(test)]
 mod tests {
+    use super::{CompileOptions, OptimizationLevel};
     use crate::{
-        BuiltinConstant, BuiltinFunction, BuiltinParameter, BuiltinType, BuiltinValue,
-        NcsOpcode, SourceId, SourceMap, compile_script, compile_script_with_source_map,
+        BuiltinConstant, BuiltinFunction, BuiltinParameter, BuiltinType, BuiltinValue, NcsOpcode,
+        SourceId, SourceMap, compile_script, compile_script_with_source_map,
         decode_ncs_instructions, parse_text, read_ndb,
     };
-
-    use super::{CompileOptions, OptimizationLevel};
 
     fn test_langspec() -> crate::LangSpec {
         crate::LangSpec {
             engine_num_structures: 3,
-            engine_structures: vec![
+            engine_structures:     vec![
                 "effect".to_string(),
                 "location".to_string(),
                 "json".to_string(),
             ],
-            constants: vec![
+            constants:             vec![
                 BuiltinConstant {
-                    name: "TRUE".to_string(),
-                    ty: BuiltinType::Int,
+                    name:  "TRUE".to_string(),
+                    ty:    BuiltinType::Int,
                     value: BuiltinValue::Int(1),
                 },
                 BuiltinConstant {
-                    name: "FALSE".to_string(),
-                    ty: BuiltinType::Int,
+                    name:  "FALSE".to_string(),
+                    ty:    BuiltinType::Int,
                     value: BuiltinValue::Int(0),
                 },
                 BuiltinConstant {
-                    name: "OBJECT_SELF".to_string(),
-                    ty: BuiltinType::Object,
+                    name:  "OBJECT_SELF".to_string(),
+                    ty:    BuiltinType::Object,
                     value: BuiltinValue::ObjectSelf,
                 },
                 BuiltinConstant {
-                    name: "OBJECT_INVALID".to_string(),
-                    ty: BuiltinType::Object,
+                    name:  "OBJECT_INVALID".to_string(),
+                    ty:    BuiltinType::Object,
                     value: BuiltinValue::ObjectInvalid,
                 },
                 BuiltinConstant {
-                    name: "OBJECT_TYPE_CREATURE".to_string(),
-                    ty: BuiltinType::Int,
+                    name:  "OBJECT_TYPE_CREATURE".to_string(),
+                    ty:    BuiltinType::Int,
                     value: BuiltinValue::Int(1),
                 },
             ],
-            functions: vec![
+            functions:             vec![
                 BuiltinFunction {
-                    name: "GetCurrentHitPoints".to_string(),
+                    name:        "GetCurrentHitPoints".to_string(),
                     return_type: BuiltinType::Int,
-                    parameters: vec![],
+                    parameters:  vec![],
                 },
                 BuiltinFunction {
-                    name: "GetMaxHitPoints".to_string(),
+                    name:        "GetMaxHitPoints".to_string(),
                     return_type: BuiltinType::Int,
-                    parameters: vec![],
+                    parameters:  vec![],
                 },
                 BuiltinFunction {
-                    name: "CreateObject".to_string(),
+                    name:        "CreateObject".to_string(),
                     return_type: BuiltinType::Object,
-                    parameters: vec![
+                    parameters:  vec![
                         BuiltinParameter {
-                            name: "nObjectType".to_string(),
-                            ty: BuiltinType::Int,
+                            name:    "nObjectType".to_string(),
+                            ty:      BuiltinType::Int,
                             default: None,
                         },
                         BuiltinParameter {
-                            name: "sTemplate".to_string(),
-                            ty: BuiltinType::String,
+                            name:    "sTemplate".to_string(),
+                            ty:      BuiltinType::String,
                             default: None,
                         },
                         BuiltinParameter {
-                            name: "lLocation".to_string(),
-                            ty: BuiltinType::EngineStructure("location".to_string()),
+                            name:    "lLocation".to_string(),
+                            ty:      BuiltinType::EngineStructure("location".to_string()),
                             default: None,
                         },
                     ],
                 },
                 BuiltinFunction {
-                    name: "GetLocation".to_string(),
+                    name:        "GetLocation".to_string(),
                     return_type: BuiltinType::EngineStructure("location".to_string()),
-                    parameters: vec![BuiltinParameter {
-                        name: "oTarget".to_string(),
-                        ty: BuiltinType::Object,
+                    parameters:  vec![BuiltinParameter {
+                        name:    "oTarget".to_string(),
+                        ty:      BuiltinType::Object,
                         default: None,
                     }],
                 },
                 BuiltinFunction {
-                    name: "SetListening".to_string(),
+                    name:        "SetListening".to_string(),
                     return_type: BuiltinType::Void,
-                    parameters: vec![
+                    parameters:  vec![
                         BuiltinParameter {
-                            name: "oTarget".to_string(),
-                            ty: BuiltinType::Object,
+                            name:    "oTarget".to_string(),
+                            ty:      BuiltinType::Object,
                             default: None,
                         },
                         BuiltinParameter {
-                            name: "bValue".to_string(),
-                            ty: BuiltinType::Int,
+                            name:    "bValue".to_string(),
+                            ty:      BuiltinType::Int,
                             default: None,
                         },
                     ],
                 },
                 BuiltinFunction {
-                    name: "SetListenPattern".to_string(),
+                    name:        "SetListenPattern".to_string(),
                     return_type: BuiltinType::Void,
-                    parameters: vec![
+                    parameters:  vec![
                         BuiltinParameter {
-                            name: "oTarget".to_string(),
-                            ty: BuiltinType::Object,
+                            name:    "oTarget".to_string(),
+                            ty:      BuiltinType::Object,
                             default: None,
                         },
                         BuiltinParameter {
-                            name: "sPattern".to_string(),
-                            ty: BuiltinType::String,
+                            name:    "sPattern".to_string(),
+                            ty:      BuiltinType::String,
                             default: None,
                         },
                         BuiltinParameter {
-                            name: "nNumber".to_string(),
-                            ty: BuiltinType::Int,
+                            name:    "nNumber".to_string(),
+                            ty:      BuiltinType::Int,
                             default: None,
                         },
                     ],
@@ -2735,14 +2861,22 @@ mod tests {
             instructions.first().map(|instruction| instruction.opcode),
             Some(NcsOpcode::RunstackAdd)
         );
-        assert!(instructions.iter().any(|instruction| instruction.opcode == NcsOpcode::Jsr));
-        assert!(instructions.iter().any(|instruction| instruction.opcode == NcsOpcode::Ret));
+        assert!(
+            instructions
+                .iter()
+                .any(|instruction| instruction.opcode == NcsOpcode::Jsr)
+        );
+        assert!(
+            instructions
+                .iter()
+                .any(|instruction| instruction.opcode == NcsOpcode::Ret)
+        );
         Ok(())
     }
 
     #[test]
-    fn compiles_simple_user_and_builtin_calls_to_valid_ncs() -> Result<(), Box<dyn std::error::Error>>
-    {
+    fn compiles_simple_user_and_builtin_calls_to_valid_ncs()
+    -> Result<(), Box<dyn std::error::Error>> {
         let script = parse_text(
             SourceId::new(81),
             r#"
@@ -2761,8 +2895,18 @@ mod tests {
         let artifacts = compile_script(&script, Some(&test_langspec()), CompileOptions::default())?;
         let instructions = decode_ncs_instructions(&artifacts.ncs)?;
 
-        assert!(instructions.iter().any(|instruction| instruction.opcode == NcsOpcode::ExecuteCommand));
-        assert!(instructions.iter().filter(|instruction| instruction.opcode == NcsOpcode::Jsr).count() >= 2);
+        assert!(
+            instructions
+                .iter()
+                .any(|instruction| instruction.opcode == NcsOpcode::ExecuteCommand)
+        );
+        assert!(
+            instructions
+                .iter()
+                .filter(|instruction| instruction.opcode == NcsOpcode::Jsr)
+                .count()
+                >= 2
+        );
         Ok(())
     }
 
@@ -2785,7 +2929,11 @@ mod tests {
         let artifacts = compile_script(&script, Some(&test_langspec()), CompileOptions::default())?;
         let instructions = decode_ncs_instructions(&artifacts.ncs)?;
 
-        assert!(instructions.iter().any(|instruction| instruction.opcode == NcsOpcode::Jsr));
+        assert!(
+            instructions
+                .iter()
+                .any(|instruction| instruction.opcode == NcsOpcode::Jsr)
+        );
         assert!(
             instructions
                 .iter()
@@ -2798,8 +2946,8 @@ mod tests {
     }
 
     #[test]
-    fn compiles_calls_using_defaults_from_forward_declarations() -> Result<(), Box<dyn std::error::Error>>
-    {
+    fn compiles_calls_using_defaults_from_forward_declarations()
+    -> Result<(), Box<dyn std::error::Error>> {
         let script = parse_text(
             SourceId::new(84),
             r#"
@@ -2815,7 +2963,11 @@ mod tests {
         let artifacts = compile_script(&script, Some(&test_langspec()), CompileOptions::default())?;
         let instructions = decode_ncs_instructions(&artifacts.ncs)?;
 
-        assert!(instructions.iter().any(|instruction| instruction.opcode == NcsOpcode::Jsr));
+        assert!(
+            instructions
+                .iter()
+                .any(|instruction| instruction.opcode == NcsOpcode::Jsr)
+        );
         Ok(())
     }
 
@@ -2865,8 +3017,12 @@ mod tests {
         "#;
         let mut source_map = SourceMap::new();
         let root_id = source_map.add_file("synthetic_retval.nss".to_string(), source.to_vec());
-        let script = parse_text(root_id, std::str::from_utf8(source).expect("utf-8"), Some(&test_langspec()))
-            .expect("script should parse");
+        let script = parse_text(
+            root_id,
+            std::str::from_utf8(source).expect("utf-8"),
+            Some(&test_langspec()),
+        )
+        .expect("script should parse");
 
         let artifacts = compile_script_with_source_map(
             &script,
@@ -2876,13 +3032,15 @@ mod tests {
             CompileOptions::default(),
         )
         .expect("compile should succeed");
-        let ndb = read_ndb(
-            &mut std::io::Cursor::new(artifacts.ndb.expect("NDB output should be present")),
-        )
+        let ndb = read_ndb(&mut std::io::Cursor::new(
+            artifacts.ndb.expect("NDB output should be present"),
+        ))
         .expect("NDB should parse");
 
         assert!(
-            ndb.variables.iter().any(|variable| variable.label == "#retval"),
+            ndb.variables
+                .iter()
+                .any(|variable| variable.label == "#retval"),
             "non-void entrypoint should preserve #retval debug records",
         );
         let loader_retval = ndb
@@ -2913,8 +3071,12 @@ mod tests {
         "#;
         let mut source_map = SourceMap::new();
         let root_id = source_map.add_file("switch_debug.nss".to_string(), source.to_vec());
-        let script = parse_text(root_id, std::str::from_utf8(source).expect("utf-8"), Some(&test_langspec()))
-            .expect("script should parse");
+        let script = parse_text(
+            root_id,
+            std::str::from_utf8(source).expect("utf-8"),
+            Some(&test_langspec()),
+        )
+        .expect("script should parse");
 
         let artifacts = compile_script_with_source_map(
             &script,
@@ -2924,9 +3086,9 @@ mod tests {
             CompileOptions::default(),
         )
         .expect("compile should succeed");
-        let ndb = read_ndb(
-            &mut std::io::Cursor::new(artifacts.ndb.expect("NDB output should be present")),
-        )
+        let ndb = read_ndb(&mut std::io::Cursor::new(
+            artifacts.ndb.expect("NDB output should be present"),
+        ))
         .expect("NDB should parse");
 
         let switch_eval = ndb
@@ -2959,8 +3121,12 @@ mod tests {
         "#;
         let mut source_map = SourceMap::new();
         let root_id = source_map.add_file("globals_debug.nss".to_string(), source.to_vec());
-        let script = parse_text(root_id, std::str::from_utf8(source).expect("utf-8"), Some(&test_langspec()))
-            .expect("script should parse");
+        let script = parse_text(
+            root_id,
+            std::str::from_utf8(source).expect("utf-8"),
+            Some(&test_langspec()),
+        )
+        .expect("script should parse");
 
         let artifacts = compile_script_with_source_map(
             &script,
@@ -2970,9 +3136,9 @@ mod tests {
             CompileOptions::default(),
         )
         .expect("compile should succeed");
-        let ndb = read_ndb(
-            &mut std::io::Cursor::new(artifacts.ndb.expect("NDB output should be present")),
-        )
+        let ndb = read_ndb(&mut std::io::Cursor::new(
+            artifacts.ndb.expect("NDB output should be present"),
+        ))
         .expect("NDB should parse");
 
         let first = ndb
@@ -2986,8 +3152,14 @@ mod tests {
             .find(|variable| variable.label == "SECOND")
             .expect("SECOND global should be present");
 
-        assert_eq!(first.binary_start, 10, "first global should begin after loader + first RunstackAdd");
-        assert_eq!(second.binary_start, 12, "second global should begin after loader + second RunstackAdd");
+        assert_eq!(
+            first.binary_start, 10,
+            "first global should begin after loader + first RunstackAdd"
+        );
+        assert_eq!(
+            second.binary_start, 12,
+            "second global should begin after loader + second RunstackAdd"
+        );
         assert_eq!(first.stack_loc, 0);
         assert_eq!(second.stack_loc, 4);
     }
@@ -3016,11 +3188,15 @@ mod tests {
         let instructions = decode_ncs_instructions(&artifacts.ncs)?;
 
         assert!(
-            instructions.iter().any(|instruction| instruction.opcode == NcsOpcode::Equal),
+            instructions
+                .iter()
+                .any(|instruction| instruction.opcode == NcsOpcode::Equal),
             "switch codegen should materialize a case comparison",
         );
         assert!(
-            instructions.iter().any(|instruction| instruction.opcode == NcsOpcode::Jmp),
+            instructions
+                .iter()
+                .any(|instruction| instruction.opcode == NcsOpcode::Jmp),
             "switch codegen should branch into case bodies",
         );
         Ok(())

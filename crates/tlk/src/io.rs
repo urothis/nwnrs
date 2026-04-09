@@ -277,26 +277,27 @@ mod tests {
         tlk.set_entry(
             0,
             TlkEntry {
-                text: "old\r\ntext".to_string(),
-                raw_text: Some(b"old\r\ntext".to_vec()),
-                sound_res_ref: "snd".to_string(),
+                text:              "old\r\ntext".to_string(),
+                raw_text:          Some(b"old\r\ntext".to_vec()),
+                sound_res_ref:     "snd".to_string(),
                 raw_sound_res_ref: {
                     let mut raw = [0_u8; 16];
                     raw[..7].copy_from_slice(b"snd \0 \0");
                     raw
                 },
-                sound_length: f32::from_bits(0x3fa00001),
+                sound_length:      f32::from_bits(0x3fa00001),
                 sound_length_bits: 0x3fa00001,
-                flags: 0x7,
-                volume_variance: 11,
-                pitch_variance: 22,
+                flags:             0x7,
+                volume_variance:   11,
+                pitch_variance:    22,
             },
         );
 
         let mut encoded = Cursor::new(Vec::new());
         write_single_tlk(&mut encoded, &mut tlk).expect("encode source tlk");
 
-        let mut parsed = read_single_tlk(Cursor::new(encoded.into_inner()), false).expect("parse tlk");
+        let mut parsed =
+            read_single_tlk(Cursor::new(encoded.into_inner()), false).expect("parse tlk");
         let mut edited = parsed.get(0).expect("load entry").expect("entry present");
         edited.text = "new\r\ntext".to_string();
         parsed.set_entry(0, edited);
@@ -306,7 +307,10 @@ mod tests {
 
         let mut reparsed =
             read_single_tlk(Cursor::new(rewritten.into_inner()), false).expect("reparse tlk");
-        let entry = reparsed.get(0).expect("load rewritten entry").expect("entry present");
+        let entry = reparsed
+            .get(0)
+            .expect("load rewritten entry")
+            .expect("entry present");
 
         assert_eq!(entry.text, "new\r\ntext");
         assert_eq!(entry.flags, 0x7);

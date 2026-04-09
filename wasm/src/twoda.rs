@@ -6,10 +6,7 @@ use wasm_bindgen::JsValue;
 
 use crate::{
     bindings::js_error,
-    lossless::{
-        LosslessDtoMetadata, unchanged_lossless_bytes,
-        with_lossless_metadata,
-    },
+    lossless::{LosslessDtoMetadata, unchanged_lossless_bytes, with_lossless_metadata},
 };
 
 /// A wasm-facing `2DA` document.
@@ -18,14 +15,14 @@ pub struct TwoDaDto {
     /// The table-wide default cell value.
     pub default_value: Option<String>,
     /// Ordered column names.
-    pub columns: Vec<String>,
+    pub columns:       Vec<String>,
     /// Ordered table rows.
-    pub rows: Vec<Vec<Option<String>>>,
+    pub rows:          Vec<Vec<Option<String>>>,
     /// Stored row labels.
-    pub row_labels: Vec<String>,
+    pub row_labels:    Vec<String>,
     /// Internal provenance metadata for unchanged write-backs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub lossless: Option<LosslessDtoMetadata>,
+    pub lossless:      Option<LosslessDtoMetadata>,
 }
 
 pub(crate) fn unchanged_twoda_bytes(value: &TwoDaDto) -> Result<Option<Vec<u8>>, JsValue> {
@@ -37,12 +34,12 @@ pub(crate) fn unchanged_twoda_bytes(value: &TwoDaDto) -> Result<Option<Vec<u8>>,
 fn twoda_to_dto(value: &twoda::TwoDa) -> TwoDaDto {
     TwoDaDto {
         default_value: value.default(),
-        columns: value.columns().to_vec(),
-        rows: value.rows.clone(),
-        row_labels: (0..value.rows.len())
+        columns:       value.columns().to_vec(),
+        rows:          value.rows.clone(),
+        row_labels:    (0..value.rows.len())
             .map(|idx| value.row_label(idx).unwrap_or_default().to_string())
             .collect(),
-        lossless: None,
+        lossless:      None,
     }
 }
 

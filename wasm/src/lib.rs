@@ -27,27 +27,27 @@ pub use twoda::{TwoDaDto, read_twoda_from_bytes, write_twoda_to_bytes};
 mod tests {
     use std::io::Cursor;
 
-    use nwnrs::prelude::{
-        compressedbuf, core::Language, erf, exo, gff, resref, ssf, tlk, twoda,
-    };
+    use nwnrs::prelude::{compressedbuf, core::Language, erf, exo, gff, resref, ssf, tlk, twoda};
 
     use crate::{
         ErfDto, GffFieldDto, GffRootDto, GffStructDto, GffValueDto, SingleTlkDto, SsfRootDto,
-        TwoDaDto, erf::read_erf_dto, erf::write_erf_dto, gff::read_gff_dto, gff::write_gff_dto,
-        ssf::read_ssf_dto, ssf::write_ssf_dto, tlk::read_tlk_dto,
-        tlk::write_tlk_dto, twoda::read_twoda_dto, twoda::write_twoda_dto,
+        TwoDaDto,
+        erf::{read_erf_dto, write_erf_dto},
+        gff::{read_gff_dto, write_gff_dto},
         lossless::with_lossless_metadata,
-        twoda::unchanged_twoda_bytes,
+        ssf::{read_ssf_dto, write_ssf_dto},
+        tlk::{read_tlk_dto, write_tlk_dto},
+        twoda::{read_twoda_dto, unchanged_twoda_bytes, write_twoda_dto},
     };
 
     #[test]
     fn lossless_metadata_returns_original_bytes_when_unchanged() {
         let value = TwoDaDto {
             default_value: Some("****".to_string()),
-            columns: vec!["col".to_string()],
-            rows: vec![vec![Some("value".to_string())]],
-            row_labels: vec!["0".to_string()],
-            lossless: None,
+            columns:       vec!["col".to_string()],
+            rows:          vec![vec![Some("value".to_string())]],
+            row_labels:    vec!["0".to_string()],
+            lossless:      None,
         };
         let value_result = with_lossless_metadata(
             value,
@@ -82,10 +82,10 @@ mod tests {
     fn lossless_metadata_detects_semantic_change() {
         let value = TwoDaDto {
             default_value: None,
-            columns: vec!["col".to_string()],
-            rows: vec![vec![Some("value".to_string())]],
-            row_labels: vec!["0".to_string()],
-            lossless: None,
+            columns:       vec!["col".to_string()],
+            rows:          vec![vec![Some("value".to_string())]],
+            row_labels:    vec!["0".to_string()],
+            lossless:      None,
         };
         let value_result = with_lossless_metadata(
             value,
@@ -128,12 +128,11 @@ mod tests {
     #[test]
     fn twoda_edited_write_roundtrips_through_native_codec() {
         let mut table = twoda::TwoDa::new();
-        table.set_columns(vec!["col".to_string()]).expect("set columns");
         table
-            .replace_rows(
-                vec![vec![Some("value".to_string())]],
-                vec!["0".to_string()],
-            )
+            .set_columns(vec!["col".to_string()])
+            .expect("set columns");
+        table
+            .replace_rows(vec![vec![Some("value".to_string())]], vec!["0".to_string()])
             .expect("set rows");
         let mut encoded = Vec::new();
         twoda::write_twoda(&mut encoded, &table, false).expect("encode 2DA");
@@ -192,7 +191,8 @@ mod tests {
         entry.text = "after".to_string();
 
         let rewritten = write_tlk_dto(&edited).expect("write TLK");
-        let mut reparsed = tlk::read_single_tlk(Cursor::new(rewritten), false).expect("reparse TLK");
+        let mut reparsed =
+            tlk::read_single_tlk(Cursor::new(rewritten), false).expect("reparse TLK");
         let entry = reparsed.get(0).expect("get entry").expect("present");
         assert_eq!(entry.text, "after");
         assert_eq!(entry.flags, 7);
@@ -204,7 +204,9 @@ mod tests {
     fn ssf_edited_write_preserves_raw_slot_bytes() {
         let mut source = ssf::new_ssf();
         let mut entry = ssf::SsfEntry::new("snd", 10);
-        entry.raw_resref = [b's', b'n', b'd', 0, b'X', b'Y', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        entry.raw_resref = [
+            b's', b'n', b'd', 0, b'X', b'Y', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        ];
         source.entries.push(entry);
         let mut encoded = Vec::new();
         ssf::write_ssf(&mut encoded, &source).expect("encode SSF");
@@ -276,7 +278,13 @@ mod tests {
             erf::read_erf(Cursor::new(rewritten), "test.erf".to_string()).expect("reparse ERF");
         assert_eq!(reparsed.resource_list_padding(), 8);
         assert_eq!(
-            reparsed.entries().values().next().expect("entry").read_all(false).expect("bytes"),
+            reparsed
+                .entries()
+                .values()
+                .next()
+                .expect("entry")
+                .read_all(false)
+                .expect("bytes"),
             b"after".to_vec()
         );
     }
@@ -307,11 +315,11 @@ mod tests {
         if let Some(items) = items {
             items.value = GffValueDto::List(vec![
                 GffStructDto {
-                    id: 1,
+                    id:     1,
                     fields: Vec::new(),
                 },
                 GffStructDto {
-                    id: 2,
+                    id:     2,
                     fields: Vec::new(),
                 },
             ]);

@@ -1,4 +1,8 @@
-use std::{collections::{HashMap, HashSet}, error::Error, fmt};
+use std::{
+    collections::{HashMap, HashSet},
+    error::Error,
+    fmt,
+};
 
 use crate::{
     Keyword, LexerError, ScriptResolver, SourceError, SourceFile, SourceId, SourceLoadOptions,
@@ -9,9 +13,9 @@ use crate::{
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IncludeEdge {
     /// Including file.
-    pub from: SourceId,
+    pub from:         SourceId,
     /// Included file.
-    pub to: SourceId,
+    pub to:           SourceId,
     /// Include string as it appeared in the source file.
     pub include_name: String,
 }
@@ -20,11 +24,11 @@ pub struct IncludeEdge {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceBundle {
     /// All loaded source files.
-    pub source_map: SourceMap,
+    pub source_map:    SourceMap,
     /// The root script file requested by the caller.
-    pub root_id: SourceId,
+    pub root_id:       SourceId,
     /// Source ids in first-load order.
-    pub source_order: Vec<SourceId>,
+    pub source_order:  Vec<SourceId>,
     /// Include relationships observed during scanning.
     pub include_edges: Vec<IncludeEdge>,
 }
@@ -33,20 +37,20 @@ pub struct SourceBundle {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MacroDefinition {
     /// Macro name.
-    pub name: String,
+    pub name:        String,
     /// Replacement tokens captured from the define line.
     pub replacement: Vec<Token>,
     /// File where the macro was defined.
-    pub source_id: SourceId,
+    pub source_id:   SourceId,
     /// One-based source line of the define.
-    pub line: usize,
+    pub line:        usize,
 }
 
 /// One preprocessed token stream plus the macros captured while producing it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PreprocessedSource {
     /// Tokens after include traversal and object-like macro expansion.
-    pub tokens: Vec<Token>,
+    pub tokens:  Vec<Token>,
     /// Macro definitions in encounter order, with later redefinitions included.
     pub defines: Vec<MacroDefinition>,
 }
@@ -100,19 +104,21 @@ pub fn load_source_bundle<R: ScriptResolver + ?Sized>(
 }
 
 /// Preprocesses one already-loaded source bundle into a token stream.
-pub fn preprocess_source_bundle(bundle: &SourceBundle) -> Result<PreprocessedSource, PreprocessError> {
+pub fn preprocess_source_bundle(
+    bundle: &SourceBundle,
+) -> Result<PreprocessedSource, PreprocessError> {
     let mut preprocessor = BundlePreprocessor::new(bundle);
     preprocessor.expand_source(bundle.root_id)?;
     preprocessor.finish(bundle.root_id)
 }
 
 struct SourceBundleLoader<'a, R: ScriptResolver + ?Sized> {
-    resolver: &'a R,
-    options: SourceLoadOptions,
-    source_map: SourceMap,
-    source_order: Vec<SourceId>,
+    resolver:      &'a R,
+    options:       SourceLoadOptions,
+    source_map:    SourceMap,
+    source_order:  Vec<SourceId>,
     include_edges: Vec<IncludeEdge>,
-    active_stack: Vec<String>,
+    active_stack:  Vec<String>,
 }
 
 impl<'a, R: ScriptResolver + ?Sized> SourceBundleLoader<'a, R> {
@@ -192,11 +198,11 @@ fn scan_include_names(source_file: &SourceFile) -> Result<Vec<String>, LexerErro
 }
 
 struct BundlePreprocessor<'a> {
-    bundle: &'a SourceBundle,
-    defines: HashMap<String, MacroDefinition>,
-    define_order: Vec<MacroDefinition>,
+    bundle:         &'a SourceBundle,
+    defines:        HashMap<String, MacroDefinition>,
+    define_order:   Vec<MacroDefinition>,
     expanded_files: HashSet<SourceId>,
-    tokens: Vec<Token>,
+    tokens:         Vec<Token>,
 }
 
 impl<'a> BundlePreprocessor<'a> {
@@ -216,10 +222,13 @@ impl<'a> BundlePreprocessor<'a> {
             .source_map
             .get(root_id)
             .ok_or_else(|| SourceError::file_not_found("root"))?;
-        self.tokens
-            .push(Token::new(TokenKind::Eof, crate::Span::new(root_id, root.len(), root.len()), ""));
+        self.tokens.push(Token::new(
+            TokenKind::Eof,
+            crate::Span::new(root_id, root.len(), root.len()),
+            "",
+        ));
         Ok(PreprocessedSource {
-            tokens: self.tokens,
+            tokens:  self.tokens,
             defines: self.define_order,
         })
     }
@@ -245,12 +254,10 @@ impl<'a> BundlePreprocessor<'a> {
                 break;
             }
 
-            let line = token_line(source, token).ok_or_else(|| {
-                LexerError {
-                    code: crate::CompilerErrorCode::UnknownStateInCompiler,
-                    span: crate::Span::new(source.id, token.span.start, token.span.end),
-                    message: "failed to resolve token line during preprocessing".to_string(),
-                }
+            let line = token_line(source, token).ok_or_else(|| LexerError {
+                code:    crate::CompilerErrorCode::UnknownStateInCompiler,
+                span:    crate::Span::new(source.id, token.span.start, token.span.end),
+                message: "failed to resolve token line during preprocessing".to_string(),
             })?;
             let line_end = next_line_index(source, &tokens, index, line);
 
@@ -328,7 +335,9 @@ impl<'a> BundlePreprocessor<'a> {
 }
 
 fn token_line(source: &SourceFile, token: &Token) -> Option<usize> {
-    source.location(token.span.start).map(|location| location.line)
+    source
+        .location(token.span.start)
+        .map(|location| location.line)
 }
 
 fn next_line_index(source: &SourceFile, tokens: &[Token], start: usize, line: usize) -> usize {
@@ -447,8 +456,8 @@ int UTIL = 1;"#,
     }
 
     #[test]
-    fn preprocesses_object_like_defines_with_include_order() -> Result<(), Box<dyn std::error::Error>>
-    {
+    fn preprocesses_object_like_defines_with_include_order()
+    -> Result<(), Box<dyn std::error::Error>> {
         let mut resolver = InMemoryScriptResolver::new();
         resolver.insert_source(
             "root",
@@ -514,8 +523,8 @@ int x = VALUE;
     }
 
     #[test]
-    fn chained_define_expansion_preserves_upstream_literal_token_kinds(
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    fn chained_define_expansion_preserves_upstream_literal_token_kinds()
+    -> Result<(), Box<dyn std::error::Error>> {
         let mut resolver = InMemoryScriptResolver::new();
         resolver.insert_source(
             "root",

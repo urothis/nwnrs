@@ -24,7 +24,7 @@ pub struct GffLocStringEntryDto {
     /// The NWN language identifier.
     pub language: i32,
     /// The localized text.
-    pub text: String,
+    pub text:     String,
 }
 
 /// A labeled field in a GFF structure.
@@ -40,7 +40,7 @@ pub struct GffFieldDto {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GffStructDto {
     /// The stored structure id.
-    pub id: i32,
+    pub id:     i32,
     /// The ordered fields in the structure.
     pub fields: Vec<GffFieldDto>,
 }
@@ -49,14 +49,14 @@ pub struct GffStructDto {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GffRootDto {
     /// The four-byte file type.
-    pub file_type: String,
+    pub file_type:    String,
     /// The four-byte file version.
     pub file_version: String,
     /// The root structure.
-    pub root: GffStructDto,
+    pub root:         GffStructDto,
     /// Internal provenance metadata for unchanged write-backs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub lossless: Option<LosslessDtoMetadata>,
+    pub lossless:     Option<LosslessDtoMetadata>,
 }
 
 /// A wasm-facing GFF value.
@@ -99,16 +99,16 @@ pub enum GffValueDto {
 
 fn gff_root_to_dto(root: &gff::GffRoot) -> GffRootDto {
     GffRootDto {
-        file_type: root.file_type.clone(),
+        file_type:    root.file_type.clone(),
         file_version: root.file_version.clone(),
-        root: gff_struct_to_dto(&root.root),
-        lossless: None,
+        root:         gff_struct_to_dto(&root.root),
+        lossless:     None,
     }
 }
 
 fn gff_struct_to_dto(value: &gff::GffStruct) -> GffStructDto {
     GffStructDto {
-        id: value.id,
+        id:     value.id,
         fields: value
             .fields()
             .iter()
@@ -141,7 +141,7 @@ fn gff_value_to_dto(value: &gff::GffValue) -> GffValueDto {
                 .iter()
                 .map(|(language, text)| GffLocStringEntryDto {
                     language: *language,
-                    text: text.clone(),
+                    text:     text.clone(),
                 })
                 .collect(),
         }),
@@ -164,7 +164,10 @@ fn dto_to_gff_struct(value: &GffStructDto) -> Result<gff::GffStruct, JsValue> {
     let mut result = gff::GffStruct::new(value.id);
     for field in &value.fields {
         result
-            .put_field(&field.label, gff::GffField::new(dto_to_gff_value(&field.value)?))
+            .put_field(
+                &field.label,
+                gff::GffField::new(dto_to_gff_value(&field.value)?),
+            )
             .map_err(|error| js_error("failed to build GFF struct", error))?;
     }
     Ok(result)
@@ -205,8 +208,8 @@ fn dto_to_gff_value(value: &GffValueDto) -> Result<gff::GffValue, JsValue> {
 
 pub(crate) fn read_gff_dto(bytes: &[u8]) -> Result<GffRootDto, JsValue> {
     let mut cursor = Cursor::new(bytes);
-    let root = gff::read_gff_root(&mut cursor)
-        .map_err(|error| js_error("failed to read GFF", error))?;
+    let root =
+        gff::read_gff_root(&mut cursor).map_err(|error| js_error("failed to read GFF", error))?;
     with_lossless_metadata(
         gff_root_to_dto(&root),
         bytes.to_vec(),

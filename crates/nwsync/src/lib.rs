@@ -18,7 +18,7 @@ pub use types::*;
 pub mod prelude {
     pub use crate::{
         HASH_TREE_DEPTH, MAGIC, Manifest, ManifestEntry, ManifestEntrySource, ManifestError,
-        ManifestResult, VERSION, path_for_entry, read_manifest, read_manifest_file,
-        write_manifest, write_manifest_file,
+        ManifestResult, VERSION, path_for_entry, read_manifest, read_manifest_file, write_manifest,
+        write_manifest_file,
     };
 }

@@ -67,15 +67,15 @@ pub type ManifestResult<T> = Result<T, ManifestError>;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ManifestEntry {
     /// The content hash stored for this entry.
-    pub sha1: SecureHash,
+    pub sha1:       SecureHash,
     /// The uncompressed payload size.
-    pub size: u32,
+    pub size:       u32,
     /// The resource reference exposed by this entry.
-    pub resref: ResRef,
+    pub resref:     ResRef,
     /// The raw 16-byte resref slot as stored on disk.
     pub raw_resref: [u8; 16],
     /// How this entry is represented in the manifest tables.
-    pub source: ManifestEntrySource,
+    pub source:     ManifestEntrySource,
 }
 
 impl ManifestEntry {
@@ -118,10 +118,10 @@ pub enum ManifestEntrySource {
 /// A parsed NWSync manifest.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Manifest {
-    pub(crate) version: u32,
+    pub(crate) version:         u32,
     pub(crate) hash_tree_depth: u32,
     /// The manifest entries in their stored order.
-    pub entries: Vec<ManifestEntry>,
+    pub entries:                Vec<ManifestEntry>,
 }
 
 impl Default for Manifest {

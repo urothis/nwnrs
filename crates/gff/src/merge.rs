@@ -1,6 +1,4 @@
-use crate::{
-    GffField, GffResult, GffRoot, GffStruct, GffValue,
-};
+use crate::{GffField, GffResult, GffRoot, GffStruct, GffValue};
 
 /// Applies `edited` onto `target` while retaining provenance already present on
 /// matching parsed fields and structures.

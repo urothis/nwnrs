@@ -98,10 +98,10 @@ pub enum KeyBifVersion {
 #[derive(Debug, Clone)]
 /// Metadata for a variable resource entry stored inside a BIF.
 pub struct VariableResource {
-    pub(crate) id: ResId,
-    pub(crate) io_offset: u64,
-    pub(crate) io_size: usize,
-    pub(crate) compression_type: ExoResFileCompressionType,
+    pub(crate) id:                ResId,
+    pub(crate) io_offset:         u64,
+    pub(crate) io_size:           usize,
+    pub(crate) compression_type:  ExoResFileCompressionType,
     pub(crate) uncompressed_size: usize,
 }
 
@@ -133,12 +133,12 @@ impl VariableResource {
 }
 
 pub(crate) struct LoadedBif {
-    pub stream: SharedReadSeek,
-    pub file_type: String,
-    pub file_version: KeyBifVersion,
+    pub stream:             SharedReadSeek,
+    pub file_type:          String,
+    pub file_version:       KeyBifVersion,
     pub variable_resources: IndexMap<ResId, VariableResource, RandomState>,
-    pub oid: Option<String>,
-    pub raw_oid: Option<String>,
+    pub oid:                Option<String>,
+    pub raw_oid:            Option<String>,
 }
 
 impl fmt::Debug for LoadedBif {
@@ -153,13 +153,13 @@ impl fmt::Debug for LoadedBif {
 }
 
 pub(crate) struct BifHandle {
-    pub filename: String,
+    pub filename:          String,
     pub resolver_filename: String,
-    pub expected_version: KeyBifVersion,
-    pub expected_oid: Option<String>,
-    pub drives: u16,
-    pub resolver: BifResolver,
-    pub loaded: Mutex<Option<Arc<LoadedBif>>>,
+    pub expected_version:  KeyBifVersion,
+    pub expected_oid:      Option<String>,
+    pub drives:            u16,
+    pub resolver:          BifResolver,
+    pub loaded:            Mutex<Option<Arc<LoadedBif>>>,
 }
 
 impl fmt::Debug for BifHandle {
@@ -175,7 +175,7 @@ impl fmt::Debug for BifHandle {
 #[derive(Debug, Clone)]
 pub(crate) struct KeyEntry {
     pub res_id: ResId,
-    pub sha1: SecureHash,
+    pub sha1:   SecureHash,
 }
 
 /// Decoded contents of a KEY file together with lazy BIF resolvers.
@@ -183,21 +183,21 @@ pub(crate) struct KeyEntry {
 /// The table implements [`nwnrs_resman::ResContainer`], so it can be placed
 /// directly inside a layered [`nwnrs_resman::ResMan`].
 pub struct KeyTable {
-    pub(crate) version: KeyBifVersion,
-    pub(crate) label: String,
-    pub(crate) build_year: u32,
-    pub(crate) build_day: u32,
-    pub(crate) bifs: Vec<BifHandle>,
+    pub(crate) version:          KeyBifVersion,
+    pub(crate) label:            String,
+    pub(crate) build_year:       u32,
+    pub(crate) build_day:        u32,
+    pub(crate) bifs:             Vec<BifHandle>,
     pub(crate) resref_id_lookup: IndexMap<ResRef, KeyEntry, RandomState>,
-    pub(crate) oid: Option<String>,
-    pub(crate) raw_oid: Option<String>,
+    pub(crate) oid:              Option<String>,
+    pub(crate) raw_oid:          Option<String>,
 }
 
 #[derive(Debug, Clone)]
 /// The resources stored in a single BIF referenced by a [`KeyTable`].
 pub struct KeyBifContents {
     /// The BIF filename as recorded by the KEY file.
-    pub filename: String,
+    pub filename:  String,
     /// The resources stored in that BIF, in table order.
     pub resources: Vec<ResRef>,
 }
@@ -387,17 +387,17 @@ impl BifHandle {
 /// Specification for a BIF to be written by [`crate::write_key_and_bif`].
 pub struct KeyBifEntry {
     /// Optional directory component to prepend to the emitted BIF path.
-    pub directory: String,
+    pub directory:         String,
     /// Basename of the emitted BIF, without the `.bif` suffix.
-    pub name: String,
+    pub name:              String,
     /// Exact filename/path spelling to emit into the KEY file and on disk.
     pub recorded_filename: Option<String>,
     /// Raw file-table drive flags.
-    pub drives: u16,
+    pub drives:            u16,
     /// Exact 24-byte BIF OID to emit for E1 outputs.
-    pub bif_oid: Option<String>,
+    pub bif_oid:           Option<String>,
     /// Resource entries that should be written into the BIF.
-    pub entries: Vec<ResRef>,
+    pub entries:           Vec<ResRef>,
 }
 
 pub(crate) type WriteBifResult = (usize, Vec<(ResRef, SecureHash)>);

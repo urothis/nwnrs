@@ -16,23 +16,27 @@ pub const DEFAULT_MAX_INCLUDE_DEPTH: usize = 16;
 pub enum SourceError {
     /// The source resolver itself failed.
     Resolver(String),
-    /// The requested source file could not be loaded or violated a compiler rule.
+    /// The requested source file could not be loaded or violated a compiler
+    /// rule.
     Compiler {
         /// Stable upstream-aligned compiler error code.
-        code: CompilerErrorCode,
+        code:        CompilerErrorCode,
         /// Logical script name associated with the failure.
         script_name: String,
         /// Human-readable error message.
-        message: String,
+        message:     String,
     },
 }
 
 impl SourceError {
-    /// Returns the upstream compiler error code when this is a compiler failure.
+    /// Returns the upstream compiler error code when this is a compiler
+    /// failure.
     pub fn code(&self) -> Option<CompilerErrorCode> {
         match self {
             Self::Resolver(_) => None,
-            Self::Compiler { code, .. } => Some(*code),
+            Self::Compiler {
+                code, ..
+            } => Some(*code),
         }
     }
 
@@ -70,7 +74,8 @@ impl SourceError {
         Self::Compiler {
             code: CompilerErrorCode::IncludeTooManyLevels,
             message: format!(
-                "include depth exceeded the configured maximum of {max_include_depth} while loading {script_name:?}"
+                "include depth exceeded the configured maximum of {max_include_depth} while \
+                 loading {script_name:?}"
             ),
             script_name,
         }
@@ -81,7 +86,11 @@ impl fmt::Display for SourceError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Resolver(message) => f.write_str(message),
-            Self::Compiler { message, code, .. } => write!(f, "{message} ({})", code.code()),
+            Self::Compiler {
+                message,
+                code,
+                ..
+            } => write!(f, "{message} ({})", code.code()),
         }
     }
 }
@@ -92,7 +101,7 @@ impl Error for SourceError {}
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct SourceLoadOptions {
     /// Resource type requested from the source resolver.
-    pub res_type: ResType,
+    pub res_type:          ResType,
     /// Maximum recursive include depth.
     pub max_include_depth: usize,
 }
@@ -100,7 +109,7 @@ pub struct SourceLoadOptions {
 impl Default for SourceLoadOptions {
     fn default() -> Self {
         Self {
-            res_type: NW_SCRIPT_SOURCE_RES_TYPE,
+            res_type:          NW_SCRIPT_SOURCE_RES_TYPE,
             max_include_depth: DEFAULT_MAX_INCLUDE_DEPTH,
         }
     }
@@ -134,9 +143,9 @@ pub struct Span {
     /// The source file containing this span.
     pub source_id: SourceId,
     /// The inclusive starting byte offset.
-    pub start: usize,
+    pub start:     usize,
     /// The exclusive ending byte offset.
-    pub end: usize,
+    pub end:       usize,
 }
 
 impl Span {
@@ -166,7 +175,7 @@ pub struct SourceLocation {
     /// The absolute byte offset.
     pub offset: usize,
     /// The one-based source line.
-    pub line: usize,
+    pub line:   usize,
     /// The one-based source column.
     pub column: usize,
 }
@@ -175,12 +184,12 @@ pub struct SourceLocation {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SourceFile {
     /// Stable identifier used by spans and diagnostics.
-    pub id: SourceId,
+    pub id:       SourceId,
     /// Logical filename used by diagnostics and include tracking.
-    pub name: String,
+    pub name:     String,
     /// Full source bytes.
     pub contents: Vec<u8>,
-    line_starts: Vec<usize>,
+    line_starts:  Vec<usize>,
 }
 
 impl SourceFile {
@@ -317,23 +326,25 @@ impl SourceMap {
 
 /// Loads script source text by logical name and resource type.
 pub trait ScriptResolver {
-    /// Returns the source bytes for `script_name`, or `None` when it does not exist.
+    /// Returns the source bytes for `script_name`, or `None` when it does not
+    /// exist.
     fn resolve_script_bytes(
         &self,
         script_name: &str,
         res_type: ResType,
     ) -> Result<Option<Vec<u8>>, SourceError>;
 
-    /// Returns the source contents for `script_name`, or `None` when it does not exist.
+    /// Returns the source contents for `script_name`, or `None` when it does
+    /// not exist.
     fn resolve_script(
         &self,
         script_name: &str,
         res_type: ResType,
     ) -> Result<Option<String>, SourceError> {
         match self.resolve_script_bytes(script_name, res_type)? {
-            Some(bytes) => String::from_utf8(bytes)
-                .map(Some)
-                .map_err(|error| SourceError::resolver(format!("source file is not valid UTF-8: {error}"))),
+            Some(bytes) => String::from_utf8(bytes).map(Some).map_err(|error| {
+                SourceError::resolver(format!("source file is not valid UTF-8: {error}"))
+            }),
             None => Ok(None),
         }
     }
@@ -388,9 +399,9 @@ impl ScriptResolver for InMemoryScriptResolver {
         res_type: ResType,
     ) -> Result<Option<String>, SourceError> {
         match self.resolve_script_bytes(script_name, res_type)? {
-            Some(bytes) => String::from_utf8(bytes)
-                .map(Some)
-                .map_err(|error| SourceError::resolver(format!("source file is not valid UTF-8: {error}"))),
+            Some(bytes) => String::from_utf8(bytes).map(Some).map_err(|error| {
+                SourceError::resolver(format!("source file is not valid UTF-8: {error}"))
+            }),
             None => Ok(None),
         }
     }

@@ -35,24 +35,24 @@ pub struct IncludeDirective {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FunctionDecl {
     /// Source span covering the whole declaration or definition.
-    pub span: Span,
+    pub span:        Span,
     /// Function return type.
     pub return_type: TypeSpec,
     /// Function name.
-    pub name: String,
+    pub name:        String,
     /// Function parameters in source order.
-    pub parameters: Vec<Parameter>,
+    pub parameters:  Vec<Parameter>,
     /// Optional function body. `None` means this was only a declaration.
-    pub body: Option<BlockStmt>,
+    pub body:        Option<BlockStmt>,
 }
 
 /// One user-defined structure declaration.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StructDecl {
     /// Source span covering the whole declaration.
-    pub span: Span,
+    pub span:   Span,
     /// Structure name.
-    pub name: String,
+    pub name:   String,
     /// Field declarations in source order.
     pub fields: Vec<StructFieldDecl>,
 }
@@ -61,9 +61,9 @@ pub struct StructDecl {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StructFieldDecl {
     /// Source span covering the declaration.
-    pub span: Span,
+    pub span:  Span,
     /// Field type.
-    pub ty: TypeSpec,
+    pub ty:    TypeSpec,
     /// Field names declared by this statement.
     pub names: Vec<NamedItem>,
 }
@@ -81,11 +81,11 @@ pub struct NamedItem {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Parameter {
     /// Source span covering the declaration.
-    pub span: Span,
+    pub span:    Span,
     /// Parameter type.
-    pub ty: TypeSpec,
+    pub ty:      TypeSpec,
     /// Parameter name.
-    pub name: String,
+    pub name:    String,
     /// Optional default value expression.
     pub default: Option<Expr>,
 }
@@ -94,11 +94,11 @@ pub struct Parameter {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TypeSpec {
     /// Source span covering the type specifier.
-    pub span: Span,
+    pub span:     Span,
     /// Whether `const` was present.
     pub is_const: bool,
     /// Underlying type shape.
-    pub kind: TypeKind,
+    pub kind:     TypeKind,
 }
 
 /// One NWScript type kind recognized syntactically by the parser.
@@ -126,9 +126,9 @@ pub enum TypeKind {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Declaration {
     /// Source span covering the whole declaration.
-    pub span: Span,
+    pub span:        Span,
     /// Declared type.
-    pub ty: TypeSpec,
+    pub ty:          TypeSpec,
     /// Declared variables.
     pub declarators: Vec<VarDeclarator>,
 }
@@ -137,9 +137,9 @@ pub struct Declaration {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct VarDeclarator {
     /// Source span covering the declarator.
-    pub span: Span,
+    pub span:        Span,
     /// Variable name.
-    pub name: String,
+    pub name:        String,
     /// Optional initializer expression.
     pub initializer: Option<Expr>,
 }
@@ -148,7 +148,7 @@ pub struct VarDeclarator {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BlockStmt {
     /// Source span covering the block braces and contents.
-    pub span: Span,
+    pub span:       Span,
     /// Statements inside the block.
     pub statements: Vec<Stmt>,
 }
@@ -206,9 +206,9 @@ pub struct ExpressionStmt {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct IfStmt {
     /// Source span covering the whole statement.
-    pub span: Span,
+    pub span:        Span,
     /// Condition expression.
-    pub condition: Expr,
+    pub condition:   Expr,
     /// Statement executed when the condition is true.
     pub then_branch: Box<Stmt>,
     /// Optional `else` branch.
@@ -219,18 +219,18 @@ pub struct IfStmt {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SwitchStmt {
     /// Source span covering the whole statement.
-    pub span: Span,
+    pub span:      Span,
     /// Condition expression.
     pub condition: Expr,
     /// Switch body.
-    pub body: Box<Stmt>,
+    pub body:      Box<Stmt>,
 }
 
 /// One `return` statement.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ReturnStmt {
     /// Source span covering the statement.
-    pub span: Span,
+    pub span:  Span,
     /// Optional returned value.
     pub value: Option<Expr>,
 }
@@ -239,20 +239,20 @@ pub struct ReturnStmt {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WhileStmt {
     /// Source span covering the whole statement.
-    pub span: Span,
+    pub span:      Span,
     /// Loop condition.
     pub condition: Expr,
     /// Loop body.
-    pub body: Box<Stmt>,
+    pub body:      Box<Stmt>,
 }
 
 /// One `do ... while` statement.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DoWhileStmt {
     /// Source span covering the whole statement.
-    pub span: Span,
+    pub span:      Span,
     /// Loop body.
-    pub body: Box<Stmt>,
+    pub body:      Box<Stmt>,
     /// Loop condition.
     pub condition: Expr,
 }
@@ -261,22 +261,22 @@ pub struct DoWhileStmt {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ForStmt {
     /// Source span covering the whole statement.
-    pub span: Span,
+    pub span:        Span,
     /// Optional initializer expression.
     pub initializer: Option<Expr>,
     /// Optional loop condition.
-    pub condition: Option<Expr>,
+    pub condition:   Option<Expr>,
     /// Optional update expression.
-    pub update: Option<Expr>,
+    pub update:      Option<Expr>,
     /// Loop body.
-    pub body: Box<Stmt>,
+    pub body:        Box<Stmt>,
 }
 
 /// One `case` label.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CaseStmt {
     /// Source span covering the label.
-    pub span: Span,
+    pub span:  Span,
     /// Case condition expression.
     pub value: Expr,
 }
@@ -307,48 +307,48 @@ pub enum ExprKind {
     /// One function call or action invocation.
     Call {
         /// Called expression.
-        callee: Box<Expr>,
+        callee:    Box<Expr>,
         /// Call arguments in source order.
         arguments: Vec<Expr>,
     },
     /// One structure field access.
     FieldAccess {
         /// Expression on the left-hand side of `.`.
-        base: Box<Expr>,
+        base:  Box<Expr>,
         /// Field name on the right-hand side of `.`.
         field: String,
     },
     /// One unary or postfix operator.
     Unary {
         /// Applied operator.
-        op: UnaryOp,
+        op:   UnaryOp,
         /// Operand expression.
         expr: Box<Expr>,
     },
     /// One binary operator.
     Binary {
         /// Applied operator.
-        op: BinaryOp,
+        op:    BinaryOp,
         /// Left-hand operand.
-        left: Box<Expr>,
+        left:  Box<Expr>,
         /// Right-hand operand.
         right: Box<Expr>,
     },
     /// One conditional expression.
     Conditional {
         /// Condition before `?`.
-        condition: Box<Expr>,
+        condition:  Box<Expr>,
         /// Expression between `?` and `:`.
-        when_true: Box<Expr>,
+        when_true:  Box<Expr>,
         /// Expression after `:`.
         when_false: Box<Expr>,
     },
     /// One assignment expression.
     Assignment {
         /// Applied assignment operator.
-        op: AssignmentOp,
+        op:    AssignmentOp,
         /// Assigned lvalue expression.
-        left: Box<Expr>,
+        left:  Box<Expr>,
         /// Right-hand expression.
         right: Box<Expr>,
     },

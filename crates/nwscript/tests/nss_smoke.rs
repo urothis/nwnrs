@@ -6,9 +6,7 @@ use nwnrs_nwscript::prelude::*;
 
 mod support;
 
-use support::{
-    assets_root, load_nss_bytes, skip_if_remote_assets_unavailable, test_error,
-};
+use support::{assets_root, load_nss_bytes, skip_if_remote_assets_unavailable, test_error};
 
 type TestResult = Result<(), Box<dyn Error>>;
 
@@ -40,7 +38,9 @@ struct RemoteScriptResolver {
 
 impl RemoteScriptResolver {
     fn new(assets: PathBuf) -> Self {
-        Self { assets }
+        Self {
+            assets,
+        }
     }
 }
 
@@ -147,7 +147,12 @@ fn smoke_remote_script_compiles_to_parseable_ndb() -> TestResult {
     let parsed = read_ndb(&mut std::io::Cursor::new(ndb))?;
 
     assert!(!parsed.files.is_empty());
-    assert!(parsed.files.iter().any(|file| file.is_root && file.name == POSITIVE_SCRIPT));
+    assert!(
+        parsed
+            .files
+            .iter()
+            .any(|file| file.is_root && file.name == POSITIVE_SCRIPT)
+    );
     Ok(())
 }
 
@@ -172,7 +177,7 @@ fn negative_remote_scripts_fail_at_the_current_frontend_boundary() -> TestResult
                     &script,
                     Some(&langspec),
                     SemanticOptions {
-                        require_entrypoint: false,
+                        require_entrypoint:       false,
                         allow_conditional_script: false,
                     },
                 )
@@ -186,7 +191,7 @@ fn negative_remote_scripts_fail_at_the_current_frontend_boundary() -> TestResult
                     Some(&langspec),
                     CompileOptions {
                         semantic: SemanticOptions {
-                            require_entrypoint: false,
+                            require_entrypoint:       false,
                             allow_conditional_script: false,
                         },
                         ..CompileOptions::default()
@@ -194,7 +199,10 @@ fn negative_remote_scripts_fail_at_the_current_frontend_boundary() -> TestResult
                 )
                 .is_err();
 
-                assert!(compile_failed, "negative script unexpectedly compiled: {path}");
+                assert!(
+                    compile_failed,
+                    "negative script unexpectedly compiled: {path}"
+                );
             }
         }
     }
@@ -265,16 +273,19 @@ fn include_backed_script_compiles_to_parseable_ndb() -> TestResult {
     let resolver = RemoteScriptResolver::new(assets);
     let bundle = load_source_bundle(&resolver, INCLUDE_SCRIPT, SourceLoadOptions::default())?;
     let artifacts = compile_source_bundle(&bundle, Some(&langspec), CompileOptions::default())?;
-    let parsed = read_ndb(
-        &mut std::io::Cursor::new(
-            artifacts
-                .ndb
-                .as_ref()
-                .ok_or_else(|| test_error("missing NDB output for include-backed script"))?,
-        ),
-    )?;
+    let parsed = read_ndb(&mut std::io::Cursor::new(
+        artifacts
+            .ndb
+            .as_ref()
+            .ok_or_else(|| test_error("missing NDB output for include-backed script"))?,
+    ))?;
 
     assert!(parsed.files.len() >= 2);
-    assert!(parsed.files.iter().any(|file| file.is_root && file.name == INCLUDE_SCRIPT));
+    assert!(
+        parsed
+            .files
+            .iter()
+            .any(|file| file.is_root && file.name == INCLUDE_SCRIPT)
+    );
     Ok(())
 }

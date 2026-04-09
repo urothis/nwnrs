@@ -14,37 +14,37 @@ use crate::util::{
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ErfPackMetadata {
-    pub(crate) source: PathBuf,
-    pub(crate) source_md5: String,
-    pub(crate) file_type: String,
-    pub(crate) file_version: erf::ErfVersion,
-    pub(crate) build_year: i32,
-    pub(crate) build_day: i32,
-    pub(crate) str_ref: i32,
-    pub(crate) loc_strings: BTreeMap<i32, String>,
-    pub(crate) oid: Option<String>,
+    pub(crate) source:                PathBuf,
+    pub(crate) source_md5:            String,
+    pub(crate) file_type:             String,
+    pub(crate) file_version:          erf::ErfVersion,
+    pub(crate) build_year:            i32,
+    pub(crate) build_day:             i32,
+    pub(crate) str_ref:               i32,
+    pub(crate) loc_strings:           BTreeMap<i32, String>,
+    pub(crate) oid:                   Option<String>,
     pub(crate) resource_list_padding: u64,
-    pub(crate) entry_order: Vec<resref::ResRef>,
-    pub(crate) entry_algorithms: BTreeMap<resref::ResRef, compressedbuf::Algorithm>,
-    pub(crate) file_md5s: BTreeMap<String, String>,
+    pub(crate) entry_order:           Vec<resref::ResRef>,
+    pub(crate) entry_algorithms:      BTreeMap<resref::ResRef, compressedbuf::Algorithm>,
+    pub(crate) file_md5s:             BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct KeyPackMetadata {
-    pub(crate) source_key: PathBuf,
+    pub(crate) source_key:     PathBuf,
     pub(crate) source_key_md5: String,
-    pub(crate) bifs: Vec<String>,
-    pub(crate) bif_md5s: BTreeMap<String, String>,
-    pub(crate) file_md5s: BTreeMap<String, String>,
+    pub(crate) bifs:           Vec<String>,
+    pub(crate) bif_md5s:       BTreeMap<String, String>,
+    pub(crate) file_md5s:      BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ResourcePackMetadata {
-    pub(crate) source: PathBuf,
-    pub(crate) source_md5: String,
+    pub(crate) source:      PathBuf,
+    pub(crate) source_md5:  String,
     pub(crate) source_kind: String,
-    pub(crate) file_name: String,
-    pub(crate) file_md5s: BTreeMap<String, String>,
+    pub(crate) file_name:   String,
+    pub(crate) file_md5s:   BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -74,53 +74,53 @@ struct MetadataKindProbe {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ErfPackMetadataFile {
-    kind: MetadataKind,
-    source: PathBuf,
-    source_md5: String,
-    file_type: String,
-    file_version: ErfPackMetadataVersion,
-    build_year: i32,
-    build_day: i32,
-    str_ref: i32,
+    kind:                  MetadataKind,
+    source:                PathBuf,
+    source_md5:            String,
+    file_type:             String,
+    file_version:          ErfPackMetadataVersion,
+    build_year:            i32,
+    build_day:             i32,
+    str_ref:               i32,
     #[serde(default)]
-    loc_strings: BTreeMap<i32, String>,
-    oid: Option<String>,
+    loc_strings:           BTreeMap<i32, String>,
+    oid:                   Option<String>,
     #[serde(default)]
     resource_list_padding: u64,
     #[serde(default)]
-    entry_order: Vec<String>,
+    entry_order:           Vec<String>,
     #[serde(default)]
-    entry_algorithms: BTreeMap<String, u32>,
+    entry_algorithms:      BTreeMap<String, u32>,
     #[serde(default)]
-    file_md5s: BTreeMap<String, String>,
+    file_md5s:             BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct KeyPackMetadataFile {
-    kind: MetadataKind,
-    source_key: PathBuf,
+    kind:           MetadataKind,
+    source_key:     PathBuf,
     source_key_md5: String,
-    version: KeyPackMetadataVersion,
-    build_year: u32,
-    build_day: u32,
-    oid: Option<String>,
+    version:        KeyPackMetadataVersion,
+    build_year:     u32,
+    build_day:      u32,
+    oid:            Option<String>,
     #[serde(default)]
-    bifs: Vec<String>,
+    bifs:           Vec<String>,
     #[serde(default)]
-    bif_md5s: BTreeMap<String, String>,
+    bif_md5s:       BTreeMap<String, String>,
     #[serde(default)]
-    file_md5s: BTreeMap<String, String>,
+    file_md5s:      BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ResourcePackMetadataFile {
-    kind: MetadataKind,
-    source: PathBuf,
-    source_md5: String,
+    kind:        MetadataKind,
+    source:      PathBuf,
+    source_md5:  String,
     source_kind: String,
-    file_name: String,
+    file_name:   String,
     #[serde(default)]
-    file_md5s: BTreeMap<String, String>,
+    file_md5s:   BTreeMap<String, String>,
 }
 
 impl From<erf::ErfVersion> for ErfPackMetadataVersion {
@@ -153,16 +153,16 @@ impl From<key::KeyBifVersion> for KeyPackMetadataVersion {
 impl From<KeyPackMetadata> for KeyPackMetadataFile {
     fn from(value: KeyPackMetadata) -> Self {
         Self {
-            kind: MetadataKind::Key,
-            source_key: value.source_key,
+            kind:           MetadataKind::Key,
+            source_key:     value.source_key,
             source_key_md5: value.source_key_md5,
-            version: KeyPackMetadataVersion::V1,
-            build_year: 0,
-            build_day: 0,
-            oid: None,
-            bifs: value.bifs,
-            bif_md5s: value.bif_md5s,
-            file_md5s: value.file_md5s,
+            version:        KeyPackMetadataVersion::V1,
+            build_year:     0,
+            build_day:      0,
+            oid:            None,
+            bifs:           value.bifs,
+            bif_md5s:       value.bif_md5s,
+            file_md5s:      value.file_md5s,
         }
     }
 }
@@ -170,19 +170,19 @@ impl From<KeyPackMetadata> for KeyPackMetadataFile {
 impl ErfPackMetadata {
     fn from_file(value: ErfPackMetadataFile, metadata_path: &Path) -> Result<Self, String> {
         Ok(Self {
-            source: value.source,
-            source_md5: value.source_md5,
-            file_type: value.file_type,
-            file_version: value.file_version.into(),
-            build_year: value.build_year,
-            build_day: value.build_day,
-            str_ref: value.str_ref,
-            loc_strings: value.loc_strings,
-            oid: value.oid,
+            source:                value.source,
+            source_md5:            value.source_md5,
+            file_type:             value.file_type,
+            file_version:          value.file_version.into(),
+            build_year:            value.build_year,
+            build_day:             value.build_day,
+            str_ref:               value.str_ref,
+            loc_strings:           value.loc_strings,
+            oid:                   value.oid,
             resource_list_padding: value.resource_list_padding,
-            entry_order: parse_entry_order(value.entry_order, metadata_path)?,
-            entry_algorithms: parse_entry_algorithms(value.entry_algorithms, metadata_path)?,
-            file_md5s: value.file_md5s,
+            entry_order:           parse_entry_order(value.entry_order, metadata_path)?,
+            entry_algorithms:      parse_entry_algorithms(value.entry_algorithms, metadata_path)?,
+            file_md5s:             value.file_md5s,
         })
     }
 }
@@ -190,11 +190,11 @@ impl ErfPackMetadata {
 impl KeyPackMetadata {
     fn from_file(value: KeyPackMetadataFile) -> Self {
         Self {
-            source_key: value.source_key,
+            source_key:     value.source_key,
             source_key_md5: value.source_key_md5,
-            bifs: value.bifs,
-            bif_md5s: value.bif_md5s,
-            file_md5s: value.file_md5s,
+            bifs:           value.bifs,
+            bif_md5s:       value.bif_md5s,
+            file_md5s:      value.file_md5s,
         }
     }
 }
@@ -202,11 +202,11 @@ impl KeyPackMetadata {
 impl ResourcePackMetadata {
     fn from_file(value: ResourcePackMetadataFile) -> Self {
         Self {
-            source: value.source,
-            source_md5: value.source_md5,
+            source:      value.source,
+            source_md5:  value.source_md5,
             source_kind: value.source_kind,
-            file_name: value.file_name,
-            file_md5s: value.file_md5s,
+            file_name:   value.file_name,
+            file_md5s:   value.file_md5s,
         }
     }
 }
@@ -220,24 +220,24 @@ pub(crate) fn write_erf_pack_metadata(
     let metadata_path = destination.join(RESOURCE_METADATA_FILENAME);
     ensure_output_file_ready(&metadata_path, force)?;
     let value = ErfPackMetadataFile {
-        kind: MetadataKind::Erf,
-        source: input.to_path_buf(),
-        source_md5: checksums::md5_digest(
+        kind:                  MetadataKind::Erf,
+        source:                input.to_path_buf(),
+        source_md5:            checksums::md5_digest(
             fs::read(input)
                 .map_err(|error| format!("failed to read {}: {error}", input.display()))?,
         )
         .to_string(),
-        file_type: erf.file_type.clone(),
-        file_version: erf.file_version.into(),
-        build_year: erf.build_year,
-        build_day: erf.build_day,
-        str_ref: erf.str_ref,
-        loc_strings: erf.loc_strings().clone(),
-        oid: erf.oid().map(str::to_string),
+        file_type:             erf.file_type.clone(),
+        file_version:          erf.file_version.into(),
+        build_year:            erf.build_year,
+        build_day:             erf.build_day,
+        str_ref:               erf.str_ref,
+        loc_strings:           erf.loc_strings().clone(),
+        oid:                   erf.oid().map(str::to_string),
         resource_list_padding: erf.resource_list_padding(),
-        entry_order: serialize_entry_order(&resman::ResContainer::contents(erf)),
-        entry_algorithms: serialize_entry_algorithms(erf),
-        file_md5s: snapshot_packable_files(destination)?,
+        entry_order:           serialize_entry_order(&resman::ResContainer::contents(erf)),
+        entry_algorithms:      serialize_entry_algorithms(erf),
+        file_md5s:             snapshot_packable_files(destination)?,
     };
     fs::write(
         &metadata_path,
@@ -303,16 +303,16 @@ pub(crate) fn write_resource_pack_metadata(
     let metadata_path = destination.join(RESOURCE_METADATA_FILENAME);
     ensure_output_file_ready(&metadata_path, force)?;
     let value = ResourcePackMetadataFile {
-        kind: MetadataKind::Resource,
-        source: input.to_path_buf(),
-        source_md5: checksums::md5_digest(
+        kind:        MetadataKind::Resource,
+        source:      input.to_path_buf(),
+        source_md5:  checksums::md5_digest(
             fs::read(input)
                 .map_err(|error| format!("failed to read {}: {error}", input.display()))?,
         )
         .to_string(),
         source_kind: source_kind.to_string(),
-        file_name: file_name.to_string(),
-        file_md5s: snapshot_packable_files(destination)?,
+        file_name:   file_name.to_string(),
+        file_md5s:   snapshot_packable_files(destination)?,
     };
     fs::write(
         &metadata_path,
@@ -622,38 +622,43 @@ mod tests {
     #[test]
     fn erf_metadata_file_round_trips_with_derived_dto() -> TestResult {
         let metadata = ErfPackMetadata {
-            source: PathBuf::from("example.erf"),
-            source_md5: "abc123".to_string(),
-            file_type: "ERF ".to_string(),
-            file_version: erf::ErfVersion::V1,
-            build_year: 2025,
-            build_day: 92,
-            str_ref: 7,
-            loc_strings: BTreeMap::from([(0, "Hello".to_string())]),
-            oid: Some("0123456789abcdef01234567".to_string()),
+            source:                PathBuf::from("example.erf"),
+            source_md5:            "abc123".to_string(),
+            file_type:             "ERF ".to_string(),
+            file_version:          erf::ErfVersion::V1,
+            build_year:            2025,
+            build_day:             92,
+            str_ref:               7,
+            loc_strings:           BTreeMap::from([(0, "Hello".to_string())]),
+            oid:                   Some("0123456789abcdef01234567".to_string()),
             resource_list_padding: 12,
-            entry_order: vec![resref::new_resolved_res_ref_from_filename("alpha.uti")?.into()],
-            entry_algorithms: BTreeMap::from([(
+            entry_order:           vec![
+                resref::new_resolved_res_ref_from_filename("alpha.uti")?.into(),
+            ],
+            entry_algorithms:      BTreeMap::from([(
                 resref::new_resolved_res_ref_from_filename("alpha.uti")?.into(),
                 compressedbuf::Algorithm::Zlib,
             )]),
-            file_md5s: BTreeMap::from([("alpha.uti".to_string(), "deadbeef".to_string())]),
+            file_md5s:             BTreeMap::from([(
+                "alpha.uti".to_string(),
+                "deadbeef".to_string(),
+            )]),
         };
 
         let file = ErfPackMetadataFile {
-            kind: MetadataKind::Erf,
-            source: metadata.source.clone(),
-            source_md5: metadata.source_md5.clone(),
-            file_type: metadata.file_type.clone(),
-            file_version: metadata.file_version.into(),
-            build_year: metadata.build_year,
-            build_day: metadata.build_day,
-            str_ref: metadata.str_ref,
-            loc_strings: metadata.loc_strings.clone(),
-            oid: metadata.oid.clone(),
+            kind:                  MetadataKind::Erf,
+            source:                metadata.source.clone(),
+            source_md5:            metadata.source_md5.clone(),
+            file_type:             metadata.file_type.clone(),
+            file_version:          metadata.file_version.into(),
+            build_year:            metadata.build_year,
+            build_day:             metadata.build_day,
+            str_ref:               metadata.str_ref,
+            loc_strings:           metadata.loc_strings.clone(),
+            oid:                   metadata.oid.clone(),
             resource_list_padding: metadata.resource_list_padding,
-            entry_order: serialize_entry_order(&metadata.entry_order),
-            entry_algorithms: {
+            entry_order:           serialize_entry_order(&metadata.entry_order),
+            entry_algorithms:      {
                 let mut algorithms = BTreeMap::new();
                 algorithms.insert(
                     "alpha.uti".to_string(),
@@ -661,7 +666,7 @@ mod tests {
                 );
                 algorithms
             },
-            file_md5s: metadata.file_md5s.clone(),
+            file_md5s:             metadata.file_md5s.clone(),
         };
 
         let json = serde_json::to_string(&file)?;
@@ -677,11 +682,11 @@ mod tests {
     #[test]
     fn key_metadata_file_round_trips_with_derived_dto() -> TestResult {
         let metadata = KeyPackMetadata {
-            source_key: PathBuf::from("test.key"),
+            source_key:     PathBuf::from("test.key"),
             source_key_md5: "abc123".to_string(),
-            bifs: vec!["data/test.bif".to_string()],
-            bif_md5s: BTreeMap::from([("data/test.bif".to_string(), "bifhash".to_string())]),
-            file_md5s: BTreeMap::from([("alpha.uti".to_string(), "reshash".to_string())]),
+            bifs:           vec!["data/test.bif".to_string()],
+            bif_md5s:       BTreeMap::from([("data/test.bif".to_string(), "bifhash".to_string())]),
+            file_md5s:      BTreeMap::from([("alpha.uti".to_string(), "reshash".to_string())]),
         };
 
         let json = serde_json::to_string(&KeyPackMetadataFile::from(metadata.clone()))?;

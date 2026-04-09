@@ -9,9 +9,9 @@ use crate::{
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LexerError {
     /// Stable upstream-aligned compiler error code.
-    pub code: CompilerErrorCode,
+    pub code:    CompilerErrorCode,
     /// Source span where lexing failed.
-    pub span: Span,
+    pub span:    Span,
     /// Human-readable error message.
     pub message: String,
 }
@@ -44,8 +44,8 @@ impl Error for LexerError {}
 #[derive(Debug, Clone)]
 pub struct Lexer<'a> {
     source_id: SourceId,
-    input: &'a [u8],
-    position: usize,
+    input:     &'a [u8],
+    position:  usize,
 }
 
 impl<'a> Lexer<'a> {
@@ -645,9 +645,7 @@ impl<'a> Lexer<'a> {
     }
 
     fn peek_byte(&self, ahead: usize) -> Option<u8> {
-        self.input
-            .get(self.position.saturating_add(ahead))
-            .copied()
+        self.input.get(self.position.saturating_add(ahead)).copied()
     }
 
     fn bump_byte(&mut self) -> Option<u8> {
@@ -848,17 +846,14 @@ mod tests {
     #[test]
     fn lexes_non_utf8_string_bytes_without_rejecting_source() {
         let tokens = lex_bytes(SourceId::new(6), b"\"a\x93\xff\"");
-        let string_token = tokens
-            .ok()
-            .and_then(|items| items.into_iter().find(|token| token.kind == TokenKind::String));
-
-        let codepoints = string_token.map(|token| {
-            token
-                .text
-                .chars()
-                .map(|ch| ch as u32)
-                .collect::<Vec<_>>()
+        let string_token = tokens.ok().and_then(|items| {
+            items
+                .into_iter()
+                .find(|token| token.kind == TokenKind::String)
         });
+
+        let codepoints =
+            string_token.map(|token| token.text.chars().map(|ch| ch as u32).collect::<Vec<_>>());
 
         assert_eq!(codepoints, Some(vec![0x61, 0x93, 0xff]));
     }

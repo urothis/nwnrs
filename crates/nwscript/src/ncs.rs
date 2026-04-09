@@ -64,18 +64,20 @@ pub fn decode_ncs_header(bytes: &[u8]) -> Result<NcsHeader, NcsHeaderError> {
     let code_size = <[u8; 4]>::try_from(code_size_bytes)
         .map(u32::from_be_bytes)
         .map_err(|_error| NcsHeaderError::TooShort(bytes.len()))?;
-    Ok(NcsHeader { code_size })
+    Ok(NcsHeader {
+        code_size,
+    })
 }
 
 /// One decoded `NCS` instruction.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct NcsInstruction {
     /// Operation code.
-    pub opcode: NcsOpcode,
+    pub opcode:  NcsOpcode,
     /// Auxiliary code.
     pub auxcode: NcsAuxCode,
     /// Encoded instruction payload after opcode and auxcode.
-    pub extra: Vec<u8>,
+    pub extra:   Vec<u8>,
 }
 
 impl NcsInstruction {
@@ -108,17 +110,17 @@ pub enum NcsOpcode {
     /// `EXCOR`
     ExclusiveOr = 0x09,
     /// `BOOLAND`
-    BooleanAnd = 0x0A,
+    BooleanAnd = 0x0a,
     /// `EQUAL`
-    Equal = 0x0B,
+    Equal = 0x0b,
     /// `NEQUAL`
-    NotEqual = 0x0C,
+    NotEqual = 0x0c,
     /// `GEQ`
-    Geq = 0x0D,
+    Geq = 0x0d,
     /// `GT`
-    Gt = 0x0E,
+    Gt = 0x0e,
     /// `LT`
-    Lt = 0x0F,
+    Lt = 0x0f,
     /// `LEQ`
     Leq = 0x10,
     /// `SHLEFT`
@@ -140,17 +142,17 @@ pub enum NcsOpcode {
     /// `NEG`
     Negation = 0x19,
     /// `COMP`
-    OnesComplement = 0x1A,
+    OnesComplement = 0x1a,
     /// `MOVSP`
-    ModifyStackPointer = 0x1B,
+    ModifyStackPointer = 0x1b,
     /// `STOREIP`
-    StoreIp = 0x1C,
+    StoreIp = 0x1c,
     /// `JMP`
-    Jmp = 0x1D,
+    Jmp = 0x1d,
     /// `JSR`
-    Jsr = 0x1E,
+    Jsr = 0x1e,
     /// `JZ`
-    Jz = 0x1F,
+    Jz = 0x1f,
     /// `RET`
     Ret = 0x20,
     /// `DESTRUCT`
@@ -172,13 +174,13 @@ pub enum NcsOpcode {
     /// `INCBP`
     IncrementBase = 0x29,
     /// `SAVEBP`
-    SaveBasePointer = 0x2A,
+    SaveBasePointer = 0x2a,
     /// `RESTOREBP`
-    RestoreBasePointer = 0x2B,
+    RestoreBasePointer = 0x2b,
     /// `STORESTATE`
-    StoreState = 0x2C,
+    StoreState = 0x2c,
     /// `NOP`
-    NoOperation = 0x2D,
+    NoOperation = 0x2d,
 }
 
 impl NcsOpcode {
@@ -313,11 +315,11 @@ pub enum NcsAuxCode {
     /// engst9/engst9 operator specialization.
     TypeTypeEngst9Engst9 = 0x39,
     /// vector/vector operator specialization.
-    TypeTypeVectorVector = 0x3A,
+    TypeTypeVectorVector = 0x3a,
     /// vector/float operator specialization.
-    TypeTypeVectorFloat = 0x3B,
+    TypeTypeVectorFloat = 0x3b,
     /// float/vector operator specialization.
-    TypeTypeFloatVector = 0x3C,
+    TypeTypeFloatVector = 0x3c,
     /// in-place evaluation marker.
     EvalInplace = 0x70,
     /// post-place evaluation marker.
@@ -325,7 +327,8 @@ pub enum NcsAuxCode {
 }
 
 impl NcsAuxCode {
-    /// Returns the canonical short suffix used by the upstream assembler helper.
+    /// Returns the canonical short suffix used by the upstream assembler
+    /// helper.
     pub fn canonical_name(self) -> Option<&'static str> {
         match self {
             Self::None
@@ -417,11 +420,11 @@ pub enum NcsReadError {
     /// One instruction payload was truncated.
     TruncatedInstruction {
         /// Byte offset of the truncated instruction.
-        offset: usize,
+        offset:         usize,
         /// Expected payload size after opcode and auxcode.
         expected_extra: usize,
         /// Actual available payload bytes.
-        actual_extra: usize,
+        actual_extra:   usize,
     },
 }
 
@@ -437,7 +440,8 @@ impl fmt::Display for NcsReadError {
                 actual_extra,
             } => write!(
                 f,
-                "truncated NCS instruction at byte {offset}: expected {expected_extra} payload bytes, got {actual_extra}"
+                "truncated NCS instruction at byte {offset}: expected {expected_extra} payload \
+                 bytes, got {actual_extra}"
             ),
         }
     }
@@ -477,12 +481,12 @@ impl TryFrom<u8> for NcsOpcode {
             0x07 => Self::LogicalOr,
             0x08 => Self::InclusiveOr,
             0x09 => Self::ExclusiveOr,
-            0x0A => Self::BooleanAnd,
-            0x0B => Self::Equal,
-            0x0C => Self::NotEqual,
-            0x0D => Self::Geq,
-            0x0E => Self::Gt,
-            0x0F => Self::Lt,
+            0x0a => Self::BooleanAnd,
+            0x0b => Self::Equal,
+            0x0c => Self::NotEqual,
+            0x0d => Self::Geq,
+            0x0e => Self::Gt,
+            0x0f => Self::Lt,
             0x10 => Self::Leq,
             0x11 => Self::ShiftLeft,
             0x12 => Self::ShiftRight,
@@ -493,12 +497,12 @@ impl TryFrom<u8> for NcsOpcode {
             0x17 => Self::Div,
             0x18 => Self::Modulus,
             0x19 => Self::Negation,
-            0x1A => Self::OnesComplement,
-            0x1B => Self::ModifyStackPointer,
-            0x1C => Self::StoreIp,
-            0x1D => Self::Jmp,
-            0x1E => Self::Jsr,
-            0x1F => Self::Jz,
+            0x1a => Self::OnesComplement,
+            0x1b => Self::ModifyStackPointer,
+            0x1c => Self::StoreIp,
+            0x1d => Self::Jmp,
+            0x1e => Self::Jsr,
+            0x1f => Self::Jz,
             0x20 => Self::Ret,
             0x21 => Self::DeStruct,
             0x22 => Self::BooleanNot,
@@ -509,10 +513,10 @@ impl TryFrom<u8> for NcsOpcode {
             0x27 => Self::RunstackCopyBase,
             0x28 => Self::DecrementBase,
             0x29 => Self::IncrementBase,
-            0x2A => Self::SaveBasePointer,
-            0x2B => Self::RestoreBasePointer,
-            0x2C => Self::StoreState,
-            0x2D => Self::NoOperation,
+            0x2a => Self::SaveBasePointer,
+            0x2b => Self::RestoreBasePointer,
+            0x2c => Self::StoreState,
+            0x2d => Self::NoOperation,
             _ => return Err(UnknownNcsOpcode(value)),
         };
         Ok(opcode)
@@ -558,9 +562,9 @@ impl TryFrom<u8> for NcsAuxCode {
             0x37 => Self::TypeTypeEngst7Engst7,
             0x38 => Self::TypeTypeEngst8Engst8,
             0x39 => Self::TypeTypeEngst9Engst9,
-            0x3A => Self::TypeTypeVectorVector,
-            0x3B => Self::TypeTypeVectorFloat,
-            0x3C => Self::TypeTypeFloatVector,
+            0x3a => Self::TypeTypeVectorVector,
+            0x3b => Self::TypeTypeVectorFloat,
+            0x3c => Self::TypeTypeFloatVector,
             0x70 => Self::EvalInplace,
             0x71 => Self::EvalPostplace,
             _ => return Err(UnknownNcsAuxCode(value)),
@@ -577,7 +581,10 @@ fn instruction_extra_size(opcode: NcsOpcode, auxcode: NcsAuxCode, bytes: &[u8]) 
             | NcsAuxCode::TypeObject
             | NcsAuxCode::TypeEngst2 => 4,
             NcsAuxCode::TypeString | NcsAuxCode::TypeEngst7 => {
-                match bytes.get(..2).and_then(|prefix| <[u8; 2]>::try_from(prefix).ok()) {
+                match bytes
+                    .get(..2)
+                    .and_then(|prefix| <[u8; 2]>::try_from(prefix).ok())
+                {
                     Some(prefix) => 2 + usize::from(u16::from_be_bytes(prefix)),
                     None => 2,
                 }
@@ -594,11 +601,7 @@ fn instruction_extra_size(opcode: NcsOpcode, auxcode: NcsAuxCode, bytes: &[u8]) 
         | NcsOpcode::Increment
         | NcsOpcode::DecrementBase
         | NcsOpcode::IncrementBase => 4,
-        NcsOpcode::Equal | NcsOpcode::NotEqual
-            if auxcode == NcsAuxCode::TypeTypeStructStruct =>
-        {
-            2
-        }
+        NcsOpcode::Equal | NcsOpcode::NotEqual if auxcode == NcsAuxCode::TypeTypeStructStruct => 2,
         NcsOpcode::DeStruct => 6,
         _ => 0,
     }
@@ -662,9 +665,9 @@ pub fn decode_ncs_instructions(bytes: &[u8]) -> Result<Vec<NcsInstruction>, NcsR
 pub fn encode_ncs_instructions(instructions: &[NcsInstruction]) -> Vec<u8> {
     let code_size = u32::try_from(
         instructions
-        .iter()
-        .map(NcsInstruction::encoded_len)
-        .sum::<usize>(),
+            .iter()
+            .map(NcsInstruction::encoded_len)
+            .sum::<usize>(),
     )
     .ok()
     .unwrap_or(u32::MAX);
@@ -689,7 +692,7 @@ mod tests {
     #[test]
     fn decode_header_accepts_valid_prefix() -> Result<(), Box<dyn std::error::Error>> {
         let bytes = [
-            b'N', b'C', b'S', b' ', b'V', b'1', b'.', b'0', b'B', 0x00, 0x00, 0x00, 0x2A,
+            b'N', b'C', b'S', b' ', b'V', b'1', b'.', b'0', b'B', 0x00, 0x00, 0x00, 0x2a,
         ];
         let header = decode_ncs_header(&bytes)?;
         assert_eq!(header.code_size, 42);
@@ -699,7 +702,7 @@ mod tests {
     #[test]
     fn decode_header_rejects_bad_marker() {
         let bytes = [
-            b'N', b'C', b'S', b' ', b'V', b'1', b'.', b'0', b'X', 0x00, 0x00, 0x00, 0x2A,
+            b'N', b'C', b'S', b' ', b'V', b'1', b'.', b'0', b'X', 0x00, 0x00, 0x00, 0x2a,
         ];
         assert_eq!(
             decode_ncs_header(&bytes),
@@ -711,14 +714,14 @@ mod tests {
     fn encode_and_decode_roundtrip_instruction_stream() -> Result<(), Box<dyn std::error::Error>> {
         let instructions = vec![
             NcsInstruction {
-                opcode: NcsOpcode::Constant,
+                opcode:  NcsOpcode::Constant,
                 auxcode: NcsAuxCode::TypeInteger,
-                extra: 42_i32.to_be_bytes().to_vec(),
+                extra:   42_i32.to_be_bytes().to_vec(),
             },
             NcsInstruction {
-                opcode: NcsOpcode::Ret,
+                opcode:  NcsOpcode::Ret,
                 auxcode: NcsAuxCode::None,
-                extra: Vec::new(),
+                extra:   Vec::new(),
             },
         ];
 

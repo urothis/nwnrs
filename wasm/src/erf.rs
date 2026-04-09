@@ -73,7 +73,7 @@ impl From<CompressedBufAlgorithmDto> for compressedbuf::Algorithm {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ErfLocStringDto {
     /// The localized string id.
-    pub id: i32,
+    pub id:   i32,
     /// The localized text.
     pub text: String,
 }
@@ -95,7 +95,12 @@ fn dto_to_erf_bytes(value: &ErfDto) -> Result<Vec<u8>, JsValue> {
     let algorithms = value
         .entries
         .iter()
-        .map(|entry| entry.compressed_buf_algorithm.unwrap_or(CompressedBufAlgorithmDto::None).into())
+        .map(|entry| {
+            entry
+                .compressed_buf_algorithm
+                .unwrap_or(CompressedBufAlgorithmDto::None)
+                .into()
+        })
         .collect::<Vec<_>>();
     let exocomp = if algorithms
         .iter()
@@ -150,9 +155,9 @@ fn dto_to_erf_bytes(value: &ErfDto) -> Result<Vec<u8>, JsValue> {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ErfEntryDto {
     /// The `name.ext` filename for the entry.
-    pub filename: String,
+    pub filename:                 String,
     /// The raw entry payload bytes.
-    pub bytes: Vec<u8>,
+    pub bytes:                    Vec<u8>,
     /// The compressed-buffer algorithm when present.
     pub compressed_buf_algorithm: Option<CompressedBufAlgorithmDto>,
 }
@@ -161,27 +166,27 @@ pub struct ErfEntryDto {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ErfDto {
     /// The four-byte archive type tag.
-    pub file_type: String,
+    pub file_type:             String,
     /// The archive version string.
-    pub file_version: ErfVersionDto,
+    pub file_version:          ErfVersionDto,
     /// The stored build year.
-    pub build_year: i32,
+    pub build_year:            i32,
     /// The stored build day.
-    pub build_day: i32,
+    pub build_day:             i32,
     /// The archive string reference.
-    pub str_ref: i32,
+    pub str_ref:               i32,
     /// The enhanced-edition OID when present.
-    pub oid: Option<String>,
+    pub oid:                   Option<String>,
     /// Preserved padding between the key list and resource list.
     #[serde(default)]
     pub resource_list_padding: u64,
     /// Localized strings stored in the archive header.
-    pub loc_strings: Vec<ErfLocStringDto>,
+    pub loc_strings:           Vec<ErfLocStringDto>,
     /// Archive entries in order.
-    pub entries: Vec<ErfEntryDto>,
+    pub entries:               Vec<ErfEntryDto>,
     /// Internal provenance metadata for unchanged write-backs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub lossless: Option<LosslessDtoMetadata>,
+    pub lossless:              Option<LosslessDtoMetadata>,
 }
 
 fn erf_to_dto(value: &erf::Erf) -> Result<ErfDto, JsValue> {
@@ -190,13 +195,11 @@ fn erf_to_dto(value: &erf::Erf) -> Result<ErfDto, JsValue> {
         .iter()
         .map(|(rr, res)| {
             Ok(ErfEntryDto {
-                filename: rr.to_string(),
-                bytes: res
+                filename:                 rr.to_string(),
+                bytes:                    res
                     .read_all(false)
                     .map_err(|error| js_error("failed to read ERF entry bytes", error))?,
-                compressed_buf_algorithm: res
-                    .compressed_buf_algorithm()
-                    .map(Into::into),
+                compressed_buf_algorithm: res.compressed_buf_algorithm().map(Into::into),
             })
         })
         .collect::<Result<Vec<_>, JsValue>>()?;
@@ -213,7 +216,7 @@ fn erf_to_dto(value: &erf::Erf) -> Result<ErfDto, JsValue> {
             .loc_strings()
             .iter()
             .map(|(id, text)| ErfLocStringDto {
-                id: *id,
+                id:   *id,
                 text: text.clone(),
             })
             .collect(),

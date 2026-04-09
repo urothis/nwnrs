@@ -16,9 +16,9 @@ use crate::{
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParserError {
     /// Stable upstream-aligned compiler error code.
-    pub code: CompilerErrorCode,
+    pub code:    CompilerErrorCode,
     /// Source span where parsing failed.
-    pub span: Span,
+    pub span:    Span,
     /// Human-readable error message.
     pub message: String,
 }
@@ -141,7 +141,8 @@ pub fn parse_text(
     parse_bytes(source_id, input.as_bytes(), langspec)
 }
 
-/// Parses one already-loaded source bundle after include traversal and macro expansion.
+/// Parses one already-loaded source bundle after include traversal and macro
+/// expansion.
 pub fn parse_source_bundle(
     bundle: &crate::SourceBundle,
     langspec: Option<&LangSpec>,
@@ -162,8 +163,8 @@ pub fn parse_resolved_script<R: crate::ScriptResolver + ?Sized>(
 }
 
 struct Parser<'a> {
-    tokens: Vec<Token>,
-    position: usize,
+    tokens:            Vec<Token>,
+    position:          usize,
     engine_structures: HashSet<&'a str>,
 }
 
@@ -193,7 +194,9 @@ impl<'a> Parser<'a> {
             }
             items.push(self.parse_top_level_item()?);
         }
-        Ok(Script { items })
+        Ok(Script {
+            items,
+        })
     }
 
     fn parse_include_directive(&mut self) -> Result<IncludeDirective, ParserError> {
@@ -399,9 +402,9 @@ impl<'a> Parser<'a> {
                 "expected void token",
             )?;
             return Ok(TypeSpec {
-                span: token.span,
+                span:     token.span,
                 is_const: false,
-                kind: TypeKind::Void,
+                kind:     TypeKind::Void,
             });
         }
         self.parse_non_void_type_specifier()
@@ -639,10 +642,8 @@ impl<'a> Parser<'a> {
             }));
         }
         if self.matches_kind(&TokenKind::Semicolon) {
-            let semicolon = self.advance_required(
-                CompilerErrorCode::NoSemicolonAfterStatement,
-                "expected ;",
-            )?;
+            let semicolon =
+                self.advance_required(CompilerErrorCode::NoSemicolonAfterStatement, "expected ;")?;
             return Ok(Stmt::Empty(SimpleStmt {
                 span: semicolon.span,
             }));
@@ -767,7 +768,7 @@ impl<'a> Parser<'a> {
                 "expected ; after return",
             )?;
             return Ok(ReturnStmt {
-                span: join_spans(return_token.span, semicolon.span),
+                span:  join_spans(return_token.span, semicolon.span),
                 value: None,
             });
         }
@@ -778,7 +779,7 @@ impl<'a> Parser<'a> {
             "expected ; after return value",
         )?;
         Ok(ReturnStmt {
-            span: join_spans(return_token.span, semicolon.span),
+            span:  join_spans(return_token.span, semicolon.span),
             value: Some(value),
         })
     }
@@ -979,8 +980,8 @@ impl<'a> Parser<'a> {
         Ok(Expr {
             span: join_spans(condition.span, when_false.span),
             kind: ExprKind::Conditional {
-                condition: Box::new(condition),
-                when_true: Box::new(when_true),
+                condition:  Box::new(condition),
+                when_true:  Box::new(when_true),
                 when_false: Box::new(when_false),
             },
         })
@@ -1101,7 +1102,7 @@ impl<'a> Parser<'a> {
         Ok(Expr {
             span: join_spans(token.span, expr.span),
             kind: ExprKind::Unary {
-                op: op.ok_or_else(|| {
+                op:   op.ok_or_else(|| {
                     self.error_here(
                         CompilerErrorCode::UnknownStateInCompiler,
                         "missing unary operator",
@@ -1124,7 +1125,7 @@ impl<'a> Parser<'a> {
                 expr = Expr {
                     span: join_spans(expr.span, field.span),
                     kind: ExprKind::FieldAccess {
-                        base: Box::new(expr),
+                        base:  Box::new(expr),
                         field: field.text,
                     },
                 };
@@ -1138,7 +1139,7 @@ impl<'a> Parser<'a> {
                 expr = Expr {
                     span: join_spans(expr.span, token.span),
                     kind: ExprKind::Unary {
-                        op: UnaryOp::PostIncrement,
+                        op:   UnaryOp::PostIncrement,
                         expr: Box::new(expr),
                     },
                 };
@@ -1152,7 +1153,7 @@ impl<'a> Parser<'a> {
                 expr = Expr {
                     span: join_spans(expr.span, token.span),
                     kind: ExprKind::Unary {
-                        op: UnaryOp::PostDecrement,
+                        op:   UnaryOp::PostDecrement,
                         expr: Box::new(expr),
                     },
                 };
@@ -1194,10 +1195,8 @@ impl<'a> Parser<'a> {
             | TokenKind::Keyword(Keyword::DateMacro)
             | TokenKind::Keyword(Keyword::TimeMacro) => self.parse_literal_expression(),
             TokenKind::LeftParen => {
-                let left = self.advance_required(
-                    CompilerErrorCode::NoLeftBracketOnExpression,
-                    "expected (",
-                )?;
+                let left = self
+                    .advance_required(CompilerErrorCode::NoLeftBracketOnExpression, "expected (")?;
                 let expr = self.parse_expression()?;
                 let right = self.consume_kind(
                     TokenKind::RightParen,
@@ -1210,10 +1209,8 @@ impl<'a> Parser<'a> {
                 })
             }
             TokenKind::Identifier => {
-                let identifier = self.advance_required(
-                    CompilerErrorCode::BadVariableName,
-                    "expected identifier",
-                )?;
+                let identifier = self
+                    .advance_required(CompilerErrorCode::BadVariableName, "expected identifier")?;
                 let mut expr = Expr {
                     span: identifier.span,
                     kind: ExprKind::Identifier(identifier.text),
@@ -1246,20 +1243,16 @@ impl<'a> Parser<'a> {
         )?;
         let mut arguments = Vec::new();
         if self.matches_kind(&TokenKind::RightParen) {
-            let right = self.advance_required(
-                CompilerErrorCode::MalformedParameterList,
-                "expected )",
-            )?;
+            let right =
+                self.advance_required(CompilerErrorCode::MalformedParameterList, "expected )")?;
             return Ok((arguments, join_spans(left_paren.span, right.span)));
         }
 
         loop {
             arguments.push(self.parse_expression()?);
             if self.matches_kind(&TokenKind::RightParen) {
-                let right = self.advance_required(
-                    CompilerErrorCode::MalformedParameterList,
-                    "expected )",
-                )?;
+                let right =
+                    self.advance_required(CompilerErrorCode::MalformedParameterList, "expected )")?;
                 return Ok((arguments, join_spans(left_paren.span, right.span)));
             }
             self.consume_kind(
@@ -1400,10 +1393,8 @@ impl<'a> Parser<'a> {
         let mut count = 0;
 
         if self.matches_kind(&TokenKind::RightSquareBracket) {
-            let right = self.advance_required(
-                CompilerErrorCode::ParsingConstantVector,
-                "expected ]",
-            )?;
+            let right =
+                self.advance_required(CompilerErrorCode::ParsingConstantVector, "expected ]")?;
             return Ok((join_spans(left.span, right.span), Literal::Vector(values)));
         }
 
@@ -1437,10 +1428,8 @@ impl<'a> Parser<'a> {
             *slot = value;
             count += 1;
             if self.matches_kind(&TokenKind::RightSquareBracket) {
-                let right = self.advance_required(
-                    CompilerErrorCode::ParsingConstantVector,
-                    "expected ]",
-                )?;
+                let right =
+                    self.advance_required(CompilerErrorCode::ParsingConstantVector, "expected ]")?;
                 return Ok((join_spans(left.span, right.span), Literal::Vector(values)));
             }
             self.consume_kind(
@@ -1688,19 +1677,21 @@ fn parse_prefixed_integer(token: &Token, radix: u32) -> Result<i32, ParserError>
 
 #[cfg(test)]
 mod tests {
-    use super::{ExprKind, Literal, ParseError, Stmt, TopLevelItem, parse_resolved_script, parse_text};
+    use super::{
+        ExprKind, Literal, ParseError, Stmt, TopLevelItem, parse_resolved_script, parse_text,
+    };
     use crate::{InMemoryScriptResolver, LangSpec, SourceId, SourceLoadOptions, TypeKind};
 
     fn test_langspec() -> LangSpec {
         LangSpec {
             engine_num_structures: 3,
-            engine_structures: vec![
+            engine_structures:     vec![
                 "effect".to_string(),
                 "location".to_string(),
                 "json".to_string(),
             ],
-            constants: Vec::new(),
-            functions: Vec::new(),
+            constants:             Vec::new(),
+            functions:             Vec::new(),
         }
     }
 
@@ -1713,18 +1704,34 @@ mod tests {
         )?;
 
         assert_eq!(script.items.len(), 4);
-        assert!(matches!(script.items.first(), Some(TopLevelItem::Include(_))));
+        assert!(matches!(
+            script.items.first(),
+            Some(TopLevelItem::Include(_))
+        ));
         assert!(matches!(script.items.get(1), Some(TopLevelItem::Global(_))));
-        assert!(matches!(script.items.get(2), Some(TopLevelItem::Function(_))));
+        assert!(matches!(
+            script.items.get(2),
+            Some(TopLevelItem::Function(_))
+        ));
         match script.items.get(3) {
             Some(TopLevelItem::Global(decl)) => {
                 assert_eq!(
                     decl.ty.kind,
                     TypeKind::EngineStructure("effect".to_string())
                 );
-                assert_eq!(decl.declarators.first().map(|declarator| declarator.name.as_str()), Some("fx"));
+                assert_eq!(
+                    decl.declarators
+                        .first()
+                        .map(|declarator| declarator.name.as_str()),
+                    Some("fx")
+                );
             }
-            other => return Err(std::io::Error::other(format!("expected global declaration, got {other:?}")).into()),
+            other => {
+                return Err(std::io::Error::other(format!(
+                    "expected global declaration, got {other:?}"
+                ))
+                .into())
+            }
         }
         Ok(())
     }
@@ -1739,19 +1746,30 @@ mod tests {
 
         match script.items.first() {
             Some(TopLevelItem::Global(decl)) => {
-                return Err(std::io::Error::other(format!("expected struct declaration, got global {decl:?}")).into())
+                return Err(std::io::Error::other(format!(
+                    "expected struct declaration, got global {decl:?}"
+                ))
+                .into())
             }
             Some(TopLevelItem::Struct(def)) => {
                 assert_eq!(def.name, "Foo");
                 assert_eq!(def.fields.len(), 3);
                 assert_eq!(def.fields.first().map(|field| field.names.len()), Some(2));
-                assert_eq!(def.fields.get(1).map(|field| field.ty.kind.clone()), Some(TypeKind::Vector));
+                assert_eq!(
+                    def.fields.get(1).map(|field| field.ty.kind.clone()),
+                    Some(TypeKind::Vector)
+                );
                 assert_eq!(
                     def.fields.get(2).map(|field| field.ty.kind.clone()),
                     Some(TypeKind::Struct("Bar".to_string()))
                 );
             }
-            other => return Err(std::io::Error::other(format!("expected struct declaration, got {other:?}")).into()),
+            other => {
+                return Err(std::io::Error::other(format!(
+                    "expected struct declaration, got {other:?}"
+                ))
+                .into())
+            }
         }
         Ok(())
     }
@@ -1766,7 +1784,11 @@ mod tests {
 
         let function = match script.items.first() {
             Some(TopLevelItem::Function(function)) => function,
-            other => return Err(std::io::Error::other(format!("expected function, got {other:?}")).into()),
+            other => {
+                return Err(
+                    std::io::Error::other(format!("expected function, got {other:?}")).into(),
+                )
+            }
         };
         let body = function
             .body
@@ -1774,13 +1796,23 @@ mod tests {
             .ok_or_else(|| std::io::Error::other("function body must exist"))?;
         let stmt = match body.statements.first() {
             Some(Stmt::Expression(stmt)) => stmt,
-            other => return Err(std::io::Error::other(format!("expected expression statement, got {other:?}")).into()),
+            other => {
+                return Err(std::io::Error::other(format!(
+                    "expected expression statement, got {other:?}"
+                ))
+                .into())
+            }
         };
 
         match &stmt.expr.kind {
-            ExprKind::Assignment { .. } => {}
+            ExprKind::Assignment {
+                ..
+            } => {}
             other => {
-                return Err(std::io::Error::other(format!("expected assignment expression, got {other:?}")).into())
+                return Err(std::io::Error::other(format!(
+                    "expected assignment expression, got {other:?}"
+                ))
+                .into())
             }
         }
         Ok(())
@@ -1790,13 +1822,19 @@ mod tests {
     fn parses_control_flow_statements() -> Result<(), Box<dyn std::error::Error>> {
         let script = parse_text(
             SourceId::new(4),
-            "void main() { if (a) { return; } else { while (b) { continue; } } for (i = 0; i < 3; i += 1) { break; } switch (n) { case 1: break; default: return; } do { n -= 1; } while (n); }",
+            "void main() { if (a) { return; } else { while (b) { continue; } } for (i = 0; i < 3; \
+             i += 1) { break; } switch (n) { case 1: break; default: return; } do { n -= 1; } \
+             while (n); }",
             Some(&test_langspec()),
         )?;
 
         let function = match script.items.first() {
             Some(TopLevelItem::Function(function)) => function,
-            other => return Err(std::io::Error::other(format!("expected function, got {other:?}")).into()),
+            other => {
+                return Err(
+                    std::io::Error::other(format!("expected function, got {other:?}")).into(),
+                )
+            }
         };
         let body = function
             .body
@@ -1819,18 +1857,30 @@ mod tests {
 
         let function = match script.items.first() {
             Some(TopLevelItem::Function(function)) => function,
-            other => return Err(std::io::Error::other(format!("expected function, got {other:?}")).into()),
+            other => {
+                return Err(
+                    std::io::Error::other(format!("expected function, got {other:?}")).into(),
+                )
+            }
         };
         let body = function
             .body
             .as_ref()
             .ok_or_else(|| std::io::Error::other("function body must exist"))?;
         match body.statements.first() {
-            Some(Stmt::Declaration(decl)) => match decl.declarators.first().and_then(|declarator| declarator.initializer.as_ref()) {
+            Some(Stmt::Declaration(decl)) => match decl
+                .declarators
+                .first()
+                .and_then(|declarator| declarator.initializer.as_ref())
+            {
                 Some(expr) => assert!(matches!(expr.kind, ExprKind::Literal(Literal::Magic(_)))),
                 None => return Err(std::io::Error::other("expected initializer").into()),
             },
-            other => return Err(std::io::Error::other(format!("expected declaration, got {other:?}")).into()),
+            other => {
+                return Err(
+                    std::io::Error::other(format!("expected declaration, got {other:?}")).into(),
+                )
+            }
         }
         Ok(())
     }
@@ -1852,15 +1902,17 @@ mod tests {
                 );
             }
             other => {
-                return Err(std::io::Error::other(format!("expected parse error, got {other:?}")).into())
+                return Err(
+                    std::io::Error::other(format!("expected parse error, got {other:?}")).into(),
+                )
             }
         }
         Ok(())
     }
 
     #[test]
-    fn parses_resolved_script_through_includes_and_object_like_defines() -> Result<(), Box<dyn std::error::Error>>
-    {
+    fn parses_resolved_script_through_includes_and_object_like_defines()
+    -> Result<(), Box<dyn std::error::Error>> {
         let mut resolver = InMemoryScriptResolver::new();
         resolver.insert_source(
             "root",
@@ -1884,14 +1936,17 @@ int helper = UTIL_PLUS;
         )?;
 
         assert_eq!(script.items.len(), 2);
-        assert!(matches!(script.items.first(), Some(TopLevelItem::Global(_))));
+        assert!(matches!(
+            script.items.first(),
+            Some(TopLevelItem::Global(_))
+        ));
         assert!(matches!(script.items.get(1), Some(TopLevelItem::Global(_))));
         Ok(())
     }
 
     #[test]
-    fn parses_full_constant_expressions_in_parameter_defaults(
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    fn parses_full_constant_expressions_in_parameter_defaults()
+    -> Result<(), Box<dyn std::error::Error>> {
         let script = parse_text(
             SourceId::new(7),
             "const int BASE = 1; void main(int nValue = BASE + 2 * 3) { return; }",
@@ -1900,7 +1955,11 @@ int helper = UTIL_PLUS;
 
         let function = match script.items.get(1) {
             Some(TopLevelItem::Function(function)) => function,
-            other => return Err(std::io::Error::other(format!("expected function, got {other:?}")).into()),
+            other => {
+                return Err(
+                    std::io::Error::other(format!("expected function, got {other:?}")).into(),
+                )
+            }
         };
         let default = function
             .parameters

@@ -6,16 +6,11 @@ use nwnrs_nwscript::prelude::*;
 
 mod support;
 
-use support::{
-    assets_root, load_nss_bytes, skip_if_remote_assets_unavailable, test_error,
-};
+use support::{assets_root, load_nss_bytes, skip_if_remote_assets_unavailable, test_error};
 
 type TestResult = Result<(), Box<dyn Error>>;
 
-fn find_function<'a>(
-    spec: &'a LangSpec,
-    name: &str,
-) -> Result<&'a BuiltinFunction, io::Error> {
+fn find_function<'a>(spec: &'a LangSpec, name: &str) -> Result<&'a BuiltinFunction, io::Error> {
     spec.functions
         .iter()
         .find(|function| function.name == name)
@@ -125,8 +120,7 @@ fn langspec_regression_cases_continue_to_parse() -> TestResult {
         int OBJECT_TYPE_INVALID = 32767;
         void SpeakOneLinerConversation(int nLine, object oSpeaker = OBJECT_TYPE_INVALID);
     "#;
-    let object_id_spec =
-        parse_langspec_bytes("langspec_object_id_default.nss", object_id_default)?;
+    let object_id_spec = parse_langspec_bytes("langspec_object_id_default.nss", object_id_default)?;
     let function = find_function(&object_id_spec, "SpeakOneLinerConversation")?;
     assert_eq!(
         function

@@ -14,9 +14,9 @@ pub struct SsfEntry {
     /// The raw 16-byte resref slot as stored on disk.
     pub raw_resref: [u8; 16],
     /// The sound resource reference stored for the slot.
-    pub resref: String,
+    pub resref:     String,
     /// The localized string reference associated with the slot.
-    pub strref: StrRef,
+    pub strref:     StrRef,
 }
 
 impl SsfEntry {

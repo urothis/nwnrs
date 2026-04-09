@@ -118,8 +118,10 @@ async fn load_resource(resource: &str) -> Result<Vec<u8>, Box<dyn Error>> {
 
 fn generated_gff_bytes(file_type: &str) -> Result<Vec<u8>, Box<dyn Error>> {
     let mut root = new_gff_root(file_type);
-    root.root
-        .put_value("Comment".to_string(), GffValue::CExoString("fixture".to_string()))?;
+    root.root.put_value(
+        "Comment".to_string(),
+        GffValue::CExoString("fixture".to_string()),
+    )?;
     let mut writer = Cursor::new(Vec::new());
     write_gff_root(&mut writer, &root)?;
     Ok(writer.into_inner())
@@ -181,7 +183,10 @@ fn generated_resource(filename: &str) -> Result<Vec<u8>, Box<dyn Error>> {
         "2da" => generated_twoda_bytes(),
         "tlk" => generated_tlk_bytes(),
         "ssf" => generated_ssf_bytes(),
-        _ => Err(io::Error::other(format!("unsupported generated fixture extension: {filename}")).into()),
+        _ => Err(io::Error::other(format!(
+            "unsupported generated fixture extension: {filename}"
+        ))
+        .into()),
     }
 }
 
@@ -220,32 +225,22 @@ async fn erf_roundtrip() -> Result<(), Box<dyn Error>> {
 
 #[tokio::test]
 async fn gff_roundtrip() -> Result<(), Box<dyn Error>> {
-    test_resource("generated:voiceset.gff")
-        .await
+    test_resource("generated:voiceset.gff").await
 }
 
 #[tokio::test]
 async fn bic_roundtrip() -> Result<(), Box<dyn Error>> {
-    test_resource(
-        "generated:aluviandarkstar.bic",
-    )
-    .await
+    test_resource("generated:aluviandarkstar.bic").await
 }
 
 #[tokio::test]
 async fn dlg_roundtrip() -> Result<(), Box<dyn Error>> {
-    test_resource(
-        "generated:m2q6a02aarin.dlg",
-    )
-    .await
+    test_resource("generated:m2q6a02aarin.dlg").await
 }
 
 #[tokio::test]
 async fn itp_roundtrip() -> Result<(), Box<dyn Error>> {
-    test_resource(
-        "generated:creaturepal.itp",
-    )
-    .await
+    test_resource("generated:creaturepal.itp").await
 }
 
 #[tokio::test]
@@ -260,84 +255,60 @@ async fn hak_roundtrip() -> Result<(), Box<dyn Error>> {
 
 #[tokio::test]
 async fn tlk_roundtrip() -> Result<(), Box<dyn Error>> {
-    test_resource("generated:dialog.tlk")
-        .await
+    test_resource("generated:dialog.tlk").await
 }
 
 #[tokio::test]
 async fn twoda_roundtrip() -> Result<(), Box<dyn Error>> {
-    test_resource("generated:appearance.2da")
-        .await
+    test_resource("generated:appearance.2da").await
 }
 
 #[tokio::test]
 async fn ssf_roundtrip() -> Result<(), Box<dyn Error>> {
-    test_resource("generated:c_aasimar.ssf")
-        .await
+    test_resource("generated:c_aasimar.ssf").await
 }
 
 #[tokio::test]
 async fn utc_roundtrip() -> Result<(), Box<dyn Error>> {
-    test_resource("generated:c_kocrachn.utc")
-        .await
+    test_resource("generated:c_kocrachn.utc").await
 }
 
 #[tokio::test]
 async fn utd_roundtrip() -> Result<(), Box<dyn Error>> {
-    test_resource(
-        "generated:nw_door_evlstone.utd",
-    )
-    .await
+    test_resource("generated:nw_door_evlstone.utd").await
 }
 
 #[tokio::test]
 async fn ute_roundtrip() -> Result<(), Box<dyn Error>> {
-    test_resource(
-        "generated:nw_aberration.ute",
-    )
-    .await
+    test_resource("generated:nw_aberration.ute").await
 }
 
 #[tokio::test]
 async fn uti_roundtrip() -> Result<(), Box<dyn Error>> {
-    test_resource(
-        "generated:am_it_kocra_hide.uti",
-    )
-    .await
+    test_resource("generated:am_it_kocra_hide.uti").await
 }
 
 #[tokio::test]
 async fn utm_roundtrip() -> Result<(), Box<dyn Error>> {
-    test_resource(
-        "generated:nw_lostitems.utm",
-    )
-    .await
+    test_resource("generated:nw_lostitems.utm").await
 }
 
 #[tokio::test]
 async fn utp_roundtrip() -> Result<(), Box<dyn Error>> {
-    test_resource(
-        "generated:dd_pl_dagflag1.utp",
-    )
-    .await
+    test_resource("generated:dd_pl_dagflag1.utp").await
 }
 
 #[tokio::test]
 async fn uts_roundtrip() -> Result<(), Box<dyn Error>> {
-    test_resource("generated:ailingmen.uts")
-        .await
+    test_resource("generated:ailingmen.uts").await
 }
 
 #[tokio::test]
 async fn utt_roundtrip() -> Result<(), Box<dyn Error>> {
-    test_resource("generated:newgeneric.utt")
-        .await
+    test_resource("generated:newgeneric.utt").await
 }
 
 #[tokio::test]
 async fn utw_roundtrip() -> Result<(), Box<dyn Error>> {
-    test_resource(
-        "generated:nw_mapnote001.utw",
-    )
-    .await
+    test_resource("generated:nw_mapnote001.utw").await
 }

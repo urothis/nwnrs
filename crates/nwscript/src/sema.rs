@@ -16,19 +16,20 @@ use crate::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 pub struct SemanticOptions {
     /// Require a valid `main()` or `StartingConditional()` entry point.
-    pub require_entrypoint: bool,
+    pub require_entrypoint:       bool,
     /// Permit `StartingConditional()` as the required entry point when `main()`
     /// is not present.
     pub allow_conditional_script: bool,
 }
 
-/// One semantic-analysis error aligned to the upstream compiler's diagnostic space.
+/// One semantic-analysis error aligned to the upstream compiler's diagnostic
+/// space.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SemanticError {
     /// Stable upstream-aligned compiler error code.
-    pub code: CompilerErrorCode,
+    pub code:    CompilerErrorCode,
     /// Source span where semantic analysis failed.
-    pub span: crate::Span,
+    pub span:    crate::Span,
     /// Human-readable error message.
     pub message: String,
 }
@@ -78,37 +79,37 @@ pub enum SemanticType {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SemanticParameter {
     /// Parameter name.
-    pub name: String,
+    pub name:        String,
     /// Resolved parameter type.
-    pub ty: SemanticType,
+    pub ty:          SemanticType,
     /// Whether the parameter has a default value.
     pub is_optional: bool,
     /// Folded default value for omitted trailing arguments.
-    pub default: Option<Literal>,
+    pub default:     Option<Literal>,
 }
 
 /// One resolved function signature.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SemanticFunction {
     /// Function name.
-    pub name: String,
+    pub name:        String,
     /// Resolved return type.
     pub return_type: SemanticType,
     /// Parameters in declaration order.
-    pub parameters: Vec<SemanticParameter>,
+    pub parameters:  Vec<SemanticParameter>,
     /// Whether this function has a body in the current script.
-    pub has_body: bool,
+    pub has_body:    bool,
     /// Whether this function came from `nwscript.nss`.
-    pub is_builtin: bool,
+    pub is_builtin:  bool,
 }
 
 /// One resolved global variable.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SemanticGlobal {
     /// Variable name.
-    pub name: String,
+    pub name:     String,
     /// Resolved type.
-    pub ty: SemanticType,
+    pub ty:       SemanticType,
     /// Whether the declaration used `const`.
     pub is_const: bool,
 }
@@ -119,14 +120,14 @@ pub struct SemanticField {
     /// Field name.
     pub name: String,
     /// Resolved field type.
-    pub ty: SemanticType,
+    pub ty:   SemanticType,
 }
 
 /// One resolved user-defined structure.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SemanticStruct {
     /// Structure name.
-    pub name: String,
+    pub name:   String,
     /// Fields in declaration order.
     pub fields: Vec<SemanticField>,
 }
@@ -135,9 +136,9 @@ pub struct SemanticStruct {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SemanticModel {
     /// Resolved structures indexed by name.
-    pub structs: BTreeMap<String, SemanticStruct>,
+    pub structs:   BTreeMap<String, SemanticStruct>,
     /// Resolved global variables indexed by name.
-    pub globals: BTreeMap<String, SemanticGlobal>,
+    pub globals:   BTreeMap<String, SemanticGlobal>,
     /// Resolved functions indexed by name.
     pub functions: BTreeMap<String, SemanticFunction>,
 }
@@ -188,21 +189,28 @@ impl ConstantValue {
 
 #[derive(Debug, Clone, PartialEq)]
 enum ValueBinding {
-    Variable { ty: SemanticType, is_const: bool },
+    Variable {
+        ty:       SemanticType,
+        is_const: bool,
+    },
     Constant(ConstantValue),
 }
 
 impl ValueBinding {
     fn ty(&self) -> SemanticType {
         match self {
-            Self::Variable { ty, .. } => ty.clone(),
+            Self::Variable {
+                ty, ..
+            } => ty.clone(),
             Self::Constant(value) => value.ty(),
         }
     }
 
     fn is_const(&self) -> bool {
         match self {
-            Self::Variable { is_const, .. } => *is_const,
+            Self::Variable {
+                is_const, ..
+            } => *is_const,
             Self::Constant(_) => true,
         }
     }
@@ -210,13 +218,13 @@ impl ValueBinding {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ScopeBinding {
-    ty: SemanticType,
+    ty:       SemanticType,
     is_const: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 struct FunctionInfo {
-    signature: SemanticFunction,
+    signature:        SemanticFunction,
     declaration_span: crate::Span,
 }
 
@@ -227,8 +235,8 @@ struct AnalysisContext {
 
 #[derive(Debug, Default)]
 struct SwitchContext {
-    case_values: BTreeSet<i32>,
-    has_default: bool,
+    case_values:       BTreeSet<i32>,
+    has_default:       bool,
     scope_decl_counts: Vec<usize>,
 }
 
@@ -268,13 +276,13 @@ impl SwitchContext {
 }
 
 struct Analyzer<'a> {
-    script: &'a Script,
-    options: SemanticOptions,
+    script:            &'a Script,
+    options:           SemanticOptions,
     builtin_constants: BTreeMap<String, ConstantValue>,
-    global_constants: BTreeMap<String, ConstantValue>,
-    functions: BTreeMap<String, FunctionInfo>,
-    structs: BTreeMap<String, SemanticStruct>,
-    globals: BTreeMap<String, SemanticGlobal>,
+    global_constants:  BTreeMap<String, ConstantValue>,
+    functions:         BTreeMap<String, FunctionInfo>,
+    structs:           BTreeMap<String, SemanticStruct>,
+    globals:           BTreeMap<String, SemanticGlobal>,
 }
 
 impl<'a> Analyzer<'a> {
@@ -294,17 +302,20 @@ impl<'a> Analyzer<'a> {
                     .parameters
                     .iter()
                     .map(|parameter| SemanticParameter {
-                        name: parameter.name.clone(),
-                        ty: semantic_type_from_builtin_type(&parameter.ty),
+                        name:        parameter.name.clone(),
+                        ty:          semantic_type_from_builtin_type(&parameter.ty),
                         is_optional: parameter.default.is_some(),
-                        default: parameter.default.as_ref().and_then(literal_from_builtin_value),
+                        default:     parameter
+                            .default
+                            .as_ref()
+                            .and_then(literal_from_builtin_value),
                     })
                     .collect::<Vec<_>>();
 
                 functions.insert(
                     function.name.clone(),
                     FunctionInfo {
-                        signature: SemanticFunction {
+                        signature:        SemanticFunction {
                             name: function.name.clone(),
                             return_type: semantic_type_from_builtin_type(&function.return_type),
                             parameters,
@@ -337,8 +348,8 @@ impl<'a> Analyzer<'a> {
         self.validate_entrypoint()?;
 
         Ok(SemanticModel {
-            structs: self.structs,
-            globals: self.globals,
+            structs:   self.structs,
+            globals:   self.globals,
             functions: self
                 .functions
                 .into_iter()
@@ -375,7 +386,8 @@ impl<'a> Analyzer<'a> {
                             CompilerErrorCode::InvalidValueAssignedToConstant,
                             declarator.span,
                             format!(
-                                "constant {:?} type {:?} does not support default constant initialization",
+                                "constant {:?} type {:?} does not support default constant \
+                                 initialization",
                                 declarator.name, ty
                             ),
                         )
@@ -395,8 +407,7 @@ impl<'a> Analyzer<'a> {
                     ));
                 }
 
-                self.global_constants
-                    .insert(declarator.name.clone(), value);
+                self.global_constants.insert(declarator.name.clone(), value);
             }
         }
 
@@ -435,7 +446,7 @@ impl<'a> Analyzer<'a> {
                     seen_names.insert(field.name.clone(), field.span);
                     fields.push(SemanticField {
                         name: field.name.clone(),
-                        ty: field_type.clone(),
+                        ty:   field_type.clone(),
                     });
                 }
             }
@@ -558,7 +569,8 @@ impl<'a> Analyzer<'a> {
                                 CompilerErrorCode::InvalidValueAssignedToConstant,
                                 declarator.span,
                                 format!(
-                                    "constant {:?} type {:?} does not support default constant initialization",
+                                    "constant {:?} type {:?} does not support default constant \
+                                     initialization",
                                     declarator.name, ty
                                 ),
                             )
@@ -599,8 +611,8 @@ impl<'a> Analyzer<'a> {
                 self.globals.insert(
                     declarator.name.clone(),
                     SemanticGlobal {
-                        name: declarator.name.clone(),
-                        ty: ty.clone(),
+                        name:     declarator.name.clone(),
+                        ty:       ty.clone(),
                         is_const: declaration.ty.is_const,
                     },
                 );
@@ -746,7 +758,7 @@ impl<'a> Analyzer<'a> {
                     scope.insert(
                         declarator.name.clone(),
                         ScopeBinding {
-                            ty: ty.clone(),
+                            ty:       ty.clone(),
                             is_const: false,
                         },
                     );
@@ -783,8 +795,8 @@ impl<'a> Analyzer<'a> {
                     ));
                 }
                 context.switch_stack.push(SwitchContext {
-                    case_values: BTreeSet::new(),
-                    has_default: false,
+                    case_values:       BTreeSet::new(),
+                    has_default:       false,
                     scope_decl_counts: vec![0],
                 });
                 let result = self.analyze_stmt(&statement.body, scopes, return_type, context);
@@ -932,9 +944,9 @@ impl<'a> Analyzer<'a> {
     ) -> Result<ResolvedExpr, SemanticError> {
         match &expr.kind {
             ExprKind::Literal(literal) => Ok(ResolvedExpr {
-                ty: semantic_type_from_literal(literal),
+                ty:        semantic_type_from_literal(literal),
                 is_lvalue: false,
-                is_const: !matches!(literal, Literal::Magic(_)),
+                is_const:  !matches!(literal, Literal::Magic(_)),
             }),
             ExprKind::Identifier(name) => {
                 let binding = self.lookup_value(name, scopes).ok_or_else(|| {
@@ -945,12 +957,15 @@ impl<'a> Analyzer<'a> {
                     )
                 })?;
                 Ok(ResolvedExpr {
-                    ty: binding.ty(),
+                    ty:        binding.ty(),
                     is_lvalue: matches!(binding, ValueBinding::Variable { .. }),
-                    is_const: binding.is_const(),
+                    is_const:  binding.is_const(),
                 })
             }
-            ExprKind::Call { callee, arguments } => {
+            ExprKind::Call {
+                callee,
+                arguments,
+            } => {
                 let ExprKind::Identifier(name) = &callee.kind else {
                     return Err(SemanticError::new(
                         CompilerErrorCode::UndefinedIdentifier,
@@ -1006,8 +1021,8 @@ impl<'a> Analyzer<'a> {
                         (
                             SemanticType::Action,
                             ExprKind::Call {
-                                callee: _,
-                                arguments: _
+                                callee:    _,
+                                arguments: _,
                             }
                         )
                     ) && resolved.ty == SemanticType::Void;
@@ -1024,12 +1039,15 @@ impl<'a> Analyzer<'a> {
                 }
 
                 Ok(ResolvedExpr {
-                    ty: function.signature.return_type.clone(),
+                    ty:        function.signature.return_type.clone(),
                     is_lvalue: false,
-                    is_const: false,
+                    is_const:  false,
                 })
             }
-            ExprKind::FieldAccess { base, field } => {
+            ExprKind::FieldAccess {
+                base,
+                field,
+            } => {
                 let resolved_base = self.analyze_expr(base, scopes)?;
                 let field_type = match &resolved_base.ty {
                     SemanticType::Vector => match field.as_str() {
@@ -1065,19 +1083,22 @@ impl<'a> Analyzer<'a> {
                 }?;
 
                 Ok(ResolvedExpr {
-                    ty: field_type,
+                    ty:        field_type,
                     is_lvalue: resolved_base.is_lvalue,
-                    is_const: resolved_base.is_const,
+                    is_const:  resolved_base.is_const,
                 })
             }
-            ExprKind::Unary { op, expr: inner } => {
+            ExprKind::Unary {
+                op,
+                expr: inner,
+            } => {
                 let resolved = self.analyze_expr(inner, scopes)?;
                 match op {
                     UnaryOp::Negate => match resolved.ty {
                         SemanticType::Int | SemanticType::Float => Ok(ResolvedExpr {
-                            ty: resolved.ty,
+                            ty:        resolved.ty,
                             is_lvalue: false,
-                            is_const: resolved.is_const,
+                            is_const:  resolved.is_const,
                         }),
                         _ => Err(SemanticError::new(
                             CompilerErrorCode::ArithmeticOperationHasInvalidOperands,
@@ -1094,9 +1115,9 @@ impl<'a> Analyzer<'a> {
                             ));
                         }
                         Ok(ResolvedExpr {
-                            ty: SemanticType::Int,
+                            ty:        SemanticType::Int,
                             is_lvalue: false,
-                            is_const: resolved.is_const,
+                            is_const:  resolved.is_const,
                         })
                     }
                     UnaryOp::BooleanNot => {
@@ -1108,9 +1129,9 @@ impl<'a> Analyzer<'a> {
                             ));
                         }
                         Ok(ResolvedExpr {
-                            ty: SemanticType::Int,
+                            ty:        SemanticType::Int,
                             is_lvalue: false,
-                            is_const: resolved.is_const,
+                            is_const:  resolved.is_const,
                         })
                     }
                     UnaryOp::PreIncrement
@@ -1125,14 +1146,18 @@ impl<'a> Analyzer<'a> {
                             ));
                         }
                         Ok(ResolvedExpr {
-                            ty: SemanticType::Int,
+                            ty:        SemanticType::Int,
                             is_lvalue: false,
-                            is_const: false,
+                            is_const:  false,
                         })
                     }
                 }
             }
-            ExprKind::Binary { op, left, right } => {
+            ExprKind::Binary {
+                op,
+                left,
+                right,
+            } => {
                 let left = self.analyze_expr(left, scopes)?;
                 let right = self.analyze_expr(right, scopes)?;
                 let ty = self.binary_result_type(*op, &left.ty, &right.ty, expr.span)?;
@@ -1160,12 +1185,16 @@ impl<'a> Analyzer<'a> {
                     ));
                 }
                 Ok(ResolvedExpr {
-                    ty: when_true.ty,
+                    ty:        when_true.ty,
                     is_lvalue: false,
-                    is_const: when_true.is_const && when_false.is_const,
+                    is_const:  when_true.is_const && when_false.is_const,
                 })
             }
-            ExprKind::Assignment { op, left, right } => {
+            ExprKind::Assignment {
+                op,
+                left,
+                right,
+            } => {
                 let left_resolved = self.analyze_expr(left, scopes)?;
                 if !left_resolved.is_lvalue {
                     return Err(SemanticError::new(
@@ -1257,9 +1286,9 @@ impl<'a> Analyzer<'a> {
                 }
 
                 Ok(ResolvedExpr {
-                    ty: left_resolved.ty,
+                    ty:        left_resolved.ty,
                     is_lvalue: false,
-                    is_const: false,
+                    is_const:  false,
                 })
             }
         }
@@ -1456,10 +1485,10 @@ impl<'a> Analyzer<'a> {
             };
 
             parameters.push(SemanticParameter {
-                name: parameter.name.clone(),
-                ty: parameter_type,
+                name:        parameter.name.clone(),
+                ty:          parameter_type,
                 is_optional: default.is_some(),
-                default: default.as_ref().and_then(literal_from_constant_value),
+                default:     default.as_ref().and_then(literal_from_constant_value),
             });
         }
 
@@ -1535,7 +1564,11 @@ impl<'a> Analyzer<'a> {
                     | UnaryOp::PostDecrement,
                 ..
             } => None,
-            ExprKind::Binary { op, left, right } => self.evaluate_constant_binary(*op, left, right),
+            ExprKind::Binary {
+                op,
+                left,
+                right,
+            } => self.evaluate_constant_binary(*op, left, right),
             ExprKind::Conditional {
                 condition,
                 when_true,
@@ -1617,7 +1650,7 @@ impl<'a> Analyzer<'a> {
         for scope in scopes.iter().rev() {
             if let Some(binding) = scope.get(name) {
                 return Some(ValueBinding::Variable {
-                    ty: binding.ty.clone(),
+                    ty:       binding.ty.clone(),
                     is_const: binding.is_const,
                 });
             }
@@ -1631,7 +1664,7 @@ impl<'a> Analyzer<'a> {
             }
 
             return Some(ValueBinding::Variable {
-                ty: global.ty.clone(),
+                ty:       global.ty.clone(),
                 is_const: global.is_const,
             });
         }
@@ -1697,9 +1730,9 @@ impl<'a> Analyzer<'a> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ResolvedExpr {
-    ty: SemanticType,
+    ty:        SemanticType,
     is_lvalue: bool,
-    is_const: bool,
+    is_const:  bool,
 }
 
 fn semantic_type_from_builtin_type(ty: &BuiltinType) -> SemanticType {
@@ -1892,7 +1925,13 @@ fn insert_scope_binding(
             "scope stack must be non-empty",
         ));
     };
-    scope.insert(name.to_string(), ScopeBinding { ty, is_const });
+    scope.insert(
+        name.to_string(),
+        ScopeBinding {
+            ty,
+            is_const,
+        },
+    );
     Ok(())
 }
 
@@ -1924,58 +1963,57 @@ fn statement_guarantees_return(statement: &Stmt) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use crate::{LangSpec, Literal, SemanticOptions, SourceId, parse_text};
-
     use super::{SemanticType, analyze_script, analyze_script_with_options};
+    use crate::{LangSpec, Literal, SemanticOptions, SourceId, parse_text};
 
     fn test_langspec() -> LangSpec {
         LangSpec {
             engine_num_structures: 3,
-            engine_structures: vec![
+            engine_structures:     vec![
                 "effect".to_string(),
                 "location".to_string(),
                 "json".to_string(),
             ],
-            constants: vec![
+            constants:             vec![
                 crate::BuiltinConstant {
-                    name: "TRUE".to_string(),
-                    ty: crate::BuiltinType::Int,
+                    name:  "TRUE".to_string(),
+                    ty:    crate::BuiltinType::Int,
                     value: crate::BuiltinValue::Int(1),
                 },
                 crate::BuiltinConstant {
-                    name: "FALSE".to_string(),
-                    ty: crate::BuiltinType::Int,
+                    name:  "FALSE".to_string(),
+                    ty:    crate::BuiltinType::Int,
                     value: crate::BuiltinValue::Int(0),
                 },
                 crate::BuiltinConstant {
-                    name: "OBJECT_INVALID".to_string(),
-                    ty: crate::BuiltinType::Object,
+                    name:  "OBJECT_INVALID".to_string(),
+                    ty:    crate::BuiltinType::Object,
                     value: crate::BuiltinValue::ObjectInvalid,
                 },
             ],
-            functions: vec![
+            functions:             vec![
                 crate::BuiltinFunction {
-                    name: "DelayCommand".to_string(),
+                    name:        "DelayCommand".to_string(),
                     return_type: crate::BuiltinType::Void,
-                    parameters: vec![
+                    parameters:  vec![
                         crate::BuiltinParameter {
-                            name: "fSeconds".to_string(),
-                            ty: crate::BuiltinType::Float,
+                            name:    "fSeconds".to_string(),
+                            ty:      crate::BuiltinType::Float,
                             default: None,
                         },
                         crate::BuiltinParameter {
-                            name: "aAction".to_string(),
-                            ty: crate::BuiltinType::Action,
+                            name:    "aAction".to_string(),
+                            ty:      crate::BuiltinType::Action,
                             default: None,
                         },
                     ],
                 },
                 crate::BuiltinFunction {
-                    name: "EffectDamage".to_string(),
+                    name:        "EffectDamage".to_string(),
                     return_type: crate::BuiltinType::EngineStructure("effect".to_string()),
-                    parameters: vec![crate::BuiltinParameter {
-                        name: "nAmount".to_string(),
-                        ty: crate::BuiltinType::Int,
+                    parameters:  vec![crate::BuiltinParameter {
+                        name:    "nAmount".to_string(),
+                        ty:      crate::BuiltinType::Int,
                         default: None,
                     }],
                 },
@@ -1987,7 +2025,8 @@ mod tests {
     fn resolves_functions_globals_and_structs() -> Result<(), Box<dyn std::error::Error>> {
         let script = parse_text(
             SourceId::new(40),
-            "struct Foo { int value; }; effect gFx; void helper(int n = TRUE); void helper(int n = TRUE) { int x = n; } void main() { struct Foo f; int x = f.value; }",
+            "struct Foo { int value; }; effect gFx; void helper(int n = TRUE); void helper(int n \
+             = TRUE) { int x = n; } void main() { struct Foo f; int x = f.value; }",
             Some(&test_langspec()),
         )?;
 
@@ -2024,8 +2063,8 @@ mod tests {
     }
 
     #[test]
-    fn folds_constant_globals_and_uses_default_constant_values() -> Result<(), Box<dyn std::error::Error>>
-    {
+    fn folds_constant_globals_and_uses_default_constant_values()
+    -> Result<(), Box<dyn std::error::Error>> {
         let script = parse_text(
             SourceId::new(46),
             r#"
@@ -2044,10 +2083,22 @@ mod tests {
         )?;
 
         let model = analyze_script(&script, Some(&test_langspec()))?;
-        assert_eq!(model.globals.get("MASK").map(|global| global.is_const), Some(true));
-        assert_eq!(model.globals.get("ZERO").map(|global| global.is_const), Some(true));
-        assert_eq!(model.globals.get("LABEL").map(|global| global.is_const), Some(true));
-        assert_eq!(model.globals.get("PICK").map(|global| global.is_const), Some(true));
+        assert_eq!(
+            model.globals.get("MASK").map(|global| global.is_const),
+            Some(true)
+        );
+        assert_eq!(
+            model.globals.get("ZERO").map(|global| global.is_const),
+            Some(true)
+        );
+        assert_eq!(
+            model.globals.get("LABEL").map(|global| global.is_const),
+            Some(true)
+        );
+        assert_eq!(
+            model.globals.get("PICK").map(|global| global.is_const),
+            Some(true)
+        );
         Ok(())
     }
 
@@ -2366,7 +2417,8 @@ mod tests {
 
         let renamed_parameter = parse_text(
             SourceId::new(64),
-            "int helper(int nDurationType); int helper(int nDurationCompare) { return nDurationCompare; } void main() {}",
+            "int helper(int nDurationType); int helper(int nDurationCompare) { return \
+             nDurationCompare; } void main() {}",
             Some(&test_langspec()),
         )
         .expect("script should parse");
@@ -2403,7 +2455,8 @@ mod tests {
     fn function_body_scope_may_shadow_parameter_names() {
         let script = parse_text(
             SourceId::new(65),
-            "int helper(object oSpellTarget) { object oSpellTarget = OBJECT_SELF; return TRUE; } void main() {}",
+            "int helper(object oSpellTarget) { object oSpellTarget = OBJECT_SELF; return TRUE; } \
+             void main() {}",
             Some(&test_langspec()),
         )
         .expect("script should parse");
@@ -2458,7 +2511,7 @@ mod tests {
             &script,
             Some(&test_langspec()),
             SemanticOptions {
-                require_entrypoint: true,
+                require_entrypoint:       true,
                 allow_conditional_script: false,
             },
         )

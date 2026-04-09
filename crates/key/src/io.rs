@@ -105,10 +105,7 @@ where
             Some(oid)
         }
     };
-    let normalized_oid = oid
-        .as_deref()
-        .map(normalize_oid)
-        .transpose()?;
+    let normalized_oid = oid.as_deref().map(normalize_oid).transpose()?;
 
     reader.seek(SeekFrom::Start(io_start + offset_to_file_table))?;
     let mut file_table = Vec::with_capacity(bif_count);
@@ -157,7 +154,13 @@ where
         };
 
         let rr = new_res_ref(res_ref_raw, ResType(res_type))?;
-        resref_id_lookup.insert(rr, crate::KeyEntry { res_id, sha1 });
+        resref_id_lookup.insert(
+            rr,
+            crate::KeyEntry {
+                res_id,
+                sha1,
+            },
+        );
     }
 
     Ok(KeyTable {
@@ -491,8 +494,7 @@ where
         + u64::try_from(entries.len().saturating_mul(entry_size))
             .map_err(|_error| KeyError::msg("BIF variable table size exceeds 64-bit range"))?;
     for (idx, resref) in entries.iter().enumerate() {
-        let id = (to_u32_len(bif_idx, "BIF index")? << 20)
-            + to_u32_len(idx, "BIF resource id")?;
+        let id = (to_u32_len(bif_idx, "BIF index")? << 20) + to_u32_len(idx, "BIF resource id")?;
         let (uncompressed_size, compressed_size, _) = entry_meta
             .get(resref)
             .ok_or_else(|| KeyError::msg(format!("missing written entry metadata for {resref}")))?;
@@ -520,7 +522,8 @@ where
     ))
 }
 
-/// Writes a KEY/BIF resource set using provenance preserved on a loaded [`KeyTable`].
+/// Writes a KEY/BIF resource set using provenance preserved on a loaded
+/// [`KeyTable`].
 pub fn write_key_table_archive(
     value: &KeyTable,
     dest_dir: impl AsRef<Path>,
@@ -617,9 +620,11 @@ fn build_bif_filename(bif_prefix: &str, bif: &crate::KeyBifEntry) -> String {
 fn infer_key_exocomp(value: &KeyTable) -> KeyResult<ExoResFileCompressionType> {
     for bif in &value.bifs {
         let loaded = bif.load()?;
-        if loaded.variable_resources.values().any(|resource| {
-            resource.compression_type != ExoResFileCompressionType::None
-        }) {
+        if loaded
+            .variable_resources
+            .values()
+            .any(|resource| resource.compression_type != ExoResFileCompressionType::None)
+        {
             return Ok(ExoResFileCompressionType::CompressedBuf);
         }
     }
@@ -713,14 +718,13 @@ mod tests {
         time::{SystemTime, UNIX_EPOCH},
     };
 
+    use nwnrs_compressedbuf::Algorithm;
+    use nwnrs_exo::ExoResFileCompressionType;
     use nwnrs_resman::ResContainer;
-    use nwnrs_resref::ResRef;
-    use nwnrs_resref::new_resolved_res_ref_from_filename;
+    use nwnrs_resref::{ResRef, new_resolved_res_ref_from_filename};
 
     use super::{read_key_table_from_file, write_key_and_bif, write_key_table_archive};
     use crate::{KeyBifEntry, KeyBifVersion};
-    use nwnrs_compressedbuf::Algorithm;
-    use nwnrs_exo::ExoResFileCompressionType;
 
     fn unique_test_dir(prefix: &str) -> PathBuf {
         let nanos = SystemTime::now()
@@ -758,20 +762,20 @@ mod tests {
             "",
             &[
                 KeyBifEntry {
-                    directory: String::new(),
-                    name: "data_a".to_string(),
+                    directory:         String::new(),
+                    name:              "data_a".to_string(),
                     recorded_filename: Some("Data\\First.BIF".to_string()),
-                    drives: 7,
-                    bif_oid: Some("fedcba987654321001234567".to_string()),
-                    entries: vec![alpha.clone()],
+                    drives:            7,
+                    bif_oid:           Some("fedcba987654321001234567".to_string()),
+                    entries:           vec![alpha.clone()],
                 },
                 KeyBifEntry {
-                    directory: String::new(),
-                    name: "data_b".to_string(),
+                    directory:         String::new(),
+                    name:              "data_b".to_string(),
                     recorded_filename: Some("Data\\Second.BIF".to_string()),
-                    drives: 9,
-                    bif_oid: Some("fedcba987654321001234567".to_string()),
-                    entries: vec![beta.clone()],
+                    drives:            9,
+                    bif_oid:           Some("fedcba987654321001234567".to_string()),
+                    entries:           vec![beta.clone()],
                 },
             ],
             2025,
@@ -789,7 +793,10 @@ mod tests {
         let key = read_key_table_from_file(&key_path).expect("read key");
         assert_eq!(
             key.bifs(),
-            vec!["Data\\First.BIF".to_string(), "Data\\Second.BIF".to_string()]
+            vec![
+                "Data\\First.BIF".to_string(),
+                "Data\\Second.BIF".to_string()
+            ]
         );
         assert_eq!(key.raw_oid(), Some("fedcba987654321001234567"));
         assert_eq!(

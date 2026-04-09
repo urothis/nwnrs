@@ -1,7 +1,4 @@
-use std::{
-    fs,
-    path::Path,
-};
+use std::{fs, path::Path};
 
 use nwnrs::prelude::{resman::ResContainer, *};
 use tracing::{debug, info, instrument, warn};
@@ -9,7 +6,10 @@ use tracing::{debug, info, instrument, warn};
 use crate::{
     args::{KeyUnpackCmd, UnpackCmd},
     metadata::{write_erf_pack_metadata, write_key_pack_metadata, write_resource_pack_metadata},
-    util::{Kind, detect_kind, ensure_output_file_ready, ensure_target_dir_ready, unpacked_raw_target, write_lines},
+    util::{
+        Kind, detect_kind, ensure_output_file_ready, ensure_target_dir_ready, unpacked_raw_target,
+        write_lines,
+    },
 };
 
 #[instrument(
@@ -35,8 +35,8 @@ pub(crate) fn run_unpack(cmd: UnpackCmd) -> Result<(), String> {
     match detect_kind(&cmd.input) {
         Some(Kind::Erf) => unpack_erf_to_dir(&cmd.input, &cmd.directory, cmd.force),
         Some(Kind::Key) => run_key_unpack(KeyUnpackCmd {
-            force: cmd.force,
-            key: cmd.input,
+            force:       cmd.force,
+            key:         cmd.input,
             destination: cmd.directory,
         }),
         Some(Kind::Gff) => unpack_resource_to_dir(&cmd.input, &cmd.directory, "gff", cmd.force),
@@ -231,8 +231,8 @@ mod tests {
 
         run_unpack(UnpackCmd {
             directory: directory.clone(),
-            force: false,
-            input: source.clone(),
+            force:     false,
+            input:     source.clone(),
         })
         .expect("unpack gff resource");
 
@@ -250,12 +250,13 @@ mod tests {
         let source_dir = unique_test_dir("twoda-unpack-source");
         fs::create_dir_all(&source_dir).expect("create source dir");
         let source = source_dir.join("appearance.2da");
-        fs::write(&source, b"2DA V2.0\nDEFAULT: ****\n\nLABEL\n0 value\n").expect("write source fixture");
+        fs::write(&source, b"2DA V2.0\nDEFAULT: ****\n\nLABEL\n0 value\n")
+            .expect("write source fixture");
 
         run_unpack(UnpackCmd {
             directory: directory.clone(),
-            force: false,
-            input: source.clone(),
+            force:     false,
+            input:     source.clone(),
         })
         .expect("unpack twoda resource");
 

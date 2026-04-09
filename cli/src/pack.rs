@@ -19,8 +19,8 @@ use crate::{
     util::{
         Kind, RESOURCE_METADATA_FILENAME, collect_key_bif_entries, current_build_date, detect_kind,
         ensure_output_file_ready, ensure_target_dir_ready, entry_is_dir, entry_is_file,
-        exo_compression_from_algorithm, infer_erf_type, parse_algorithm,
-        parse_erf_version, parse_key_version, should_skip_top_level_dir, sorted_dir_entries,
+        exo_compression_from_algorithm, infer_erf_type, parse_algorithm, parse_erf_version,
+        parse_key_version, should_skip_top_level_dir, sorted_dir_entries,
     },
 };
 
@@ -207,7 +207,8 @@ fn run_pack_resource(cmd: PackCmd, kind: Kind) -> Result<(), String> {
         return Ok(());
     }
 
-    let source = resolve_resource_pack_source(&cmd.input, kind, read_resource_pack_metadata(&cmd.input)?)?;
+    let source =
+        resolve_resource_pack_source(&cmd.input, kind, read_resource_pack_metadata(&cmd.input)?)?;
     match kind {
         Kind::Gff => pack_gff_resource(&source, &cmd.output, cmd.force),
         Kind::TwoDa => pack_twoda_resource(&source, &cmd.output, cmd.force),
@@ -296,7 +297,8 @@ fn pack_twoda_resource(input: &Path, output: &Path, force: bool) -> Result<(), S
     let mut bytes = Vec::new();
     twoda::write_twoda(&mut bytes, &value, false)
         .map_err(|error| format!("failed to write {} as 2DA: {error}", output.display()))?;
-    fs::write(output, bytes).map_err(|error| format!("failed to write {}: {error}", output.display()))
+    fs::write(output, bytes)
+        .map_err(|error| format!("failed to write {}: {error}", output.display()))
 }
 
 fn pack_tlk_resource(input: &Path, output: &Path, force: bool) -> Result<(), String> {
@@ -322,7 +324,8 @@ fn pack_ssf_resource(input: &Path, output: &Path, force: bool) -> Result<(), Str
     let mut bytes = Vec::new();
     ssf::write_ssf(&mut bytes, &value)
         .map_err(|error| format!("failed to write {} as SSF: {error}", output.display()))?;
-    fs::write(output, bytes).map_err(|error| format!("failed to write {}: {error}", output.display()))
+    fs::write(output, bytes)
+        .map_err(|error| format!("failed to write {}: {error}", output.display()))
 }
 
 pub(crate) fn apply_erf_entry_order(
@@ -459,7 +462,7 @@ pub(crate) enum PackSourceKind {
 
 #[derive(Clone)]
 pub(crate) struct PackSourceEntry {
-    pub(crate) rr: resref::ResRef,
+    pub(crate) rr:     resref::ResRef,
     pub(crate) source: PackSourceKind,
 }
 
@@ -571,7 +574,7 @@ fn pack_source_for_file(path: &Path) -> Result<PackSourceEntry, String> {
     let resolved = resref::new_resolved_res_ref_from_filename(file_name)
         .map_err(|error| format!("{} is not a valid resref source: {error}", path.display()))?;
     Ok(PackSourceEntry {
-        rr: resolved.into(),
+        rr:     resolved.into(),
         source: PackSourceKind::File(path.to_path_buf()),
     })
 }
@@ -582,7 +585,11 @@ fn is_pack_metadata_file(path: &Path) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, path::PathBuf, time::{SystemTime, UNIX_EPOCH}};
+    use std::{
+        fs,
+        path::PathBuf,
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
     use super::*;
     use crate::args::PackCmd;
@@ -607,15 +614,15 @@ mod tests {
         fs::write(&input, bytes.into_inner()).expect("write input fixture");
 
         run_pack(PackCmd {
-            force: false,
-            data_version: "V1".to_string(),
+            force:            false,
+            data_version:     "V1".to_string(),
             data_compression: "none".to_string(),
-            no_squash: false,
-            no_symlinks: false,
-            recurse: 2,
-            erf_type: None,
-            input: input.clone(),
-            output: output.clone(),
+            no_squash:        false,
+            no_symlinks:      false,
+            recurse:          2,
+            erf_type:         None,
+            input:            input.clone(),
+            output:           output.clone(),
         })
         .expect("pack gff resource");
 
@@ -632,18 +639,19 @@ mod tests {
         fs::create_dir_all(&temp_dir).expect("create temp dir");
         let input = temp_dir.join("appearance.2da");
         let output = temp_dir.join("copy.2da");
-        fs::write(&input, b"2DA V2.0\nDEFAULT: ****\n\nLABEL\n0 value\n").expect("write twoda fixture");
+        fs::write(&input, b"2DA V2.0\nDEFAULT: ****\n\nLABEL\n0 value\n")
+            .expect("write twoda fixture");
 
         run_pack(PackCmd {
-            force: false,
-            data_version: "V1".to_string(),
+            force:            false,
+            data_version:     "V1".to_string(),
             data_compression: "none".to_string(),
-            no_squash: false,
-            no_symlinks: false,
-            recurse: 2,
-            erf_type: None,
-            input: input.clone(),
-            output: output.clone(),
+            no_squash:        false,
+            no_symlinks:      false,
+            recurse:          2,
+            erf_type:         None,
+            input:            input.clone(),
+            output:           output.clone(),
         })
         .expect("pack twoda resource");
 

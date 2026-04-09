@@ -1,6 +1,5 @@
 use std::{
-    collections::BTreeMap,
-    collections::hash_map::RandomState,
+    collections::{BTreeMap, hash_map::RandomState},
     fs::File,
     io::{self, Read, Seek, SeekFrom, Write},
     path::Path,
@@ -16,8 +15,7 @@ use nwnrs_util::prelude::*;
 use tracing::{debug, instrument};
 
 use crate::{
-    Erf, ErfError, ErfResMeta, ErfResult, ErfVersion, ErfWriteOptions, HEADER_SIZE,
-    VALID_ERF_TYPES,
+    Erf, ErfError, ErfResMeta, ErfResult, ErfVersion, ErfWriteOptions, HEADER_SIZE, VALID_ERF_TYPES,
 };
 
 /// Reads an ERF-family archive from a seekable reader.
@@ -129,8 +127,8 @@ pub fn read_erf_shared(stream: SharedReadSeek, filename: String) -> ErfResult<Er
                 (compression, uncompressed_size)
             }
         };
-        let disk_size_u64 =
-            u64::try_from(disk_size).map_err(|_error| ErfError::msg("ERF resource size exceeds 64-bit range"))?;
+        let disk_size_u64 = u64::try_from(disk_size)
+            .map_err(|_error| ErfError::msg("ERF resource size exceeds 64-bit range"))?;
         expect(offset != 0, "ERF resource offset must be non-zero")?;
         expect(
             offset
@@ -212,7 +210,8 @@ pub fn read_erf_shared(stream: SharedReadSeek, filename: String) -> ErfResult<Er
         loc_strings,
         entries,
         oid,
-        resource_list_padding: offset_to_resource_list.saturating_sub(expected_resource_list_offset),
+        resource_list_padding: offset_to_resource_list
+            .saturating_sub(expected_resource_list_offset),
     };
     debug!(entry_count = erf.entries.len(), file_type = %erf.file_type, "read erf archive");
     Ok(erf)
@@ -545,8 +544,9 @@ where
     ])?;
     writer.write_all(&vec![
         0_u8;
-        usize::try_from(resource_list_padding)
-            .map_err(|_error| ErfError::msg("ERF resource list padding exceeds usize"))?
+        usize::try_from(resource_list_padding).map_err(
+            |_error| ErfError::msg("ERF resource list padding exceeds usize")
+        )?
     ])?;
     writer.write_all(&vec![
         0_u8;

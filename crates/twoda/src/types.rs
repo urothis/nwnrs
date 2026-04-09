@@ -86,9 +86,9 @@ pub struct TwoDa {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TwoDaSnapshot {
     pub(crate) default_value: Cell,
-    pub(crate) headers: Vec<String>,
-    pub(crate) row_labels: Vec<String>,
-    pub(crate) rows: Vec<Row>,
+    pub(crate) headers:       Vec<String>,
+    pub(crate) row_labels:    Vec<String>,
+    pub(crate) rows:          Vec<Row>,
 }
 
 #[derive(Debug, Clone)]
@@ -99,55 +99,55 @@ pub(crate) struct TwoDaSourceLayout {
 #[derive(Debug, Clone)]
 pub(crate) enum TwoDaSourceLine {
     HeaderMagic {
-        raw: String,
+        raw:         String,
         line_ending: String,
     },
     Blank {
-        raw: String,
+        raw:         String,
         line_ending: String,
     },
     Default {
-        prefix: String,
-        value: Option<TwoDaTokenLayout>,
-        trailing: String,
+        prefix:      String,
+        value:       Option<TwoDaTokenLayout>,
+        trailing:    String,
         line_ending: String,
     },
     HeaderRow {
-        leading: String,
-        columns: Vec<String>,
-        separators: Vec<String>,
-        trailing: String,
+        leading:     String,
+        columns:     Vec<String>,
+        separators:  Vec<String>,
+        trailing:    String,
         line_ending: String,
     },
     DataRow {
-        row_index: usize,
+        row_index:   usize,
         after_label: String,
-        cells: Vec<TwoDaTokenLayout>,
-        separators: Vec<String>,
-        trailing: String,
+        cells:       Vec<TwoDaTokenLayout>,
+        separators:  Vec<String>,
+        trailing:    String,
         line_ending: String,
     },
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct TwoDaTokenLayout {
-    pub(crate) value: Cell,
+    pub(crate) value:  Cell,
     pub(crate) quoted: bool,
-    pub(crate) raw: String,
+    pub(crate) raw:    String,
 }
 
 impl TwoDa {
     /// Creates an empty table.
     pub fn new() -> Self {
         Self {
-            default_value: None,
-            headers: Vec::new(),
+            default_value:      None,
+            headers:            Vec::new(),
             headers_for_lookup: Vec::new(),
-            row_labels: Vec::new(),
-            rows: Vec::new(),
-            source_bytes: None,
-            source_snapshot: None,
-            source_layout: None,
+            row_labels:         Vec::new(),
+            rows:               Vec::new(),
+            source_bytes:       None,
+            source_snapshot:    None,
+            source_layout:      None,
         }
     }
 
@@ -305,9 +305,9 @@ impl TwoDa {
     pub(crate) fn snapshot(&self) -> TwoDaSnapshot {
         TwoDaSnapshot {
             default_value: self.default_value.clone(),
-            headers: self.headers.clone(),
-            row_labels: self.row_labels.clone(),
-            rows: self.rows.clone(),
+            headers:       self.headers.clone(),
+            row_labels:    self.row_labels.clone(),
+            rows:          self.rows.clone(),
         }
     }
 }

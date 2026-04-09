@@ -12,11 +12,11 @@ use crate::{
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HirModule {
     /// Top-level includes preserved from the source unit.
-    pub includes: Vec<IncludeDirective>,
+    pub includes:  Vec<IncludeDirective>,
     /// User-defined structures in source order.
-    pub structs: Vec<HirStruct>,
+    pub structs:   Vec<HirStruct>,
     /// Globals in source order.
-    pub globals: Vec<HirGlobal>,
+    pub globals:   Vec<HirGlobal>,
     /// Functions in source order.
     pub functions: Vec<HirFunction>,
 }
@@ -25,9 +25,9 @@ pub struct HirModule {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HirStruct {
     /// Source span.
-    pub span: crate::Span,
+    pub span:   crate::Span,
     /// Structure name.
-    pub name: String,
+    pub name:   String,
     /// Fields in declaration order.
     pub fields: Vec<HirField>,
 }
@@ -38,20 +38,20 @@ pub struct HirField {
     /// Field name.
     pub name: String,
     /// Field type.
-    pub ty: SemanticType,
+    pub ty:   SemanticType,
 }
 
 /// One lowered global variable.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HirGlobal {
     /// Source span.
-    pub span: crate::Span,
+    pub span:        crate::Span,
     /// Global name.
-    pub name: String,
+    pub name:        String,
     /// Global type.
-    pub ty: SemanticType,
+    pub ty:          SemanticType,
     /// Whether the global is `const`.
-    pub is_const: bool,
+    pub is_const:    bool,
     /// Optional initializer.
     pub initializer: Option<HirExpr>,
 }
@@ -60,45 +60,45 @@ pub struct HirGlobal {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HirFunction {
     /// Source span.
-    pub span: crate::Span,
+    pub span:        crate::Span,
     /// Function name.
-    pub name: String,
+    pub name:        String,
     /// Return type.
     pub return_type: SemanticType,
     /// Parameters in declaration order.
-    pub parameters: Vec<HirParameter>,
+    pub parameters:  Vec<HirParameter>,
     /// All local slots, including parameters first.
-    pub locals: Vec<HirLocal>,
+    pub locals:      Vec<HirLocal>,
     /// Optional body for declarations vs implementations.
-    pub body: Option<HirBlock>,
+    pub body:        Option<HirBlock>,
     /// Whether the function came from the builtin langspec.
-    pub is_builtin: bool,
+    pub is_builtin:  bool,
 }
 
 /// One lowered function parameter.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HirParameter {
     /// Local slot for this parameter.
-    pub local: HirLocalId,
+    pub local:       HirLocalId,
     /// Parameter name.
-    pub name: String,
+    pub name:        String,
     /// Parameter type.
-    pub ty: SemanticType,
+    pub ty:          SemanticType,
     /// Whether the parameter has a default value.
     pub is_optional: bool,
     /// Lowered default value for omitted trailing arguments.
-    pub default: Option<HirExpr>,
+    pub default:     Option<HirExpr>,
 }
 
 /// One lowered local slot.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HirLocal {
     /// Stable local id within one function.
-    pub id: HirLocalId,
+    pub id:   HirLocalId,
     /// Local name.
     pub name: String,
     /// Local type.
-    pub ty: SemanticType,
+    pub ty:   SemanticType,
     /// Whether this slot is a parameter or a body-local.
     pub kind: HirLocalKind,
 }
@@ -122,7 +122,7 @@ pub struct HirLocalId(pub u32);
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HirBlock {
     /// Source span.
-    pub span: crate::Span,
+    pub span:       crate::Span,
     /// Lowered statements.
     pub statements: Vec<HirStmt>,
 }
@@ -164,9 +164,9 @@ pub enum HirStmt {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HirDeclareStmt {
     /// Source span.
-    pub span: crate::Span,
+    pub span:        crate::Span,
     /// Declaration type.
-    pub ty: SemanticType,
+    pub ty:          SemanticType,
     /// Declared locals in source order.
     pub declarators: Vec<HirDeclarator>,
 }
@@ -175,7 +175,7 @@ pub struct HirDeclareStmt {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HirDeclarator {
     /// Local slot for the declared value.
-    pub local: HirLocalId,
+    pub local:       HirLocalId,
     /// Optional initializer.
     pub initializer: Option<HirExpr>,
 }
@@ -184,9 +184,9 @@ pub struct HirDeclarator {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HirIfStmt {
     /// Source span.
-    pub span: crate::Span,
+    pub span:        crate::Span,
     /// Condition.
-    pub condition: HirExpr,
+    pub condition:   HirExpr,
     /// True branch.
     pub then_branch: Box<HirStmt>,
     /// Optional false branch.
@@ -197,18 +197,18 @@ pub struct HirIfStmt {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HirSwitchStmt {
     /// Source span.
-    pub span: crate::Span,
+    pub span:      crate::Span,
     /// Switch condition.
     pub condition: HirExpr,
     /// Switch body.
-    pub body: Box<HirStmt>,
+    pub body:      Box<HirStmt>,
 }
 
 /// One lowered `return`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HirReturnStmt {
     /// Source span.
-    pub span: crate::Span,
+    pub span:  crate::Span,
     /// Optional return value.
     pub value: Option<HirExpr>,
 }
@@ -217,20 +217,20 @@ pub struct HirReturnStmt {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HirWhileStmt {
     /// Source span.
-    pub span: crate::Span,
+    pub span:      crate::Span,
     /// Loop condition.
     pub condition: HirExpr,
     /// Loop body.
-    pub body: Box<HirStmt>,
+    pub body:      Box<HirStmt>,
 }
 
 /// One lowered `do/while`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HirDoWhileStmt {
     /// Source span.
-    pub span: crate::Span,
+    pub span:      crate::Span,
     /// Loop body.
-    pub body: Box<HirStmt>,
+    pub body:      Box<HirStmt>,
     /// Loop condition.
     pub condition: HirExpr,
 }
@@ -239,15 +239,15 @@ pub struct HirDoWhileStmt {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HirForStmt {
     /// Source span.
-    pub span: crate::Span,
+    pub span:        crate::Span,
     /// Optional initializer expression.
     pub initializer: Option<HirExpr>,
     /// Optional condition expression.
-    pub condition: Option<HirExpr>,
+    pub condition:   Option<HirExpr>,
     /// Optional update expression.
-    pub update: Option<HirExpr>,
+    pub update:      Option<HirExpr>,
     /// Loop body.
-    pub body: Box<HirStmt>,
+    pub body:        Box<HirStmt>,
 }
 
 /// One lowered expression.
@@ -256,7 +256,7 @@ pub struct HirExpr {
     /// Source span.
     pub span: crate::Span,
     /// Resolved expression type.
-    pub ty: SemanticType,
+    pub ty:   SemanticType,
     /// Lowered expression kind.
     pub kind: HirExprKind,
 }
@@ -271,48 +271,48 @@ pub enum HirExprKind {
     /// One direct function call.
     Call {
         /// Resolved target.
-        target: HirCallTarget,
+        target:    HirCallTarget,
         /// Lowered arguments.
         arguments: Vec<HirExpr>,
     },
     /// One structure field access.
     FieldAccess {
         /// Resolved base value.
-        base: Box<HirExpr>,
+        base:  Box<HirExpr>,
         /// Field name.
         field: String,
     },
     /// One unary expression.
     Unary {
         /// Operator.
-        op: UnaryOp,
+        op:   UnaryOp,
         /// Operand.
         expr: Box<HirExpr>,
     },
     /// One binary expression.
     Binary {
         /// Operator.
-        op: BinaryOp,
+        op:    BinaryOp,
         /// Left operand.
-        left: Box<HirExpr>,
+        left:  Box<HirExpr>,
         /// Right operand.
         right: Box<HirExpr>,
     },
     /// One conditional expression.
     Conditional {
         /// Condition.
-        condition: Box<HirExpr>,
+        condition:  Box<HirExpr>,
         /// True branch.
-        when_true: Box<HirExpr>,
+        when_true:  Box<HirExpr>,
         /// False branch.
         when_false: Box<HirExpr>,
     },
     /// One assignment expression.
     Assignment {
         /// Operator.
-        op: AssignmentOp,
+        op:    AssignmentOp,
         /// Left lvalue.
-        left: Box<HirExpr>,
+        left:  Box<HirExpr>,
         /// Right expression.
         right: Box<HirExpr>,
     },
@@ -344,7 +344,7 @@ pub enum HirCallTarget {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HirLowerError {
     /// Source span that triggered the failure.
-    pub span: crate::Span,
+    pub span:    crate::Span,
     /// Human-readable message.
     pub message: String,
 }
@@ -376,8 +376,8 @@ pub fn lower_to_hir(
 }
 
 struct HirLowerer<'a> {
-    script: &'a Script,
-    semantic: &'a SemanticModel,
+    script:            &'a Script,
+    semantic:          &'a SemanticModel,
     builtin_constants: BTreeMap<String, SemanticType>,
 }
 
@@ -435,14 +435,14 @@ impl<'a> HirLowerer<'a> {
             .get(&definition.name)
             .ok_or_else(|| HirLowerError::new(definition.span, "missing semantic struct"))?;
         Ok(HirStruct {
-            span: definition.span,
-            name: resolved.name.clone(),
+            span:   definition.span,
+            name:   resolved.name.clone(),
             fields: resolved
                 .fields
                 .iter()
                 .map(|field| HirField {
                     name: field.name.clone(),
-                    ty: field.ty.clone(),
+                    ty:   field.ty.clone(),
                 })
                 .collect(),
         })
@@ -454,11 +454,10 @@ impl<'a> HirLowerer<'a> {
     ) -> Result<Vec<HirGlobal>, HirLowerError> {
         let mut globals = Vec::new();
         for declarator in &declaration.declarators {
-            let resolved = self
-                .semantic
-                .globals
-                .get(&declarator.name)
-                .ok_or_else(|| HirLowerError::new(declarator.span, "missing semantic global"))?;
+            let resolved =
+                self.semantic.globals.get(&declarator.name).ok_or_else(|| {
+                    HirLowerError::new(declarator.span, "missing semantic global")
+                })?;
             let initializer = declarator
                 .initializer
                 .as_ref()
@@ -490,22 +489,15 @@ impl<'a> HirLowerer<'a> {
         debug_assert_eq!(resolved.parameters.len(), function.parameters.len());
 
         for (parameter, parsed) in resolved.parameters.iter().zip(&function.parameters) {
-            let local = ctx.push_local(
-                &parsed.name,
-                parameter.ty.clone(),
-                HirLocalKind::Parameter,
-            );
+            let local = ctx.push_local(&parsed.name, parameter.ty.clone(), HirLocalKind::Parameter);
             let default = if let Some(default) = &parsed.default {
                 Some(self.lower_expr(default, &mut ctx)?)
             } else {
-                parameter
-                    .default
-                    .as_ref()
-                    .map(|literal| HirExpr {
-                        span: function.span,
-                        ty: parameter.ty.clone(),
-                        kind: HirExprKind::Literal(literal.clone()),
-                    })
+                parameter.default.as_ref().map(|literal| HirExpr {
+                    span: function.span,
+                    ty:   parameter.ty.clone(),
+                    kind: HirExprKind::Literal(literal.clone()),
+                })
             };
             parameters.push(HirParameter {
                 local,
@@ -565,7 +557,9 @@ impl<'a> HirLowerer<'a> {
         ctx: &mut FunctionLoweringContext,
     ) -> Result<HirStmt, HirLowerError> {
         match statement {
-            Stmt::Block(block) => Ok(HirStmt::Block(Box::new(self.lower_block(block, ctx, false)?))),
+            Stmt::Block(block) => Ok(HirStmt::Block(Box::new(
+                self.lower_block(block, ctx, false)?,
+            ))),
             Stmt::Declaration(declaration) => {
                 let ty = lower_decl_type(&declaration.ty, self.semantic)?;
                 let mut declarators = Vec::new();
@@ -576,7 +570,10 @@ impl<'a> HirLowerer<'a> {
                         .map(|initializer| self.lower_expr(initializer, ctx))
                         .transpose()?;
                     let local = ctx.push_local(&declarator.name, ty.clone(), HirLocalKind::Local);
-                    declarators.push(HirDeclarator { local, initializer });
+                    declarators.push(HirDeclarator {
+                        local,
+                        initializer,
+                    });
                 }
                 Ok(HirStmt::Declare(Box::new(HirDeclareStmt {
                     span: declaration.span,
@@ -584,10 +581,12 @@ impl<'a> HirLowerer<'a> {
                     declarators,
                 })))
             }
-            Stmt::Expression(statement) => Ok(HirStmt::Expr(Box::new(self.lower_expr(&statement.expr, ctx)?))),
+            Stmt::Expression(statement) => Ok(HirStmt::Expr(Box::new(
+                self.lower_expr(&statement.expr, ctx)?,
+            ))),
             Stmt::If(statement) => Ok(HirStmt::If(Box::new(HirIfStmt {
-                span: statement.span,
-                condition: self.lower_expr(&statement.condition, ctx)?,
+                span:        statement.span,
+                condition:   self.lower_expr(&statement.condition, ctx)?,
                 then_branch: Box::new(self.lower_stmt(&statement.then_branch, ctx)?),
                 else_branch: statement
                     .else_branch
@@ -596,12 +595,12 @@ impl<'a> HirLowerer<'a> {
                     .transpose()?,
             }))),
             Stmt::Switch(statement) => Ok(HirStmt::Switch(Box::new(HirSwitchStmt {
-                span: statement.span,
+                span:      statement.span,
                 condition: self.lower_expr(&statement.condition, ctx)?,
-                body: Box::new(self.lower_stmt(&statement.body, ctx)?),
+                body:      Box::new(self.lower_stmt(&statement.body, ctx)?),
             }))),
             Stmt::Return(statement) => Ok(HirStmt::Return(Box::new(HirReturnStmt {
-                span: statement.span,
+                span:  statement.span,
                 value: statement
                     .value
                     .as_ref()
@@ -609,35 +608,37 @@ impl<'a> HirLowerer<'a> {
                     .transpose()?,
             }))),
             Stmt::While(statement) => Ok(HirStmt::While(Box::new(HirWhileStmt {
-                span: statement.span,
+                span:      statement.span,
                 condition: self.lower_expr(&statement.condition, ctx)?,
-                body: Box::new(self.lower_stmt(&statement.body, ctx)?),
+                body:      Box::new(self.lower_stmt(&statement.body, ctx)?),
             }))),
             Stmt::DoWhile(statement) => Ok(HirStmt::DoWhile(Box::new(HirDoWhileStmt {
-                span: statement.span,
-                body: Box::new(self.lower_stmt(&statement.body, ctx)?),
+                span:      statement.span,
+                body:      Box::new(self.lower_stmt(&statement.body, ctx)?),
                 condition: self.lower_expr(&statement.condition, ctx)?,
             }))),
             Stmt::For(statement) => Ok(HirStmt::For(Box::new(HirForStmt {
-                span: statement.span,
+                span:        statement.span,
                 initializer: statement
                     .initializer
                     .as_ref()
                     .map(|expr| self.lower_expr(expr, ctx))
                     .transpose()?,
-                condition: statement
+                condition:   statement
                     .condition
                     .as_ref()
                     .map(|expr| self.lower_expr(expr, ctx))
                     .transpose()?,
-                update: statement
+                update:      statement
                     .update
                     .as_ref()
                     .map(|expr| self.lower_expr(expr, ctx))
                     .transpose()?,
-                body: Box::new(self.lower_stmt(&statement.body, ctx)?),
+                body:        Box::new(self.lower_stmt(&statement.body, ctx)?),
             }))),
-            Stmt::Case(statement) => Ok(HirStmt::Case(Box::new(self.lower_expr(&statement.value, ctx)?))),
+            Stmt::Case(statement) => Ok(HirStmt::Case(Box::new(
+                self.lower_expr(&statement.value, ctx)?,
+            ))),
             Stmt::Default(statement) => Ok(HirStmt::Default(statement.span)),
             Stmt::Break(statement) => Ok(HirStmt::Break(statement.span)),
             Stmt::Continue(statement) => Ok(HirStmt::Continue(statement.span)),
@@ -653,20 +654,20 @@ impl<'a> HirLowerer<'a> {
         let lowered = match &expr.kind {
             ExprKind::Literal(literal) => HirExpr {
                 span: expr.span,
-                ty: semantic_type_from_literal(literal),
+                ty:   semantic_type_from_literal(literal),
                 kind: HirExprKind::Literal(literal.clone()),
             },
             ExprKind::Identifier(name) => {
                 if let Some(local) = ctx.lookup_local(name) {
                     HirExpr {
                         span: expr.span,
-                        ty: local.ty.clone(),
+                        ty:   local.ty.clone(),
                         kind: HirExprKind::Value(HirValueRef::Local(local.id)),
                     }
                 } else if let Some(global) = self.semantic.globals.get(name) {
                     HirExpr {
                         span: expr.span,
-                        ty: global.ty.clone(),
+                        ty:   global.ty.clone(),
                         kind: HirExprKind::Value(if global.is_const {
                             HirValueRef::ConstGlobal(name.clone())
                         } else {
@@ -676,7 +677,7 @@ impl<'a> HirLowerer<'a> {
                 } else if let Some(ty) = self.builtin_constants.get(name) {
                     HirExpr {
                         span: expr.span,
-                        ty: ty.clone(),
+                        ty:   ty.clone(),
                         kind: HirExprKind::Value(HirValueRef::BuiltinConstant(name.clone())),
                     }
                 } else {
@@ -686,23 +687,24 @@ impl<'a> HirLowerer<'a> {
                     ));
                 }
             }
-            ExprKind::Call { callee, arguments } => {
+            ExprKind::Call {
+                callee,
+                arguments,
+            } => {
                 let ExprKind::Identifier(name) = &callee.kind else {
                     return Err(HirLowerError::new(
                         callee.span,
                         "HIR lowering only supports direct identifier calls",
                     ));
                 };
-                let function = self
-                    .semantic
-                    .functions
-                    .get(name)
-                    .ok_or_else(|| HirLowerError::new(callee.span, "missing semantic call target"))?;
+                let function = self.semantic.functions.get(name).ok_or_else(|| {
+                    HirLowerError::new(callee.span, "missing semantic call target")
+                })?;
                 HirExpr {
                     span: expr.span,
-                    ty: function.return_type.clone(),
+                    ty:   function.return_type.clone(),
                     kind: HirExprKind::Call {
-                        target: if function.is_builtin {
+                        target:    if function.is_builtin {
                             HirCallTarget::Builtin(name.clone())
                         } else {
                             HirCallTarget::Function(name.clone())
@@ -714,31 +716,41 @@ impl<'a> HirLowerer<'a> {
                     },
                 }
             }
-            ExprKind::FieldAccess { base, field } => {
+            ExprKind::FieldAccess {
+                base,
+                field,
+            } => {
                 let base = self.lower_expr(base, ctx)?;
                 let ty = field_result_type(&base.ty, field, self.semantic, expr.span)?;
                 HirExpr {
                     span: expr.span,
                     ty,
                     kind: HirExprKind::FieldAccess {
-                        base: Box::new(base),
+                        base:  Box::new(base),
                         field: field.clone(),
                     },
                 }
             }
-            ExprKind::Unary { op, expr: inner } => {
+            ExprKind::Unary {
+                op,
+                expr: inner,
+            } => {
                 let inner = self.lower_expr(inner, ctx)?;
                 let ty = unary_result_type(*op, &inner.ty, expr.span)?;
                 HirExpr {
                     span: expr.span,
                     ty,
                     kind: HirExprKind::Unary {
-                        op: *op,
+                        op:   *op,
                         expr: Box::new(inner),
                     },
                 }
             }
-            ExprKind::Binary { op, left, right } => {
+            ExprKind::Binary {
+                op,
+                left,
+                right,
+            } => {
                 let left = self.lower_expr(left, ctx)?;
                 let right = self.lower_expr(right, ctx)?;
                 let ty = binary_result_type(*op, &left.ty, &right.ty, expr.span)?;
@@ -746,8 +758,8 @@ impl<'a> HirLowerer<'a> {
                     span: expr.span,
                     ty,
                     kind: HirExprKind::Binary {
-                        op: *op,
-                        left: Box::new(left),
+                        op:    *op,
+                        left:  Box::new(left),
                         right: Box::new(right),
                     },
                 }
@@ -762,23 +774,27 @@ impl<'a> HirLowerer<'a> {
                 let when_false = self.lower_expr(when_false, ctx)?;
                 HirExpr {
                     span: expr.span,
-                    ty: when_true.ty.clone(),
+                    ty:   when_true.ty.clone(),
                     kind: HirExprKind::Conditional {
-                        condition: Box::new(condition),
-                        when_true: Box::new(when_true),
+                        condition:  Box::new(condition),
+                        when_true:  Box::new(when_true),
                         when_false: Box::new(when_false),
                     },
                 }
             }
-            ExprKind::Assignment { op, left, right } => {
+            ExprKind::Assignment {
+                op,
+                left,
+                right,
+            } => {
                 let left = self.lower_expr(left, ctx)?;
                 let right = self.lower_expr(right, ctx)?;
                 HirExpr {
                     span: expr.span,
-                    ty: assignment_result_type(*op, &left.ty, &right.ty, expr.span)?,
+                    ty:   assignment_result_type(*op, &left.ty, &right.ty, expr.span)?,
                     kind: HirExprKind::Assignment {
-                        op: *op,
-                        left: Box::new(left),
+                        op:    *op,
+                        left:  Box::new(left),
                         right: Box::new(right),
                     },
                 }
@@ -823,7 +839,13 @@ impl FunctionLoweringContext {
             kind,
         });
         if let Some(scope) = self.scopes.last_mut() {
-            scope.insert(name.to_string(), HirLocalBinding { id, ty });
+            scope.insert(
+                name.to_string(),
+                HirLocalBinding {
+                    id,
+                    ty,
+                },
+            );
         }
         id
     }
@@ -833,10 +855,7 @@ impl FunctionLoweringContext {
     }
 }
 
-fn lower_decl_type(
-    ty: &TypeSpec,
-    semantic: &SemanticModel,
-) -> Result<SemanticType, HirLowerError> {
+fn lower_decl_type(ty: &TypeSpec, semantic: &SemanticModel) -> Result<SemanticType, HirLowerError> {
     match &ty.kind {
         crate::TypeKind::Void => Ok(SemanticType::Void),
         crate::TypeKind::Int => Ok(SemanticType::Int),
@@ -878,7 +897,9 @@ fn semantic_type_from_builtin_value(value: &BuiltinValue) -> Option<SemanticType
         BuiltinValue::ObjectId(_) | BuiltinValue::ObjectSelf | BuiltinValue::ObjectInvalid => {
             Some(SemanticType::Object)
         }
-        BuiltinValue::LocationInvalid => Some(SemanticType::EngineStructure("location".to_string())),
+        BuiltinValue::LocationInvalid => {
+            Some(SemanticType::EngineStructure("location".to_string()))
+        }
         BuiltinValue::Json(_) => Some(SemanticType::EngineStructure("json".to_string())),
         BuiltinValue::Vector(_) => Some(SemanticType::Vector),
     }
@@ -947,8 +968,7 @@ fn binary_result_type(
         | BinaryOp::LessEqual
             if matches!(
                 (left, right),
-                (SemanticType::Int, SemanticType::Int)
-                    | (SemanticType::Float, SemanticType::Float)
+                (SemanticType::Int, SemanticType::Int) | (SemanticType::Float, SemanticType::Float)
             ) =>
         {
             Ok(SemanticType::Int)
@@ -1059,45 +1079,44 @@ fn field_result_type(
 
 #[cfg(test)]
 mod tests {
+    use super::{HirCallTarget, HirExprKind, HirLocalKind, HirStmt, HirValueRef, lower_to_hir};
     use crate::{
         BuiltinConstant, BuiltinFunction, BuiltinParameter, BuiltinType, BuiltinValue, LangSpec,
         SourceId, analyze_script, parse_text,
     };
 
-    use super::{HirCallTarget, HirExprKind, HirLocalKind, HirStmt, HirValueRef, lower_to_hir};
-
     fn test_langspec() -> LangSpec {
         LangSpec {
             engine_num_structures: 3,
-            engine_structures: vec![
+            engine_structures:     vec![
                 "effect".to_string(),
                 "location".to_string(),
                 "json".to_string(),
             ],
-            constants: vec![
+            constants:             vec![
                 BuiltinConstant {
-                    name: "TRUE".to_string(),
-                    ty: BuiltinType::Int,
+                    name:  "TRUE".to_string(),
+                    ty:    BuiltinType::Int,
                     value: BuiltinValue::Int(1),
                 },
                 BuiltinConstant {
-                    name: "OBJECT_INVALID".to_string(),
-                    ty: BuiltinType::Object,
+                    name:  "OBJECT_INVALID".to_string(),
+                    ty:    BuiltinType::Object,
                     value: BuiltinValue::ObjectInvalid,
                 },
             ],
-            functions: vec![BuiltinFunction {
-                name: "DelayCommand".to_string(),
+            functions:             vec![BuiltinFunction {
+                name:        "DelayCommand".to_string(),
                 return_type: BuiltinType::Void,
-                parameters: vec![
+                parameters:  vec![
                     BuiltinParameter {
-                        name: "fSeconds".to_string(),
-                        ty: BuiltinType::Float,
+                        name:    "fSeconds".to_string(),
+                        ty:      BuiltinType::Float,
                         default: None,
                     },
                     BuiltinParameter {
-                        name: "aAction".to_string(),
-                        ty: BuiltinType::Action,
+                        name:    "aAction".to_string(),
+                        ty:      BuiltinType::Action,
                         default: None,
                     },
                 ],
@@ -1106,7 +1125,8 @@ mod tests {
     }
 
     #[test]
-    fn lowers_globals_and_locals_to_resolved_value_refs() -> Result<(), Box<dyn std::error::Error>> {
+    fn lowers_globals_and_locals_to_resolved_value_refs() -> Result<(), Box<dyn std::error::Error>>
+    {
         let script = parse_text(
             SourceId::new(70),
             r#"
@@ -1122,7 +1142,11 @@ mod tests {
         let hir = lower_to_hir(&script, &semantic, Some(&test_langspec()))?;
 
         assert_eq!(hir.globals.len(), 1);
-        match hir.globals.first().and_then(|global| global.initializer.as_ref()) {
+        match hir
+            .globals
+            .first()
+            .and_then(|global| global.initializer.as_ref())
+        {
             Some(initializer) => {
                 assert_eq!(
                     initializer.kind,
@@ -1138,8 +1162,14 @@ mod tests {
             .find(|function| function.name == "main")
             .ok_or_else(|| std::io::Error::other("main should be lowered"))?;
         assert_eq!(main.locals.len(), 2);
-        assert_eq!(main.locals.first().map(|local| local.kind), Some(HirLocalKind::Local));
-        assert_eq!(main.locals.get(1).map(|local| local.kind), Some(HirLocalKind::Local));
+        assert_eq!(
+            main.locals.first().map(|local| local.kind),
+            Some(HirLocalKind::Local)
+        );
+        assert_eq!(
+            main.locals.get(1).map(|local| local.kind),
+            Some(HirLocalKind::Local)
+        );
 
         let body = main
             .body
@@ -1147,7 +1177,11 @@ mod tests {
             .ok_or_else(|| std::io::Error::other("main should have a body"))?;
 
         match body.statements.first() {
-            Some(HirStmt::Declare(statement)) => match statement.declarators.first().and_then(|declarator| declarator.initializer.as_ref()) {
+            Some(HirStmt::Declare(statement)) => match statement
+                .declarators
+                .first()
+                .and_then(|declarator| declarator.initializer.as_ref())
+            {
                 Some(initializer) => {
                     assert_eq!(
                         initializer.kind,
@@ -1156,27 +1190,43 @@ mod tests {
                 }
                 None => return Err(std::io::Error::other("expected local initializer").into()),
             },
-            other => return Err(std::io::Error::other(format!("expected declaration, got {other:?}")).into()),
+            other => {
+                return Err(
+                    std::io::Error::other(format!("expected declaration, got {other:?}")).into(),
+                )
+            }
         }
 
         match body.statements.get(1) {
-            Some(HirStmt::Declare(statement)) => match statement.declarators.first().and_then(|declarator| declarator.initializer.as_ref()) {
+            Some(HirStmt::Declare(statement)) => match statement
+                .declarators
+                .first()
+                .and_then(|declarator| declarator.initializer.as_ref())
+            {
                 Some(initializer) => {
                     let first_local = main
                         .locals
                         .first()
                         .ok_or_else(|| std::io::Error::other("missing first local"))?;
-                    assert_eq!(initializer.kind, HirExprKind::Value(HirValueRef::Local(first_local.id)));
+                    assert_eq!(
+                        initializer.kind,
+                        HirExprKind::Value(HirValueRef::Local(first_local.id))
+                    );
                 }
                 None => return Err(std::io::Error::other("expected local initializer").into()),
             },
-            other => return Err(std::io::Error::other(format!("expected declaration, got {other:?}")).into()),
+            other => {
+                return Err(
+                    std::io::Error::other(format!("expected declaration, got {other:?}")).into(),
+                )
+            }
         }
         Ok(())
     }
 
     #[test]
-    fn lowers_builtin_and_user_calls_to_explicit_targets() -> Result<(), Box<dyn std::error::Error>> {
+    fn lowers_builtin_and_user_calls_to_explicit_targets() -> Result<(), Box<dyn std::error::Error>>
+    {
         let script = parse_text(
             SourceId::new(71),
             r#"
@@ -1203,38 +1253,55 @@ mod tests {
 
         match body.statements.first() {
             Some(HirStmt::Expr(expr)) => match &expr.kind {
-                HirExprKind::Call { target, .. } => {
+                HirExprKind::Call {
+                    target, ..
+                } => {
                     assert_eq!(target, &HirCallTarget::Function("helper".to_string()));
                 }
                 other => {
-                    return Err(std::io::Error::other(format!("expected direct call, got {other:?}")).into())
+                    return Err(std::io::Error::other(format!(
+                        "expected direct call, got {other:?}"
+                    ))
+                    .into())
                 }
             },
             other => {
-                return Err(std::io::Error::other(format!("expected expression statement, got {other:?}")).into())
+                return Err(std::io::Error::other(format!(
+                    "expected expression statement, got {other:?}"
+                ))
+                .into())
             }
         }
 
         match body.statements.get(1) {
             Some(HirStmt::Expr(expr)) => match &expr.kind {
-                HirExprKind::Call { target, arguments } => {
+                HirExprKind::Call {
+                    target,
+                    arguments,
+                } => {
                     assert_eq!(target, &HirCallTarget::Builtin("DelayCommand".to_string()));
                     assert_eq!(arguments.len(), 2);
                 }
                 other => {
-                    return Err(std::io::Error::other(format!("expected builtin call, got {other:?}")).into())
+                    return Err(std::io::Error::other(format!(
+                        "expected builtin call, got {other:?}"
+                    ))
+                    .into())
                 }
             },
             other => {
-                return Err(std::io::Error::other(format!("expected expression statement, got {other:?}")).into())
+                return Err(std::io::Error::other(format!(
+                    "expected expression statement, got {other:?}"
+                ))
+                .into())
             }
         }
         Ok(())
     }
 
     #[test]
-    fn lowers_function_body_locals_that_shadow_parameter_names(
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    fn lowers_function_body_locals_that_shadow_parameter_names()
+    -> Result<(), Box<dyn std::error::Error>> {
         let script = parse_text(
             SourceId::new(72),
             r#"
@@ -1255,8 +1322,14 @@ mod tests {
             .find(|function| function.name == "helper")
             .ok_or_else(|| std::io::Error::other("helper should be lowered"))?;
         assert_eq!(helper.locals.len(), 2);
-        assert_eq!(helper.locals.first().map(|local| local.kind), Some(HirLocalKind::Parameter));
-        assert_eq!(helper.locals.get(1).map(|local| local.kind), Some(HirLocalKind::Local));
+        assert_eq!(
+            helper.locals.first().map(|local| local.kind),
+            Some(HirLocalKind::Parameter)
+        );
+        assert_eq!(
+            helper.locals.get(1).map(|local| local.kind),
+            Some(HirLocalKind::Local)
+        );
         Ok(())
     }
 }

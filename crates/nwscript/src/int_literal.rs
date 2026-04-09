@@ -72,7 +72,13 @@ mod tests {
     fn wraps_prefixed_literals_like_upstream() {
         assert_eq!(parse_wrapping_prefixed_i32("0xffffffff", 16), Ok(-1));
         assert_eq!(parse_wrapping_prefixed_i32("0x80000000", 16), Ok(i32::MIN));
-        assert_eq!(parse_wrapping_prefixed_i32("0b11111111111111111111111111111111", 2), Ok(-1));
-        assert_eq!(parse_wrapping_prefixed_i32("0o20000000000", 8), Ok(i32::MIN));
+        assert_eq!(
+            parse_wrapping_prefixed_i32("0b11111111111111111111111111111111", 2),
+            Ok(-1)
+        );
+        assert_eq!(
+            parse_wrapping_prefixed_i32("0o20000000000", 8),
+            Ok(i32::MIN)
+        );
     }
 }

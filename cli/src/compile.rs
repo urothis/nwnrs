@@ -16,7 +16,10 @@ use crate::{
 pub(crate) fn run_compile(cmd: CompileCmd) -> Result<(), String> {
     info!("compiling NWScript source");
     if !cmd.input.is_file() {
-        return Err(format!("input source does not exist: {}", cmd.input.display()));
+        return Err(format!(
+            "input source does not exist: {}",
+            cmd.input.display()
+        ));
     }
 
     let optimization = parse_optimization_level(&cmd.optimization)?;
@@ -34,11 +37,9 @@ pub(crate) fn run_compile(cmd: CompileCmd) -> Result<(), String> {
     let langspec_path = resolve_langspec_path(&cmd)?;
     let langspec_bytes = fs::read(&langspec_path)
         .map_err(|error| format!("failed to read {}: {error}", langspec_path.display()))?;
-    let langspec = nwscript::parse_langspec_bytes(
-        &langspec_path.display().to_string(),
-        &langspec_bytes,
-    )
-    .map_err(|error| format!("failed to parse {}: {error}", langspec_path.display()))?;
+    let langspec =
+        nwscript::parse_langspec_bytes(&langspec_path.display().to_string(), &langspec_bytes)
+            .map_err(|error| format!("failed to parse {}: {error}", langspec_path.display()))?;
 
     let mut search_roots = Vec::new();
     if let Some(parent) = cmd.input.parent() {
@@ -51,9 +52,20 @@ pub(crate) fn run_compile(cmd: CompileCmd) -> Result<(), String> {
         .input
         .file_name()
         .and_then(OsStr::to_str)
-        .ok_or_else(|| format!("input file name is not valid UTF-8: {}", cmd.input.display()))?;
-    let bundle = nwscript::load_source_bundle(&resolver, root_name, nwscript::SourceLoadOptions::default())
-        .map_err(|error| format!("failed to load source bundle for {}: {error}", cmd.input.display()))?;
+        .ok_or_else(|| {
+            format!(
+                "input file name is not valid UTF-8: {}",
+                cmd.input.display()
+            )
+        })?;
+    let bundle =
+        nwscript::load_source_bundle(&resolver, root_name, nwscript::SourceLoadOptions::default())
+            .map_err(|error| {
+                format!(
+                    "failed to load source bundle for {}: {error}",
+                    cmd.input.display()
+                )
+            })?;
     let script = nwscript::parse_source_bundle(&bundle, Some(&langspec))
         .map_err(|error| format!("failed to parse {}: {error}", cmd.input.display()))?;
 
@@ -65,7 +77,7 @@ pub(crate) fn run_compile(cmd: CompileCmd) -> Result<(), String> {
             Some(&langspec),
             nwscript::CompileOptions {
                 semantic: nwscript::SemanticOptions {
-                    require_entrypoint: !cmd.no_entrypoint_check,
+                    require_entrypoint:       !cmd.no_entrypoint_check,
                     allow_conditional_script: true,
                 },
                 optimization,
@@ -77,7 +89,7 @@ pub(crate) fn run_compile(cmd: CompileCmd) -> Result<(), String> {
             Some(&langspec),
             nwscript::CompileOptions {
                 semantic: nwscript::SemanticOptions {
-                    require_entrypoint: !cmd.no_entrypoint_check,
+                    require_entrypoint:       !cmd.no_entrypoint_check,
                     allow_conditional_script: true,
                 },
                 optimization,
@@ -141,16 +153,21 @@ struct FilesystemScriptResolver {
 impl FilesystemScriptResolver {
     fn new(mut search_roots: Vec<PathBuf>) -> Self {
         search_roots.retain(|path| !path.as_os_str().is_empty());
-        Self { search_roots }
+        Self {
+            search_roots,
+        }
     }
 
     fn read_candidate(&self, path: &Path) -> Result<Option<Vec<u8>>, nwscript::SourceError> {
         let Some(resolved) = resolve_case_insensitive(path) else {
             return Ok(None);
         };
-        fs::read(&resolved)
-            .map(Some)
-            .map_err(|error| nwscript::SourceError::resolver(format!("failed to read {}: {error}", resolved.display())))
+        fs::read(&resolved).map(Some).map_err(|error| {
+            nwscript::SourceError::resolver(format!(
+                "failed to read {}: {error}",
+                resolved.display()
+            ))
+        })
     }
 }
 
@@ -227,11 +244,14 @@ fn resolve_case_insensitive(path: &Path) -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, path::PathBuf, time::{SystemTime, UNIX_EPOCH}};
-
-    use crate::args::CompileCmd;
+    use std::{
+        fs,
+        path::PathBuf,
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
     use super::run_compile;
+    use crate::args::CompileCmd;
 
     fn unique_test_dir(prefix: &str) -> PathBuf {
         let nanos = SystemTime::now()
@@ -258,21 +278,17 @@ int FALSE = 0;
         let output = temp_dir.join("test.ncs");
         let debug = temp_dir.join("test.ndb");
         fs::write(temp_dir.join("nwscript.nss"), minimal_langspec()).expect("write langspec");
-        fs::write(
-            &input,
-            "int StartingConditional() { return TRUE; }",
-        )
-        .expect("write input");
+        fs::write(&input, "int StartingConditional() { return TRUE; }").expect("write input");
 
         run_compile(CompileCmd {
-            force: true,
-            debug: true,
+            force:               true,
+            debug:               true,
             no_entrypoint_check: false,
-            output: Some(output.clone()),
-            langspec: None,
-            include_dir: Vec::new(),
-            optimization: "O0".to_string(),
-            input: input.clone(),
+            output:              Some(output.clone()),
+            langspec:            None,
+            include_dir:         Vec::new(),
+            optimization:        "O0".to_string(),
+            input:               input.clone(),
         })
         .expect("compile should succeed");
 
@@ -290,7 +306,11 @@ int FALSE = 0;
         let input = temp_dir.join("test.nss");
         let output = temp_dir.join("test.ncs");
         fs::write(temp_dir.join("nwscript.nss"), minimal_langspec()).expect("write langspec");
-        fs::write(include_dir.join("helper.nss"), "int helper() { return TRUE; }").expect("write include");
+        fs::write(
+            include_dir.join("helper.nss"),
+            "int helper() { return TRUE; }",
+        )
+        .expect("write include");
         fs::write(
             &input,
             "#include \"helper\"\nint StartingConditional() { return helper(); }",
@@ -298,14 +318,14 @@ int FALSE = 0;
         .expect("write input");
 
         run_compile(CompileCmd {
-            force: true,
-            debug: false,
+            force:               true,
+            debug:               false,
             no_entrypoint_check: false,
-            output: Some(output.clone()),
-            langspec: None,
-            include_dir: vec![include_dir],
-            optimization: "O1".to_string(),
-            input: input.clone(),
+            output:              Some(output.clone()),
+            langspec:            None,
+            include_dir:         vec![include_dir],
+            optimization:        "O1".to_string(),
+            input:               input.clone(),
         })
         .expect("compile should succeed");
 

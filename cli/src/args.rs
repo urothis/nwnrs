@@ -124,19 +124,19 @@ pub(crate) struct PackCmd {
 }
 
 pub(crate) struct KeyPackCmd {
-    pub(crate) data_version: String,
+    pub(crate) data_version:     String,
     pub(crate) data_compression: String,
-    pub(crate) no_squash: bool,
-    pub(crate) no_symlinks: bool,
-    pub(crate) force: bool,
-    pub(crate) key: String,
-    pub(crate) source: PathBuf,
-    pub(crate) destination: PathBuf,
+    pub(crate) no_squash:        bool,
+    pub(crate) no_symlinks:      bool,
+    pub(crate) force:            bool,
+    pub(crate) key:              String,
+    pub(crate) source:           PathBuf,
+    pub(crate) destination:      PathBuf,
 }
 
 pub(crate) struct KeyUnpackCmd {
-    pub(crate) force: bool,
-    pub(crate) key: PathBuf,
+    pub(crate) force:       bool,
+    pub(crate) key:         PathBuf,
     pub(crate) destination: PathBuf,
 }
 

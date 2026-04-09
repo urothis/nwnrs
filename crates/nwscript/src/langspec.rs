@@ -61,9 +61,9 @@ pub enum BuiltinValue {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BuiltinConstant {
     /// Constant name.
-    pub name: String,
+    pub name:  String,
     /// Constant type.
-    pub ty: BuiltinType,
+    pub ty:    BuiltinType,
     /// Constant value.
     pub value: BuiltinValue,
 }
@@ -72,9 +72,9 @@ pub struct BuiltinConstant {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BuiltinParameter {
     /// Parameter name.
-    pub name: String,
+    pub name:    String,
     /// Parameter type.
-    pub ty: BuiltinType,
+    pub ty:      BuiltinType,
     /// Optional default value.
     pub default: Option<BuiltinValue>,
 }
@@ -83,11 +83,11 @@ pub struct BuiltinParameter {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BuiltinFunction {
     /// Function name.
-    pub name: String,
+    pub name:        String,
     /// Return type.
     pub return_type: BuiltinType,
     /// Parameters in declaration order.
-    pub parameters: Vec<BuiltinParameter>,
+    pub parameters:  Vec<BuiltinParameter>,
 }
 
 /// Parsed builtin declarations from `nwscript.nss`.
@@ -96,11 +96,11 @@ pub struct LangSpec {
     /// Number declared by `ENGINE_NUM_STRUCTURES`.
     pub engine_num_structures: usize,
     /// Engine structure names in index order.
-    pub engine_structures: Vec<String>,
+    pub engine_structures:     Vec<String>,
     /// Builtin constants in declaration order.
-    pub constants: Vec<BuiltinConstant>,
+    pub constants:             Vec<BuiltinConstant>,
     /// Builtin functions in declaration order.
-    pub functions: Vec<BuiltinFunction>,
+    pub functions:             Vec<BuiltinFunction>,
 }
 
 /// Errors returned while bootstrapping the builtin language spec.
@@ -113,7 +113,7 @@ pub enum LangSpecError {
     /// The language specification text was malformed.
     Parse {
         /// Upstream-aligned compiler error code.
-        code: CompilerErrorCode,
+        code:    CompilerErrorCode,
         /// Human-readable message.
         message: String,
     },
@@ -122,7 +122,7 @@ pub enum LangSpecError {
 impl LangSpecError {
     fn parse(message: impl Into<String>) -> Self {
         Self::Parse {
-            code: CompilerErrorCode::ParsingIdentifierList,
+            code:    CompilerErrorCode::ParsingIdentifierList,
             message: message.into(),
         }
     }
@@ -133,7 +133,10 @@ impl fmt::Display for LangSpecError {
         match self {
             Self::Source(error) => error.fmt(f),
             Self::Lex(error) => error.fmt(f),
-            Self::Parse { code, message } => write!(f, "{message} ({})", code.code()),
+            Self::Parse {
+                code,
+                message,
+            } => write!(f, "{message} ({})", code.code()),
         }
     }
 }
@@ -152,7 +155,8 @@ impl From<LexerError> for LangSpecError {
     }
 }
 
-/// Loads `nwscript.nss` through a source resolver and parses the builtin declarations.
+/// Loads `nwscript.nss` through a source resolver and parses the builtin
+/// declarations.
 pub fn load_langspec<R: ScriptResolver + ?Sized>(
     resolver: &R,
     script_name: &str,
@@ -191,13 +195,13 @@ pub fn parse_langspec_from_source_map(
 }
 
 struct LangSpecParser {
-    tokens: Vec<Token>,
-    position: usize,
+    tokens:                Vec<Token>,
+    position:              usize,
     engine_num_structures: usize,
-    engine_structures: Vec<String>,
-    constants: Vec<BuiltinConstant>,
-    functions: Vec<BuiltinFunction>,
-    constant_values: HashMap<String, BuiltinValue>,
+    engine_structures:     Vec<String>,
+    constants:             Vec<BuiltinConstant>,
+    functions:             Vec<BuiltinFunction>,
+    constant_values:       HashMap<String, BuiltinValue>,
 }
 
 impl LangSpecParser {
@@ -224,9 +228,9 @@ impl LangSpecParser {
 
         Ok(LangSpec {
             engine_num_structures: self.engine_num_structures,
-            engine_structures: self.engine_structures,
-            constants: self.constants,
-            functions: self.functions,
+            engine_structures:     self.engine_structures,
+            constants:             self.constants,
+            functions:             self.functions,
         })
     }
 
@@ -284,7 +288,11 @@ impl LangSpecParser {
             let value = self.parse_value_for_type(&ty)?;
             self.expect_kind(TokenKind::Semicolon)?;
             self.constant_values.insert(name.clone(), value.clone());
-            self.constants.push(BuiltinConstant { name, ty, value });
+            self.constants.push(BuiltinConstant {
+                name,
+                ty,
+                value,
+            });
             return Ok(());
         }
 
@@ -311,7 +319,11 @@ impl LangSpecParser {
             } else {
                 None
             };
-            parameters.push(BuiltinParameter { name, ty, default });
+            parameters.push(BuiltinParameter {
+                name,
+                ty,
+                default,
+            });
 
             if self.matches_kind(&TokenKind::Comma) {
                 self.advance();

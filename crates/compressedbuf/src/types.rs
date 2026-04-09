@@ -91,7 +91,7 @@ pub enum AlgorithmHeader {
     /// Zstd payload header version and dictionary marker.
     Zstd {
         /// The stored zstd wrapper version.
-        version: u32,
+        version:    u32,
         /// The stored zstd dictionary marker.
         dictionary: u32,
     },
@@ -105,7 +105,7 @@ impl AlgorithmHeader {
                 version: ZLIB_VERSION,
             },
             Algorithm::Zstd => Self::Zstd {
-                version: ZSTD_VERSION,
+                version:    ZSTD_VERSION,
                 dictionary: 0,
             },
         }
@@ -116,17 +116,17 @@ impl AlgorithmHeader {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompressedBufPayload {
     /// Four-byte magic encoded in the wrapper header.
-    pub magic: u32,
+    pub magic:            u32,
     /// Wrapper header version.
-    pub header_version: u32,
+    pub header_version:   u32,
     /// Compression algorithm.
-    pub algorithm: Algorithm,
+    pub algorithm:        Algorithm,
     /// Algorithm-specific header fields.
     pub algorithm_header: AlgorithmHeader,
     /// Uncompressed payload bytes.
-    pub data: Vec<u8>,
+    pub data:             Vec<u8>,
     /// Original encoded bytes when this payload came from `read_payload_*`.
-    pub original_bytes: Option<Vec<u8>>,
+    pub original_bytes:   Option<Vec<u8>>,
 }
 
 impl CompressedBufPayload {

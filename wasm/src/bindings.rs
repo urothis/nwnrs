@@ -34,8 +34,10 @@ macro_rules! wasm_read_binding {
 
 macro_rules! wasm_write_binding {
     (
-        fn $name:ident($value:ident : JsValue) -> $dto:ty
-        , deserialize_context: $deserialize_context:literal,
+        fn
+        $name:ident($value:ident : JsValue) ->
+        $dto:ty,deserialize_context:
+        $deserialize_context:literal,
         $body:block $(,)?
     ) => {
         #[doc = concat!("Serializes a JavaScript ", stringify!($dto), " value back into raw bytes.")]

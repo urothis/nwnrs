@@ -76,7 +76,7 @@ pub type ResManResult<T> = Result<T, ResManError>;
 /// identity.
 pub struct ResOrigin {
     container: String,
-    label: String,
+    label:     String,
 }
 
 impl ResOrigin {
@@ -84,7 +84,7 @@ impl ResOrigin {
     pub fn new(container: impl Into<String>, label: impl Into<String>) -> Self {
         Self {
             container: container.into(),
-            label: label.into(),
+            label:     label.into(),
         }
     }
 
@@ -116,21 +116,21 @@ pub(crate) enum ResBacking {
 
 pub(crate) struct ResMutableState {
     pub cached: bool,
-    pub cache: Vec<u8>,
-    pub sha1: SecureHash,
+    pub cache:  Vec<u8>,
+    pub sha1:   SecureHash,
 }
 
 pub(crate) struct ResInner {
-    pub mtime: SystemTime,
-    pub io_offset: u64,
-    pub io_size: i64,
-    pub resref: ResRef,
-    pub compression: ExoResFileCompressionType,
+    pub mtime:                    SystemTime,
+    pub io_offset:                u64,
+    pub io_size:                  i64,
+    pub resref:                   ResRef,
+    pub compression:              ExoResFileCompressionType,
     pub compressed_buf_algorithm: Option<Algorithm>,
-    pub uncompressed_size: usize,
-    pub origin: ResOrigin,
-    pub backing: ResBacking,
-    pub state: Mutex<ResMutableState>,
+    pub uncompressed_size:        usize,
+    pub origin:                   ResOrigin,
+    pub backing:                  ResBacking,
+    pub state:                    Mutex<ResMutableState>,
 }
 
 #[derive(Clone)]
@@ -299,7 +299,8 @@ impl Res {
         self.inner.compression
     }
 
-    /// Returns the compressed-buffer algorithm stored in an ERF payload, when known.
+    /// Returns the compressed-buffer algorithm stored in an ERF payload, when
+    /// known.
     pub fn compressed_buf_algorithm(&self) -> Option<Algorithm> {
         self.inner.compressed_buf_algorithm
     }

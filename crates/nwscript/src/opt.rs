@@ -1,9 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
-    BinaryOp, BuiltinValue, HirBlock, HirExpr, HirExprKind, HirFunction, HirIfStmt,
-    HirModule, HirStmt, HirSwitchStmt, LangSpec, Literal, NcsInstruction, NcsOpcode,
-    OptimizationLevel, SemanticType, UnaryOp,
+    BinaryOp, BuiltinValue, HirBlock, HirExpr, HirExprKind, HirFunction, HirIfStmt, HirModule,
+    HirStmt, HirSwitchStmt, LangSpec, Literal, NcsInstruction, NcsOpcode, OptimizationLevel,
+    SemanticType, UnaryOp,
 };
 
 pub(crate) fn optimize_hir(
@@ -104,19 +104,16 @@ fn optimize_block(block: HirBlock, constants: &BTreeMap<String, ConstValue>) -> 
     }
 }
 
-fn optimize_stmt(
-    statement: HirStmt,
-    constants: &BTreeMap<String, ConstValue>,
-) -> Option<HirStmt> {
+fn optimize_stmt(statement: HirStmt, constants: &BTreeMap<String, ConstValue>) -> Option<HirStmt> {
     match statement {
         HirStmt::Block(block) => Some(HirStmt::Block(Box::new(optimize_block(*block, constants)))),
         HirStmt::If(boxed) => {
             let HirIfStmt {
-            span,
-            condition,
-            then_branch,
-            else_branch,
-        } = *boxed;
+                span,
+                condition,
+                then_branch,
+                else_branch,
+            } = *boxed;
             if let Some(ConstValue::Int(value)) = evaluate_const_expr(&condition, constants) {
                 if value != 0 {
                     return optimize_stmt(*then_branch, constants);
@@ -136,26 +133,33 @@ fn optimize_stmt(
             })))
         }
         HirStmt::Switch(boxed) => {
-            let HirSwitchStmt { span, condition, body } = *boxed;
+            let HirSwitchStmt {
+                span,
+                condition,
+                body,
+            } = *boxed;
             Some(HirStmt::Switch(Box::new(HirSwitchStmt {
-            span,
-            condition,
-            body: Box::new(optimize_stmt(*body, constants).unwrap_or(HirStmt::Empty(span))),
+                span,
+                condition,
+                body: Box::new(optimize_stmt(*body, constants).unwrap_or(HirStmt::Empty(span))),
             })))
         }
         HirStmt::While(mut statement) => {
-            statement.body =
-                Box::new(optimize_stmt(*statement.body, constants).unwrap_or(HirStmt::Empty(statement.span)));
+            statement.body = Box::new(
+                optimize_stmt(*statement.body, constants).unwrap_or(HirStmt::Empty(statement.span)),
+            );
             Some(HirStmt::While(statement))
         }
         HirStmt::DoWhile(mut statement) => {
-            statement.body =
-                Box::new(optimize_stmt(*statement.body, constants).unwrap_or(HirStmt::Empty(statement.span)));
+            statement.body = Box::new(
+                optimize_stmt(*statement.body, constants).unwrap_or(HirStmt::Empty(statement.span)),
+            );
             Some(HirStmt::DoWhile(statement))
         }
         HirStmt::For(mut statement) => {
-            statement.body =
-                Box::new(optimize_stmt(*statement.body, constants).unwrap_or(HirStmt::Empty(statement.span)));
+            statement.body = Box::new(
+                optimize_stmt(*statement.body, constants).unwrap_or(HirStmt::Empty(statement.span)),
+            );
             Some(HirStmt::For(statement))
         }
         other => Some(other),
@@ -170,10 +174,11 @@ fn eliminate_dead_functions(hir: &HirModule) -> HirModule {
         .map(|(index, function)| (function.name.clone(), (index, function)))
         .collect::<BTreeMap<_, _>>();
 
-    let entry_name = function_map
-        .get("main")
-        .map(|_| "main")
-        .or_else(|| function_map.get("StartingConditional").map(|_| "StartingConditional"));
+    let entry_name = function_map.get("main").map(|_| "main").or_else(|| {
+        function_map
+            .get("StartingConditional")
+            .map(|_| "StartingConditional")
+    });
 
     let mut visited = BTreeSet::new();
     let mut ordered = Vec::new();
@@ -187,12 +192,7 @@ fn eliminate_dead_functions(hir: &HirModule) -> HirModule {
     }
 
     if let Some(entry_name) = entry_name {
-        visit_function(
-            entry_name,
-            &mut ordered,
-            &mut visited,
-            &function_map,
-        );
+        visit_function(entry_name, &mut ordered, &mut visited, &function_map);
     }
 
     let mut functions = Vec::with_capacity(ordered.len());
@@ -306,7 +306,10 @@ fn collect_user_calls_expr(
 ) {
     match &expr.kind {
         HirExprKind::Literal(_) | HirExprKind::Value(_) => {}
-        HirExprKind::Call { target, arguments } => {
+        HirExprKind::Call {
+            target,
+            arguments,
+        } => {
             for argument in arguments {
                 collect_user_calls_expr(argument, ordered, visited, function_map);
             }
@@ -314,13 +317,21 @@ fn collect_user_calls_expr(
                 visit_function(name, ordered, visited, function_map);
             }
         }
-        HirExprKind::FieldAccess { base, .. } => {
+        HirExprKind::FieldAccess {
+            base, ..
+        } => {
             collect_user_calls_expr(base, ordered, visited, function_map);
         }
-        HirExprKind::Unary { expr, .. } => {
+        HirExprKind::Unary {
+            expr, ..
+        } => {
             collect_user_calls_expr(expr, ordered, visited, function_map);
         }
-        HirExprKind::Binary { left, right, .. } => {
+        HirExprKind::Binary {
+            left,
+            right,
+            ..
+        } => {
             collect_user_calls_expr(left, ordered, visited, function_map);
             collect_user_calls_expr(right, ordered, visited, function_map);
         }
@@ -333,7 +344,11 @@ fn collect_user_calls_expr(
             collect_user_calls_expr(when_true, ordered, visited, function_map);
             collect_user_calls_expr(when_false, ordered, visited, function_map);
         }
-        HirExprKind::Assignment { op, left, right } => {
+        HirExprKind::Assignment {
+            op,
+            left,
+            right,
+        } => {
             if *op != crate::AssignmentOp::Assign {
                 collect_user_calls_expr(left, ordered, visited, function_map);
             }
@@ -379,9 +394,14 @@ pub(crate) fn evaluate_const_expr(
     match &expr.kind {
         HirExprKind::Literal(literal) => const_from_literal(literal),
         HirExprKind::Value(crate::HirValueRef::ConstGlobal(name))
-        | HirExprKind::Value(crate::HirValueRef::BuiltinConstant(name)) => constants.get(name).cloned(),
+        | HirExprKind::Value(crate::HirValueRef::BuiltinConstant(name)) => {
+            constants.get(name).cloned()
+        }
         HirExprKind::Value(_) => None,
-        HirExprKind::Unary { op, expr } => {
+        HirExprKind::Unary {
+            op,
+            expr,
+        } => {
             let value = evaluate_const_expr(expr, constants)?;
             match (op, value) {
                 (UnaryOp::Negate, ConstValue::Int(value)) => Some(ConstValue::Int(-value)),
@@ -393,7 +413,11 @@ pub(crate) fn evaluate_const_expr(
                 _ => None,
             }
         }
-        HirExprKind::Binary { op, left, right } => {
+        HirExprKind::Binary {
+            op,
+            left,
+            right,
+        } => {
             let left = evaluate_const_expr(left, constants)?;
             let right = evaluate_const_expr(right, constants)?;
             match (left, right) {
@@ -418,9 +442,15 @@ pub(crate) fn evaluate_const_expr(
             ConstValue::Int(_) => evaluate_const_expr(when_false, constants),
             _ => None,
         },
-        HirExprKind::Call { .. }
-        | HirExprKind::FieldAccess { .. }
-        | HirExprKind::Assignment { .. } => None,
+        HirExprKind::Call {
+            ..
+        }
+        | HirExprKind::FieldAccess {
+            ..
+        }
+        | HirExprKind::Assignment {
+            ..
+        } => None,
     }
 }
 
@@ -516,36 +546,35 @@ fn assignment_stack_offset(instruction: &NcsInstruction) -> Option<i32> {
 
 #[cfg(test)]
 mod tests {
+    use super::{OptimizationLevel, meld_instructions, optimize_hir};
     use crate::{
         BuiltinConstant, BuiltinFunction, BuiltinParameter, BuiltinType, BuiltinValue, LangSpec,
         NcsAuxCode, NcsInstruction, NcsOpcode, SourceId, compile_hir_to_ncs,
         decode_ncs_instructions, lower_to_hir, parse_text,
     };
 
-    use super::{OptimizationLevel, meld_instructions, optimize_hir};
-
     fn test_langspec() -> LangSpec {
         LangSpec {
             engine_num_structures: 0,
-            engine_structures: vec![],
-            constants: vec![
+            engine_structures:     vec![],
+            constants:             vec![
                 BuiltinConstant {
-                    name: "TRUE".to_string(),
-                    ty: BuiltinType::Int,
+                    name:  "TRUE".to_string(),
+                    ty:    BuiltinType::Int,
                     value: BuiltinValue::Int(1),
                 },
                 BuiltinConstant {
-                    name: "FALSE".to_string(),
-                    ty: BuiltinType::Int,
+                    name:  "FALSE".to_string(),
+                    ty:    BuiltinType::Int,
                     value: BuiltinValue::Int(0),
                 },
             ],
-            functions: vec![BuiltinFunction {
-                name: "GetValue".to_string(),
+            functions:             vec![BuiltinFunction {
+                name:        "GetValue".to_string(),
                 return_type: BuiltinType::Int,
-                parameters: vec![BuiltinParameter {
-                    name: "nValue".to_string(),
-                    ty: BuiltinType::Int,
+                parameters:  vec![BuiltinParameter {
+                    name:    "nValue".to_string(),
+                    ty:      BuiltinType::Int,
                     default: None,
                 }],
             }],
@@ -565,8 +594,8 @@ mod tests {
             Some(&test_langspec()),
         )
         .expect("script should parse");
-        let semantic = crate::analyze_script(&script, Some(&test_langspec()))
-            .expect("script should analyze");
+        let semantic =
+            crate::analyze_script(&script, Some(&test_langspec())).expect("script should analyze");
         let hir = lower_to_hir(&script, &semantic, Some(&test_langspec()))
             .expect("HIR lowering should succeed");
 
@@ -598,8 +627,8 @@ mod tests {
             Some(&test_langspec()),
         )
         .expect("script should parse");
-        let semantic = crate::analyze_script(&script, Some(&test_langspec()))
-            .expect("script should analyze");
+        let semantic =
+            crate::analyze_script(&script, Some(&test_langspec())).expect("script should analyze");
         let hir = lower_to_hir(&script, &semantic, Some(&test_langspec()))
             .expect("HIR lowering should succeed");
 
@@ -625,8 +654,8 @@ mod tests {
             Some(&test_langspec()),
         )
         .expect("script should parse");
-        let semantic = crate::analyze_script(&script, Some(&test_langspec()))
-            .expect("script should analyze");
+        let semantic =
+            crate::analyze_script(&script, Some(&test_langspec())).expect("script should analyze");
         let hir = lower_to_hir(&script, &semantic, Some(&test_langspec()))
             .expect("HIR lowering should succeed");
 
@@ -642,7 +671,8 @@ mod tests {
         .expect("O3 output should decode");
 
         assert!(
-            o0.iter().any(|instruction| instruction.opcode == NcsOpcode::RunstackAdd),
+            o0.iter()
+                .any(|instruction| instruction.opcode == NcsOpcode::RunstackAdd),
             "O0 should preserve the local initializer stack dance",
         );
         assert!(
@@ -658,19 +688,19 @@ mod tests {
     fn meld_instructions_only_rewrites_the_upstream_active_pattern() {
         let instructions = vec![
             NcsInstruction {
-                opcode: NcsOpcode::RunstackAdd,
+                opcode:  NcsOpcode::RunstackAdd,
                 auxcode: NcsAuxCode::TypeInteger,
-                extra: Vec::new(),
+                extra:   Vec::new(),
             },
             NcsInstruction {
-                opcode: NcsOpcode::Constant,
+                opcode:  NcsOpcode::Constant,
                 auxcode: NcsAuxCode::TypeInteger,
-                extra: 3_i32.to_be_bytes().to_vec(),
+                extra:   3_i32.to_be_bytes().to_vec(),
             },
             NcsInstruction {
-                opcode: NcsOpcode::Assignment,
+                opcode:  NcsOpcode::Assignment,
                 auxcode: NcsAuxCode::TypeVoid,
-                extra: {
+                extra:   {
                     let mut bytes = Vec::new();
                     bytes.extend_from_slice(&(-8_i32).to_be_bytes());
                     bytes.extend_from_slice(&(4_u16).to_be_bytes());
@@ -678,9 +708,9 @@ mod tests {
                 },
             },
             NcsInstruction {
-                opcode: NcsOpcode::ModifyStackPointer,
+                opcode:  NcsOpcode::ModifyStackPointer,
                 auxcode: NcsAuxCode::None,
-                extra: (-4_i32).to_be_bytes().to_vec(),
+                extra:   (-4_i32).to_be_bytes().to_vec(),
             },
         ];
 

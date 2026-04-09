@@ -72,8 +72,9 @@ impl fmt::Display for NdbType {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NdbFile {
     /// File name as written in the debug table.
-    pub name: String,
-    /// Whether this file is the root script file (`N`) rather than an include (`n`).
+    pub name:    String,
+    /// Whether this file is the root script file (`N`) rather than an include
+    /// (`n`).
     pub is_root: bool,
 }
 
@@ -83,14 +84,14 @@ pub struct NdbStructField {
     /// Field name.
     pub label: String,
     /// Field type.
-    pub ty: NdbType,
+    pub ty:    NdbType,
 }
 
 /// One struct entry in an `NDB` file.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NdbStruct {
     /// Struct name.
-    pub label: String,
+    pub label:  String,
     /// Declared fields in write order.
     pub fields: Vec<NdbStructField>,
 }
@@ -99,58 +100,58 @@ pub struct NdbStruct {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NdbFunction {
     /// Function name.
-    pub label: String,
+    pub label:        String,
     /// Start byte offset in the emitted `NCS`.
     pub binary_start: u32,
     /// End byte offset in the emitted `NCS`.
-    pub binary_end: u32,
+    pub binary_end:   u32,
     /// Return type abbreviation.
-    pub return_type: NdbType,
+    pub return_type:  NdbType,
     /// Parameter types in declaration order.
-    pub args: Vec<NdbType>,
+    pub args:         Vec<NdbType>,
 }
 
 /// One variable entry in an `NDB` file.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NdbVariable {
     /// Variable name.
-    pub label: String,
+    pub label:        String,
     /// Variable type abbreviation.
-    pub ty: NdbType,
+    pub ty:           NdbType,
     /// Start byte offset in the emitted `NCS`.
     pub binary_start: u32,
     /// End byte offset in the emitted `NCS`.
-    pub binary_end: u32,
+    pub binary_end:   u32,
     /// Stack location as recorded by the compiler.
-    pub stack_loc: u32,
+    pub stack_loc:    u32,
 }
 
 /// One line mapping entry in an `NDB` file.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NdbLine {
     /// File-table index.
-    pub file_num: usize,
+    pub file_num:     usize,
     /// One-based source line number.
-    pub line_num: usize,
+    pub line_num:     usize,
     /// Start byte offset in the emitted `NCS`.
     pub binary_start: u32,
     /// End byte offset in the emitted `NCS`.
-    pub binary_end: u32,
+    pub binary_end:   u32,
 }
 
 /// Parsed contents of an `NDB V1.0` file.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct Ndb {
     /// File table entries.
-    pub files: Vec<NdbFile>,
+    pub files:     Vec<NdbFile>,
     /// Declared structs.
-    pub structs: Vec<NdbStruct>,
+    pub structs:   Vec<NdbStruct>,
     /// Function debug entries.
     pub functions: Vec<NdbFunction>,
     /// Variable debug entries.
     pub variables: Vec<NdbVariable>,
     /// Source line mappings.
-    pub lines: Vec<NdbLine>,
+    pub lines:     Vec<NdbLine>,
 }
 
 /// Errors returned while parsing or writing `NDB V1.0`.
@@ -251,7 +252,7 @@ pub fn read_ndb<R: BufRead>(reader: &mut R) -> Result<Ndb, NdbError> {
                     format!("out-of-order NDB file record index {index} in {trimmed}"),
                 )?;
                 result.files.push(NdbFile {
-                    name: part(1)?.to_string(),
+                    name:    part(1)?.to_string(),
                     is_root: tag.starts_with('N'),
                 });
             }
@@ -261,7 +262,7 @@ pub fn read_ndb<R: BufRead>(reader: &mut R) -> Result<Ndb, NdbError> {
                     format!("invalid NDB struct record: {trimmed}"),
                 )?;
                 result.structs.push(NdbStruct {
-                    label: part(2)?.to_string(),
+                    label:  part(2)?.to_string(),
                     fields: Vec::with_capacity(parse_usize(part(1)?, trimmed)?),
                 });
             }
@@ -275,7 +276,7 @@ pub fn read_ndb<R: BufRead>(reader: &mut R) -> Result<Ndb, NdbError> {
                 })?;
                 structure.fields.push(NdbStructField {
                     label: part(2)?.to_string(),
-                    ty: NdbType::parse(part(1)?),
+                    ty:    NdbType::parse(part(1)?),
                 });
             }
             "f" => {
@@ -284,11 +285,11 @@ pub fn read_ndb<R: BufRead>(reader: &mut R) -> Result<Ndb, NdbError> {
                     format!("invalid NDB function record: {trimmed}"),
                 )?;
                 result.functions.push(NdbFunction {
-                    label: part(5)?.to_string(),
+                    label:        part(5)?.to_string(),
                     binary_start: parse_hex_u32(part(1)?, trimmed)?,
-                    binary_end: parse_hex_u32(part(2)?, trimmed)?,
-                    return_type: NdbType::parse(part(4)?),
-                    args: Vec::with_capacity(parse_usize(part(3)?, trimmed)?),
+                    binary_end:   parse_hex_u32(part(2)?, trimmed)?,
+                    return_type:  NdbType::parse(part(4)?),
+                    args:         Vec::with_capacity(parse_usize(part(3)?, trimmed)?),
                 });
             }
             "fp" => {
@@ -309,11 +310,11 @@ pub fn read_ndb<R: BufRead>(reader: &mut R) -> Result<Ndb, NdbError> {
                     format!("invalid NDB variable record: {trimmed}"),
                 )?;
                 result.variables.push(NdbVariable {
-                    label: part(5)?.to_string(),
-                    ty: NdbType::parse(part(4)?),
+                    label:        part(5)?.to_string(),
+                    ty:           NdbType::parse(part(4)?),
                     binary_start: parse_hex_u32(part(1)?, trimmed)?,
-                    binary_end: parse_hex_u32(part(2)?, trimmed)?,
-                    stack_loc: parse_hex_u32(part(3)?, trimmed)?,
+                    binary_end:   parse_hex_u32(part(2)?, trimmed)?,
+                    stack_loc:    parse_hex_u32(part(3)?, trimmed)?,
                 });
             }
             tag if tag.starts_with('l') => {
@@ -322,10 +323,10 @@ pub fn read_ndb<R: BufRead>(reader: &mut R) -> Result<Ndb, NdbError> {
                     format!("invalid NDB line record: {trimmed}"),
                 )?;
                 result.lines.push(NdbLine {
-                    file_num: parse_usize(&tag[1..], trimmed)?,
-                    line_num: parse_usize(part(1)?, trimmed)?,
+                    file_num:     parse_usize(&tag[1..], trimmed)?,
+                    line_num:     parse_usize(part(1)?, trimmed)?,
                     binary_start: parse_hex_u32(part(2)?, trimmed)?,
-                    binary_end: parse_hex_u32(part(3)?, trimmed)?,
+                    binary_end:   parse_hex_u32(part(3)?, trimmed)?,
                 });
             }
             _ => {
@@ -487,7 +488,10 @@ mod tests {
         );
 
         let parsed = parse_ndb_str(source)?;
-        assert_eq!(parsed.files.first().map(|file| file.name.as_str()), Some("test"));
+        assert_eq!(
+            parsed.files.first().map(|file| file.name.as_str()),
+            Some("test")
+        );
         assert_eq!(parsed.files.first().map(|file| file.is_root), Some(true));
         assert_eq!(
             parsed
@@ -498,11 +502,17 @@ mod tests {
             Some("x")
         );
         assert_eq!(
-            parsed.functions.first().map(|function| function.return_type.clone()),
+            parsed
+                .functions
+                .first()
+                .map(|function| function.return_type.clone()),
             Some(NdbType::EngineStructure(0))
         );
         assert_eq!(
-            parsed.functions.first().map(|function| function.args.clone()),
+            parsed
+                .functions
+                .first()
+                .map(|function| function.args.clone()),
             Some(vec![NdbType::Int, NdbType::Struct(0)])
         );
         assert_eq!(

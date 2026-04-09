@@ -193,8 +193,8 @@ impl ResContainer for Erf {
 
 #[derive(Debug)]
 pub(crate) struct ErfResMeta {
-    pub offset: u64,
-    pub disk_size: usize,
+    pub offset:            u64,
+    pub disk_size:         usize,
     pub uncompressed_size: usize,
-    pub compression: nwnrs_exo::ExoResFileCompressionType,
+    pub compression:       nwnrs_exo::ExoResFileCompressionType,
 }

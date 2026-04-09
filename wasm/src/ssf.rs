@@ -16,9 +16,9 @@ pub struct SsfEntryDto {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub raw_resref: Vec<u8>,
     /// The sound resource reference.
-    pub resref: String,
+    pub resref:     String,
     /// The associated TLK string reference.
-    pub strref: u32,
+    pub strref:     u32,
 }
 
 fn dto_to_ssf(value: &SsfRootDto) -> Result<ssf::SsfRoot, JsValue> {
@@ -29,13 +29,12 @@ fn dto_to_ssf(value: &SsfRootDto) -> Result<ssf::SsfRoot, JsValue> {
         .map(|entry| {
             let mut native = ssf::SsfEntry::new(&entry.resref, entry.strref);
             if !entry.raw_resref.is_empty() {
-                native.raw_resref = <[u8; 16]>::try_from(entry.raw_resref.clone()).map_err(
-                    |error| {
+                native.raw_resref =
+                    <[u8; 16]>::try_from(entry.raw_resref.clone()).map_err(|error| {
                         JsValue::from_str(&format!(
                             "SSF raw_resref must contain exactly 16 bytes: {error:?}"
                         ))
-                    },
-                )?;
+                    })?;
             }
             Ok(native)
         })
@@ -47,7 +46,7 @@ fn dto_to_ssf(value: &SsfRootDto) -> Result<ssf::SsfRoot, JsValue> {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SsfRootDto {
     /// Ordered soundset entries.
-    pub entries: Vec<SsfEntryDto>,
+    pub entries:  Vec<SsfEntryDto>,
     /// Internal provenance metadata for unchanged write-backs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lossless: Option<LosslessDtoMetadata>,
@@ -55,13 +54,13 @@ pub struct SsfRootDto {
 
 fn ssf_to_dto(value: &ssf::SsfRoot) -> SsfRootDto {
     SsfRootDto {
-        entries: value
+        entries:  value
             .entries
             .iter()
             .map(|entry| SsfEntryDto {
                 raw_resref: entry.raw_resref.to_vec(),
-                resref: entry.resref.clone(),
-                strref: entry.strref,
+                resref:     entry.resref.clone(),
+                strref:     entry.strref,
             })
             .collect(),
         lossless: None,
@@ -70,8 +69,8 @@ fn ssf_to_dto(value: &ssf::SsfRoot) -> SsfRootDto {
 
 pub(crate) fn read_ssf_dto(bytes: &[u8]) -> Result<SsfRootDto, JsValue> {
     let mut cursor = Cursor::new(bytes);
-    let value = ssf::read_ssf(&mut cursor)
-        .map_err(|error| js_error("failed to read SSF", error))?;
+    let value =
+        ssf::read_ssf(&mut cursor).map_err(|error| js_error("failed to read SSF", error))?;
     with_lossless_metadata(
         ssf_to_dto(&value),
         bytes.to_vec(),

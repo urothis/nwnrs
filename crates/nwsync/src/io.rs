@@ -94,13 +94,11 @@ pub fn read_manifest<R: Read>(reader: &mut R) -> ManifestResult<Manifest> {
 
         let mapped = manifest
             .entries
-            .get(
-                *primary_positions.get(entry_index).ok_or_else(|| {
-                    ManifestError::msg(format!(
-                        "Mapping {index} references non-existent entry {entry_index}"
-                    ))
-                })?,
-            )
+            .get(*primary_positions.get(entry_index).ok_or_else(|| {
+                ManifestError::msg(format!(
+                    "Mapping {index} references non-existent entry {entry_index}"
+                ))
+            })?)
             .cloned()
             .ok_or_else(|| {
                 ManifestError::msg(format!(
@@ -154,15 +152,15 @@ pub fn write_manifest<W: Write>(writer: &mut W, manifest: &Manifest) -> Manifest
         .enumerate()
         .filter_map(|(index, entry)| match entry.source {
             ManifestEntrySource::Primary => Some(index),
-            ManifestEntrySource::Mapping { .. } => None,
+            ManifestEntrySource::Mapping {
+                ..
+            } => None,
         })
         .collect::<Vec<_>>();
     let primary_ordinals = primary_positions
         .iter()
         .enumerate()
-        .map(|(ordinal, position)| {
-            Ok((*position, to_u32(ordinal, "manifest primary ordinal")?))
-        })
+        .map(|(ordinal, position)| Ok((*position, to_u32(ordinal, "manifest primary ordinal")?)))
         .collect::<ManifestResult<HashMap<_, _>>>()?;
     let mapping_positions = manifest
         .entries
@@ -170,14 +168,22 @@ pub fn write_manifest<W: Write>(writer: &mut W, manifest: &Manifest) -> Manifest
         .enumerate()
         .filter_map(|(index, entry)| match entry.source {
             ManifestEntrySource::Primary => None,
-            ManifestEntrySource::Mapping { .. } => Some(index),
+            ManifestEntrySource::Mapping {
+                ..
+            } => Some(index),
         })
         .collect::<Vec<_>>();
 
     writer.write_all(MAGIC)?;
     write_u32(writer, manifest.version)?;
-    write_u32(writer, to_u32(primary_positions.len(), "manifest primary count")?)?;
-    write_u32(writer, to_u32(mapping_positions.len(), "manifest mapping count")?)?;
+    write_u32(
+        writer,
+        to_u32(primary_positions.len(), "manifest primary count")?,
+    )?;
+    write_u32(
+        writer,
+        to_u32(mapping_positions.len(), "manifest mapping count")?,
+    )?;
 
     for position in &primary_positions {
         let entry = manifest
@@ -195,7 +201,9 @@ pub fn write_manifest<W: Write>(writer: &mut W, manifest: &Manifest) -> Manifest
             .get(*position)
             .ok_or_else(|| ManifestError::msg("mapping entry index out of range"))?;
         let target = match entry.source {
-            ManifestEntrySource::Mapping { target } => target,
+            ManifestEntrySource::Mapping {
+                target,
+            } => target,
             ManifestEntrySource::Primary => {
                 return Err(ManifestError::msg("mapping table contained primary entry"));
             }
@@ -324,18 +332,20 @@ mod tests {
         };
         let mut manifest = Manifest::default();
         manifest.entries.push(ManifestEntry {
-            sha1: secure_hash(b"first"),
-            size: 5,
-            resref: primary_rr.clone(),
+            sha1:       secure_hash(b"first"),
+            size:       5,
+            resref:     primary_rr.clone(),
             raw_resref: *b"HELLO\0\0\0\0\0\0\0\0\0\0\0",
-            source: ManifestEntrySource::Primary,
+            source:     ManifestEntrySource::Primary,
         });
         manifest.entries.push(ManifestEntry {
-            sha1: secure_hash(b"first"),
-            size: 5,
-            resref: mapping_rr,
+            sha1:       secure_hash(b"first"),
+            size:       5,
+            resref:     mapping_rr,
             raw_resref: *b"WORLD\0\0\0\0\0\0\0\0\0\0\0",
-            source: ManifestEntrySource::Mapping { target: 0 },
+            source:     ManifestEntrySource::Mapping {
+                target: 0
+            },
         });
 
         let mut encoded = Vec::new();
@@ -354,7 +364,9 @@ mod tests {
         );
         assert_eq!(
             decoded.entries.get(1).map(|entry| &entry.source),
-            Some(&ManifestEntrySource::Mapping { target: 0 })
+            Some(&ManifestEntrySource::Mapping {
+                target: 0
+            })
         );
 
         let mut edited = decoded.clone();
@@ -373,7 +385,9 @@ mod tests {
         };
         assert_eq!(
             redecoded.entries.get(1).map(|entry| &entry.source),
-            Some(&ManifestEntrySource::Mapping { target: 0 })
+            Some(&ManifestEntrySource::Mapping {
+                target: 0
+            })
         );
         assert_eq!(
             redecoded.entries.first().map(|entry| entry.raw_resref),

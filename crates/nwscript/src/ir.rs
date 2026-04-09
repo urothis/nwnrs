@@ -12,7 +12,7 @@ use crate::{
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct IrModule {
     /// Globals lowered into the IR world.
-    pub globals: Vec<IrGlobal>,
+    pub globals:   Vec<IrGlobal>,
     /// Functions lowered into stack-machine IR.
     pub functions: Vec<IrFunction>,
 }
@@ -23,33 +23,33 @@ pub struct IrGlobal {
     /// Global name.
     pub name: String,
     /// Global type.
-    pub ty: SemanticType,
+    pub ty:   SemanticType,
 }
 
 /// One lowered function.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct IrFunction {
     /// Function name.
-    pub name: String,
+    pub name:        String,
     /// Return type.
     pub return_type: SemanticType,
     /// Parameter types in declaration order.
-    pub parameters: Vec<SemanticType>,
+    pub parameters:  Vec<SemanticType>,
     /// Local types by slot.
-    pub locals: Vec<SemanticType>,
+    pub locals:      Vec<SemanticType>,
     /// Basic blocks in layout order.
-    pub blocks: Vec<IrBlock>,
+    pub blocks:      Vec<IrBlock>,
 }
 
 /// One basic block.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct IrBlock {
     /// Block id.
-    pub id: IrBlockId,
+    pub id:           IrBlockId,
     /// Non-terminator instructions.
     pub instructions: Vec<IrInstruction>,
     /// Block terminator.
-    pub terminator: IrTerminator,
+    pub terminator:   IrTerminator,
 }
 
 /// One block id.
@@ -76,14 +76,14 @@ pub enum IrInstruction {
     /// Materialize one literal.
     Const {
         /// Destination value.
-        dst: IrValueId,
+        dst:     IrValueId,
         /// Literal payload.
         literal: Literal,
     },
     /// Load one local.
     LoadLocal {
         /// Destination value.
-        dst: IrValueId,
+        dst:   IrValueId,
         /// Local slot.
         local: IrLocalId,
     },
@@ -97,70 +97,70 @@ pub enum IrInstruction {
     /// Load one global.
     LoadGlobal {
         /// Destination value.
-        dst: IrValueId,
+        dst:  IrValueId,
         /// Global name.
         name: String,
     },
     /// Store one global.
     StoreGlobal {
         /// Global name.
-        name: String,
+        name:  String,
         /// Stored value.
         value: IrValueId,
     },
     /// Apply one unary operator.
     Unary {
         /// Destination value.
-        dst: IrValueId,
+        dst:     IrValueId,
         /// Operator.
-        op: UnaryOp,
+        op:      UnaryOp,
         /// Operand.
         operand: IrValueId,
     },
     /// Apply one binary operator.
     Binary {
         /// Destination value.
-        dst: IrValueId,
+        dst:   IrValueId,
         /// Operator.
-        op: BinaryOp,
+        op:    BinaryOp,
         /// Left operand.
-        left: IrValueId,
+        left:  IrValueId,
         /// Right operand.
         right: IrValueId,
     },
     /// Apply one assignment operator in-place.
     Assignment {
         /// Destination value.
-        dst: IrValueId,
+        dst:   IrValueId,
         /// Operator.
-        op: AssignmentOp,
+        op:    AssignmentOp,
         /// Left operand.
-        left: IrValueId,
+        left:  IrValueId,
         /// Right operand.
         right: IrValueId,
     },
     /// Call one function or builtin by name.
     Call {
         /// Optional return destination.
-        dst: Option<IrValueId>,
+        dst:       Option<IrValueId>,
         /// Function name.
-        function: String,
+        function:  String,
         /// Argument values.
         arguments: Vec<IrValueId>,
     },
     /// Load one structure field.
     FieldLoad {
         /// Destination value.
-        dst: IrValueId,
+        dst:   IrValueId,
         /// Base value.
-        base: IrValueId,
+        base:  IrValueId,
         /// Field name.
         field: String,
     },
     /// Store one structure field.
     FieldStore {
         /// Base value.
-        base: IrValueId,
+        base:  IrValueId,
         /// Field name.
         field: String,
         /// Stored value.
@@ -178,7 +178,7 @@ pub enum IrTerminator {
     /// Conditional branch.
     Branch {
         /// Condition value.
-        condition: IrValueId,
+        condition:  IrValueId,
         /// True target.
         then_block: IrBlockId,
         /// False target.
@@ -189,9 +189,9 @@ pub enum IrTerminator {
         /// Condition value.
         condition: IrValueId,
         /// Cases in source order.
-        cases: Vec<(i32, IrBlockId)>,
+        cases:     Vec<(i32, IrBlockId)>,
         /// Default target.
-        default: IrBlockId,
+        default:   IrBlockId,
     },
     /// Unreachable control flow.
     Unreachable,
@@ -201,7 +201,7 @@ pub enum IrTerminator {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IrLowerError {
     /// Optional source span tied to the failure.
-    pub span: Option<crate::Span>,
+    pub span:    Option<crate::Span>,
     /// Human-readable error text.
     pub message: String,
 }
@@ -232,9 +232,9 @@ pub fn lower_hir_to_ir(
 }
 
 struct IrLowerer<'a> {
-    hir: &'a HirModule,
+    hir:               &'a HirModule,
     builtin_constants: BTreeMap<String, Literal>,
-    functions: BTreeMap<String, &'a HirFunction>,
+    functions:         BTreeMap<String, &'a HirFunction>,
 }
 
 impl<'a> IrLowerer<'a> {
@@ -266,7 +266,7 @@ impl<'a> IrLowerer<'a> {
             .iter()
             .map(|global| IrGlobal {
                 name: global.name.clone(),
-                ty: global.ty.clone(),
+                ty:   global.ty.clone(),
             })
             .collect();
         let mut functions = Vec::new();
@@ -276,22 +276,25 @@ impl<'a> IrLowerer<'a> {
             }
             functions.push(FunctionLowerer::new(&self, function).lower()?);
         }
-        Ok(IrModule { globals, functions })
+        Ok(IrModule {
+            globals,
+            functions,
+        })
     }
 }
 
 struct BlockBuilder {
-    id: IrBlockId,
+    id:           IrBlockId,
     instructions: Vec<IrInstruction>,
-    terminator: Option<IrTerminator>,
+    terminator:   Option<IrTerminator>,
 }
 
 struct FunctionLowerer<'a, 'b> {
-    lowerer: &'b IrLowerer<'a>,
-    function: &'a HirFunction,
-    blocks: Vec<BlockBuilder>,
-    next_value: u32,
-    break_targets: Vec<IrBlockId>,
+    lowerer:          &'b IrLowerer<'a>,
+    function:         &'a HirFunction,
+    blocks:           Vec<BlockBuilder>,
+    next_value:       u32,
+    break_targets:    Vec<IrBlockId>,
     continue_targets: Vec<IrBlockId>,
 }
 
@@ -322,27 +325,27 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
         }
 
         Ok(IrFunction {
-            name: self.function.name.clone(),
+            name:        self.function.name.clone(),
             return_type: self.function.return_type.clone(),
-            parameters: self
+            parameters:  self
                 .function
                 .parameters
                 .iter()
                 .map(|parameter| parameter.ty.clone())
                 .collect(),
-            locals: self
+            locals:      self
                 .function
                 .locals
                 .iter()
                 .map(|local| local.ty.clone())
                 .collect(),
-            blocks: self
+            blocks:      self
                 .blocks
                 .into_iter()
                 .map(|block| IrBlock {
-                    id: block.id,
+                    id:           block.id,
                     instructions: block.instructions,
-                    terminator: block.terminator.unwrap_or(IrTerminator::Unreachable),
+                    terminator:   block.terminator.unwrap_or(IrTerminator::Unreachable),
                 })
                 .collect(),
         })
@@ -413,9 +416,12 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
             HirStmt::Declare(statement) => {
                 for declarator in &statement.declarators {
                     if let Some(initializer) = &declarator.initializer {
-                        let value = self
-                            .lower_expr(initializer, current)?
-                            .ok_or_else(|| IrLowerError::new(Some(initializer.span), "void initializer is not supported in IR"))?;
+                        let value = self.lower_expr(initializer, current)?.ok_or_else(|| {
+                            IrLowerError::new(
+                                Some(initializer.span),
+                                "void initializer is not supported in IR",
+                            )
+                        })?;
                         self.push_instruction(
                             current,
                             IrInstruction::StoreLocal {
@@ -458,9 +464,10 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
                 Ok(None)
             }
             HirStmt::Continue(span) => {
-                let target = self.continue_targets.last().copied().ok_or_else(|| {
-                    IrLowerError::new(Some(*span), "continue used outside loop")
-                })?;
+                let target =
+                    self.continue_targets.last().copied().ok_or_else(|| {
+                        IrLowerError::new(Some(*span), "continue used outside loop")
+                    })?;
                 self.set_terminator(current, IrTerminator::Jump(target))?;
                 Ok(None)
             }
@@ -475,7 +482,12 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
     ) -> Result<Option<IrBlockId>, IrLowerError> {
         let condition = self
             .lower_expr(&statement.condition, current)?
-            .ok_or_else(|| IrLowerError::new(Some(statement.condition.span), "if condition must produce a value"))?;
+            .ok_or_else(|| {
+                IrLowerError::new(
+                    Some(statement.condition.span),
+                    "if condition must produce a value",
+                )
+            })?;
         let then_block = self.new_block();
         let else_block = self.new_block();
         self.set_terminator(
@@ -520,7 +532,12 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
 
         let condition = self
             .lower_expr(&statement.condition, cond_block)?
-            .ok_or_else(|| IrLowerError::new(Some(statement.condition.span), "while condition must produce a value"))?;
+            .ok_or_else(|| {
+                IrLowerError::new(
+                    Some(statement.condition.span),
+                    "while condition must produce a value",
+                )
+            })?;
         self.set_terminator(
             cond_block,
             IrTerminator::Branch {
@@ -563,7 +580,12 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
 
         let condition = self
             .lower_expr(&statement.condition, cond_block)?
-            .ok_or_else(|| IrLowerError::new(Some(statement.condition.span), "do/while condition must produce a value"))?;
+            .ok_or_else(|| {
+                IrLowerError::new(
+                    Some(statement.condition.span),
+                    "do/while condition must produce a value",
+                )
+            })?;
         self.set_terminator(
             cond_block,
             IrTerminator::Branch {
@@ -594,7 +616,12 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
         if let Some(condition_expr) = &statement.condition {
             let condition = self
                 .lower_expr(condition_expr, cond_block)?
-                .ok_or_else(|| IrLowerError::new(Some(condition_expr.span), "for condition must produce a value"))?;
+                .ok_or_else(|| {
+                    IrLowerError::new(
+                        Some(condition_expr.span),
+                        "for condition must produce a value",
+                    )
+                })?;
             self.set_terminator(
                 cond_block,
                 IrTerminator::Branch {
@@ -637,7 +664,12 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
         };
         let condition = self
             .lower_expr(&statement.condition, current)?
-            .ok_or_else(|| IrLowerError::new(Some(statement.condition.span), "switch condition must produce a value"))?;
+            .ok_or_else(|| {
+                IrLowerError::new(
+                    Some(statement.condition.span),
+                    "switch condition must produce a value",
+                )
+            })?;
         let end_block = self.new_block();
 
         let mut case_targets = Vec::new();
@@ -764,7 +796,10 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
                 )?;
                 Ok(Some(dst))
             }
-            HirExprKind::Call { target, arguments } => {
+            HirExprKind::Call {
+                target,
+                arguments,
+            } => {
                 let function_name = match target {
                     HirCallTarget::Builtin(name) | HirCallTarget::Function(name) => name.clone(),
                 };
@@ -839,9 +874,15 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
                 )?;
                 Ok(dst)
             }
-            HirExprKind::FieldAccess { base, field } => {
+            HirExprKind::FieldAccess {
+                base,
+                field,
+            } => {
                 let base = self.lower_expr(base, block)?.ok_or_else(|| {
-                    IrLowerError::new(Some(expr.span), "field access requires a value-producing base")
+                    IrLowerError::new(
+                        Some(expr.span),
+                        "field access requires a value-producing base",
+                    )
                 })?;
                 let dst = self.new_value();
                 self.push_instruction(
@@ -854,7 +895,10 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
                 )?;
                 Ok(Some(dst))
             }
-            HirExprKind::Unary { op, expr: inner } => match op {
+            HirExprKind::Unary {
+                op,
+                expr: inner,
+            } => match op {
                 UnaryOp::PreIncrement
                 | UnaryOp::PreDecrement
                 | UnaryOp::PostIncrement
@@ -866,7 +910,7 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
                     self.push_instruction(
                         block,
                         IrInstruction::Const {
-                            dst: one,
+                            dst:     one,
                             literal: Literal::Integer(1),
                         },
                     )?;
@@ -874,24 +918,26 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
                     self.push_instruction(
                         block,
                         IrInstruction::Binary {
-                            dst: next,
-                            op: match op {
+                            dst:   next,
+                            op:    match op {
                                 UnaryOp::PreIncrement | UnaryOp::PostIncrement => BinaryOp::Add,
                                 UnaryOp::PreDecrement | UnaryOp::PostDecrement => {
                                     BinaryOp::Subtract
                                 }
                                 _ => unreachable!(),
                             },
-                            left: old,
+                            left:  old,
                             right: one,
                         },
                     )?;
                     self.lower_store_target(inner, block, next)?;
-                    Ok(Some(if matches!(op, UnaryOp::PostIncrement | UnaryOp::PostDecrement) {
-                        old
-                    } else {
-                        next
-                    }))
+                    Ok(Some(
+                        if matches!(op, UnaryOp::PostIncrement | UnaryOp::PostDecrement) {
+                            old
+                        } else {
+                            next
+                        },
+                    ))
                 }
                 _ => {
                     let operand = self.lower_expr(inner, block)?.ok_or_else(|| {
@@ -909,7 +955,11 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
                     Ok(Some(dst))
                 }
             },
-            HirExprKind::Binary { op, left, right } => {
+            HirExprKind::Binary {
+                op,
+                left,
+                right,
+            } => {
                 let left = self.lower_expr(left, block)?.ok_or_else(|| {
                     IrLowerError::new(Some(left.span), "left operand must produce a value")
                 })?;
@@ -928,11 +978,17 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
                 )?;
                 Ok(Some(dst))
             }
-            HirExprKind::Conditional { .. } => Err(IrLowerError::new(
+            HirExprKind::Conditional {
+                ..
+            } => Err(IrLowerError::new(
                 Some(expr.span),
                 "conditional expressions are not lowered into IR yet",
             )),
-            HirExprKind::Assignment { op, left, right } => {
+            HirExprKind::Assignment {
+                op,
+                left,
+                right,
+            } => {
                 if *op == AssignmentOp::Assign {
                     let value = self.lower_expr(right, block)?.ok_or_else(|| {
                         IrLowerError::new(Some(right.span), "assignment requires a value")
@@ -1002,7 +1058,10 @@ fn evaluate_case_value(
         HirExprKind::Literal(Literal::String(value)) => Ok(nwscript_string_hash(value)),
         HirExprKind::Value(crate::HirValueRef::BuiltinConstant(name)) => {
             let literal = builtin_constants.get(name).ok_or_else(|| {
-                IrLowerError::new(Some(expr.span), format!("unknown builtin constant {:?}", name))
+                IrLowerError::new(
+                    Some(expr.span),
+                    format!("unknown builtin constant {:?}", name),
+                )
             })?;
             match literal {
                 Literal::Integer(value) => Ok(*value),
@@ -1036,37 +1095,36 @@ fn literal_from_builtin_value(value: &BuiltinValue) -> Option<Literal> {
 
 #[cfg(test)]
 mod tests {
+    use super::{IrInstruction, IrTerminator, lower_hir_to_ir};
     use crate::{
         BuiltinConstant, BuiltinFunction, BuiltinType, BuiltinValue, LangSpec, SourceId,
         analyze_script, lower_to_hir, parse_text,
     };
 
-    use super::{IrInstruction, IrTerminator, lower_hir_to_ir};
-
     fn test_langspec() -> LangSpec {
         LangSpec {
             engine_num_structures: 3,
-            engine_structures: vec![
+            engine_structures:     vec![
                 "effect".to_string(),
                 "location".to_string(),
                 "json".to_string(),
             ],
-            constants: vec![
+            constants:             vec![
                 BuiltinConstant {
-                    name: "TRUE".to_string(),
-                    ty: BuiltinType::Int,
+                    name:  "TRUE".to_string(),
+                    ty:    BuiltinType::Int,
                     value: BuiltinValue::Int(1),
                 },
                 BuiltinConstant {
-                    name: "FALSE".to_string(),
-                    ty: BuiltinType::Int,
+                    name:  "FALSE".to_string(),
+                    ty:    BuiltinType::Int,
                     value: BuiltinValue::Int(0),
                 },
             ],
-            functions: vec![BuiltinFunction {
-                name: "GetCurrentHitPoints".to_string(),
+            functions:             vec![BuiltinFunction {
+                name:        "GetCurrentHitPoints".to_string(),
                 return_type: BuiltinType::Int,
-                parameters: vec![],
+                parameters:  vec![],
             }],
         }
     }
@@ -1105,10 +1163,12 @@ mod tests {
                 matches!(instruction, IrInstruction::Call { function, .. } if function == "GetCurrentHitPoints")
             })
         }));
-        assert!(function
-            .blocks
-            .iter()
-            .any(|block| matches!(block.terminator, IrTerminator::Branch { .. })));
+        assert!(
+            function
+                .blocks
+                .iter()
+                .any(|block| matches!(block.terminator, IrTerminator::Branch { .. }))
+        );
     }
 
     #[test]
