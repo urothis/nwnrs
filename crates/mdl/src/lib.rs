@@ -1,0 +1,46 @@
+#![forbid(unsafe_code)]
+//! Reader and writer helpers for Neverwinter Nights model (`MDL`) payloads.
+//!
+//! This crate currently treats models as raw byte payloads while providing a
+//! first-class API surface for resource-manager integration, source-style text
+//! access, and syntax-faithful ASCII model parsing when the caller wants to
+//! inspect geometry and animation data structurally.
+
+mod ascii;
+mod io;
+mod resolve;
+mod scene;
+mod semantic;
+mod types;
+
+pub use ascii::*;
+pub use io::*;
+pub use resolve::*;
+pub use scene::*;
+pub use semantic::*;
+pub use types::*;
+
+/// Common imports for consumers of this crate.
+pub mod prelude {
+    pub use crate::{
+        AnimationEvent, AsciiAnimation, AsciiBodyItem, AsciiElement, AsciiModel, AsciiNode,
+        AsciiPayloadKind, AsciiStatement, MODEL_RES_TYPE, Model, ModelClassification,
+        ModelDiagnostic, ModelDiagnosticKind, ModelError, ModelResult, NodeKind, NwnAnimMeshTrack,
+        NwnAnimation, NwnCoordinateSystem, NwnEmitter, NwnEmitterProperty, NwnFace, NwnLight,
+        NwnMaterial, NwnMaterialTrack, NwnMesh, NwnNodeAnimationTrack, NwnPrimitive,
+        NwnPropertyValue, NwnReference, NwnScene, NwnSceneNode, NwnSkinWeight, NwnTextureRef,
+        NwnTextureSlot, NwnTransform, NwnTransformTrack, NwnUvSet, NwnVec2Sample, NwnVec3Sample,
+        ResolvedMaterialTextures, ResolvedTexture, ScalarKey, SemanticAnimation,
+        SemanticAnimationNode, SemanticEmitter, SemanticEmitterProperty, SemanticFace,
+        SemanticHeader, SemanticLight, SemanticMaterial, SemanticMesh, SemanticModel, SemanticNode,
+        SemanticPropertyValue, SemanticReference, SemanticSkinWeight, SemanticTextureBinding,
+        SemanticUvLayer, TextureResolverOptions, TextureResourceKind, UnresolvedTexture, Vec3Key,
+        Vec4Key, lower_ascii_model, lower_semantic_model_to_scene, parse_ascii_model,
+        parse_scene_model, parse_semantic_model, read_ascii_model, read_ascii_model_from_file,
+        read_ascii_model_from_res, read_model, read_model_from_file, read_model_from_res,
+        read_scene_model, read_scene_model_from_file, read_scene_model_from_res,
+        read_semantic_model, read_semantic_model_from_file, read_semantic_model_from_res,
+        resolve_material_textures, resolve_scene_textures, resolve_texture_ref, write_ascii_model,
+        write_model,
+    };
+}

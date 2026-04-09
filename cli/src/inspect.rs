@@ -33,7 +33,7 @@ pub(crate) fn run_inspect(path: &Path) -> Result<(), String> {
         }
         Some(Kind::Model) => {
             debug!("detected MDL input");
-            let model = model::read_model_from_file(path)
+            let model = mdl::read_model_from_file(path)
                 .map_err(|error| format!("failed to parse {} as MDL: {error}", path.display()))?;
             write_stdout_line(&format!("{model:#?}"))
         }

@@ -139,7 +139,7 @@ impl PltLayer {
 /// One typed PLT pixel entry.
 pub struct PltPixel {
     /// Per-pixel value byte from the file.
-    pub value: u8,
+    pub value:    u8,
     /// Layer id byte for the pixel.
     pub layer_id: u8,
 }
@@ -155,22 +155,22 @@ impl PltPixel {
 /// Parsed PLT texture payload.
 pub struct PltTexture {
     /// Four-byte file type tag, typically `PLT `.
-    pub file_type: [u8; 4],
+    pub file_type:     [u8; 4],
     /// Four-byte version tag, typically `V1  `.
-    pub file_version: [u8; 4],
+    pub file_version:  [u8; 4],
     /// First unused four-byte header field.
-    pub unused1: [u8; 4],
+    pub unused1:       [u8; 4],
     /// Second unused four-byte header field.
-    pub unused2: [u8; 4],
+    pub unused2:       [u8; 4],
     /// Image width in pixels.
-    pub width: u32,
+    pub width:         u32,
     /// Image height in pixels.
-    pub height: u32,
+    pub height:        u32,
     /// One typed entry per pixel.
     ///
     /// `value` corresponds to the VB source's luminance/value byte.
     /// `layer_id` selects the material layer for that pixel.
-    pub pixels: Vec<PltPixel>,
+    pub pixels:        Vec<PltPixel>,
     /// Bytes stored after the pixel payload, if any.
     pub trailing_data: Vec<u8>,
 }
@@ -198,7 +198,11 @@ impl PltTexture {
         }
         let index = usize::try_from(y)
             .ok()
-            .and_then(|row| usize::try_from(self.width).ok().and_then(|stride| row.checked_mul(stride)))
+            .and_then(|row| {
+                usize::try_from(self.width)
+                    .ok()
+                    .and_then(|stride| row.checked_mul(stride))
+            })
             .and_then(|row| usize::try_from(x).ok().and_then(|col| row.checked_add(col)))
             .ok_or_else(|| PltError::msg("PLT pixel index overflow"))?;
         self.pixels
@@ -327,7 +331,10 @@ fn parse_plt_bytes(bytes: &[u8]) -> PltResult<PltTexture> {
     for entry in payload.chunks_exact(2) {
         let [value, layer_id] = <[u8; 2]>::try_from(entry)
             .map_err(|_error| PltError::msg("PLT pixel entry length mismatch"))?;
-        pixels.push(PltPixel { value, layer_id });
+        pixels.push(PltPixel {
+            value,
+            layer_id,
+        });
     }
 
     let trailing_data = bytes
@@ -410,8 +417,8 @@ mod tests {
         assert_eq!(
             plt.pixels.first(),
             Some(&PltPixel {
-                value: 71,
-                layer_id: 5
+                value:    71,
+                layer_id: 5,
             })
         );
         assert_eq!(
@@ -442,27 +449,27 @@ mod tests {
     #[test]
     fn manual_plt_roundtrips_through_read_and_write() {
         let original = PltTexture {
-            file_type: *b"PLT ",
-            file_version: *b"V1  ",
-            unused1: [10, 0, 0, 0],
-            unused2: [0, 0, 0, 0],
-            width: 2,
-            height: 2,
-            pixels: vec![
+            file_type:     *b"PLT ",
+            file_version:  *b"V1  ",
+            unused1:       [10, 0, 0, 0],
+            unused2:       [0, 0, 0, 0],
+            width:         2,
+            height:        2,
+            pixels:        vec![
                 PltPixel {
-                    value: 1,
+                    value:    1,
                     layer_id: 3,
                 },
                 PltPixel {
-                    value: 2,
+                    value:    2,
                     layer_id: 5,
                 },
                 PltPixel {
-                    value: 3,
+                    value:    3,
                     layer_id: 5,
                 },
                 PltPixel {
-                    value: 4,
+                    value:    4,
                     layer_id: 3,
                 },
             ],

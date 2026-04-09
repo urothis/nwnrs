@@ -916,7 +916,7 @@ dependencies = [
  "nwnrs-key",
  "nwnrs-lru",
  "nwnrs-masterlist",
- "nwnrs-model",
+ "nwnrs-mdl",
  "nwnrs-nwscript",
  "nwnrs-nwsync",
  "nwnrs-plt",
@@ -1071,10 +1071,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "nwnrs-model"
+name = "nwnrs-mdl"
 version = "0.1.0"
 dependencies = [
  "nwnrs-resman",
+ "nwnrs-resmemfile",
+ "nwnrs-resref",
  "nwnrs-restype",
  "tracing",
 ]

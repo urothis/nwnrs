@@ -35,8 +35,8 @@ pub(crate) fn run_unpack(cmd: UnpackCmd) -> Result<(), String> {
     match detect_kind(&cmd.input) {
         Some(Kind::Erf) => unpack_erf_to_dir(&cmd.input, &cmd.directory, cmd.force),
         Some(Kind::Key) => run_key_unpack(KeyUnpackCmd {
-            force: cmd.force,
-            key: cmd.input,
+            force:       cmd.force,
+            key:         cmd.input,
             destination: cmd.directory,
         }),
         Some(Kind::Gff) => unpack_resource_to_dir(&cmd.input, &cmd.directory, "gff", cmd.force),
@@ -235,8 +235,8 @@ mod tests {
 
         run_unpack(UnpackCmd {
             directory: directory.clone(),
-            force: false,
-            input: source.clone(),
+            force:     false,
+            input:     source.clone(),
         })
         .expect("unpack gff resource");
 
@@ -259,8 +259,8 @@ mod tests {
 
         run_unpack(UnpackCmd {
             directory: directory.clone(),
-            force: false,
-            input: source.clone(),
+            force:     false,
+            input:     source.clone(),
         })
         .expect("unpack twoda resource");
 

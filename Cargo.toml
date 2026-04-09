@@ -24,7 +24,7 @@ nwnrs-gff = { path = "crates/gff" }
 nwnrs-key = { path = "crates/key" }
 nwnrs-lru = { path = "crates/lru" }
 nwnrs-masterlist = { path = "crates/masterlist" }
-nwnrs-model = { path = "crates/model" }
+nwnrs-mdl = { path = "crates/mdl" }
 nwnrs-nwscript = { path = "crates/nwscript" }
 nwnrs-nwsync = { path = "crates/nwsync" }
 nwnrs-plt = { path = "crates/plt" }

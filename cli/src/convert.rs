@@ -1,22 +1,15 @@
-use std::{
-    ffi::OsStr,
-    fs::File,
-    path::Path,
-};
+use std::{ffi::OsStr, fs::File, path::Path};
 
 use image::{DynamicImage, ImageFormat, RgbaImage};
 use nwnrs::prelude::*;
 use tracing::info;
 
-use crate::{
-    args::ConvertCmd,
-    util::ensure_output_file_ready,
-};
+use crate::{args::ConvertCmd, util::ensure_output_file_ready};
 
 struct DecodedImage {
-    width: u32,
+    width:  u32,
     height: u32,
-    rgba: Vec<u8>,
+    rgba:   Vec<u8>,
 }
 
 pub(crate) fn run_convert(cmd: ConvertCmd) -> Result<(), String> {
@@ -30,10 +23,7 @@ pub(crate) fn run_convert(cmd: ConvertCmd) -> Result<(), String> {
         "tga" => write_output_tga(&cmd.output, &decoded)?,
         "webp" => write_output_webp(&cmd.output, &decoded)?,
         other => {
-            return Err(format!(
-                "unsupported convert output format: {}",
-                other
-            ));
+            return Err(format!("unsupported convert output format: {}", other));
         }
     }
 
@@ -72,32 +62,44 @@ fn read_input_image(path: &Path) -> Result<DecodedImage, String> {
                 .map_err(|error| format!("failed to read {}: {error}", path.display()))?
                 .to_rgba8();
             Ok(DecodedImage {
-                width: image.width(),
+                width:  image.width(),
                 height: image.height(),
-                rgba: image.into_raw(),
+                rgba:   image.into_raw(),
             })
         }
     }
 }
 
-fn write_output_dds(path: &Path, decoded: &DecodedImage, format: dds::DdsFormat) -> Result<(), String> {
+fn write_output_dds(
+    path: &Path,
+    decoded: &DecodedImage,
+    format: dds::DdsFormat,
+) -> Result<(), String> {
     let dds = dds::DdsTexture::encode_rgba8(decoded.width, decoded.height, format, &decoded.rgba)
         .map_err(|error| format!("failed to encode dds for {}: {error}", path.display()))?;
-    let mut file =
-        File::create(path).map_err(|error| format!("failed to create {}: {error}", path.display()))?;
+    let mut file = File::create(path)
+        .map_err(|error| format!("failed to create {}: {error}", path.display()))?;
     dds::write_dds(&mut file, &dds)
         .map_err(|error| format!("failed to write {}: {error}", path.display()))
 }
 
 fn write_output_tga(path: &Path, decoded: &DecodedImage) -> Result<(), String> {
-    let width = u16::try_from(decoded.width)
-        .map_err(|error| format!("image width does not fit TGA limits for {}: {error}", path.display()))?;
-    let height = u16::try_from(decoded.height)
-        .map_err(|error| format!("image height does not fit TGA limits for {}: {error}", path.display()))?;
+    let width = u16::try_from(decoded.width).map_err(|error| {
+        format!(
+            "image width does not fit TGA limits for {}: {error}",
+            path.display()
+        )
+    })?;
+    let height = u16::try_from(decoded.height).map_err(|error| {
+        format!(
+            "image height does not fit TGA limits for {}: {error}",
+            path.display()
+        )
+    })?;
     let tga = tga::TgaTexture::encode_rgba8(width, height, &decoded.rgba)
         .map_err(|error| format!("failed to encode tga for {}: {error}", path.display()))?;
-    let mut file =
-        File::create(path).map_err(|error| format!("failed to create {}: {error}", path.display()))?;
+    let mut file = File::create(path)
+        .map_err(|error| format!("failed to create {}: {error}", path.display()))?;
     tga::write_tga(&mut file, &tga)
         .map_err(|error| format!("failed to write {}: {error}", path.display()))
 }
@@ -106,8 +108,8 @@ fn write_output_webp(path: &Path, decoded: &DecodedImage) -> Result<(), String> 
     let image = RgbaImage::from_raw(decoded.width, decoded.height, decoded.rgba.clone())
         .ok_or_else(|| "decoded image buffer length does not match dimensions".to_string())?;
     let dynamic = DynamicImage::ImageRgba8(image);
-    let mut file =
-        File::create(path).map_err(|error| format!("failed to create {}: {error}", path.display()))?;
+    let mut file = File::create(path)
+        .map_err(|error| format!("failed to create {}: {error}", path.display()))?;
     dynamic
         .write_to(&mut file, ImageFormat::WebP)
         .map_err(|error| format!("failed to write {}: {error}", path.display()))
@@ -143,14 +145,6 @@ mod tests {
     use super::run_convert;
     use crate::args::ConvertCmd;
 
-    fn fixture_tga_path() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../amp01_g06.tga")
-    }
-
-    fn fixture_dds_path() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../ashlw_066.dds")
-    }
-
     fn unique_test_dir(label: &str) -> PathBuf {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -166,10 +160,7 @@ mod tests {
             2,
             2,
             vec![
-                255, 0, 0, 255,
-                0, 255, 0, 255,
-                0, 0, 255, 255,
-                255, 255, 0, 255,
+                255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 0, 255,
             ],
         )
         .expect("construct png fixture");
@@ -179,31 +170,43 @@ mod tests {
     }
 
     fn write_jpeg_fixture(path: &Path) {
-        let image = RgbImage::from_raw(
-            2,
-            2,
-            vec![
-                255, 0, 0,
-                0, 255, 0,
-                0, 0, 255,
-                255, 255, 0,
-            ],
-        )
-        .expect("construct jpeg fixture");
+        let image = RgbImage::from_raw(2, 2, vec![255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 0])
+            .expect("construct jpeg fixture");
         DynamicImage::ImageRgb8(image)
             .save_with_format(path, ImageFormat::Jpeg)
             .expect("write jpeg fixture");
     }
 
+    fn write_tga_fixture(path: &Path) {
+        let tga = tga::TgaTexture::encode_rgba8(16, 16, &vec![255; 16_usize * 16 * 4])
+            .expect("encode tga fixture");
+        let mut file = fs::File::create(path).expect("create tga fixture");
+        tga::write_tga(&mut file, &tga).expect("write tga fixture");
+    }
+
+    fn write_dds_fixture(path: &Path) {
+        let dds = dds::DdsTexture::encode_rgba8(
+            16,
+            16,
+            dds::DdsFormat::Dxt5,
+            &vec![255; 16_usize * 16 * 4],
+        )
+        .expect("encode dds fixture");
+        let mut file = fs::File::create(path).expect("create dds fixture");
+        dds::write_dds(&mut file, &dds).expect("write dds fixture");
+    }
+
     #[test]
     fn convert_supports_tga_to_dds() {
         let temp_dir = unique_test_dir("convert-tga-to-dds");
+        let input = temp_dir.join("amp01_g06.tga");
         let output = temp_dir.join("amp01_g06.dds");
+        write_tga_fixture(&input);
 
         run_convert(ConvertCmd {
             force: true,
             dds_format: String::from("dxt5"),
-            input: fixture_tga_path(),
+            input,
             output: output.clone(),
         })
         .expect("convert tga to dds");
@@ -216,19 +219,21 @@ mod tests {
     #[test]
     fn convert_supports_dds_to_webp() {
         let temp_dir = unique_test_dir("convert-dds-to-webp");
+        let input = temp_dir.join("ashlw_066.dds");
         let output = temp_dir.join("ashlw_066.webp");
+        write_dds_fixture(&input);
 
         run_convert(ConvertCmd {
             force: true,
             dds_format: String::from("dxt5"),
-            input: fixture_dds_path(),
+            input,
             output: output.clone(),
         })
         .expect("convert dds to webp");
 
         let image = image::open(&output).expect("read converted webp");
-        assert_eq!(image.width(), 512);
-        assert_eq!(image.height(), 512);
+        assert_eq!(image.width(), 16);
+        assert_eq!(image.height(), 16);
     }
 
     #[test]
@@ -255,12 +260,14 @@ mod tests {
     #[test]
     fn convert_supports_tga_to_webp() {
         let temp_dir = unique_test_dir("convert-tga-to-webp");
+        let input = temp_dir.join("amp01_g06.tga");
         let output = temp_dir.join("amp01_g06.webp");
+        write_tga_fixture(&input);
 
         run_convert(ConvertCmd {
             force: true,
             dds_format: String::from("dxt5"),
-            input: fixture_tga_path(),
+            input,
             output: output.clone(),
         })
         .expect("convert tga to webp");

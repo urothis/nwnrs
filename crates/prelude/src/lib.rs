@@ -52,9 +52,9 @@ pub mod prelude {
     pub mod masterlist {
         pub use nwnrs_masterlist::prelude::*;
     }
-    /// Export NWN model types and traits.
-    pub mod model {
-        pub use nwnrs_model::prelude::*;
+    /// Export NWN MDL types and traits.
+    pub mod mdl {
+        pub use nwnrs_mdl::prelude::*;
     }
     /// Export NWScript compiler and format types and traits.
     pub mod nwscript {
@@ -149,13 +149,10 @@ mod tests {
         let mut cache = prelude::lru::WeightedLru::new(2, 1);
         cache.insert("k", 1);
         assert_eq!(cache.get(&"k"), Some(&1));
-        let model = prelude::model::Model::from_text("newmodel a");
-        assert_eq!(model.as_text().unwrap_or(""), "newmodel a");
+        let mdl = prelude::mdl::Model::from_text("newmodel a");
+        assert_eq!(mdl.as_text().unwrap_or(""), "newmodel a");
         assert_eq!(prelude::plt::PLT_RES_TYPE.0, 6);
-        assert_eq!(
-            prelude::dds::DdsFormat::Dxt1.bytes_per_block(),
-            8
-        );
+        assert_eq!(prelude::dds::DdsFormat::Dxt1.bytes_per_block(), 8);
         assert_eq!(
             prelude::exo::ExoResFileCompressionType::from_u32(1),
             Some(prelude::exo::ExoResFileCompressionType::CompressedBuf)

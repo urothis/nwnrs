@@ -99,7 +99,9 @@ impl TgaImageType {
             9 => Ok(Self::RleColorMapped),
             10 => Ok(Self::RleTrueColor),
             11 => Ok(Self::RleBlackAndWhite),
-            _ => Err(TgaError::msg(format!("unsupported TGA image type: {value}"))),
+            _ => Err(TgaError::msg(format!(
+                "unsupported TGA image type: {value}"
+            ))),
         }
     }
 
@@ -121,7 +123,7 @@ impl TgaImageType {
 /// Optional TGA 2.0 footer descriptor.
 pub struct TgaFooter {
     /// Offset to the extension area, when present.
-    pub extension_area_offset: u32,
+    pub extension_area_offset:      u32,
     /// Offset to the developer directory, when present.
     pub developer_directory_offset: u32,
 }
@@ -481,7 +483,7 @@ fn parse_tga_footer(bytes: &[u8]) -> Option<TgaFooter> {
         return None;
     }
     Some(TgaFooter {
-        extension_area_offset: read_u32_at(footer, 0).ok()?,
+        extension_area_offset:      read_u32_at(footer, 0).ok()?,
         developer_directory_offset: read_u32_at(footer, 4).ok()?,
     })
 }
@@ -532,9 +534,7 @@ fn image_data_storage_len(
 
     match image_type {
         TgaImageType::NoImage => Ok(0),
-        TgaImageType::ColorMapped
-        | TgaImageType::TrueColor
-        | TgaImageType::BlackAndWhite => {
+        TgaImageType::ColorMapped | TgaImageType::TrueColor | TgaImageType::BlackAndWhite => {
             let expected_len = pixel_count
                 .checked_mul(bytes_per_pixel)
                 .ok_or_else(|| TgaError::msg("TGA image data length overflow"))?;
@@ -566,11 +566,7 @@ fn rgba_len(width: u16, height: u16) -> TgaResult<usize> {
         .ok_or_else(|| TgaError::msg("TGA RGBA buffer length overflow"))
 }
 
-fn rle_encoded_len(
-    payload: &[u8],
-    pixel_count: usize,
-    bytes_per_pixel: usize,
-) -> TgaResult<usize> {
+fn rle_encoded_len(payload: &[u8], pixel_count: usize, bytes_per_pixel: usize) -> TgaResult<usize> {
     let mut cursor = 0_usize;
     let mut decoded_pixels = 0_usize;
 
@@ -662,11 +658,7 @@ fn expand_rle_image_data(
     Ok(out)
 }
 
-fn decode_tga_pixel(
-    pixel: &[u8],
-    pixel_depth: u8,
-    image_type: TgaImageType,
-) -> TgaResult<[u8; 4]> {
+fn decode_tga_pixel(pixel: &[u8], pixel_depth: u8, image_type: TgaImageType) -> TgaResult<[u8; 4]> {
     match image_type {
         TgaImageType::TrueColor | TgaImageType::RleTrueColor => match pixel_depth {
             24 => match pixel {
@@ -694,20 +686,24 @@ fn decode_tga_pixel(
         TgaImageType::BlackAndWhite | TgaImageType::RleBlackAndWhite => match pixel_depth {
             8 => match pixel {
                 [gray] => Ok([*gray, *gray, *gray, 255]),
-                _ => Err(TgaError::msg("TGA 8-bit grayscale pixel slice length mismatch")),
+                _ => Err(TgaError::msg(
+                    "TGA 8-bit grayscale pixel slice length mismatch",
+                )),
             },
             16 => match pixel {
                 [gray, alpha] => Ok([*gray, *gray, *gray, *alpha]),
-                _ => Err(TgaError::msg("TGA 16-bit grayscale pixel slice length mismatch")),
+                _ => Err(TgaError::msg(
+                    "TGA 16-bit grayscale pixel slice length mismatch",
+                )),
             },
             _ => Err(TgaError::msg(format!(
                 "unsupported TGA grayscale pixel depth: {pixel_depth}"
             ))),
         },
         TgaImageType::NoImage => Err(TgaError::msg("TGA contains no image data")),
-        TgaImageType::ColorMapped | TgaImageType::RleColorMapped => {
-            Err(TgaError::msg("TGA color-mapped decode is not implemented yet"))
-        }
+        TgaImageType::ColorMapped | TgaImageType::RleColorMapped => Err(TgaError::msg(
+            "TGA color-mapped decode is not implemented yet",
+        )),
     }
 }
 
@@ -736,7 +732,9 @@ pub mod prelude {
 mod tests {
     use std::{fs, io::Cursor, path::PathBuf};
 
-    use crate::{TGA_HEADER_SIZE, TgaImageType, TgaTexture, read_tga, read_tga_from_file, write_tga};
+    use crate::{
+        TGA_HEADER_SIZE, TgaImageType, TgaTexture, read_tga, read_tga_from_file, write_tga,
+    };
 
     fn fixture_path() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../amp01_g06.tga")
@@ -812,10 +810,7 @@ mod tests {
     #[test]
     fn encode_rgba8_roundtrips_through_decode() {
         let rgba = vec![
-            255, 0, 0, 255,
-            0, 255, 0, 128,
-            0, 0, 255, 64,
-            255, 255, 0, 0,
+            255, 0, 0, 255, 0, 255, 0, 128, 0, 0, 255, 64, 255, 255, 0, 0,
         ];
         let tga = TgaTexture::encode_rgba8(2, 2, &rgba).unwrap_or_else(|error| {
             panic!("encode rgba8 tga: {error}");

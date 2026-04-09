@@ -98,28 +98,28 @@ impl DdsFormat {
 /// NWN compact DDS header.
 pub struct NwnDdsHeader {
     /// Width in pixels.
-    pub width: u32,
+    pub width:       u32,
     /// Height in pixels.
-    pub height: u32,
+    pub height:      u32,
     /// Channel count marker from the file. `3` => DXT1, `4` => DXT5.
-    pub channels: u32,
+    pub channels:    u32,
     /// Stored pitch/linear size from the header.
     pub linear_size: u32,
     /// Average alpha value recorded by the encoder.
-    pub alpha_mean: f32,
+    pub alpha_mean:  f32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 /// One encoded mip level.
 pub struct DdsMipLevel {
     /// Mip level index, zero-based.
-    pub level: usize,
+    pub level:  usize,
     /// Width in pixels.
-    pub width: u32,
+    pub width:  u32,
     /// Height in pixels.
     pub height: u32,
     /// Raw packed bytes for this level.
-    pub data: Vec<u8>,
+    pub data:   Vec<u8>,
 }
 
 impl DdsMipLevel {
@@ -145,11 +145,11 @@ impl DdsMipLevel {
 /// Parsed NWN DDS texture.
 pub struct DdsTexture {
     /// Packed pixel format.
-    pub format: DdsFormat,
+    pub format:     DdsFormat,
     /// Top-level width.
-    pub width: u32,
+    pub width:      u32,
     /// Top-level height.
-    pub height: u32,
+    pub height:     u32,
     /// Ordered mip levels.
     pub mip_levels: Vec<DdsMipLevel>,
     /// NWN DDS header.
@@ -167,7 +167,8 @@ impl DdsTexture {
         parse_dds_bytes(bytes)
     }
 
-    /// Encodes top-left-origin RGBA8 pixels into an NWN DDS texture with a full mip chain.
+    /// Encodes top-left-origin RGBA8 pixels into an NWN DDS texture with a full
+    /// mip chain.
     pub fn encode_rgba8(
         width: u32,
         height: u32,
@@ -197,8 +198,9 @@ impl DdsTexture {
             .first()
             .map(|mip| mip.data.len())
             .ok_or_else(|| DdsError::msg("DDS mip generation produced no levels"))?;
-        let linear_size = u32::try_from(top_level_size)
-            .map_err(|error| DdsError::msg(format!("DDS top-level packed size out of range: {error}")))?;
+        let linear_size = u32::try_from(top_level_size).map_err(|error| {
+            DdsError::msg(format!("DDS top-level packed size out of range: {error}"))
+        })?;
         let alpha_mean = alpha_mean_rgba8(rgba)?;
         let channels = match format {
             DdsFormat::Dxt1 => 3,
@@ -284,8 +286,9 @@ pub fn write_dds<W: Write>(writer: &mut W, dds: &DdsTexture) -> DdsResult<()> {
         .mip_levels
         .first()
         .ok_or_else(|| DdsError::msg("DDS contains no mip levels"))?;
-    let linear_size = u32::try_from(top_level.data.len())
-        .map_err(|error| DdsError::msg(format!("DDS top-level packed size out of range: {error}")))?;
+    let linear_size = u32::try_from(top_level.data.len()).map_err(|error| {
+        DdsError::msg(format!("DDS top-level packed size out of range: {error}"))
+    })?;
 
     writer.write_all(&dds.width.to_le_bytes())?;
     writer.write_all(&dds.height.to_le_bytes())?;
@@ -442,9 +445,7 @@ fn validate_writable_dds(dds: &DdsTexture) -> DdsResult<()> {
 
         if expected_width == 1 && expected_height == 1 {
             if index + 1 != dds.mip_levels.len() {
-                return Err(DdsError::msg(
-                    "DDS mip chain contains levels beyond 1x1",
-                ));
+                return Err(DdsError::msg("DDS mip chain contains levels beyond 1x1"));
             }
             break;
         }
@@ -511,7 +512,13 @@ fn generate_mip_chain_rgba8(
         }
         let next_width = current_width.max(2) / 2;
         let next_height = current_height.max(2) / 2;
-        current_rgba = downsample_rgba8(&current_rgba, current_width, current_height, next_width, next_height)?;
+        current_rgba = downsample_rgba8(
+            &current_rgba,
+            current_width,
+            current_height,
+            next_width,
+            next_height,
+        )?;
         current_width = next_width;
         current_height = next_height;
     }
@@ -563,16 +570,14 @@ fn alpha_mean_rgba8(rgba: &[u8]) -> DdsResult<f32> {
     if pixel_count == 0 {
         return Err(DdsError::msg("DDS RGBA input contains no pixels"));
     }
-    let alpha_sum = rgba
-        .chunks_exact(4)
-        .try_fold(0_u64, |acc, pixel| {
-            pixel
-                .get(3)
-                .copied()
-                .map(u64::from)
-                .and_then(|alpha| acc.checked_add(alpha))
-                .ok_or_else(|| DdsError::msg("DDS alpha sum overflow"))
-        })?;
+    let alpha_sum = rgba.chunks_exact(4).try_fold(0_u64, |acc, pixel| {
+        pixel
+            .get(3)
+            .copied()
+            .map(u64::from)
+            .and_then(|alpha| acc.checked_add(alpha))
+            .ok_or_else(|| DdsError::msg("DDS alpha sum overflow"))
+    })?;
     Ok((alpha_sum as f32) / (pixel_count as f32 * 255.0))
 }
 
@@ -587,7 +592,11 @@ fn rgba_len(width: u32, height: u32) -> DdsResult<usize> {
 fn rgba_pixel(rgba: &[u8], width: u32, x: u32, y: u32) -> DdsResult<[u8; 4]> {
     let index = usize::try_from(y)
         .ok()
-        .and_then(|row| usize::try_from(width).ok().and_then(|stride| row.checked_mul(stride)))
+        .and_then(|row| {
+            usize::try_from(width)
+                .ok()
+                .and_then(|stride| row.checked_mul(stride))
+        })
         .and_then(|row| usize::try_from(x).ok().and_then(|col| row.checked_add(col)))
         .and_then(|pixel| pixel.checked_mul(4))
         .ok_or_else(|| DdsError::msg("DDS RGBA pixel index overflow"))?;
@@ -597,16 +606,14 @@ fn rgba_pixel(rgba: &[u8], width: u32, x: u32, y: u32) -> DdsResult<[u8; 4]> {
     <[u8; 4]>::try_from(pixel).map_err(|_error| DdsError::msg("DDS RGBA pixel slice out of range"))
 }
 
-fn write_rgba_pixel(
-    rgba: &mut [u8],
-    width: u32,
-    x: u32,
-    y: u32,
-    pixel: [u8; 4],
-) -> DdsResult<()> {
+fn write_rgba_pixel(rgba: &mut [u8], width: u32, x: u32, y: u32, pixel: [u8; 4]) -> DdsResult<()> {
     let index = usize::try_from(y)
         .ok()
-        .and_then(|row| usize::try_from(width).ok().and_then(|stride| row.checked_mul(stride)))
+        .and_then(|row| {
+            usize::try_from(width)
+                .ok()
+                .and_then(|stride| row.checked_mul(stride))
+        })
         .and_then(|row| usize::try_from(x).ok().and_then(|col| row.checked_add(col)))
         .and_then(|pixel_index| pixel_index.checked_mul(4))
         .ok_or_else(|| DdsError::msg("DDS RGBA write index overflow"))?;
@@ -645,7 +652,11 @@ fn decode_mip_rgba8(mip: &DdsMipLevel, format: DdsFormat) -> DdsResult<Vec<u8>> 
                         .ok()
                         .and_then(|stride| row.checked_mul(stride))
                 })
-                .and_then(|row| usize::try_from(block_x).ok().and_then(|col| row.checked_add(col)))
+                .and_then(|row| {
+                    usize::try_from(block_x)
+                        .ok()
+                        .and_then(|col| row.checked_add(col))
+                })
                 .ok_or_else(|| DdsError::msg("DDS block index overflow"))?;
             let block_offset = block_index
                 .checked_mul(format.bytes_per_block())
@@ -682,27 +693,21 @@ fn decode_dxt1_block_into(
                 .map_err(|_error| DdsError::msg("DDS DXT1 selector bytes missing"))
         })?;
     let palette = decode_dxt_colors(color0, color1, true);
-    blit_block_rgba8(
-        mip,
-        block_x,
-        block_y,
-        rgba,
-        |x, y| {
-            let row = match y {
-                0 => selector_bytes[0],
-                1 => selector_bytes[1],
-                2 => selector_bytes[2],
-                _ => selector_bytes[3],
-            };
-            let selector = (row >> (x * 2)) & 0x03;
-            match selector {
-                0 => palette[0],
-                1 => palette[1],
-                2 => palette[2],
-                _ => palette[3],
-            }
-        },
-    )
+    blit_block_rgba8(mip, block_x, block_y, rgba, |x, y| {
+        let row = match y {
+            0 => selector_bytes[0],
+            1 => selector_bytes[1],
+            2 => selector_bytes[2],
+            _ => selector_bytes[3],
+        };
+        let selector = (row >> (x * 2)) & 0x03;
+        match selector {
+            0 => palette[0],
+            1 => palette[1],
+            2 => palette[2],
+            _ => palette[3],
+        }
+    })
 }
 
 fn decode_dxt5_block_into(
@@ -733,40 +738,34 @@ fn decode_dxt5_block_into(
     let alpha_values = decode_dxt5_alpha_values(alpha0, alpha1);
     let colors = decode_dxt_colors(color0, color1, false);
 
-    blit_block_rgba8(
-        mip,
-        block_x,
-        block_y,
-        rgba,
-        |x, y| {
-            let selector_index = y * 4 + x;
-            let alpha_selector = dxt5_selector(alpha_selectors, selector_index);
-            let row = match y {
-                0 => color_selector_bytes[0],
-                1 => color_selector_bytes[1],
-                2 => color_selector_bytes[2],
-                _ => color_selector_bytes[3],
-            };
-            let color_selector = (row >> (x * 2)) & 0x03;
-            let [r, g, b, _a] = match color_selector {
-                0 => colors[0],
-                1 => colors[1],
-                2 => colors[2],
-                _ => colors[3],
-            };
-            let alpha = match alpha_selector {
-                0 => alpha_values[0],
-                1 => alpha_values[1],
-                2 => alpha_values[2],
-                3 => alpha_values[3],
-                4 => alpha_values[4],
-                5 => alpha_values[5],
-                6 => alpha_values[6],
-                _ => alpha_values[7],
-            };
-            [r, g, b, alpha]
-        },
-    )
+    blit_block_rgba8(mip, block_x, block_y, rgba, |x, y| {
+        let selector_index = y * 4 + x;
+        let alpha_selector = dxt5_selector(alpha_selectors, selector_index);
+        let row = match y {
+            0 => color_selector_bytes[0],
+            1 => color_selector_bytes[1],
+            2 => color_selector_bytes[2],
+            _ => color_selector_bytes[3],
+        };
+        let color_selector = (row >> (x * 2)) & 0x03;
+        let [r, g, b, _a] = match color_selector {
+            0 => colors[0],
+            1 => colors[1],
+            2 => colors[2],
+            _ => colors[3],
+        };
+        let alpha = match alpha_selector {
+            0 => alpha_values[0],
+            1 => alpha_values[1],
+            2 => alpha_values[2],
+            3 => alpha_values[3],
+            4 => alpha_values[4],
+            5 => alpha_values[5],
+            6 => alpha_values[6],
+            _ => alpha_values[7],
+        };
+        [r, g, b, alpha]
+    })
 }
 
 fn blit_block_rgba8(
@@ -800,7 +799,11 @@ fn blit_block_rgba8(
                         .ok()
                         .and_then(|stride| row.checked_mul(stride))
                 })
-                .and_then(|row| usize::try_from(dst_x).ok().and_then(|col| row.checked_add(col)))
+                .and_then(|row| {
+                    usize::try_from(dst_x)
+                        .ok()
+                        .and_then(|col| row.checked_add(col))
+                })
                 .ok_or_else(|| DdsError::msg("DDS pixel index overflow"))?;
             let dst = pixel_index
                 .checked_mul(4)
@@ -922,7 +925,11 @@ fn packed_level_size(width: u32, height: u32, format: DdsFormat) -> DdsResult<us
     let blocks_y = height.div_ceil(4);
     usize::try_from(blocks_x)
         .ok()
-        .and_then(|x| usize::try_from(blocks_y).ok().and_then(|y| x.checked_mul(y)))
+        .and_then(|x| {
+            usize::try_from(blocks_y)
+                .ok()
+                .and_then(|y| x.checked_mul(y))
+        })
         .and_then(|blocks| blocks.checked_mul(format.bytes_per_block()))
         .ok_or_else(|| DdsError::msg("DDS packed level size overflow"))
 }
@@ -968,9 +975,8 @@ fn narrow_u32_to_u8(value: u32) -> u8 {
 /// Common imports for consumers of this crate.
 pub mod prelude {
     pub use crate::{
-        DDS_RES_TYPE, DdsError, DdsFormat, DdsMipLevel, DdsResult, DdsTexture,
-        NWN_DDS_HEADER_SIZE, NwnDdsHeader, read_dds, read_dds_from_file, read_dds_from_res,
-        write_dds,
+        DDS_RES_TYPE, DdsError, DdsFormat, DdsMipLevel, DdsResult, DdsTexture, NWN_DDS_HEADER_SIZE,
+        NwnDdsHeader, read_dds, read_dds_from_file, read_dds_from_res, write_dds,
     };
 }
 
@@ -998,8 +1004,14 @@ mod tests {
         assert_eq!(dds.width, 512);
         assert_eq!(dds.height, 512);
         assert_eq!(dds.mip_count(), 10);
-        assert_eq!(dds.mip_levels.first().map(|level| level.data.len()), Some(262_144));
-        assert_eq!(dds.mip_levels.get(9).map(|level| level.data.len()), Some(16));
+        assert_eq!(
+            dds.mip_levels.first().map(|level| level.data.len()),
+            Some(262_144)
+        );
+        assert_eq!(
+            dds.mip_levels.get(9).map(|level| level.data.len()),
+            Some(16)
+        );
         assert_eq!(dds.nwn_header.channels, 4);
         assert_eq!(NWN_DDS_HEADER_SIZE, 20);
         assert_eq!(DDS_RES_TYPE.0, 2033);
@@ -1021,12 +1033,12 @@ mod tests {
     #[test]
     fn decodes_dxt1_block_to_rgba8() {
         let mip = DdsMipLevel {
-            level: 0,
-            width: 4,
+            level:  0,
+            width:  4,
             height: 4,
-            data: vec![
-                0x00, 0xF8, 0xE0, 0x07, // red, green
-                0xE4, 0xE4, 0xE4, 0xE4, // selectors: 0,1,2,3 across each row
+            data:   vec![
+                0x00, 0xf8, 0xe0, 0x07, // red, green
+                0xe4, 0xe4, 0xe4, 0xe4, // selectors: 0,1,2,3 across each row
             ],
         };
 
@@ -1044,14 +1056,14 @@ mod tests {
     #[test]
     fn decodes_dxt5_block_to_rgba8() {
         let mip = DdsMipLevel {
-            level: 0,
-            width: 4,
+            level:  0,
+            width:  4,
             height: 4,
-            data: vec![
-                0xFF, 0x00, // alpha endpoints
+            data:   vec![
+                0xff, 0x00, // alpha endpoints
                 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // alpha selectors: all 0
-                0x00, 0xF8, 0xE0, 0x07, // red, green
-                0xE4, 0xE4, 0xE4, 0xE4, // selectors: 0,1,2,3
+                0x00, 0xf8, 0xe0, 0x07, // red, green
+                0xe4, 0xe4, 0xe4, 0xe4, // selectors: 0,1,2,3
             ],
         };
 
@@ -1089,9 +1101,10 @@ mod tests {
         });
 
         assert_eq!(rgba.len(), 512 * 512 * 4);
-        assert!(rgba
-            .chunks_exact(4)
-            .any(|pixel| pixel.get(3).copied().unwrap_or(0) != 0));
+        assert!(
+            rgba.chunks_exact(4)
+                .any(|pixel| pixel.get(3).copied().unwrap_or(0) != 0)
+        );
     }
 
     #[test]
@@ -1099,9 +1112,10 @@ mod tests {
         let original_bytes = fs::read(fixture_path()).unwrap_or_else(|error| {
             panic!("read fixture bytes: {error}");
         });
-        let texture = DdsTexture::read_from_texture_bytes(&original_bytes).unwrap_or_else(|error| {
-            panic!("parse fixture as dds: {error}");
-        });
+        let texture =
+            DdsTexture::read_from_texture_bytes(&original_bytes).unwrap_or_else(|error| {
+                panic!("parse fixture as dds: {error}");
+            });
 
         let mut encoded = Vec::new();
         if let Err(error) = write_dds(&mut encoded, &texture) {
@@ -1114,41 +1128,35 @@ mod tests {
     #[test]
     fn manual_dds_roundtrips_through_read_and_write() {
         let original = DdsTexture {
-            format: DdsFormat::Dxt1,
-            width: 4,
-            height: 4,
+            format:     DdsFormat::Dxt1,
+            width:      4,
+            height:     4,
             mip_levels: vec![
                 DdsMipLevel {
-                    level: 0,
-                    width: 4,
+                    level:  0,
+                    width:  4,
                     height: 4,
-                    data: vec![
-                        0x00, 0xF8, 0xE0, 0x07, 0xE4, 0xE4, 0xE4, 0xE4,
-                    ],
+                    data:   vec![0x00, 0xf8, 0xe0, 0x07, 0xe4, 0xe4, 0xe4, 0xe4],
                 },
                 DdsMipLevel {
-                    level: 1,
-                    width: 2,
+                    level:  1,
+                    width:  2,
                     height: 2,
-                    data: vec![
-                        0x00, 0xF8, 0xE0, 0x07, 0x00, 0x00, 0x00, 0x00,
-                    ],
+                    data:   vec![0x00, 0xf8, 0xe0, 0x07, 0x00, 0x00, 0x00, 0x00],
                 },
                 DdsMipLevel {
-                    level: 2,
-                    width: 1,
+                    level:  2,
+                    width:  1,
                     height: 1,
-                    data: vec![
-                        0x00, 0xF8, 0xE0, 0x07, 0x55, 0x55, 0x55, 0x55,
-                    ],
+                    data:   vec![0x00, 0xf8, 0xe0, 0x07, 0x55, 0x55, 0x55, 0x55],
                 },
             ],
             nwn_header: crate::NwnDdsHeader {
-                width: 4,
-                height: 4,
-                channels: 3,
+                width:       4,
+                height:      4,
+                channels:    3,
                 linear_size: 8,
-                alpha_mean: 1.0,
+                alpha_mean:  1.0,
             },
         };
 
@@ -1168,22 +1176,9 @@ mod tests {
     #[test]
     fn encode_rgba8_supports_dxt1_solid_color() {
         let rgba = vec![
-            255, 0, 0, 255,
-            255, 0, 0, 255,
-            255, 0, 0, 255,
-            255, 0, 0, 255,
-            255, 0, 0, 255,
-            255, 0, 0, 255,
-            255, 0, 0, 255,
-            255, 0, 0, 255,
-            255, 0, 0, 255,
-            255, 0, 0, 255,
-            255, 0, 0, 255,
-            255, 0, 0, 255,
-            255, 0, 0, 255,
-            255, 0, 0, 255,
-            255, 0, 0, 255,
-            255, 0, 0, 255,
+            255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0,
+            0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255,
+            255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255,
         ];
         let dds = DdsTexture::encode_rgba8(4, 4, DdsFormat::Dxt1, &rgba).unwrap_or_else(|error| {
             panic!("encode dxt1 rgba8: {error}");
@@ -1201,22 +1196,10 @@ mod tests {
     #[test]
     fn encode_rgba8_supports_dxt5_solid_alpha() {
         let rgba = vec![
-            0, 128, 255, 128,
-            0, 128, 255, 128,
-            0, 128, 255, 128,
-            0, 128, 255, 128,
-            0, 128, 255, 128,
-            0, 128, 255, 128,
-            0, 128, 255, 128,
-            0, 128, 255, 128,
-            0, 128, 255, 128,
-            0, 128, 255, 128,
-            0, 128, 255, 128,
-            0, 128, 255, 128,
-            0, 128, 255, 128,
-            0, 128, 255, 128,
-            0, 128, 255, 128,
-            0, 128, 255, 128,
+            0, 128, 255, 128, 0, 128, 255, 128, 0, 128, 255, 128, 0, 128, 255, 128, 0, 128, 255,
+            128, 0, 128, 255, 128, 0, 128, 255, 128, 0, 128, 255, 128, 0, 128, 255, 128, 0, 128,
+            255, 128, 0, 128, 255, 128, 0, 128, 255, 128, 0, 128, 255, 128, 0, 128, 255, 128, 0,
+            128, 255, 128, 0, 128, 255, 128,
         ];
         let dds = DdsTexture::encode_rgba8(4, 4, DdsFormat::Dxt5, &rgba).unwrap_or_else(|error| {
             panic!("encode dxt5 rgba8: {error}");

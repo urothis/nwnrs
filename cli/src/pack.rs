@@ -327,11 +327,11 @@ fn pack_ssf_resource(input: &Path, output: &Path, force: bool) -> Result<(), Str
 }
 
 fn pack_model_resource(input: &Path, output: &Path, force: bool) -> Result<(), String> {
-    let value = model::read_model_from_file(input)
+    let value = mdl::read_model_from_file(input)
         .map_err(|error| format!("failed to parse {} as MDL: {error}", input.display()))?;
     ensure_output_file_ready(output, force)?;
     let mut bytes = Cursor::new(Vec::new());
-    model::write_model(&mut bytes, &value)
+    mdl::write_model(&mut bytes, &value)
         .map_err(|error| format!("failed to write {} as MDL: {error}", output.display()))?;
     fs::write(output, bytes.into_inner())
         .map_err(|error| format!("failed to write {}: {error}", output.display()))
@@ -371,7 +371,8 @@ fn pack_texture_resource(input: &Path, output: &Path, force: bool) -> Result<(),
             ))
         }
     }
-    fs::write(output, bytes.into_inner()).map_err(|error| format!("failed to write {}: {error}", output.display()))
+    fs::write(output, bytes.into_inner())
+        .map_err(|error| format!("failed to write {}: {error}", output.display()))
 }
 
 pub(crate) fn apply_erf_entry_order(
@@ -522,7 +523,7 @@ pub(crate) enum PackSourceKind {
 
 #[derive(Clone)]
 pub(crate) struct PackSourceEntry {
-    pub(crate) rr: resref::ResRef,
+    pub(crate) rr:     resref::ResRef,
     pub(crate) source: PackSourceKind,
 }
 
@@ -530,7 +531,9 @@ impl PackSourceEntry {
     fn source_label(&self) -> String {
         match &self.source {
             PackSourceKind::File(path) => path.display().to_string(),
-            PackSourceKind::CompiledScript { path, .. } => path.display().to_string(),
+            PackSourceKind::CompiledScript {
+                path, ..
+            } => path.display().to_string(),
         }
     }
 
@@ -538,7 +541,9 @@ impl PackSourceEntry {
         match &self.source {
             PackSourceKind::File(path) => fs::read(path)
                 .map_err(|error| format!("failed to read {}: {error}", path.display())),
-            PackSourceKind::CompiledScript { bytes, .. } => Ok(bytes.clone()),
+            PackSourceKind::CompiledScript {
+                bytes, ..
+            } => Ok(bytes.clone()),
         }
     }
 
@@ -670,17 +675,17 @@ fn pack_source_for_file(path: &Path, pack_root: &Path) -> Result<PackSourceEntry
         let artifacts = compile_script_file(
             path,
             &CompileScriptOptions {
-                debug: false,
+                debug:               false,
                 no_entrypoint_check: false,
-                langspec: None,
-                include_dirs: &include_dirs,
-                optimization: nwscript::OptimizationLevel::O0,
+                langspec:            None,
+                include_dirs:        &include_dirs,
+                optimization:        nwscript::OptimizationLevel::O0,
             },
         )?;
         return Ok(PackSourceEntry {
-            rr: resolved.into(),
+            rr:     resolved.into(),
             source: PackSourceKind::CompiledScript {
-                path: path.to_path_buf(),
+                path:  path.to_path_buf(),
                 bytes: artifacts.ncs,
             },
         });
@@ -690,7 +695,7 @@ fn pack_source_for_file(path: &Path, pack_root: &Path) -> Result<PackSourceEntry
     let resolved = resref::new_resolved_res_ref_from_filename(file_name)
         .map_err(|error| format!("{} is not a valid resref source: {error}", path.display()))?;
     Ok(PackSourceEntry {
-        rr: resolved.into(),
+        rr:     resolved.into(),
         source: PackSourceKind::File(path.to_path_buf()),
     })
 }
@@ -793,15 +798,15 @@ mod tests {
         fs::write(&input, bytes.into_inner()).expect("write input fixture");
 
         run_pack(PackCmd {
-            force: false,
-            data_version: "V1".to_string(),
+            force:            false,
+            data_version:     "V1".to_string(),
             data_compression: "none".to_string(),
-            no_squash: false,
-            no_symlinks: false,
-            recurse: 2,
-            erf_type: None,
-            input: input.clone(),
-            output: output.clone(),
+            no_squash:        false,
+            no_symlinks:      false,
+            recurse:          2,
+            erf_type:         None,
+            input:            input.clone(),
+            output:           output.clone(),
         })
         .expect("pack gff resource");
 
@@ -822,15 +827,15 @@ mod tests {
             .expect("write twoda fixture");
 
         run_pack(PackCmd {
-            force: false,
-            data_version: "V1".to_string(),
+            force:            false,
+            data_version:     "V1".to_string(),
             data_compression: "none".to_string(),
-            no_squash: false,
-            no_symlinks: false,
-            recurse: 2,
-            erf_type: None,
-            input: input.clone(),
-            output: output.clone(),
+            no_squash:        false,
+            no_symlinks:      false,
+            recurse:          2,
+            erf_type:         None,
+            input:            input.clone(),
+            output:           output.clone(),
         })
         .expect("pack twoda resource");
 
@@ -868,15 +873,15 @@ int FALSE = 0;
         fs::write(scripts.join("test.ncs"), b"stale").expect("write stale ncs");
 
         run_pack(PackCmd {
-            force: true,
-            data_version: "V1".to_string(),
+            force:            true,
+            data_version:     "V1".to_string(),
             data_compression: "none".to_string(),
-            no_squash: false,
-            no_symlinks: false,
-            recurse: 2,
-            erf_type: None,
-            input: input.clone(),
-            output: output.clone(),
+            no_squash:        false,
+            no_symlinks:      false,
+            recurse:          2,
+            erf_type:         None,
+            input:            input.clone(),
+            output:           output.clone(),
         })
         .expect("pack mod with scripts");
 
@@ -920,15 +925,15 @@ int FALSE = 0;
         .expect("write script");
 
         run_pack(PackCmd {
-            force: true,
-            data_version: "V1".to_string(),
+            force:            true,
+            data_version:     "V1".to_string(),
             data_compression: "none".to_string(),
-            no_squash: false,
-            no_symlinks: false,
-            recurse: 2,
-            erf_type: None,
-            input: input.clone(),
-            output: output.clone(),
+            no_squash:        false,
+            no_symlinks:      false,
+            recurse:          2,
+            erf_type:         None,
+            input:            input.clone(),
+            output:           output.clone(),
         })
         .expect("pack key with scripts");
 

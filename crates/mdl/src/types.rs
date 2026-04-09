@@ -15,7 +15,9 @@ pub struct Model {
 impl Model {
     /// Creates a model from raw bytes.
     pub fn new(bytes: Vec<u8>) -> Self {
-        Self { bytes }
+        Self {
+            bytes,
+        }
     }
 
     /// Creates a model from UTF-8 text.

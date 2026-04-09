@@ -20,7 +20,7 @@ At a high level:
 - `nwnrs-resref`, `nwnrs-restype`, and `nwnrs-core` define the shared identity vocabulary
 - `nwnrs-resman` defines a common `Res`/`ResContainer` model and a layered `ResMan`
 - container crates such as `nwnrs-erf`, `nwnrs-key`, `nwnrs-resdir`, `nwnrs-resfile`, `nwnrs-resmemfile`, and `nwnrs-resnwsync` project different storage backends into that shared model
-- format crates such as `nwnrs-gff`, `nwnrs-twoda`, `nwnrs-tlk`, `nwnrs-ssf`, `nwnrs-model`, `nwnrs-tga`, `nwnrs-dds`, `nwnrs-plt`, and `nwnrs-nwsync` provide typed parsers and writers, with the texture crates now split cleanly by on-disk format
+- format crates such as `nwnrs-gff`, `nwnrs-twoda`, `nwnrs-tlk`, `nwnrs-ssf`, `nwnrs-mdl`, `nwnrs-tga`, `nwnrs-dds`, `nwnrs-plt`, and `nwnrs-nwsync` provide typed parsers and writers, with the texture crates now split cleanly by on-disk format
 - `nwnrs-nwscript` provides the NWScript frontend and compiler pipeline: source loading, preprocessing, lexing, parsing, semantic analysis, optimization, and `NCS`/`NDB` emission
 - `nwnrs-game` composes those pieces into a default game-facing resource-loading stack
 
