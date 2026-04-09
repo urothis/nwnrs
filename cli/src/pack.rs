@@ -39,6 +39,8 @@ pub(crate) fn run_pack(cmd: PackCmd) -> Result<(), String> {
         Some(Kind::TwoDa) => run_pack_resource(cmd, Kind::TwoDa),
         Some(Kind::Tlk) => run_pack_resource(cmd, Kind::Tlk),
         Some(Kind::Ssf) => run_pack_resource(cmd, Kind::Ssf),
+        Some(Kind::Model) => run_pack_resource(cmd, Kind::Model),
+        Some(Kind::Texture) => run_pack_resource(cmd, Kind::Texture),
         None => Err(format!(
             "unsupported output file type for generic pack: {}",
             cmd.output.display()
@@ -208,6 +210,8 @@ fn run_pack_resource(cmd: PackCmd, kind: Kind) -> Result<(), String> {
         Kind::TwoDa => pack_twoda_resource(&source, &cmd.output, cmd.force),
         Kind::Tlk => pack_tlk_resource(&source, &cmd.output, cmd.force),
         Kind::Ssf => pack_ssf_resource(&source, &cmd.output, cmd.force),
+        Kind::Model => pack_model_resource(&source, &cmd.output, cmd.force),
+        Kind::Texture => pack_texture_resource(&source, &cmd.output, cmd.force),
         Kind::Erf | Kind::Key => Err(format!(
             "unsupported standalone resource pack kind for {}",
             cmd.output.display()
@@ -320,6 +324,54 @@ fn pack_ssf_resource(input: &Path, output: &Path, force: bool) -> Result<(), Str
         .map_err(|error| format!("failed to write {} as SSF: {error}", output.display()))?;
     fs::write(output, bytes)
         .map_err(|error| format!("failed to write {}: {error}", output.display()))
+}
+
+fn pack_model_resource(input: &Path, output: &Path, force: bool) -> Result<(), String> {
+    let value = model::read_model_from_file(input)
+        .map_err(|error| format!("failed to parse {} as MDL: {error}", input.display()))?;
+    ensure_output_file_ready(output, force)?;
+    let mut bytes = Cursor::new(Vec::new());
+    model::write_model(&mut bytes, &value)
+        .map_err(|error| format!("failed to write {} as MDL: {error}", output.display()))?;
+    fs::write(output, bytes.into_inner())
+        .map_err(|error| format!("failed to write {}: {error}", output.display()))
+}
+
+fn pack_texture_resource(input: &Path, output: &Path, force: bool) -> Result<(), String> {
+    let extension = input
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(str::to_ascii_lowercase)
+        .ok_or_else(|| format!("failed to infer texture format from {}", input.display()))?;
+    ensure_output_file_ready(output, force)?;
+    let mut bytes = Cursor::new(Vec::new());
+    match extension.as_str() {
+        "tga" => {
+            let value = tga::read_tga_from_file(input)
+                .map_err(|error| format!("failed to parse {} as TGA: {error}", input.display()))?;
+            tga::write_tga(&mut bytes, &value)
+                .map_err(|error| format!("failed to write {} as TGA: {error}", output.display()))?;
+        }
+        "dds" => {
+            let value = dds::read_dds_from_file(input)
+                .map_err(|error| format!("failed to parse {} as DDS: {error}", input.display()))?;
+            dds::write_dds(&mut bytes, &value)
+                .map_err(|error| format!("failed to write {} as DDS: {error}", output.display()))?;
+        }
+        "plt" => {
+            let value = plt::read_plt_from_file(input)
+                .map_err(|error| format!("failed to parse {} as PLT: {error}", input.display()))?;
+            plt::write_plt(&mut bytes, &value)
+                .map_err(|error| format!("failed to write {} as PLT: {error}", output.display()))?;
+        }
+        _ => {
+            return Err(format!(
+                "unsupported texture format for {}",
+                input.display()
+            ))
+        }
+    }
+    fs::write(output, bytes.into_inner()).map_err(|error| format!("failed to write {}: {error}", output.display()))
 }
 
 pub(crate) fn apply_erf_entry_order(
@@ -470,7 +522,7 @@ pub(crate) enum PackSourceKind {
 
 #[derive(Clone)]
 pub(crate) struct PackSourceEntry {
-    pub(crate) rr:     resref::ResRef,
+    pub(crate) rr: resref::ResRef,
     pub(crate) source: PackSourceKind,
 }
 
@@ -478,9 +530,7 @@ impl PackSourceEntry {
     fn source_label(&self) -> String {
         match &self.source {
             PackSourceKind::File(path) => path.display().to_string(),
-            PackSourceKind::CompiledScript {
-                path, ..
-            } => path.display().to_string(),
+            PackSourceKind::CompiledScript { path, .. } => path.display().to_string(),
         }
     }
 
@@ -488,9 +538,7 @@ impl PackSourceEntry {
         match &self.source {
             PackSourceKind::File(path) => fs::read(path)
                 .map_err(|error| format!("failed to read {}: {error}", path.display())),
-            PackSourceKind::CompiledScript {
-                bytes, ..
-            } => Ok(bytes.clone()),
+            PackSourceKind::CompiledScript { bytes, .. } => Ok(bytes.clone()),
         }
     }
 
@@ -622,17 +670,17 @@ fn pack_source_for_file(path: &Path, pack_root: &Path) -> Result<PackSourceEntry
         let artifacts = compile_script_file(
             path,
             &CompileScriptOptions {
-                debug:               false,
+                debug: false,
                 no_entrypoint_check: false,
-                langspec:            None,
-                include_dirs:        &include_dirs,
-                optimization:        nwscript::OptimizationLevel::O0,
+                langspec: None,
+                include_dirs: &include_dirs,
+                optimization: nwscript::OptimizationLevel::O0,
             },
         )?;
         return Ok(PackSourceEntry {
-            rr:     resolved.into(),
+            rr: resolved.into(),
             source: PackSourceKind::CompiledScript {
-                path:  path.to_path_buf(),
+                path: path.to_path_buf(),
                 bytes: artifacts.ncs,
             },
         });
@@ -642,7 +690,7 @@ fn pack_source_for_file(path: &Path, pack_root: &Path) -> Result<PackSourceEntry
     let resolved = resref::new_resolved_res_ref_from_filename(file_name)
         .map_err(|error| format!("{} is not a valid resref source: {error}", path.display()))?;
     Ok(PackSourceEntry {
-        rr:     resolved.into(),
+        rr: resolved.into(),
         source: PackSourceKind::File(path.to_path_buf()),
     })
 }
@@ -745,15 +793,15 @@ mod tests {
         fs::write(&input, bytes.into_inner()).expect("write input fixture");
 
         run_pack(PackCmd {
-            force:            false,
-            data_version:     "V1".to_string(),
+            force: false,
+            data_version: "V1".to_string(),
             data_compression: "none".to_string(),
-            no_squash:        false,
-            no_symlinks:      false,
-            recurse:          2,
-            erf_type:         None,
-            input:            input.clone(),
-            output:           output.clone(),
+            no_squash: false,
+            no_symlinks: false,
+            recurse: 2,
+            erf_type: None,
+            input: input.clone(),
+            output: output.clone(),
         })
         .expect("pack gff resource");
 
@@ -774,15 +822,15 @@ mod tests {
             .expect("write twoda fixture");
 
         run_pack(PackCmd {
-            force:            false,
-            data_version:     "V1".to_string(),
+            force: false,
+            data_version: "V1".to_string(),
             data_compression: "none".to_string(),
-            no_squash:        false,
-            no_symlinks:      false,
-            recurse:          2,
-            erf_type:         None,
-            input:            input.clone(),
-            output:           output.clone(),
+            no_squash: false,
+            no_symlinks: false,
+            recurse: 2,
+            erf_type: None,
+            input: input.clone(),
+            output: output.clone(),
         })
         .expect("pack twoda resource");
 
@@ -820,15 +868,15 @@ int FALSE = 0;
         fs::write(scripts.join("test.ncs"), b"stale").expect("write stale ncs");
 
         run_pack(PackCmd {
-            force:            true,
-            data_version:     "V1".to_string(),
+            force: true,
+            data_version: "V1".to_string(),
             data_compression: "none".to_string(),
-            no_squash:        false,
-            no_symlinks:      false,
-            recurse:          2,
-            erf_type:         None,
-            input:            input.clone(),
-            output:           output.clone(),
+            no_squash: false,
+            no_symlinks: false,
+            recurse: 2,
+            erf_type: None,
+            input: input.clone(),
+            output: output.clone(),
         })
         .expect("pack mod with scripts");
 
@@ -872,15 +920,15 @@ int FALSE = 0;
         .expect("write script");
 
         run_pack(PackCmd {
-            force:            true,
-            data_version:     "V1".to_string(),
+            force: true,
+            data_version: "V1".to_string(),
             data_compression: "none".to_string(),
-            no_squash:        false,
-            no_symlinks:      false,
-            recurse:          2,
-            erf_type:         None,
-            input:            input.clone(),
-            output:           output.clone(),
+            no_squash: false,
+            no_symlinks: false,
+            recurse: 2,
+            erf_type: None,
+            input: input.clone(),
+            output: output.clone(),
         })
         .expect("pack key with scripts");
 

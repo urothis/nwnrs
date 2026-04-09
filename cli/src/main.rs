@@ -3,6 +3,7 @@
 
 mod args;
 mod compile;
+mod convert;
 mod inspect;
 mod logging;
 mod metadata;
@@ -32,6 +33,7 @@ fn main() -> ExitCode {
 fn run(cli: Cli) -> Result<(), String> {
     match cli.command {
         Command::Compile(cmd) => compile::run_compile(cmd),
+        Command::Convert(cmd) => convert::run_convert(cmd),
         Command::Inspect(cmd) => inspect::run_inspect(&cmd.path),
         Command::Pack(cmd) => pack::run_pack(cmd),
         Command::Unpack(cmd) => unpack::run_unpack(cmd),

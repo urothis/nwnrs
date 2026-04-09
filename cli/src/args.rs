@@ -13,6 +13,7 @@ pub(crate) struct Cli {
 #[argh(subcommand)]
 pub(crate) enum Command {
     Compile(CompileCmd),
+    Convert(ConvertCmd),
     Inspect(InspectCmd),
     Pack(PackCmd),
     Unpack(UnpackCmd),
@@ -54,6 +55,27 @@ pub(crate) struct CompileCmd {
     #[argh(positional)]
     /// input .nss file to compile
     pub(crate) input: PathBuf,
+}
+
+#[derive(FromArgs)]
+#[argh(subcommand, name = "convert")]
+/// convert image assets between supported formats
+pub(crate) struct ConvertCmd {
+    #[argh(switch, short = 'f')]
+    /// overwrite existing output files
+    pub(crate) force: bool,
+
+    #[argh(option, default = "String::from(\"dxt5\")")]
+    /// dds block format when OUTPUT ends in .dds: dxt1 or dxt5
+    pub(crate) dds_format: String,
+
+    #[argh(positional)]
+    /// input image path
+    pub(crate) input: PathBuf,
+
+    #[argh(positional)]
+    /// output image path
+    pub(crate) output: PathBuf,
 }
 
 #[derive(FromArgs)]

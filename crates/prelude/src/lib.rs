@@ -19,6 +19,10 @@ pub mod prelude {
     pub mod core {
         pub use nwnrs_core::prelude::*;
     }
+    /// Export DDS texture types and traits.
+    pub mod dds {
+        pub use nwnrs_dds::prelude::*;
+    }
     /// Export ERF archive types and traits.
     pub mod erf {
         pub use nwnrs_erf::prelude::*;
@@ -48,9 +52,17 @@ pub mod prelude {
     pub mod masterlist {
         pub use nwnrs_masterlist::prelude::*;
     }
+    /// Export NWN model types and traits.
+    pub mod model {
+        pub use nwnrs_model::prelude::*;
+    }
     /// Export NWScript compiler and format types and traits.
     pub mod nwscript {
         pub use nwnrs_nwscript::prelude::*;
+    }
+    /// Export PLT texture types and traits.
+    pub mod plt {
+        pub use nwnrs_plt::prelude::*;
     }
     /// Export NWN sync client types and traits.
     pub mod nwsync {
@@ -91,6 +103,10 @@ pub mod prelude {
     /// Export stream extension traits.
     pub mod streamext {
         pub use nwnrs_streamext::prelude::*;
+    }
+    /// Export TGA texture types and traits.
+    pub mod tga {
+        pub use nwnrs_tga::prelude::*;
     }
     /// Export TLK file types and traits.
     pub mod tlk {
@@ -133,6 +149,13 @@ mod tests {
         let mut cache = prelude::lru::WeightedLru::new(2, 1);
         cache.insert("k", 1);
         assert_eq!(cache.get(&"k"), Some(&1));
+        let model = prelude::model::Model::from_text("newmodel a");
+        assert_eq!(model.as_text().unwrap_or(""), "newmodel a");
+        assert_eq!(prelude::plt::PLT_RES_TYPE.0, 6);
+        assert_eq!(
+            prelude::dds::DdsFormat::Dxt1.bytes_per_block(),
+            8
+        );
         assert_eq!(
             prelude::exo::ExoResFileCompressionType::from_u32(1),
             Some(prelude::exo::ExoResFileCompressionType::CompressedBuf)

@@ -1,6 +1,7 @@
 [workspace]
 default-members = ["cli"]
 members = ["cli", "crates/*", "wasm"]
+exclude = ["crates/texture"]
 resolver = "3"
 
 [workspace.package]
@@ -15,6 +16,7 @@ nwnrs = { path = "crates/prelude" }
 nwnrs-checksums = { path = "crates/checksums" }
 nwnrs-compressedbuf = { path = "crates/compressedbuf" }
 nwnrs-core = { path = "crates/core" }
+nwnrs-dds = { path = "crates/dds" }
 nwnrs-erf = { path = "crates/erf" }
 nwnrs-exo = { path = "crates/exo" }
 nwnrs-game = { path = "crates/game" }
@@ -22,8 +24,10 @@ nwnrs-gff = { path = "crates/gff" }
 nwnrs-key = { path = "crates/key" }
 nwnrs-lru = { path = "crates/lru" }
 nwnrs-masterlist = { path = "crates/masterlist" }
+nwnrs-model = { path = "crates/model" }
 nwnrs-nwscript = { path = "crates/nwscript" }
 nwnrs-nwsync = { path = "crates/nwsync" }
+nwnrs-plt = { path = "crates/plt" }
 nwnrs-resdir = { path = "crates/resdir" }
 nwnrs-resfile = { path = "crates/resfile" }
 nwnrs-resman = { path = "crates/resman" }
@@ -33,6 +37,7 @@ nwnrs-resref = { path = "crates/resref" }
 nwnrs-restype = { path = "crates/restype" }
 nwnrs-ssf = { path = "crates/ssf" }
 nwnrs-streamext = { path = "crates/streamext" }
+nwnrs-tga = { path = "crates/tga" }
 nwnrs-tlk = { path = "crates/tlk" }
 nwnrs-twoda = { path = "crates/twoda" }
 nwnrs-util = { path = "crates/util" }
@@ -44,6 +49,12 @@ encoding_rs = { version = "0.8.35", default-features = false, features = [
 ] }
 flate2 = { version = "1.1.9", default-features = false, features = [
     "rust_backend",
+] }
+image = { version = "0.25.8", default-features = false, features = [
+    "jpeg",
+    "png",
+    "tga",
+    "webp",
 ] }
 indexmap = { version = "2.13.1", default-features = false }
 md5 = { version = "0.8.0", default-features = false }
@@ -63,6 +74,7 @@ tracing = { version = "0.1.44", default-features = false, features = [
 ] }
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt"] }
 tokio = { version = "1.51.1", features = ["full"] }
+texpresso = { version = "2.0.2", default-features = false }
 wasm-bindgen = { version = "0.2.117", default-features = false, features = [
     "std",
 ] }

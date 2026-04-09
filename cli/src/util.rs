@@ -16,13 +16,15 @@ pub(crate) enum Kind {
     Ssf,
     Tlk,
     TwoDa,
+    Model,
+    Texture,
     Erf,
     Key,
 }
 
 pub(crate) struct DirEntryInfo {
     pub(crate) file_name: String,
-    pub(crate) path:      PathBuf,
+    pub(crate) path: PathBuf,
 }
 
 pub(crate) fn detect_kind(path: &Path) -> Option<Kind> {
@@ -30,6 +32,8 @@ pub(crate) fn detect_kind(path: &Path) -> Option<Kind> {
     Some(match extension.as_str() {
         "gff" | "are" | "bic" | "dlg" | "git" | "ifo" | "itp" | "jrl" | "utc" | "utd" | "ute"
         | "uti" | "utm" | "utp" | "uts" | "utt" | "utw" => Kind::Gff,
+        "mdl" => Kind::Model,
+        "dds" | "plt" | "tga" => Kind::Texture,
         "ssf" => Kind::Ssf,
         "tlk" => Kind::Tlk,
         "2da" => Kind::TwoDa,

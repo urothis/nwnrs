@@ -31,6 +31,16 @@ pub(crate) fn run_inspect(path: &Path) -> Result<(), String> {
                 .map_err(|error| format!("failed to parse {} as SSF: {error}", path.display()))?;
             write_stdout_line(&format!("{ssf:#?}"))
         }
+        Some(Kind::Model) => {
+            debug!("detected MDL input");
+            let model = model::read_model_from_file(path)
+                .map_err(|error| format!("failed to parse {} as MDL: {error}", path.display()))?;
+            write_stdout_line(&format!("{model:#?}"))
+        }
+        Some(Kind::Texture) => {
+            debug!("detected texture input");
+            inspect_texture(path)
+        }
         Some(Kind::Tlk) => {
             debug!("detected TLK input");
             let tlk = tlk::SingleTlk::from_file(path, true)
@@ -56,6 +66,32 @@ pub(crate) fn run_inspect(path: &Path) -> Result<(), String> {
             write_stdout_line(&format!("{gff:#?}"))
         }
         None => Err(format!("unsupported file type for {}", path.display())),
+    }
+}
+
+fn inspect_texture(path: &Path) -> Result<(), String> {
+    let extension = path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(str::to_ascii_lowercase)
+        .ok_or_else(|| format!("failed to infer texture format from {}", path.display()))?;
+    match extension.as_str() {
+        "tga" => {
+            let texture = tga::read_tga_from_file(path)
+                .map_err(|error| format!("failed to parse {} as TGA: {error}", path.display()))?;
+            write_stdout_line(&format!("{texture:#?}"))
+        }
+        "dds" => {
+            let texture = dds::read_dds_from_file(path)
+                .map_err(|error| format!("failed to parse {} as DDS: {error}", path.display()))?;
+            write_stdout_line(&format!("{texture:#?}"))
+        }
+        "plt" => {
+            let texture = plt::read_plt_from_file(path)
+                .map_err(|error| format!("failed to parse {} as PLT: {error}", path.display()))?;
+            write_stdout_line(&format!("{texture:#?}"))
+        }
+        _ => Err(format!("unsupported texture format for {}", path.display())),
     }
 }
 

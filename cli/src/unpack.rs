@@ -35,14 +35,18 @@ pub(crate) fn run_unpack(cmd: UnpackCmd) -> Result<(), String> {
     match detect_kind(&cmd.input) {
         Some(Kind::Erf) => unpack_erf_to_dir(&cmd.input, &cmd.directory, cmd.force),
         Some(Kind::Key) => run_key_unpack(KeyUnpackCmd {
-            force:       cmd.force,
-            key:         cmd.input,
+            force: cmd.force,
+            key: cmd.input,
             destination: cmd.directory,
         }),
         Some(Kind::Gff) => unpack_resource_to_dir(&cmd.input, &cmd.directory, "gff", cmd.force),
         Some(Kind::TwoDa) => unpack_resource_to_dir(&cmd.input, &cmd.directory, "2da", cmd.force),
         Some(Kind::Tlk) => unpack_resource_to_dir(&cmd.input, &cmd.directory, "tlk", cmd.force),
         Some(Kind::Ssf) => unpack_resource_to_dir(&cmd.input, &cmd.directory, "ssf", cmd.force),
+        Some(Kind::Model) => unpack_resource_to_dir(&cmd.input, &cmd.directory, "mdl", cmd.force),
+        Some(Kind::Texture) => {
+            unpack_resource_to_dir(&cmd.input, &cmd.directory, "texture", cmd.force)
+        }
         None => Err(format!(
             "unsupported file type for generic unpack: {}",
             cmd.input.display()
@@ -231,8 +235,8 @@ mod tests {
 
         run_unpack(UnpackCmd {
             directory: directory.clone(),
-            force:     false,
-            input:     source.clone(),
+            force: false,
+            input: source.clone(),
         })
         .expect("unpack gff resource");
 
@@ -255,8 +259,8 @@ mod tests {
 
         run_unpack(UnpackCmd {
             directory: directory.clone(),
-            force:     false,
-            input:     source.clone(),
+            force: false,
+            input: source.clone(),
         })
         .expect("unpack twoda resource");
 
