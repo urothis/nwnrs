@@ -60,8 +60,8 @@ impl From<nwnrs_resref::ResRefError> for ResDirError {
 /// A directory-backed resource container.
 #[derive(Debug, Clone)]
 pub struct ResDir {
-    pub(crate) root:    PathBuf,
-    pub(crate) label:   String,
+    pub(crate) root: PathBuf,
+    pub(crate) label: String,
     pub(crate) entries: IndexMap<ResRef, Res>,
 }
 

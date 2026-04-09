@@ -19,7 +19,8 @@ pub enum Algorithm {
 }
 
 impl Algorithm {
-    pub(crate) fn from_u32(value: u32) -> Result<Self, CompressedBufError> {
+    /// Converts a raw numeric marker into a compression algorithm.
+    pub fn from_u32(value: u32) -> Result<Self, CompressedBufError> {
         Ok(match value {
             0 => Self::None,
             1 => Self::Zlib,
@@ -76,3 +77,68 @@ impl From<ExpectationError> for CompressedBufError {
 
 /// A result alias for compressed buffer operations.
 pub type CompressedBufResult<T> = Result<T, CompressedBufError>;
+
+/// Additional header fields that depend on the compression algorithm.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AlgorithmHeader {
+    /// No algorithm-specific header fields.
+    None,
+    /// Zlib payload header version.
+    Zlib {
+        /// The stored zlib wrapper version.
+        version: u32,
+    },
+    /// Zstd payload header version and dictionary marker.
+    Zstd {
+        /// The stored zstd wrapper version.
+        version: u32,
+        /// The stored zstd dictionary marker.
+        dictionary: u32,
+    },
+}
+
+impl AlgorithmHeader {
+    pub(crate) fn canonical_for(algorithm: Algorithm) -> Self {
+        match algorithm {
+            Algorithm::None => Self::None,
+            Algorithm::Zlib => Self::Zlib {
+                version: ZLIB_VERSION,
+            },
+            Algorithm::Zstd => Self::Zstd {
+                version: ZSTD_VERSION,
+                dictionary: 0,
+            },
+        }
+    }
+}
+
+/// A provenance-rich compressed-buffer payload.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompressedBufPayload {
+    /// Four-byte magic encoded in the wrapper header.
+    pub magic: u32,
+    /// Wrapper header version.
+    pub header_version: u32,
+    /// Compression algorithm.
+    pub algorithm: Algorithm,
+    /// Algorithm-specific header fields.
+    pub algorithm_header: AlgorithmHeader,
+    /// Uncompressed payload bytes.
+    pub data: Vec<u8>,
+    /// Original encoded bytes when this payload came from `read_payload_*`.
+    pub original_bytes: Option<Vec<u8>>,
+}
+
+impl CompressedBufPayload {
+    /// Creates a canonical new payload with no preserved source bytes.
+    pub fn new(magic: u32, algorithm: Algorithm, data: Vec<u8>) -> Self {
+        Self {
+            magic,
+            header_version: VERSION,
+            algorithm,
+            algorithm_header: AlgorithmHeader::canonical_for(algorithm),
+            data,
+            original_bytes: None,
+        }
+    }
+}

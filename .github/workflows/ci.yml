@@ -50,10 +50,7 @@ jobs:
             - uses: ./.github/actions/rust-check
             - uses: ./.github/actions/rust-test
               with:
-                  verbose: true
-            - uses: ./.github/actions/rust-test
-              with:
-                  package: nwnrs-cli
+                  workspace: true
                   verbose: true
 
     lint:

@@ -11,5 +11,18 @@ encoding_rs.workspace = true
 serde.workspace = true
 tracing.workspace = true
 
+[dev-dependencies]
+nwnrs-checksums.workspace = true
+nwnrs-compressedbuf.workspace = true
+nwnrs-erf.workspace = true
+nwnrs-exo.workspace = true
+nwnrs-gff.workspace = true
+nwnrs-ssf.workspace = true
+nwnrs-tlk.workspace = true
+nwnrs-twoda.workspace = true
+reqwest.workspace = true
+tokio.workspace = true
+md5.workspace = true
+
 [lints]
 workspace = true

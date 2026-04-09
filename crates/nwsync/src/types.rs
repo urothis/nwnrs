@@ -67,20 +67,32 @@ pub type ManifestResult<T> = Result<T, ManifestError>;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ManifestEntry {
     /// The content hash stored for this entry.
-    pub sha1:   SecureHash,
+    pub sha1: SecureHash,
     /// The uncompressed payload size.
-    pub size:   u32,
+    pub size: u32,
     /// The resource reference exposed by this entry.
     pub resref: ResRef,
+    /// The raw 16-byte resref slot as stored on disk.
+    pub raw_resref: [u8; 16],
+    /// How this entry is represented in the manifest tables.
+    pub source: ManifestEntrySource,
 }
 
 impl ManifestEntry {
     /// Creates a new manifest entry.
     pub fn new(sha1: SecureHash, size: u32, resref: ResRef) -> Self {
+        let mut raw_resref = [0_u8; 16];
+        let bytes = resref.res_ref().as_bytes();
+        let count = bytes.len().min(raw_resref.len());
+        if let (Some(dst), Some(src)) = (raw_resref.get_mut(..count), bytes.get(..count)) {
+            dst.copy_from_slice(src);
+        }
         Self {
             sha1,
             size,
             resref,
+            raw_resref,
+            source: ManifestEntrySource::Primary,
         }
     }
 }
@@ -91,13 +103,25 @@ impl fmt::Display for ManifestEntry {
     }
 }
 
+/// The on-disk table that stores a manifest entry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ManifestEntrySource {
+    /// The entry is stored in the primary entry table.
+    Primary,
+    /// The entry is stored in the mapping table and points at a primary entry.
+    Mapping {
+        /// Manifest entry index of the pointed-to primary entry.
+        target: usize,
+    },
+}
+
 /// A parsed NWSync manifest.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Manifest {
-    pub(crate) version:         u32,
+    pub(crate) version: u32,
     pub(crate) hash_tree_depth: u32,
     /// The manifest entries in their stored order.
-    pub entries:                Vec<ManifestEntry>,
+    pub entries: Vec<ManifestEntry>,
 }
 
 impl Default for Manifest {

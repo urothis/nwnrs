@@ -12,10 +12,48 @@ pub(crate) struct Cli {
 #[derive(FromArgs)]
 #[argh(subcommand)]
 pub(crate) enum Command {
+    Compile(CompileCmd),
     Inspect(InspectCmd),
     Pack(PackCmd),
     Unpack(UnpackCmd),
     Nwsync(NwsyncCmd),
+}
+
+#[derive(FromArgs)]
+#[argh(subcommand, name = "compile")]
+/// compile one NWScript source file to NCS and optional NDB output
+pub(crate) struct CompileCmd {
+    #[argh(switch, short = 'f')]
+    /// overwrite existing output files
+    pub(crate) force: bool,
+
+    #[argh(switch)]
+    /// also write debugger output as a sibling .ndb file
+    pub(crate) debug: bool,
+
+    #[argh(switch)]
+    /// skip main/StartingConditional entrypoint validation
+    pub(crate) no_entrypoint_check: bool,
+
+    #[argh(option, short = 'o')]
+    /// output NCS file path, defaults to INPUT with .ncs extension
+    pub(crate) output: Option<PathBuf>,
+
+    #[argh(option)]
+    /// explicit nwscript.nss path; defaults to nwscript.nss beside INPUT
+    pub(crate) langspec: Option<PathBuf>,
+
+    #[argh(option)]
+    /// extra directory to search for #include files; may be repeated
+    pub(crate) include_dir: Vec<PathBuf>,
+
+    #[argh(option, default = "String::from(\"O0\")")]
+    /// optimization level: O0, O1, O2, or O3
+    pub(crate) optimization: String,
+
+    #[argh(positional)]
+    /// input .nss file to compile
+    pub(crate) input: PathBuf,
 }
 
 #[derive(FromArgs)]
@@ -29,7 +67,7 @@ pub(crate) struct InspectCmd {
 
 #[derive(FromArgs)]
 #[argh(subcommand, name = "unpack")]
-/// unpack a resource into a directory or source-like text form
+/// unpack a resource into a directory
 pub(crate) struct UnpackCmd {
     #[argh(option, short = 'd', default = "PathBuf::from(\".\")")]
     /// destination directory
@@ -46,7 +84,7 @@ pub(crate) struct UnpackCmd {
 
 #[derive(FromArgs)]
 #[argh(subcommand, name = "pack")]
-/// pack a source file or directory into NWN binary form
+/// pack a directory into NWN binary form
 pub(crate) struct PackCmd {
     #[argh(switch, short = 'f')]
     /// overwrite existing output files
@@ -86,19 +124,19 @@ pub(crate) struct PackCmd {
 }
 
 pub(crate) struct KeyPackCmd {
-    pub(crate) data_version:     String,
+    pub(crate) data_version: String,
     pub(crate) data_compression: String,
-    pub(crate) no_squash:        bool,
-    pub(crate) no_symlinks:      bool,
-    pub(crate) force:            bool,
-    pub(crate) key:              String,
-    pub(crate) source:           PathBuf,
-    pub(crate) destination:      PathBuf,
+    pub(crate) no_squash: bool,
+    pub(crate) no_symlinks: bool,
+    pub(crate) force: bool,
+    pub(crate) key: String,
+    pub(crate) source: PathBuf,
+    pub(crate) destination: PathBuf,
 }
 
 pub(crate) struct KeyUnpackCmd {
-    pub(crate) force:       bool,
-    pub(crate) key:         PathBuf,
+    pub(crate) force: bool,
+    pub(crate) key: PathBuf,
     pub(crate) destination: PathBuf,
 }
 

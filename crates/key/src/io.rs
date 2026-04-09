@@ -1,4 +1,5 @@
 use std::{
+    collections::hash_map::RandomState,
     fs::{self, File},
     io::{self, BufWriter, Read, Seek, SeekFrom, Write},
     path::Path,
@@ -101,9 +102,13 @@ where
         KeyBifVersion::E1 => {
             let oid = read_fixed_string(&mut reader, 24)?;
             reader.seek(SeekFrom::Current(8))?;
-            Some(normalize_oid(&oid)?)
+            Some(oid)
         }
     };
+    let normalized_oid = oid
+        .as_deref()
+        .map(normalize_oid)
+        .transpose()?;
 
     reader.seek(SeekFrom::Start(io_start + offset_to_file_table))?;
     let mut file_table = Vec::with_capacity(bif_count);
@@ -116,19 +121,22 @@ where
     }
 
     let mut bifs = Vec::with_capacity(bif_count);
-    for (_, filename_offset, filename_size, _) in &file_table {
+    for (_, filename_offset, filename_size, drives) in &file_table {
         reader.seek(SeekFrom::Start(io_start + u64::from(*filename_offset)))?;
         let filename = trim_trailing_nuls(&read_bytes(&mut reader, usize::from(*filename_size))?);
+        let resolver_filename = normalize_bif_filename(&filename);
         bifs.push(crate::BifHandle {
-            filename:         normalize_bif_filename(&filename),
+            filename,
+            resolver_filename,
             expected_version: version,
-            expected_oid:     oid.clone(),
-            resolver:         resolver.clone(),
-            loaded:           Mutex::new(None),
+            expected_oid: normalized_oid.clone(),
+            drives: *drives,
+            resolver: resolver.clone(),
+            loaded: Mutex::new(None),
         });
     }
 
-    let mut resref_id_lookup = indexmap::IndexMap::new();
+    let mut resref_id_lookup = indexmap::IndexMap::with_hasher(RandomState::new());
     reader.seek(SeekFrom::Start(io_start + offset_to_key_table))?;
     for _ in 0..key_count {
         let res_ref_raw = trim_trailing_nuls(&read_bytes(&mut reader, 16)?);
@@ -149,13 +157,7 @@ where
         };
 
         let rr = new_res_ref(res_ref_raw, ResType(res_type))?;
-        resref_id_lookup.insert(
-            rr,
-            crate::KeyEntry {
-                res_id,
-                sha1,
-            },
-        );
+        resref_id_lookup.insert(rr, crate::KeyEntry { res_id, sha1 });
     }
 
     Ok(KeyTable {
@@ -165,7 +167,8 @@ where
         build_day,
         bifs,
         resref_id_lookup,
-        oid,
+        oid: normalized_oid,
+        raw_oid: oid,
     })
 }
 
@@ -198,7 +201,7 @@ pub(crate) fn read_bif(
     let variable_count = read_u32(reader.as_mut())? as usize;
     let fixed_count = read_u32(reader.as_mut())?;
     let variable_table_offset = u64::from(read_u32(reader.as_mut())?);
-    let oid = if version == KeyBifVersion::E1 {
+    let raw_oid = if version == KeyBifVersion::E1 {
         let oid = read_fixed_string(reader.as_mut(), 24)?;
         let normalized = normalize_oid(&oid)?;
         if let Some(expected_oid) = expected_oid
@@ -208,7 +211,7 @@ pub(crate) fn read_bif(
                 "bif oid ({normalized}) mismatches key oid ({expected_oid})"
             )));
         }
-        Some(normalized)
+        Some(oid)
     } else {
         None
     };
@@ -218,7 +221,7 @@ pub(crate) fn read_bif(
     }
 
     reader.seek(SeekFrom::Start(variable_table_offset))?;
-    let mut variable_resources = indexmap::IndexMap::new();
+    let mut variable_resources = indexmap::IndexMap::with_hasher(RandomState::new());
     for _ in 0..variable_count {
         let full_id = read_u32(reader.as_mut())?;
         let offset = u64::from(read_u32(reader.as_mut())?);
@@ -252,7 +255,8 @@ pub(crate) fn read_bif(
         file_type,
         file_version: version,
         variable_resources,
-        oid,
+        oid: raw_oid.as_deref().map(normalize_oid).transpose()?,
+        raw_oid,
     })
 }
 
@@ -296,18 +300,21 @@ where
     let mut filenames = std::io::Cursor::new(Vec::new());
     let mut bif_results = Vec::with_capacity(bifs.len());
 
-    for bif in bifs {
-        fs::create_dir_all(dest_dir.join(&bif.directory))?;
-        let bif_path = dest_dir
-            .join(&bif.directory)
-            .join(format!("{}.bif", bif.name));
+    for (bif_idx, bif) in bifs.iter().enumerate() {
+        let filename_for_bif = build_bif_filename(bif_prefix, bif);
+        let normalized_filename = normalize_bif_filename(&filename_for_bif);
+        let bif_path = dest_dir.join(&normalized_filename);
+        if let Some(parent) = bif_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
         let bif_file = File::create(&bif_path)?;
         let mut bif_writer = BufWriter::new(bif_file);
         let written = write_bif(
+            bif_idx,
             version,
             exocomp,
             compalg,
-            &key_oid,
+            bif.bif_oid.as_deref().unwrap_or(&key_oid),
             &mut bif_writer,
             &bif.entries,
             &mut writer,
@@ -320,12 +327,6 @@ where
             &mut file_table,
             to_u32_usize(bif_disk_size.saturating_sub(20), "BIF disk size")?,
         )?;
-        let prefix = bif_prefix.trim_matches(|ch| ch == '/' || ch == '\\');
-        let filename_for_bif = if prefix.is_empty() {
-            format!("{}.bif", bif.name)
-        } else {
-            format!("{}\\{}.bif", prefix, bif.name)
-        };
         write_u32(
             &mut file_table,
             to_u32_u64(
@@ -341,7 +342,7 @@ where
             &mut file_table,
             to_u16_len(filename_for_bif.len(), "BIF filename length")?,
         )?;
-        write_u16(&mut file_table, 0)?;
+        write_u16(&mut file_table, bif.drives)?;
         filenames.write_all(filename_for_bif.as_bytes())?;
         filenames.write_all(&[0_u8])?;
     }
@@ -417,6 +418,7 @@ where
 }
 
 fn write_bif<F>(
+    bif_idx: usize,
     version: KeyBifVersion,
     exocomp: ExoResFileCompressionType,
     compalg: Algorithm,
@@ -453,7 +455,10 @@ where
     writer.write_all(&vec![0_u8; entry_size * entries.len()])?;
     let var_table_start = u64::from(variable_table_offset);
 
-    let mut entry_meta = indexmap::IndexMap::<ResRef, (usize, usize, SecureHash)>::new();
+    let mut entry_meta =
+        indexmap::IndexMap::<ResRef, (usize, usize, SecureHash), RandomState>::with_hasher(
+            RandomState::new(),
+        );
     let mut sha_entries = Vec::with_capacity(entries.len());
     for resref in entries {
         let pos = writer.stream_position()?;
@@ -486,8 +491,8 @@ where
         + u64::try_from(entries.len().saturating_mul(entry_size))
             .map_err(|_error| KeyError::msg("BIF variable table size exceeds 64-bit range"))?;
     for (idx, resref) in entries.iter().enumerate() {
-        let id =
-            (to_u32_len(idx, "BIF resource index")? << 20) + to_u32_len(idx, "BIF resource id")?;
+        let id = (to_u32_len(bif_idx, "BIF index")? << 20)
+            + to_u32_len(idx, "BIF resource id")?;
         let (uncompressed_size, compressed_size, _) = entry_meta
             .get(resref)
             .ok_or_else(|| KeyError::msg(format!("missing written entry metadata for {resref}")))?;
@@ -515,6 +520,71 @@ where
     ))
 }
 
+/// Writes a KEY/BIF resource set using provenance preserved on a loaded [`KeyTable`].
+pub fn write_key_table_archive(
+    value: &KeyTable,
+    dest_dir: impl AsRef<Path>,
+    key_name: &str,
+) -> KeyResult<()> {
+    let mut bifs = Vec::with_capacity(value.bifs.len());
+    let bif_contents = value.bif_contents()?;
+    let mut payloads =
+        indexmap::IndexMap::<ResRef, Vec<u8>, RandomState>::with_hasher(RandomState::new());
+
+    for (bif_idx, contents) in bif_contents.into_iter().enumerate() {
+        let handle = value
+            .bifs
+            .get(bif_idx)
+            .ok_or_else(|| KeyError::msg("missing bif handle"))?;
+        let loaded = handle.load()?;
+        for rr in &contents.resources {
+            payloads.insert(rr.clone(), value.demand(rr)?.read_all(false)?);
+        }
+
+        let path = Path::new(&contents.filename);
+        let name = path
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| KeyError::msg(format!("invalid bif filename {}", contents.filename)))?
+            .to_string();
+        let directory = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .map(|parent| parent.to_string_lossy().replace('\\', "/"))
+            .unwrap_or_default();
+
+        bifs.push(crate::KeyBifEntry {
+            directory,
+            name,
+            recorded_filename: Some(contents.filename.clone()),
+            drives: handle.drives,
+            bif_oid: loaded.raw_oid.clone(),
+            entries: contents.resources,
+        });
+    }
+
+    write_key_and_bif(
+        value.version,
+        infer_key_exocomp(value)?,
+        infer_key_algorithm(value)?,
+        dest_dir,
+        key_name,
+        "",
+        &bifs,
+        value.build_year,
+        value.build_day,
+        value.raw_oid.as_deref(),
+        |rr, io| {
+            let bytes = payloads
+                .get(rr)
+                .ok_or_else(|| io::Error::other(format!("missing payload for {rr}")))?;
+            io.write_all(bytes)?;
+            Ok((bytes.len(), secure_hash(bytes)))
+        },
+    )
+}
+
 trait WriteSeek: Write + Seek {}
 impl<T: Write + Seek> WriteSeek for T {}
 
@@ -529,6 +599,43 @@ fn normalize_oid(input: &str) -> KeyResult<String> {
 
 fn normalize_bif_filename(filename: &str) -> String {
     filename.replace('\\', "/")
+}
+
+fn build_bif_filename(bif_prefix: &str, bif: &crate::KeyBifEntry) -> String {
+    if let Some(filename) = &bif.recorded_filename {
+        return filename.clone();
+    }
+
+    let prefix = bif_prefix.trim_matches(|ch| ch == '/' || ch == '\\');
+    if prefix.is_empty() {
+        format!("{}.bif", bif.name)
+    } else {
+        format!("{}\\{}.bif", prefix, bif.name)
+    }
+}
+
+fn infer_key_exocomp(value: &KeyTable) -> KeyResult<ExoResFileCompressionType> {
+    for bif in &value.bifs {
+        let loaded = bif.load()?;
+        if loaded.variable_resources.values().any(|resource| {
+            resource.compression_type != ExoResFileCompressionType::None
+        }) {
+            return Ok(ExoResFileCompressionType::CompressedBuf);
+        }
+    }
+    Ok(ExoResFileCompressionType::None)
+}
+
+fn infer_key_algorithm(value: &KeyTable) -> KeyResult<Algorithm> {
+    for rr in value.contents() {
+        let res = value.demand(&rr)?;
+        if let Some(algorithm) = res.compressed_buf_algorithm()
+            && algorithm != Algorithm::None
+        {
+            return Ok(algorithm);
+        }
+    }
+    Ok(Algorithm::None)
 }
 
 fn trim_trailing_nuls(bytes: &[u8]) -> String {
@@ -595,4 +702,117 @@ fn to_u32_u64(value: u64, what: &str) -> KeyResult<u32> {
 
 fn to_u16_len(value: usize, what: &str) -> KeyResult<u16> {
     u16::try_from(value).map_err(|_error| KeyError::msg(format!("{what} exceeds 16-bit range")))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        collections::HashMap,
+        fs,
+        path::PathBuf,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    use nwnrs_resman::ResContainer;
+    use nwnrs_resref::ResRef;
+    use nwnrs_resref::new_resolved_res_ref_from_filename;
+
+    use super::{read_key_table_from_file, write_key_and_bif, write_key_table_archive};
+    use crate::{KeyBifEntry, KeyBifVersion};
+    use nwnrs_compressedbuf::Algorithm;
+    use nwnrs_exo::ExoResFileCompressionType;
+
+    fn unique_test_dir(prefix: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock drift before unix epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!("nwnrs-key-{prefix}-{nanos}"))
+    }
+
+    #[test]
+    fn key_archive_roundtrip_preserves_recorded_bif_names_and_multi_bif_ids() {
+        let source_dir = unique_test_dir("source");
+        let output_dir = unique_test_dir("output");
+        fs::create_dir_all(&source_dir).expect("create source dir");
+        fs::create_dir_all(&output_dir).expect("create output dir");
+
+        let alpha: ResRef = new_resolved_res_ref_from_filename("alpha.uti")
+            .expect("alpha resref")
+            .into();
+        let beta: ResRef = new_resolved_res_ref_from_filename("beta.utc")
+            .expect("beta resref")
+            .into();
+
+        let payloads: HashMap<ResRef, Vec<u8>> = HashMap::from([
+            (alpha.clone(), b"alpha-bytes".to_vec()),
+            (beta.clone(), b"beta-bytes".to_vec()),
+        ]);
+
+        write_key_and_bif(
+            KeyBifVersion::E1,
+            ExoResFileCompressionType::None,
+            Algorithm::None,
+            &source_dir,
+            "chitin",
+            "",
+            &[
+                KeyBifEntry {
+                    directory: String::new(),
+                    name: "data_a".to_string(),
+                    recorded_filename: Some("Data\\First.BIF".to_string()),
+                    drives: 7,
+                    bif_oid: Some("fedcba987654321001234567".to_string()),
+                    entries: vec![alpha.clone()],
+                },
+                KeyBifEntry {
+                    directory: String::new(),
+                    name: "data_b".to_string(),
+                    recorded_filename: Some("Data\\Second.BIF".to_string()),
+                    drives: 9,
+                    bif_oid: Some("fedcba987654321001234567".to_string()),
+                    entries: vec![beta.clone()],
+                },
+            ],
+            2025,
+            97,
+            Some("fedcba987654321001234567"),
+            |rr, io| {
+                let bytes = payloads.get(rr).expect("payload for resref");
+                io.write_all(bytes)?;
+                Ok((bytes.len(), nwnrs_checksums::secure_hash(bytes)))
+            },
+        )
+        .expect("write key+bif");
+
+        let key_path = source_dir.join("chitin.key");
+        let key = read_key_table_from_file(&key_path).expect("read key");
+        assert_eq!(
+            key.bifs(),
+            vec!["Data\\First.BIF".to_string(), "Data\\Second.BIF".to_string()]
+        );
+        assert_eq!(key.raw_oid(), Some("fedcba987654321001234567"));
+        assert_eq!(
+            key.demand(&beta)
+                .expect("demand second bif resource")
+                .read_all(false)
+                .expect("read second bif resource"),
+            b"beta-bytes"
+        );
+
+        write_key_table_archive(&key, &output_dir, "chitin").expect("rewrite key archive");
+
+        assert_eq!(
+            fs::read(source_dir.join("chitin.key")).expect("read source key"),
+            fs::read(output_dir.join("chitin.key")).expect("read output key")
+        );
+        assert_eq!(
+            fs::read(source_dir.join("Data/First.BIF")).expect("read source first bif"),
+            fs::read(output_dir.join("Data/First.BIF")).expect("read output first bif")
+        );
+        assert_eq!(
+            fs::read(source_dir.join("Data/Second.BIF")).expect("read source second bif"),
+            fs::read(output_dir.join("Data/Second.BIF")).expect("read output second bif")
+        );
+    }
 }

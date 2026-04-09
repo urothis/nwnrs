@@ -8,6 +8,8 @@
 mod encoding;
 mod errors;
 mod io;
+#[cfg(test)]
+mod testing;
 
 pub use encoding::*;
 pub use errors::*;

@@ -93,6 +93,7 @@ fn new_res(
         io_size,
         0,
         ExoResFileCompressionType::None,
+        None,
         usize::try_from(io_size.max(0)).unwrap_or(usize::MAX),
         EMPTY_SECURE_HASH,
     )

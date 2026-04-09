@@ -2,6 +2,7 @@
 //! Command-line entrypoint for NWNRS tools.
 
 mod args;
+mod compile;
 mod inspect;
 mod logging;
 mod metadata;
@@ -30,6 +31,7 @@ fn main() -> ExitCode {
 #[instrument(level = "info", skip_all, err)]
 fn run(cli: Cli) -> Result<(), String> {
     match cli.command {
+        Command::Compile(cmd) => compile::run_compile(cmd),
         Command::Inspect(cmd) => inspect::run_inspect(&cmd.path),
         Command::Pack(cmd) => pack::run_pack(cmd),
         Command::Unpack(cmd) => unpack::run_unpack(cmd),

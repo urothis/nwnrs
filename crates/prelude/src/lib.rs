@@ -36,10 +36,6 @@ pub mod prelude {
     pub mod gff {
         pub use nwnrs_gff::prelude::*;
     }
-    /// Export GFF JSON serialization types and traits.
-    pub mod gffjson {
-        pub use nwnrs_gffjson::prelude::*;
-    }
     /// Export key file types and traits.
     pub mod key {
         pub use nwnrs_key::prelude::*;
@@ -51,6 +47,10 @@ pub mod prelude {
     /// Export masterlist API client types and traits.
     pub mod masterlist {
         pub use nwnrs_masterlist::prelude::*;
+    }
+    /// Export NWScript compiler and format types and traits.
+    pub mod nwscript {
+        pub use nwnrs_nwscript::prelude::*;
     }
     /// Export NWN sync client types and traits.
     pub mod nwsync {

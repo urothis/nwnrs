@@ -1,7 +1,7 @@
 use std::{
     collections::HashSet,
     ffi::OsStr,
-    fs::{self, File},
+    fs,
     io::{self, BufReader, Cursor},
     path::{Path, PathBuf},
 };
@@ -12,13 +12,14 @@ use tracing::{debug, info, instrument, warn};
 use crate::{
     args::{KeyPackCmd, PackCmd},
     metadata::{
-        ErfPackMetadata, copy_original_key_set, read_erf_pack_metadata, read_key_pack_metadata,
-        should_copy_original_erf, should_copy_original_key,
+        ErfPackMetadata, ResourcePackMetadata, copy_original_key_set, read_erf_pack_metadata,
+        read_key_pack_metadata, read_resource_pack_metadata, should_copy_original_erf,
+        should_copy_original_key, should_copy_original_resource,
     },
     util::{
         Kind, RESOURCE_METADATA_FILENAME, collect_key_bif_entries, current_build_date, detect_kind,
         ensure_output_file_ready, ensure_target_dir_ready, entry_is_dir, entry_is_file,
-        exo_compression_from_algorithm, infer_erf_type, is_gff_extension, parse_algorithm,
+        exo_compression_from_algorithm, infer_erf_type, parse_algorithm,
         parse_erf_version, parse_key_version, should_skip_top_level_dir, sorted_dir_entries,
     },
 };
@@ -34,16 +35,10 @@ pub(crate) fn run_pack(cmd: PackCmd) -> Result<(), String> {
     match detect_kind(&cmd.output) {
         Some(Kind::Key) => run_pack_key(cmd),
         Some(Kind::Erf) => run_pack_erf(cmd),
-        Some(Kind::Gff) => pack_gff_file(&cmd.input, &cmd.output, cmd.force),
-        Some(Kind::TwoDa) => pack_twoda_file(&cmd.input, &cmd.output, cmd.force),
-        Some(Kind::Tlk) => Err(format!(
-            "generic pack does not yet support TLK import: {}",
-            cmd.output.display()
-        )),
-        Some(Kind::Ssf) => Err(format!(
-            "generic pack does not yet support SSF import: {}",
-            cmd.output.display()
-        )),
+        Some(Kind::Gff) => run_pack_resource(cmd, Kind::Gff),
+        Some(Kind::TwoDa) => run_pack_resource(cmd, Kind::TwoDa),
+        Some(Kind::Tlk) => run_pack_resource(cmd, Kind::Tlk),
+        Some(Kind::Ssf) => run_pack_resource(cmd, Kind::Ssf),
         None => Err(format!(
             "unsupported output file type for generic pack: {}",
             cmd.output.display()
@@ -148,8 +143,16 @@ fn run_pack_erf(cmd: PackCmd) -> Result<(), String> {
         .unwrap_or_default();
     let str_ref = metadata.as_ref().map(|meta| meta.str_ref).unwrap_or(0);
     let oid = metadata.as_ref().and_then(|meta| meta.oid.as_deref());
+    let entry_algorithms = metadata
+        .as_ref()
+        .map(|meta| meta.entry_algorithms.clone())
+        .unwrap_or_default();
     let mut out = Cursor::new(Vec::new());
-    erf::write_erf(
+    let resource_list_padding = metadata
+        .as_ref()
+        .map(|meta| meta.resource_list_padding)
+        .unwrap_or(0);
+    erf::write_erf_with_options(
         &mut out,
         &file_type,
         version,
@@ -161,6 +164,9 @@ fn run_pack_erf(cmd: PackCmd) -> Result<(), String> {
         str_ref,
         &refs,
         oid,
+        erf::ErfWriteOptions {
+            resource_list_padding,
+        },
         |rr, io| {
             let entry = sources
                 .iter()
@@ -170,6 +176,7 @@ fn run_pack_erf(cmd: PackCmd) -> Result<(), String> {
             io.write_all(&data)?;
             Ok((data.len(), checksums::secure_hash(&data)))
         },
+        |rr| entry_algorithms.get(rr).copied().unwrap_or(compalg),
     )
     .map_err(|error| format!("failed to pack {}: {error}", cmd.output.display()))?;
 
@@ -177,6 +184,145 @@ fn run_pack_erf(cmd: PackCmd) -> Result<(), String> {
     fs::write(&cmd.output, out.into_inner())
         .map_err(|error| format!("failed to write {}: {error}", cmd.output.display()))?;
     Ok(())
+}
+
+#[instrument(
+    level = "info",
+    skip_all,
+    err,
+    fields(input = %cmd.input.display(), output = %cmd.output.display(), force = cmd.force)
+)]
+fn run_pack_resource(cmd: PackCmd, kind: Kind) -> Result<(), String> {
+    if let Some(metadata) = read_resource_pack_metadata(&cmd.input)?
+        && should_copy_original_resource(&metadata, &cmd.input)?
+    {
+        ensure_output_file_ready(&cmd.output, cmd.force)?;
+        fs::copy(&metadata.source, &cmd.output).map_err(|error| {
+            format!(
+                "failed to copy original resource {} to {}: {error}",
+                metadata.source.display(),
+                cmd.output.display()
+            )
+        })?;
+        return Ok(());
+    }
+
+    let source = resolve_resource_pack_source(&cmd.input, kind, read_resource_pack_metadata(&cmd.input)?)?;
+    match kind {
+        Kind::Gff => pack_gff_resource(&source, &cmd.output, cmd.force),
+        Kind::TwoDa => pack_twoda_resource(&source, &cmd.output, cmd.force),
+        Kind::Tlk => pack_tlk_resource(&source, &cmd.output, cmd.force),
+        Kind::Ssf => pack_ssf_resource(&source, &cmd.output, cmd.force),
+        Kind::Erf | Kind::Key => Err(format!(
+            "unsupported standalone resource pack kind for {}",
+            cmd.output.display()
+        )),
+    }
+}
+
+fn resolve_resource_pack_source(
+    input: &Path,
+    expected_kind: Kind,
+    metadata: Option<ResourcePackMetadata>,
+) -> Result<PathBuf, String> {
+    if input.is_file() {
+        if detect_kind(input) != Some(expected_kind) {
+            return Err(format!(
+                "input file type does not match output resource kind: {}",
+                input.display()
+            ));
+        }
+        return Ok(input.to_path_buf());
+    }
+    if !input.is_dir() {
+        return Err(format!("source does not exist: {}", input.display()));
+    }
+
+    if let Some(metadata) = metadata {
+        let candidate = input.join(&metadata.file_name);
+        if candidate.is_file() {
+            if detect_kind(&candidate) != Some(expected_kind) {
+                return Err(format!(
+                    "resource metadata file type does not match output resource kind: {}",
+                    candidate.display()
+                ));
+            }
+            return Ok(candidate);
+        }
+    }
+
+    let mut files = sorted_dir_entries(input)?
+        .into_iter()
+        .filter(|entry| entry_is_file(&entry.path, false).unwrap_or(false))
+        .filter(|entry| entry.file_name != RESOURCE_METADATA_FILENAME)
+        .collect::<Vec<_>>();
+    if files.len() != 1 {
+        return Err(format!(
+            "resource directory must contain exactly one packable file: {}",
+            input.display()
+        ));
+    }
+    let source = files.remove(0).path;
+    if detect_kind(&source) != Some(expected_kind) {
+        return Err(format!(
+            "resource directory file type does not match output resource kind: {}",
+            source.display()
+        ));
+    }
+    Ok(source)
+}
+
+fn pack_gff_resource(input: &Path, output: &Path, force: bool) -> Result<(), String> {
+    let file = fs::File::open(input)
+        .map_err(|error| format!("failed to open {}: {error}", input.display()))?;
+    let mut reader = BufReader::new(file);
+    let root = gff::read_gff_root(&mut reader)
+        .map_err(|error| format!("failed to parse {} as GFF: {error}", input.display()))?;
+    ensure_output_file_ready(output, force)?;
+    let mut bytes = Cursor::new(Vec::new());
+    gff::write_gff_root(&mut bytes, &root)
+        .map_err(|error| format!("failed to write {} as GFF: {error}", output.display()))?;
+    fs::write(output, bytes.into_inner())
+        .map_err(|error| format!("failed to write {}: {error}", output.display()))
+}
+
+fn pack_twoda_resource(input: &Path, output: &Path, force: bool) -> Result<(), String> {
+    let file = fs::File::open(input)
+        .map_err(|error| format!("failed to open {}: {error}", input.display()))?;
+    let mut reader = BufReader::new(file);
+    let value = twoda::read_twoda(&mut reader)
+        .map_err(|error| format!("failed to parse {} as 2DA: {error}", input.display()))?;
+    ensure_output_file_ready(output, force)?;
+    let mut bytes = Vec::new();
+    twoda::write_twoda(&mut bytes, &value, false)
+        .map_err(|error| format!("failed to write {} as 2DA: {error}", output.display()))?;
+    fs::write(output, bytes).map_err(|error| format!("failed to write {}: {error}", output.display()))
+}
+
+fn pack_tlk_resource(input: &Path, output: &Path, force: bool) -> Result<(), String> {
+    let file = fs::File::open(input)
+        .map_err(|error| format!("failed to open {}: {error}", input.display()))?;
+    let mut value = tlk::read_single_tlk(BufReader::new(file), false)
+        .map_err(|error| format!("failed to parse {} as TLK: {error}", input.display()))?;
+    ensure_output_file_ready(output, force)?;
+    let mut bytes = Cursor::new(Vec::new());
+    tlk::write_single_tlk(&mut bytes, &mut value)
+        .map_err(|error| format!("failed to write {} as TLK: {error}", output.display()))?;
+    fs::write(output, bytes.into_inner())
+        .map_err(|error| format!("failed to write {}: {error}", output.display()))
+}
+
+fn pack_ssf_resource(input: &Path, output: &Path, force: bool) -> Result<(), String> {
+    let file = fs::File::open(input)
+        .map_err(|error| format!("failed to open {}: {error}", input.display()))?;
+    let mut reader = BufReader::new(file);
+    let value = ssf::read_ssf(&mut reader)
+        .map_err(|error| format!("failed to parse {} as SSF: {error}", input.display()))?;
+    ensure_output_file_ready(output, force)?;
+    let mut bytes = Vec::new();
+    ssf::write_ssf(&mut bytes, &value)
+        .map_err(|error| format!("failed to write {} as SSF: {error}", output.display()))?;
+    fs::write(output, bytes).map_err(|error| format!("failed to write {}: {error}", output.display()))
 }
 
 pub(crate) fn apply_erf_entry_order(
@@ -273,6 +419,9 @@ fn run_key_pack(cmd: KeyPackCmd) -> Result<(), String> {
                 String::new()
             },
             name,
+            recorded_filename: None,
+            drives: 0,
+            bif_oid: None,
             entries,
         });
     }
@@ -303,65 +452,21 @@ fn run_key_pack(cmd: KeyPackCmd) -> Result<(), String> {
     Ok(())
 }
 
-#[instrument(
-    level = "info",
-    skip_all,
-    err,
-    fields(input = %input.display(), output = %output.display(), force)
-)]
-fn pack_gff_file(input: &Path, output: &Path, force: bool) -> Result<(), String> {
-    let json = fs::read_to_string(input)
-        .map_err(|error| format!("failed to read {}: {error}", input.display()))?;
-    let root = gffjson::gff_root_from_json_str(&json)
-        .map_err(|error| format!("failed to parse {} as GFF JSON: {error}", input.display()))?;
-    ensure_output_file_ready(output, force)?;
-    let mut bytes = Cursor::new(Vec::new());
-    gff::write_gff_root(&mut bytes, &root)
-        .map_err(|error| format!("failed to serialize {} as GFF: {error}", input.display()))?;
-    fs::write(output, bytes.into_inner())
-        .map_err(|error| format!("failed to write {}: {error}", output.display()))?;
-    Ok(())
-}
-
-#[instrument(
-    level = "info",
-    skip_all,
-    err,
-    fields(input = %input.display(), output = %output.display(), force)
-)]
-fn pack_twoda_file(input: &Path, output: &Path, force: bool) -> Result<(), String> {
-    let file = File::open(input)
-        .map_err(|error| format!("failed to open {}: {error}", input.display()))?;
-    let mut reader = BufReader::new(file);
-    let twoda = twoda::read_twoda(&mut reader)
-        .map_err(|error| format!("failed to parse {} as 2DA text: {error}", input.display()))?;
-    ensure_output_file_ready(output, force)?;
-    let mut bytes = Vec::new();
-    twoda::write_twoda(&mut bytes, &twoda, false)
-        .map_err(|error| format!("failed to serialize {} as 2DA: {error}", input.display()))?;
-    fs::write(output, bytes)
-        .map_err(|error| format!("failed to write {}: {error}", output.display()))?;
-    Ok(())
-}
-
 #[derive(Clone)]
 pub(crate) enum PackSourceKind {
     File(PathBuf),
-    GffJson(PathBuf),
 }
 
 #[derive(Clone)]
 pub(crate) struct PackSourceEntry {
-    pub(crate) rr:     resref::ResRef,
+    pub(crate) rr: resref::ResRef,
     pub(crate) source: PackSourceKind,
 }
 
 impl PackSourceEntry {
     fn source_label(&self) -> String {
         match &self.source {
-            PackSourceKind::File(path) | PackSourceKind::GffJson(path) => {
-                path.display().to_string()
-            }
+            PackSourceKind::File(path) => path.display().to_string(),
         }
     }
 
@@ -369,18 +474,6 @@ impl PackSourceEntry {
         match &self.source {
             PackSourceKind::File(path) => fs::read(path)
                 .map_err(|error| format!("failed to read {}: {error}", path.display())),
-            PackSourceKind::GffJson(path) => {
-                let json = fs::read_to_string(path)
-                    .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
-                let root = gffjson::gff_root_from_json_str(&json).map_err(|error| {
-                    format!("failed to parse {} as GFF JSON: {error}", path.display())
-                })?;
-                let mut bytes = Cursor::new(Vec::new());
-                gff::write_gff_root(&mut bytes, &root).map_err(|error| {
-                    format!("failed to serialize {} as GFF: {error}", path.display())
-                })?;
-                Ok(bytes.into_inner())
-            }
         }
     }
 }
@@ -475,31 +568,89 @@ fn pack_source_for_file(path: &Path) -> Result<PackSourceEntry, String> {
         ));
     }
     let file_name = path.file_name().and_then(OsStr::to_str).unwrap_or("");
-    if let Some(base_name) = file_name.strip_suffix(".json") {
-        let resolved = resref::new_resolved_res_ref_from_filename(base_name).map_err(|error| {
-            format!("{} is not a valid GFF JSON source: {error}", path.display())
-        })?;
-        if !is_gff_extension(resolved.res_ext()) {
-            return Err(format!(
-                "{} is JSON for unsupported pack type {}",
-                path.display(),
-                resolved.res_ext()
-            ));
-        }
-        return Ok(PackSourceEntry {
-            rr:     resolved.into(),
-            source: PackSourceKind::GffJson(path.to_path_buf()),
-        });
-    }
-
     let resolved = resref::new_resolved_res_ref_from_filename(file_name)
         .map_err(|error| format!("{} is not a valid resref source: {error}", path.display()))?;
     Ok(PackSourceEntry {
-        rr:     resolved.into(),
+        rr: resolved.into(),
         source: PackSourceKind::File(path.to_path_buf()),
     })
 }
 
 fn is_pack_metadata_file(path: &Path) -> bool {
     path.file_name().and_then(OsStr::to_str) == Some(RESOURCE_METADATA_FILENAME)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{fs, path::PathBuf, time::{SystemTime, UNIX_EPOCH}};
+
+    use super::*;
+    use crate::args::PackCmd;
+
+    fn unique_test_dir(prefix: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock drift before unix epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!("nwnrs-cli-{prefix}-{nanos}"))
+    }
+
+    #[test]
+    fn pack_supports_binary_gff_resource() {
+        let root = gff::new_gff_root("UTC ");
+        let temp_dir = unique_test_dir("gff-pack");
+        fs::create_dir_all(&temp_dir).expect("create temp dir");
+        let input = temp_dir.join("fixture.utc");
+        let output = temp_dir.join("copy.utc");
+        let mut bytes = Cursor::new(Vec::new());
+        gff::write_gff_root(&mut bytes, &root).expect("write gff fixture");
+        fs::write(&input, bytes.into_inner()).expect("write input fixture");
+
+        run_pack(PackCmd {
+            force: false,
+            data_version: "V1".to_string(),
+            data_compression: "none".to_string(),
+            no_squash: false,
+            no_symlinks: false,
+            recurse: 2,
+            erf_type: None,
+            input: input.clone(),
+            output: output.clone(),
+        })
+        .expect("pack gff resource");
+
+        assert_eq!(
+            fs::read(&input).expect("read input"),
+            fs::read(&output).expect("read output")
+        );
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn pack_supports_binary_twoda_resource() {
+        let temp_dir = unique_test_dir("twoda-pack");
+        fs::create_dir_all(&temp_dir).expect("create temp dir");
+        let input = temp_dir.join("appearance.2da");
+        let output = temp_dir.join("copy.2da");
+        fs::write(&input, b"2DA V2.0\nDEFAULT: ****\n\nLABEL\n0 value\n").expect("write twoda fixture");
+
+        run_pack(PackCmd {
+            force: false,
+            data_version: "V1".to_string(),
+            data_compression: "none".to_string(),
+            no_squash: false,
+            no_symlinks: false,
+            recurse: 2,
+            erf_type: None,
+            input: input.clone(),
+            output: output.clone(),
+        })
+        .expect("pack twoda resource");
+
+        assert_eq!(
+            fs::read(&input).expect("read input"),
+            fs::read(&output).expect("read output")
+        );
+        let _ = fs::remove_dir_all(temp_dir);
+    }
 }

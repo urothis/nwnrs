@@ -4,61 +4,67 @@ use nwnrs_util::prelude::*;
 use tracing::{debug, instrument};
 
 use crate::{
-    GffCExoLocString, GffError, GffField, GffFieldKind, GffResult, GffRoot, GffStruct, GffValue,
-    HEADER_SIZE, ensure_label,
+    GffCExoLocString, GffError, GffField, GffFieldKind, GffFieldProvenance, GffResult, GffRoot,
+    GffStruct, GffStructProvenance, GffValue, HEADER_SIZE, ensure_label,
 };
 
 #[derive(Debug, Clone)]
 struct Header {
-    struct_offset:        u32,
-    struct_count:         u32,
-    field_offset:         u32,
-    field_count:          u32,
-    label_offset:         u32,
-    label_count:          u32,
-    field_data_offset:    u32,
-    field_data_size:      u32,
+    struct_offset: u32,
+    struct_count: u32,
+    field_offset: u32,
+    field_count: u32,
+    label_offset: u32,
+    label_count: u32,
+    field_data_offset: u32,
+    field_data_size: u32,
     field_indices_offset: u32,
-    field_indices_size:   u32,
-    list_indices_offset:  u32,
-    list_indices_size:    u32,
+    field_indices_size: u32,
+    list_indices_offset: u32,
+    list_indices_size: u32,
 }
 
 #[derive(Debug, Clone)]
 struct RawStructEntry {
-    id:             i32,
+    id: i32,
     data_or_offset: i32,
-    field_count:    i32,
+    field_count: i32,
 }
 
 #[derive(Debug, Clone)]
 struct RawFieldEntry {
-    field_kind:     GffFieldKind,
-    label_index:    i32,
+    field_kind: GffFieldKind,
+    label_index: i32,
     data_or_offset: i32,
+}
+
+#[derive(Debug, Clone)]
+struct RawLabelEntry {
+    text: String,
+    bytes: [u8; 16],
 }
 
 #[derive(Debug, Default)]
 struct WriteState {
-    labels:        Vec<String>,
-    structs:       Vec<WriteStructEntry>,
-    fields:        Vec<WriteFieldEntry>,
-    field_data:    Vec<u8>,
+    labels: Vec<RawLabelEntry>,
+    structs: Vec<WriteStructEntry>,
+    fields: Vec<WriteFieldEntry>,
+    field_data: Vec<u8>,
     field_indices: Vec<i32>,
-    list_indices:  Vec<i32>,
+    list_indices: Vec<i32>,
 }
 
 #[derive(Debug, Clone, Default)]
 struct WriteStructEntry {
-    id:             i32,
+    id: i32,
     data_or_offset: i32,
-    field_count:    i32,
+    field_count: i32,
 }
 
 #[derive(Debug, Clone)]
 struct WriteFieldEntry {
-    field_kind:     GffFieldKind,
-    label_index:    i32,
+    field_kind: GffFieldKind,
+    label_index: i32,
     data_or_offset: i32,
 }
 
@@ -66,54 +72,57 @@ struct WriteFieldEntry {
 #[instrument(level = "debug", skip_all, err)]
 pub fn read_gff_root<R: Read + Seek>(reader: &mut R) -> GffResult<GffRoot> {
     let start = reader.stream_position()?;
+    reader.seek(SeekFrom::Start(start))?;
+    let mut bytes = Vec::new();
+    reader.read_to_end(&mut bytes)?;
+    let mut reader = io::Cursor::new(bytes.clone());
+    let start = 0;
 
-    let file_type = read_str_or_err(reader, 4)?;
-    let file_version = read_str_or_err(reader, 4)?;
+    let file_type = read_str_or_err(&mut reader, 4)?;
+    let file_version = read_str_or_err(&mut reader, 4)?;
     expect(file_type.len() == 4, "GFF file type must be 4 bytes")?;
     expect(
         file_version == "V3.2",
         format!("unsupported gff version {file_version}"),
     )?;
 
-    let mut header = Header {
-        struct_offset:        read_u32(reader)?,
-        struct_count:         read_u32(reader)?,
-        field_offset:         read_u32(reader)?,
-        field_count:          read_u32(reader)?,
-        label_offset:         read_u32(reader)?,
-        label_count:          read_u32(reader)?,
-        field_data_offset:    read_u32(reader)?,
-        field_data_size:      read_u32(reader)?,
-        field_indices_offset: read_u32(reader)?,
-        field_indices_size:   read_u32(reader)?,
-        list_indices_offset:  read_u32(reader)?,
-        list_indices_size:    read_u32(reader)?,
+    let header = Header {
+        struct_offset: read_u32(&mut reader)?,
+        struct_count: read_u32(&mut reader)?,
+        field_offset: read_u32(&mut reader)?,
+        field_count: read_u32(&mut reader)?,
+        label_offset: read_u32(&mut reader)?,
+        label_count: read_u32(&mut reader)?,
+        field_data_offset: read_u32(&mut reader)?,
+        field_data_size: read_u32(&mut reader)?,
+        field_indices_offset: read_u32(&mut reader)?,
+        field_indices_size: read_u32(&mut reader)?,
+        list_indices_offset: read_u32(&mut reader)?,
+        list_indices_size: read_u32(&mut reader)?,
     };
-
-    normalize_index_offsets(reader, start, &mut header)?;
 
     expect(
         usize::try_from(header.struct_offset).ok() == Some(HEADER_SIZE),
         "unexpected struct offset",
     )?;
 
-    let labels = read_labels(reader, start, &header)?;
-    let fields = read_field_entries(reader, start, &header)?;
+    let labels = read_labels(&mut reader, start, &header)?;
+    let fields = read_field_entries(&mut reader, start, &header)?;
     let field_indices = read_i32_array(
-        reader,
+        &mut reader,
         start + u64::from(header.field_indices_offset),
         header.field_indices_size,
     )?;
     let list_indices = read_i32_array(
-        reader,
+        &mut reader,
         start + u64::from(header.list_indices_offset),
         header.list_indices_size,
     )?;
-    let structs = read_struct_entries(reader, start, &header)?;
+    let structs = read_struct_entries(&mut reader, start, &header)?;
 
     let root_struct = parse_struct(
         0,
-        reader,
+        &mut reader,
         start,
         &header,
         &labels,
@@ -123,55 +132,16 @@ pub fn read_gff_root<R: Read + Seek>(reader: &mut R) -> GffResult<GffRoot> {
         &structs,
     )?;
 
-    let root = GffRoot {
+    let mut root = GffRoot {
         file_type,
         file_version,
         root: root_struct,
+        source_bytes: Some(bytes),
+        source_snapshot: None,
     };
+    root.source_snapshot = Some(root.snapshot());
     debug!(file_type = %root.file_type, "read gff root");
     Ok(root)
-}
-
-fn normalize_index_offsets<R: Seek>(
-    reader: &mut R,
-    start: u64,
-    header: &mut Header,
-) -> GffResult<()> {
-    let file_end = reader.seek(SeekFrom::End(0))?;
-    let declared_end =
-        start + u64::from(header.list_indices_offset) + u64::from(header.list_indices_size);
-    if file_end >= declared_end {
-        return Ok(());
-    }
-
-    let shortfall = declared_end - file_end;
-    let shortfall_u32 = u32::try_from(shortfall)
-        .map_err(|_error| GffError::msg("GFF section shortfall exceeds 32-bit range"))?;
-
-    expect(
-        shortfall_u32 <= header.field_data_size,
-        "GFF file truncated before field-data section",
-    )?;
-    expect(
-        shortfall_u32
-            <= header
-                .field_indices_offset
-                .saturating_sub(header.field_data_offset),
-        "GFF index offset shortfall exceeds field-data span",
-    )?;
-    expect(
-        shortfall_u32
-            <= header
-                .list_indices_offset
-                .saturating_sub(header.field_indices_offset),
-        "GFF index offset shortfall exceeds field-index span",
-    )?;
-
-    header.field_data_size -= shortfall_u32;
-    header.field_indices_offset -= shortfall_u32;
-    header.list_indices_offset -= shortfall_u32;
-
-    Ok(())
 }
 
 /// Writes a complete GFF document to `writer`.
@@ -188,6 +158,12 @@ pub fn write_gff_root<W: Write + Seek>(writer: &mut W, root: &GffRoot) -> GffRes
         "GFF file version must be 4 bytes",
     )?;
     expect(root.root.id == -1, "root struct id must be -1")?;
+    if let (Some(source_bytes), Some(source_snapshot)) = (&root.source_bytes, &root.source_snapshot)
+        && *source_snapshot == root.snapshot()
+    {
+        writer.write_all(source_bytes)?;
+        return Ok(());
+    }
 
     let mut state = WriteState::default();
     let root_idx = collect_struct(&root.root, &mut state)?;
@@ -263,14 +239,8 @@ pub fn write_gff_root<W: Write + Seek>(writer: &mut W, root: &GffRoot) -> GffRes
     }
 
     for label in &state.labels {
-        ensure_label(label)?;
-        let mut padded = [0_u8; 16];
-        let bytes = label.as_bytes();
-        let slot = padded
-            .get_mut(..bytes.len())
-            .ok_or_else(|| GffError::msg("GFF label padding overflow"))?;
-        slot.copy_from_slice(bytes);
-        writer.write_all(&padded)?;
+        ensure_label(&label.text)?;
+        writer.write_all(&label.bytes)?;
     }
 
     writer.write_all(&state.field_data)?;
@@ -310,7 +280,7 @@ fn parse_struct<R: Read + Seek>(
     reader: &mut R,
     start: u64,
     header: &Header,
-    labels: &[String],
+    labels: &[RawLabelEntry],
     fields: &[RawFieldEntry],
     field_indices: &[i32],
     list_indices: &[i32],
@@ -337,6 +307,7 @@ fn parse_struct<R: Read + Seek>(
     };
 
     let mut gff_struct = GffStruct::new(entry.id);
+    let mut field_labels = Vec::with_capacity(field_refs.len());
 
     for field_idx in field_refs {
         let raw_field = fields
@@ -345,7 +316,9 @@ fn parse_struct<R: Read + Seek>(
         let label = labels
             .get(to_usize(raw_field.label_index, "label index")?)
             .ok_or_else(|| GffError::msg("invalid label index"))?
+            .text
             .clone();
+        field_labels.push(label.clone());
 
         if gff_struct.get_field(&label).is_some() {
             return Err(GffError::msg(format!("duplicate label in struct: {label}")));
@@ -365,6 +338,8 @@ fn parse_struct<R: Read + Seek>(
         gff_struct.put_field(label, field)?;
     }
 
+    gff_struct.provenance = Some(GffStructProvenance { field_labels });
+
     Ok(gff_struct)
 }
 
@@ -374,47 +349,78 @@ fn parse_field<R: Read + Seek>(
     reader: &mut R,
     start: u64,
     header: &Header,
-    labels: &[String],
+    labels: &[RawLabelEntry],
     fields: &[RawFieldEntry],
     field_indices: &[i32],
     list_indices: &[i32],
     structs: &[RawStructEntry],
 ) -> GffResult<GffField> {
-    let value = match raw.field_kind {
-        GffFieldKind::Byte => GffValue::Byte(
-            u8::try_from(raw.data_or_offset)
-                .map_err(|_error| GffError::msg("byte field value out of range"))?,
+    let label_bytes = labels
+        .get(to_usize(raw.label_index, "label index")?)
+        .ok_or_else(|| GffError::msg("invalid label index"))?
+        .bytes;
+    let (value, raw_field_data) = match raw.field_kind {
+        GffFieldKind::Byte => (
+            GffValue::Byte(
+                u8::try_from(raw.data_or_offset)
+                    .map_err(|_error| GffError::msg("byte field value out of range"))?,
+            ),
+            None,
         ),
-        GffFieldKind::Char => GffValue::Char(
-            i8::try_from(raw.data_or_offset)
-                .map_err(|_error| GffError::msg("char field value out of range"))?,
+        GffFieldKind::Char => (
+            GffValue::Char(
+                i8::try_from(raw.data_or_offset)
+                    .map_err(|_error| GffError::msg("char field value out of range"))?,
+            ),
+            None,
         ),
-        GffFieldKind::Word => GffValue::Word(
-            u16::try_from(raw.data_or_offset)
-                .map_err(|_error| GffError::msg("word field value out of range"))?,
+        GffFieldKind::Word => (
+            GffValue::Word(
+                u16::try_from(raw.data_or_offset)
+                    .map_err(|_error| GffError::msg("word field value out of range"))?,
+            ),
+            None,
         ),
-        GffFieldKind::Short => GffValue::Short(
-            i16::try_from(raw.data_or_offset)
-                .map_err(|_error| GffError::msg("short field value out of range"))?,
+        GffFieldKind::Short => (
+            GffValue::Short(
+                i16::try_from(raw.data_or_offset)
+                    .map_err(|_error| GffError::msg("short field value out of range"))?,
+            ),
+            None,
         ),
         GffFieldKind::Dword => {
-            GffValue::Dword(u32::from_ne_bytes(raw.data_or_offset.to_ne_bytes()))
+            (
+                GffValue::Dword(u32::from_ne_bytes(raw.data_or_offset.to_ne_bytes())),
+                None,
+            )
         }
-        GffFieldKind::Int => GffValue::Int(raw.data_or_offset),
-        GffFieldKind::Float => GffValue::Float(f32::from_bits(u32::from_ne_bytes(
-            raw.data_or_offset.to_ne_bytes(),
-        ))),
+        GffFieldKind::Int => (GffValue::Int(raw.data_or_offset), None),
+        GffFieldKind::Float => (
+            GffValue::Float(f32::from_bits(u32::from_ne_bytes(
+                raw.data_or_offset.to_ne_bytes(),
+            ))),
+            None,
+        ),
         GffFieldKind::Dword64 => {
             seek_field_data(reader, start, header, raw.data_or_offset)?;
-            GffValue::Dword64(read_u64(reader)?)
+            let bytes = read_bytes_or_err(reader, 8)?;
+            let mut data = [0_u8; 8];
+            data.copy_from_slice(&bytes);
+            (GffValue::Dword64(u64::from_le_bytes(data)), Some(bytes))
         }
         GffFieldKind::Int64 => {
             seek_field_data(reader, start, header, raw.data_or_offset)?;
-            GffValue::Int64(read_i64(reader)?)
+            let bytes = read_bytes_or_err(reader, 8)?;
+            let mut data = [0_u8; 8];
+            data.copy_from_slice(&bytes);
+            (GffValue::Int64(i64::from_le_bytes(data)), Some(bytes))
         }
         GffFieldKind::Double => {
             seek_field_data(reader, start, header, raw.data_or_offset)?;
-            GffValue::Double(f64::from_bits(read_u64(reader)?))
+            let bytes = read_bytes_or_err(reader, 8)?;
+            let mut data = [0_u8; 8];
+            data.copy_from_slice(&bytes);
+            (GffValue::Double(f64::from_bits(u64::from_le_bytes(data))), Some(bytes))
         }
         GffFieldKind::CExoString => {
             seek_field_data(reader, start, header, raw.data_or_offset)?;
@@ -422,14 +428,21 @@ fn parse_field<R: Read + Seek>(
             let bytes = read_bytes_or_err(reader, to_usize(size, "CExoString length")?)?;
             let decoded =
                 from_nwnrs_encoding(&bytes).map_err(|error| GffError::msg(error.to_string()))?;
-            GffValue::CExoString(decoded)
+            let mut raw_bytes = size.to_le_bytes().to_vec();
+            raw_bytes.extend_from_slice(&bytes);
+            (GffValue::CExoString(decoded), Some(raw_bytes))
         }
         GffFieldKind::ResRef => {
             seek_field_data(reader, start, header, raw.data_or_offset)?;
             let size = usize::try_from(read_i8(reader)?)
                 .map_err(|_error| GffError::msg("negative ResRef length"))?;
             let bytes = read_bytes_or_err(reader, size)?;
-            GffValue::ResRef(String::from_utf8_lossy(&bytes).to_string())
+            let mut raw_bytes = vec![u8::try_from(size).map_err(|_error| GffError::msg("ResRef too long"))?];
+            raw_bytes.extend_from_slice(&bytes);
+            (
+                GffValue::ResRef(String::from_utf8_lossy(&bytes).to_string()),
+                Some(raw_bytes),
+            )
         }
         GffFieldKind::CExoLocString => {
             seek_field_data(reader, start, header, raw.data_or_offset)?;
@@ -453,31 +466,46 @@ fn parse_field<R: Read + Seek>(
                         .map_err(|_error| GffError::msg("negative CExoLocString payload size"))?,
                 "invalid CExoLocString payload size",
             )?;
-            GffValue::CExoLocString(GffCExoLocString {
-                str_ref,
-                entries,
-            })
+            let mut raw_bytes = total_size.to_le_bytes().to_vec();
+            reader.seek(SeekFrom::Start(payload_start))?;
+            raw_bytes.extend_from_slice(
+                &read_bytes_or_err(
+                    reader,
+                    usize::try_from(total_size)
+                        .map_err(|_error| GffError::msg("negative CExoLocString payload size"))?,
+                )?,
+            );
+            (
+                GffValue::CExoLocString(GffCExoLocString { str_ref, entries }),
+                Some(raw_bytes),
+            )
         }
         GffFieldKind::Void => {
             seek_field_data(reader, start, header, raw.data_or_offset)?;
             let size = read_u32(reader)?;
-            GffValue::Void(read_bytes_or_err(
+            let bytes = read_bytes_or_err(
                 reader,
                 usize::try_from(size)
                     .map_err(|_error| GffError::msg("void field size exceeds usize"))?,
-            )?)
+            )?;
+            let mut raw_bytes = size.to_le_bytes().to_vec();
+            raw_bytes.extend_from_slice(&bytes);
+            (GffValue::Void(bytes), Some(raw_bytes))
         }
-        GffFieldKind::Struct => GffValue::Struct(parse_struct(
-            to_usize(raw.data_or_offset, "struct field offset")?,
-            reader,
-            start,
-            header,
-            labels,
-            fields,
-            field_indices,
-            list_indices,
-            structs,
-        )?),
+        GffFieldKind::Struct => (
+            GffValue::Struct(parse_struct(
+                to_usize(raw.data_or_offset, "struct field offset")?,
+                reader,
+                start,
+                header,
+                labels,
+                fields,
+                field_indices,
+                list_indices,
+                structs,
+            )?),
+            None,
+        ),
         GffFieldKind::List => {
             let offset = to_usize(raw.data_or_offset / 4, "list offset")?;
             let count = *list_indices
@@ -503,11 +531,19 @@ fn parse_field<R: Read + Seek>(
                     )
                 })
                 .collect::<GffResult<Vec<_>>>()?;
-            GffValue::List(list)
+            (GffValue::List(list), None)
         }
     };
-
-    Ok(GffField::new(value))
+    let original_value = value.clone();
+    Ok(GffField::with_provenance(
+        value,
+        GffFieldProvenance {
+            label_bytes,
+            original_value,
+            raw_data_or_offset: raw.data_or_offset,
+            raw_field_data,
+        },
+    ))
 }
 
 fn collect_struct(structure: &GffStruct, state: &mut WriteState) -> GffResult<i32> {
@@ -521,9 +557,17 @@ fn collect_struct(structure: &GffStruct, state: &mut WriteState) -> GffResult<i3
     for (label, field) in structure.fields() {
         ensure_label(label)?;
         let label_index = to_i32_len(
-            get_or_insert_label(label, &mut state.labels),
+            get_or_insert_label(label, field.provenance.as_ref(), &mut state.labels),
             "GFF label index",
         )?;
+        let field_idx = to_i32_len(state.fields.len(), "GFF field index")?;
+        state.fields.push(WriteFieldEntry {
+            field_kind: field.kind(),
+            label_index,
+            data_or_offset: 0,
+        });
+        struct_field_ids.push(field_idx);
+
         let data_or_offset = match field.value() {
             GffValue::Byte(value) => i32::from(*value),
             GffValue::Char(value) => i32::from(*value),
@@ -550,6 +594,14 @@ fn collect_struct(structure: &GffStruct, state: &mut WriteState) -> GffResult<i3
                 offset
             }
             GffValue::CExoString(value) => {
+                if let Some(provenance) = &field.provenance
+                    && provenance.original_value == *field.value()
+                    && let Some(raw_bytes) = &provenance.raw_field_data
+                {
+                    let offset = to_i32_len(state.field_data.len(), "GFF field data offset")?;
+                    state.field_data.extend_from_slice(raw_bytes);
+                    offset
+                } else {
                 let offset = to_i32_len(state.field_data.len(), "GFF field data offset")?;
                 let encoded =
                     to_nwnrs_encoding(value).map_err(|error| GffError::msg(error.to_string()))?;
@@ -558,8 +610,17 @@ fn collect_struct(structure: &GffStruct, state: &mut WriteState) -> GffResult<i3
                 );
                 state.field_data.extend_from_slice(&encoded);
                 offset
+                }
             }
             GffValue::ResRef(value) => {
+                if let Some(provenance) = &field.provenance
+                    && provenance.original_value == *field.value()
+                    && let Some(raw_bytes) = &provenance.raw_field_data
+                {
+                    let offset = to_i32_len(state.field_data.len(), "GFF field data offset")?;
+                    state.field_data.extend_from_slice(raw_bytes);
+                    offset
+                } else {
                 let offset = to_i32_len(state.field_data.len(), "GFF field data offset")?;
                 expect(value.len() <= u8::MAX as usize, "ResRef too long for GFF")?;
                 state.field_data.push(
@@ -568,8 +629,17 @@ fn collect_struct(structure: &GffStruct, state: &mut WriteState) -> GffResult<i3
                 );
                 state.field_data.extend_from_slice(value.as_bytes());
                 offset
+                }
             }
             GffValue::CExoLocString(value) => {
+                if let Some(provenance) = &field.provenance
+                    && provenance.original_value == *field.value()
+                    && let Some(raw_bytes) = &provenance.raw_field_data
+                {
+                    let offset = to_i32_len(state.field_data.len(), "GFF field data offset")?;
+                    state.field_data.extend_from_slice(raw_bytes);
+                    offset
+                } else {
                 let offset = to_i32_len(state.field_data.len(), "GFF field data offset")?;
                 let mut payload = Vec::new();
                 for (language, text) in &value.entries {
@@ -592,21 +662,27 @@ fn collect_struct(structure: &GffStruct, state: &mut WriteState) -> GffResult<i3
                 );
                 state.field_data.extend_from_slice(&payload);
                 offset
+                }
             }
             GffValue::Void(value) => {
+                if let Some(provenance) = &field.provenance
+                    && provenance.original_value == *field.value()
+                    && let Some(raw_bytes) = &provenance.raw_field_data
+                {
+                    let offset = to_i32_len(state.field_data.len(), "GFF field data offset")?;
+                    state.field_data.extend_from_slice(raw_bytes);
+                    offset
+                } else {
                 let offset = to_i32_len(state.field_data.len(), "GFF field data offset")?;
                 state
                     .field_data
                     .extend_from_slice(&to_u32_len(value.len(), "void length")?.to_le_bytes());
                 state.field_data.extend_from_slice(value);
                 offset
+                }
             }
             GffValue::Struct(child) => collect_struct(child, state)?,
             GffValue::List(list) => {
-                let mut child_indices = Vec::with_capacity(list.len());
-                for child in list {
-                    child_indices.push(collect_struct(child, state)?);
-                }
                 let offset = to_i32_len(
                     state
                         .list_indices
@@ -615,21 +691,41 @@ fn collect_struct(structure: &GffStruct, state: &mut WriteState) -> GffResult<i3
                         .ok_or_else(|| GffError::msg("GFF list indices size overflow"))?,
                     "GFF list offset",
                 )?;
-                state
+                let list_len = to_i32_len(list.len(), "GFF list size")?;
+                let reserved = list
+                    .len()
+                    .checked_add(1)
+                    .ok_or_else(|| GffError::msg("GFF list reservation overflow"))?;
+                let list_start = state.list_indices.len();
+                state.list_indices.resize(
+                    state
+                        .list_indices
+                        .len()
+                        .checked_add(reserved)
+                        .ok_or_else(|| GffError::msg("GFF list indices size overflow"))?,
+                    0,
+                );
+                *state
                     .list_indices
-                    .push(to_i32_len(child_indices.len(), "GFF list size")?);
-                state.list_indices.extend(child_indices);
+                    .get_mut(list_start)
+                    .ok_or_else(|| GffError::msg("GFF list header slot out of range"))? = list_len;
+
+                for (idx, child) in list.iter().enumerate() {
+                    *state
+                        .list_indices
+                        .get_mut(list_start + idx + 1)
+                        .ok_or_else(|| GffError::msg("GFF list child slot out of range"))? =
+                        collect_struct(child, state)?;
+                }
                 offset
             }
         };
 
-        let field_idx = to_i32_len(state.fields.len(), "GFF field index")?;
-        state.fields.push(WriteFieldEntry {
-            field_kind: field.kind(),
-            label_index,
-            data_or_offset,
-        });
-        struct_field_ids.push(field_idx);
+        state
+            .fields
+            .get_mut(to_usize(field_idx, "GFF field index")?)
+            .ok_or_else(|| GffError::msg("GFF field entry out of range"))?
+            .data_or_offset = data_or_offset;
     }
 
     let entry = state
@@ -659,11 +755,29 @@ fn collect_struct(structure: &GffStruct, state: &mut WriteState) -> GffResult<i3
     Ok(struct_idx)
 }
 
-fn get_or_insert_label(label: &str, labels: &mut Vec<String>) -> usize {
-    if let Some(idx) = labels.iter().position(|existing| existing == label) {
+fn get_or_insert_label(
+    label: &str,
+    provenance: Option<&GffFieldProvenance>,
+    labels: &mut Vec<RawLabelEntry>,
+) -> usize {
+    if let Some(idx) = labels.iter().position(|existing| existing.text == label) {
         idx
     } else {
-        labels.push(label.to_string());
+        let bytes = provenance
+            .filter(|provenance| trim_trailing_nuls(&provenance.label_bytes) == label)
+            .map(|provenance| provenance.label_bytes)
+            .unwrap_or_else(|| {
+                let mut padded = [0_u8; 16];
+                let label_bytes = label.as_bytes();
+                if let Some(prefix) = padded.get_mut(..label_bytes.len()) {
+                    prefix.copy_from_slice(label_bytes);
+                }
+                padded
+            });
+        labels.push(RawLabelEntry {
+            text: label.to_string(),
+            bytes,
+        });
         labels.len() - 1
     }
 }
@@ -672,12 +786,17 @@ fn read_labels<R: Read + Seek>(
     reader: &mut R,
     start: u64,
     header: &Header,
-) -> GffResult<Vec<String>> {
+) -> GffResult<Vec<RawLabelEntry>> {
     reader.seek(SeekFrom::Start(start + u64::from(header.label_offset)))?;
     (0..header.label_count)
         .map(|_| {
             let bytes = read_bytes_or_err(reader, 16)?;
-            Ok(trim_trailing_nuls(&bytes))
+            let mut raw = [0_u8; 16];
+            raw.copy_from_slice(&bytes);
+            Ok(RawLabelEntry {
+                text: trim_trailing_nuls(&bytes),
+                bytes: raw,
+            })
         })
         .collect()
 }
@@ -711,9 +830,9 @@ fn read_struct_entries<R: Read + Seek>(
     (0..header.struct_count)
         .map(|_| {
             Ok(RawStructEntry {
-                id:             read_i32(reader)?,
+                id: read_i32(reader)?,
                 data_or_offset: read_i32(reader)?,
-                field_count:    read_i32(reader)?,
+                field_count: read_i32(reader)?,
             })
         })
         .collect()
@@ -790,22 +909,180 @@ fn read_i32<R: Read>(reader: &mut R) -> io::Result<i32> {
     Ok(i32::from_le_bytes(bytes))
 }
 
-fn read_u64<R: Read>(reader: &mut R) -> io::Result<u64> {
-    let mut bytes = [0_u8; 8];
-    reader.read_exact(&mut bytes)?;
-    Ok(u64::from_le_bytes(bytes))
-}
-
-fn read_i64<R: Read>(reader: &mut R) -> io::Result<i64> {
-    let mut bytes = [0_u8; 8];
-    reader.read_exact(&mut bytes)?;
-    Ok(i64::from_le_bytes(bytes))
-}
-
 fn write_u32<W: Write>(writer: &mut W, value: u32) -> io::Result<()> {
     writer.write_all(&value.to_le_bytes())
 }
 
 fn write_i32<W: Write>(writer: &mut W, value: i32) -> io::Result<()> {
     writer.write_all(&value.to_le_bytes())
+}
+
+#[allow(clippy::panic)]
+#[cfg(test)]
+mod tests {
+    use std::io::Cursor;
+
+    use super::{read_gff_root, write_gff_root};
+    use crate::{GffRoot, GffValue, new_gff_struct};
+
+    #[test]
+    fn edited_source_backed_gff_preserves_value_edit() {
+        let mut original = GffRoot::new("UTC ");
+        if let Err(error) = original.put_value("Comment", GffValue::CExoString("before".to_string()))
+        {
+            panic!("seed gff: {error}");
+        }
+        let mut encoded = Cursor::new(Vec::new());
+        if let Err(error) = write_gff_root(&mut encoded, &original) {
+            panic!("encode gff: {error}");
+        }
+
+        let mut parsed = match read_gff_root(&mut Cursor::new(encoded.into_inner())) {
+            Ok(root) => root,
+            Err(error) => panic!("parse gff: {error}"),
+        };
+        if let Err(error) = parsed.put_value("Comment", GffValue::CExoString("after".to_string()))
+        {
+            panic!("edit gff: {error}");
+        }
+
+        let mut output = Cursor::new(Vec::new());
+        if let Err(error) = write_gff_root(&mut output, &parsed) {
+            panic!("rewrite gff: {error}");
+        }
+        let reparsed = match read_gff_root(&mut Cursor::new(output.into_inner())) {
+            Ok(root) => root,
+            Err(error) => panic!("reparse gff: {error}"),
+        };
+        let comment = match reparsed
+            .root
+            .get_field("Comment")
+            .and_then(|field| match field.value() {
+                GffValue::CExoString(value) => Some(value.clone()),
+                _ => None,
+            })
+        {
+            Some(comment) => comment,
+            None => panic!("comment field"),
+        };
+        assert_eq!(comment, "after");
+    }
+
+    #[test]
+    fn edited_source_backed_gff_allows_structural_field_edits() {
+        let mut original = GffRoot::new("UTC ");
+        if let Err(error) = original.put_value("First", GffValue::CExoString("one".to_string())) {
+            panic!("seed first: {error}");
+        }
+        if let Err(error) = original.put_value("Second", GffValue::Int(2)) {
+            panic!("seed second: {error}");
+        }
+        let mut encoded = Cursor::new(Vec::new());
+        if let Err(error) = write_gff_root(&mut encoded, &original) {
+            panic!("encode gff: {error}");
+        }
+
+        let mut parsed = match read_gff_root(&mut Cursor::new(encoded.into_inner())) {
+            Ok(root) => root,
+            Err(error) => panic!("parse gff: {error}"),
+        };
+        parsed.root.remove("First");
+        if let Err(error) = parsed.put_value("Third", GffValue::Struct(new_gff_struct(7))) {
+            panic!("insert third: {error}");
+        }
+
+        let mut output = Cursor::new(Vec::new());
+        if let Err(error) = write_gff_root(&mut output, &parsed) {
+            panic!("rewrite gff: {error}");
+        }
+        let reparsed = match read_gff_root(&mut Cursor::new(output.into_inner())) {
+            Ok(root) => root,
+            Err(error) => panic!("reparse gff: {error}"),
+        };
+
+        assert!(reparsed.root.get_field("First").is_none());
+        assert!(matches!(
+            reparsed.root.get_field("Second").map(|field| field.value()),
+            Some(GffValue::Int(2))
+        ));
+        assert!(matches!(
+            reparsed.root.get_field("Third").map(|field| field.value()),
+            Some(GffValue::Struct(_))
+        ));
+    }
+
+    #[test]
+    fn edited_source_backed_gff_allows_list_resize() {
+        let mut original = GffRoot::new("UTC ");
+        if let Err(error) = original.put_value(
+            "Items",
+            GffValue::List(vec![new_gff_struct(1), new_gff_struct(2)]),
+        ) {
+            panic!("seed list: {error}");
+        }
+        let mut encoded = Cursor::new(Vec::new());
+        if let Err(error) = write_gff_root(&mut encoded, &original) {
+            panic!("encode gff: {error}");
+        }
+
+        let mut parsed = match read_gff_root(&mut Cursor::new(encoded.into_inner())) {
+            Ok(root) => root,
+            Err(error) => panic!("parse gff: {error}"),
+        };
+        if let Err(error) = parsed.put_value("Items", GffValue::List(vec![new_gff_struct(1)])) {
+            panic!("shrink list: {error}");
+        }
+
+        let mut output = Cursor::new(Vec::new());
+        if let Err(error) = write_gff_root(&mut output, &parsed) {
+            panic!("rewrite gff: {error}");
+        }
+        let reparsed = match read_gff_root(&mut Cursor::new(output.into_inner())) {
+            Ok(root) => root,
+            Err(error) => panic!("reparse gff: {error}"),
+        };
+
+        assert!(matches!(
+            reparsed.root.get_field("Items").map(|field| field.value()),
+            Some(GffValue::List(items)) if items.len() == 1
+        ));
+    }
+
+    #[test]
+    fn malformed_gff_index_offsets_are_rejected() {
+        let mut original = GffRoot::new("UTC ");
+        if let Err(error) = original.put_value("Items", GffValue::List(vec![new_gff_struct(1)])) {
+            panic!("seed list: {error}");
+        }
+        let mut encoded = Cursor::new(Vec::new());
+        if let Err(error) = write_gff_root(&mut encoded, &original) {
+            panic!("encode gff: {error}");
+        }
+        let mut bytes = encoded.into_inner();
+
+        let list_indices_offset_bytes = match bytes.get(48..52) {
+            Some(bytes) => bytes,
+            None => panic!("fixture list index offset should exist"),
+        };
+        let list_indices_offset = match <[u8; 4]>::try_from(list_indices_offset_bytes) {
+            Ok(bytes) => u32::from_le_bytes(bytes),
+            Err(_error) => panic!("offset"),
+        };
+        if let Some(offset_bytes) = bytes.get_mut(48..52) {
+            offset_bytes.copy_from_slice(&(list_indices_offset + 1).to_le_bytes());
+        } else {
+            panic!("fixture list index offset should exist");
+        }
+
+        let error = match read_gff_root(&mut Cursor::new(bytes)) {
+            Ok(_root) => panic!("malformed gff should fail"),
+            Err(error) => error,
+        };
+        assert!(
+            error.to_string().contains("failed to fill whole buffer")
+                || error.to_string().contains("out of bounds")
+                || error.to_string().contains("range"),
+            "unexpected error: {error}"
+        );
+    }
 }

@@ -8,7 +8,7 @@ This repository is organized as a layered toolkit:
 - resource identity, type, checksum, encoding, and stream utilities
 - container adapters that expose archives, directories, single files, in-memory buffers, and NWSync manifests through a shared resource-manager abstraction
 - a high-level game crate for installation discovery and default resource loading
-- a CLI for inspection, packing, unpacking, and selected NWSync workflows
+- a CLI for inspection, packing, unpacking, selected NWSync workflows, and NWScript compilation
 
 ## What This Workspace Does
 
@@ -20,7 +20,7 @@ At a high level:
 - `nwnrs-resref`, `nwnrs-restype`, and `nwnrs-core` define the shared identity vocabulary
 - `nwnrs-resman` defines a common `Res`/`ResContainer` model and a layered `ResMan`
 - container crates such as `nwnrs-erf`, `nwnrs-key`, `nwnrs-resdir`, `nwnrs-resfile`, `nwnrs-resmemfile`, and `nwnrs-resnwsync` project different storage backends into that shared model
-- format crates such as `nwnrs-gff`, `nwnrs-gffjson`, `nwnrs-twoda`, `nwnrs-tlk`, `nwnrs-ssf`, and `nwnrs-nwsync` provide typed parsers and writers
+- format crates such as `nwnrs-gff`, `nwnrs-twoda`, `nwnrs-tlk`, `nwnrs-ssf`, and `nwnrs-nwsync` provide typed parsers and writers
 - `nwnrs-game` composes those pieces into a default game-facing resource-loading stack
 
 ## Usage
@@ -75,14 +75,19 @@ Or run it directly:
 cargo run --git https://github.com/urothis/nwn-rs --bin nwnrs-cli -- --help
 ```
 
+Compile one NWScript source file:
+
+```bash
+cargo run -p nwnrs-cli -- compile --debug path/to/script.nss
+```
+
 ## Supported Workflows
 
 The workspace supports:
 
 - inspecting ERF, KEY, GFF, 2DA, TLK, and SSF files
+- compiling NWScript `.nss` files to `.ncs` and optional `.ndb`
 - unpacking ERF archives and KEY/BIF sets into directory form
-- converting GFF resources into JSON and packing them back into binary form
-- writing 2DA text back into binary-compatible output
 - opening NWSync repositories and printing manifest contents
 - building a layered `ResMan` from game roots, override directories, ERFs, and NWSync manifests
 

@@ -31,6 +31,7 @@ pub fn read_resmemfile(
             len as i64,
             0,
             ExoResFileCompressionType::None,
+            None,
             len,
             EMPTY_SECURE_HASH,
         ),

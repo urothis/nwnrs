@@ -40,7 +40,7 @@ impl From<ResManError> for ResMemFileError {
 pub struct ResMemFile {
     pub(crate) label: String,
     pub(crate) entry: Res,
-    pub(crate) len:   usize,
+    pub(crate) len: usize,
 }
 
 impl ResMemFile {

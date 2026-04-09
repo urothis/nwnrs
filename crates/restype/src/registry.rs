@@ -7,7 +7,7 @@ use crate::prelude::*;
 
 #[derive(Debug, Clone)]
 struct Registry {
-    types:   HashMap<ResType, String>,
+    types: HashMap<ResType, String>,
     reverse: HashMap<String, ResType>,
 }
 
@@ -187,7 +187,7 @@ pub fn reset_registry_for_tests() {
 
 fn make_registry() -> Registry {
     let mut registry = Registry {
-        types:   HashMap::new(),
+        types: HashMap::new(),
         reverse: HashMap::new(),
     };
 

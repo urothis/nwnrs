@@ -7,6 +7,7 @@ The command-line interface for inspecting, packing, unpacking, and managing NWN 
 Build or run the CLI from the workspace root:
 
 ```bash
+cargo run -p nwnrs-cli -- compile --debug path/to/script.nss
 cargo run -p nwnrs-cli -- inspect path/to/module.mod
 cargo run -p nwnrs-cli -- unpack path/to/module.mod -d out/
 cargo run -p nwnrs-cli -- pack out/ rebuilt.mod
@@ -15,7 +16,7 @@ cargo run -p nwnrs-cli -- nwsync print path/to/repository --manifest <sha1>
 
 Useful patterns:
 
-- unpack a GFF-family resource to JSON, edit it, then pack it back
+- compile `.nss` to `.ncs` using a sibling `nwscript.nss`, or override it with `--langspec`
 - unpack a KEY/BIF set, preserve `resource.json`, and repack without losing archive ordering
 - open a game install with `nwnrs-game`, then query resources through `nwnrs-resman`
 
@@ -24,6 +25,7 @@ Useful patterns:
 - [`main.rs`](./src/main.rs)
 - [`args.rs`](./src/args.rs)
 - [`inspect.rs`](./src/inspect.rs)
+- [`compile.rs`](./src/compile.rs)
 - [`pack.rs`](./src/pack.rs)
 - [`unpack.rs`](./src/unpack.rs)
 - [`nwsync.rs`](./src/nwsync.rs)

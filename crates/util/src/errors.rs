@@ -51,7 +51,7 @@ impl Error for UnknownEncodingError {}
 /// An error returned when a text conversion fails for a configured encoding.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EncodingConversionError {
-    encoding:  String,
+    encoding: String,
     operation: &'static str,
 }
 

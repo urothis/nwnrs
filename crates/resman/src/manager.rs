@@ -13,7 +13,7 @@ use crate::prelude::*;
 /// recent lookups.
 pub struct ResMan {
     containers: Vec<Arc<dyn ResContainer>>,
-    cache:      Option<WeightedLru<ResRef, Res>>,
+    cache: Option<WeightedLru<ResRef, Res>>,
 }
 
 impl fmt::Debug for ResMan {
@@ -33,8 +33,7 @@ impl ResMan {
     pub fn new(cache_size_mb: usize) -> Self {
         Self {
             containers: Vec::new(),
-            cache:      (cache_size_mb > 0)
-                .then(|| WeightedLru::new(cache_size_mb * 1024 * 1024, 1)),
+            cache: (cache_size_mb > 0).then(|| WeightedLru::new(cache_size_mb * 1024 * 1024, 1)),
         }
     }
 

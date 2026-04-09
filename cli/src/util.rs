@@ -10,7 +10,7 @@ use nwnrs::prelude::*;
 
 pub(crate) const RESOURCE_METADATA_FILENAME: &str = "resource.json";
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Kind {
     Gff,
     Ssf,
@@ -22,7 +22,7 @@ pub(crate) enum Kind {
 
 pub(crate) struct DirEntryInfo {
     pub(crate) file_name: String,
-    pub(crate) path:      PathBuf,
+    pub(crate) path: PathBuf,
 }
 
 pub(crate) fn detect_kind(path: &Path) -> Option<Kind> {
@@ -37,12 +37,6 @@ pub(crate) fn detect_kind(path: &Path) -> Option<Kind> {
         "key" => Kind::Key,
         _ => return None,
     })
-}
-
-pub(crate) fn is_gff_extension(extension: &str) -> bool {
-    game::GFF_EXTENSIONS
-        .iter()
-        .any(|candidate| candidate.eq_ignore_ascii_case(extension))
 }
 
 pub(crate) fn unpacked_raw_target(destination: &Path, file_name: &str, extension: &str) -> PathBuf {
