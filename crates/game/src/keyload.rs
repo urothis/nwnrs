@@ -86,7 +86,8 @@ mod tests {
     fn missing_key_file_is_skipped_without_modifying_manager() {
         let root = unique_test_dir("root");
         let lang_root = root.join("lang").join("english");
-        fs::create_dir_all(root.join("data")).unwrap_or_else(|error| panic!("create data: {error}"));
+        fs::create_dir_all(root.join("data"))
+            .unwrap_or_else(|error| panic!("create data: {error}"));
         fs::create_dir_all(&lang_root).unwrap_or_else(|error| panic!("create lang root: {error}"));
         let mut manager = ResMan::new(0);
 

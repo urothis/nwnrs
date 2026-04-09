@@ -188,15 +188,18 @@ mod tests {
     use std::io::{Cursor, Read, Write};
 
     use crate::{
-        read_fixed_value, read_size_prefixed_seq, write_size_prefixed_seq, write_size_prefixed_string,
+        read_fixed_value, read_size_prefixed_seq, write_size_prefixed_seq,
+        write_size_prefixed_string,
     };
 
     #[test]
     fn size_prefixed_sequences_roundtrip() {
         let mut bytes = Vec::new();
-        if let Err(error) = write_size_prefixed_seq::<u16, _, _, _>(&mut bytes, &[1_u8, 2, 3], |w, v| {
-            w.write_all(&[*v])
-        }) {
+        if let Err(error) =
+            write_size_prefixed_seq::<u16, _, _, _>(&mut bytes, &[1_u8, 2, 3], |w, v| {
+                w.write_all(&[*v])
+            })
+        {
             panic!("write seq: {error}");
         }
 

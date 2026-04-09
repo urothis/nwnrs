@@ -415,7 +415,10 @@ fn run_key_pack(cmd: KeyPackCmd) -> Result<(), String> {
             }
         }
         let entries = normalize_pack_sources(entries)?;
-        let refs = entries.iter().map(|entry| entry.rr.clone()).collect::<Vec<_>>();
+        let refs = entries
+            .iter()
+            .map(|entry| entry.rr.clone())
+            .collect::<Vec<_>>();
         for entry in entries {
             source_entries.insert(entry.rr.clone(), entry);
         }
@@ -475,7 +478,9 @@ impl PackSourceEntry {
     fn source_label(&self) -> String {
         match &self.source {
             PackSourceKind::File(path) => path.display().to_string(),
-            PackSourceKind::CompiledScript { path, .. } => path.display().to_string(),
+            PackSourceKind::CompiledScript {
+                path, ..
+            } => path.display().to_string(),
         }
     }
 
@@ -483,7 +488,9 @@ impl PackSourceEntry {
         match &self.source {
             PackSourceKind::File(path) => fs::read(path)
                 .map_err(|error| format!("failed to read {}: {error}", path.display())),
-            PackSourceKind::CompiledScript { bytes, .. } => Ok(bytes.clone()),
+            PackSourceKind::CompiledScript {
+                bytes, ..
+            } => Ok(bytes.clone()),
         }
     }
 
@@ -504,7 +511,9 @@ pub(crate) fn collect_generic_pack_sources(
     let pack_root = if path.is_dir() {
         path.to_path_buf()
     } else {
-        path.parent().unwrap_or_else(|| Path::new(".")).to_path_buf()
+        path.parent()
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf()
     };
     collect_generic_pack_entry(
         path,
@@ -801,11 +810,8 @@ int FALSE = 0;
         let scripts = input.join("nss");
         fs::create_dir_all(&scripts).expect("create script dir");
         fs::write(input.join("nwscript.nss"), minimal_langspec()).expect("write langspec");
-        fs::write(
-            scripts.join("helper.nss"),
-            "int helper() { return TRUE; }",
-        )
-        .expect("write include");
+        fs::write(scripts.join("helper.nss"), "int helper() { return TRUE; }")
+            .expect("write include");
         fs::write(
             scripts.join("test.nss"),
             "#include \"helper\"\nint StartingConditional() { return helper(); }",

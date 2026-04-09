@@ -114,7 +114,10 @@ mod tests {
     #[test]
     fn prelude_modules_expose_common_workspace_types() {
         let digest = prelude::checksums::secure_hash(b"abc");
-        assert_eq!(digest.to_string(), "a9993e364706816aba3e25717850c26c9cd0d89d");
+        assert_eq!(
+            digest.to_string(),
+            "a9993e364706816aba3e25717850c26c9cd0d89d"
+        );
 
         let language = prelude::core::resolve_language("en").unwrap_or_else(|error| {
             panic!("resolve language: {error}");

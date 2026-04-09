@@ -50,6 +50,9 @@ mod tests {
             Some(ExoResFileCompressionType::CompressedBuf)
         );
         assert_eq!(ExoResFileCompressionType::from_u32(7), None);
-        assert_eq!(ExoResFileCompressionType::CompressedBuf.to_string(), "CompressedBuf");
+        assert_eq!(
+            ExoResFileCompressionType::CompressedBuf.to_string(),
+            "CompressedBuf"
+        );
     }
 }

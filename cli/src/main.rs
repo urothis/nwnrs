@@ -48,7 +48,7 @@ fn run(cli: Cli) -> Result<(), String> {
 mod tests {
     use std::path::PathBuf;
 
-    use super::{args::InspectCmd, run, Cli, Command};
+    use super::{Cli, Command, args::InspectCmd, run};
 
     #[test]
     fn run_propagates_subcommand_errors() {

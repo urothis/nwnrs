@@ -1,6 +1,5 @@
 use std::{
-    collections::hash_map::RandomState,
-    collections::HashMap,
+    collections::{HashMap, hash_map::RandomState},
     fmt,
     io::{self, Cursor},
     path::{Path, PathBuf},

@@ -158,7 +158,9 @@ mod tests {
     use nwnrs_resref::{ResolvedResRef, new_res_ref};
     use nwnrs_restype::ResType;
 
-    use crate::{Res, ResContainer, ResMan, ResManError, ResManResult, new_res_origin, shared_stream};
+    use crate::{
+        Res, ResContainer, ResMan, ResManError, ResManResult, new_res_origin, shared_stream,
+    };
 
     #[derive(Clone)]
     struct TestContainer {
@@ -217,7 +219,7 @@ mod tests {
             panic!("shared rr: {error}");
         });
         let older = TestContainer {
-            label: "older",
+            label:   "older",
             entries: HashMap::from([
                 (shared.clone(), make_res("shared", 2027, b"older", "older")),
                 (
@@ -229,11 +231,8 @@ mod tests {
             ]),
         };
         let newer = TestContainer {
-            label: "newer",
-            entries: HashMap::from([(
-                shared.clone(),
-                make_res("shared", 2027, b"newer", "newer"),
-            )]),
+            label:   "newer",
+            entries: HashMap::from([(shared.clone(), make_res("shared", 2027, b"newer", "newer"))]),
         };
 
         let mut manager = ResMan::new(1);
@@ -258,7 +257,7 @@ mod tests {
             panic!("alpha rr: {error}");
         });
         let container = TestContainer {
-            label: "single",
+            label:   "single",
             entries: HashMap::from([(rr.clone(), make_res("alpha", 2027, b"alpha", "single"))]),
         };
         let mut manager = ResMan::new(1);

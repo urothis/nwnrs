@@ -297,9 +297,8 @@ mod tests {
         time::{SystemTime, UNIX_EPOCH},
     };
 
-    use crate::{Platform, find_nwnrs_root_impl, find_user_root_impl};
-
     use super::{expand_tilde, normalize_relative_path};
+    use crate::{Platform, find_nwnrs_root_impl, find_user_root_impl};
 
     fn unique_test_dir(prefix: &str) -> PathBuf {
         let nanos = SystemTime::now()
@@ -354,28 +353,30 @@ mod tests {
         if let Err(error) = fs::create_dir_all(settings.parent().unwrap_or(&home)) {
             panic!("create settings dir: {error}");
         }
-        if let Err(error) = fs::write(&settings, format!(r#"{{"folders":["{}"]}}"#, beamdog_root.display())) {
+        if let Err(error) = fs::write(
+            &settings,
+            format!(r#"{{"folders":["{}"]}}"#, beamdog_root.display()),
+        ) {
             panic!("write settings: {error}");
         }
         if let Err(error) = fs::write(install.join("databuild.txt"), "build") {
             panic!("write databuild: {error}");
         }
 
-        let resolved = match find_nwnrs_root_impl(
-            "",
-            |_key| None,
-            || Some(home.clone()),
-            Platform::Linux,
-        ) {
-            Ok(value) => value,
-            Err(error) => panic!("resolve game root: {error}"),
-        };
+        let resolved =
+            match find_nwnrs_root_impl("", |_key| None, || Some(home.clone()), Platform::Linux) {
+                Ok(value) => value,
+                Err(error) => panic!("resolve game root: {error}"),
+            };
         assert_eq!(resolved, install);
     }
 
     #[test]
     fn normalizes_relative_paths_and_expands_home() {
-        assert_eq!(normalize_relative_path(r"foo\bar/baz"), PathBuf::from("foo/bar/baz"));
+        assert_eq!(
+            normalize_relative_path(r"foo\bar/baz"),
+            PathBuf::from("foo/bar/baz")
+        );
         if let Some(home) = std::env::var_os("HOME") {
             assert_eq!(
                 expand_tilde(&PathBuf::from("~/override")),

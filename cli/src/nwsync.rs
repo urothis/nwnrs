@@ -323,7 +323,9 @@ async fn fetch_manifest_repository(url: &str, output: &Path) -> Result<FetchSumm
 
     let manifest_bytes = fetch_bytes(&client, &manifest_url).await?;
     let manifest_sha1 = checksums::secure_hash(&manifest_bytes);
-    if let Some(url_sha1) = manifest_sha1_from_url(&manifest_url)? && url_sha1 != manifest_sha1 {
+    if let Some(url_sha1) = manifest_sha1_from_url(&manifest_url)?
+        && url_sha1 != manifest_sha1
+    {
         return Err(format!(
             "manifest sha1 in url ({url_sha1}) does not match downloaded payload ({manifest_sha1})"
         ));
@@ -468,9 +470,9 @@ fn manifest_entry_data_url(
         parts.push("sha1");
         for index in 0..hash_tree_depth {
             let start = index * 2;
-            let prefix = sha1_hex
-                .get(start..start + 2)
-                .ok_or_else(|| format!("sha1 too short for hash tree depth {hash_tree_depth}: {sha1_hex}"))?;
+            let prefix = sha1_hex.get(start..start + 2).ok_or_else(|| {
+                format!("sha1 too short for hash tree depth {hash_tree_depth}: {sha1_hex}")
+            })?;
             parts.push(prefix);
         }
         parts.push(&sha1_hex);
@@ -481,14 +483,16 @@ fn manifest_entry_data_url(
 #[allow(clippy::panic)]
 #[cfg(test)]
 mod tests {
+    use nwnrs::prelude::checksums::parse_secure_hash;
     use reqwest::Url;
 
     use super::{manifest_entry_data_url, manifest_repository_base_url};
-    use nwnrs::prelude::checksums::parse_secure_hash;
 
     #[test]
     fn manifest_base_url_strips_manifest_path() {
-        let url = match Url::parse("https://example.com/nwsync/manifests/0123456789012345678901234567890123456789") {
+        let url = match Url::parse(
+            "https://example.com/nwsync/manifests/0123456789012345678901234567890123456789",
+        ) {
             Ok(value) => value,
             Err(error) => panic!("parse url: {error}"),
         };

@@ -206,10 +206,9 @@ pub fn write_manifest<W: Write>(writer: &mut W, manifest: &Manifest) -> Manifest
 
 fn sorted_manifest_positions(manifest: &Manifest) -> Vec<usize> {
     let mut positions = (0..manifest.entries.len()).collect::<Vec<_>>();
-    positions.sort_by(|left, right| compare_manifest_entries(
-        manifest.entries.get(*left),
-        manifest.entries.get(*right),
-    ));
+    positions.sort_by(|left, right| {
+        compare_manifest_entries(manifest.entries.get(*left), manifest.entries.get(*right))
+    });
     positions
 }
 
@@ -439,9 +438,18 @@ mod tests {
             Err(error) => panic!("read manifest: {error}"),
         };
         assert_eq!(decoded.entries.len(), 3);
-        assert_eq!(decoded.entries.first().map(|entry| &entry.resref), Some(&alpha));
-        assert_eq!(decoded.entries.get(1).map(|entry| &entry.resref), Some(&gamma));
-        assert_eq!(decoded.entries.get(2).map(|entry| &entry.resref), Some(&beta));
+        assert_eq!(
+            decoded.entries.first().map(|entry| &entry.resref),
+            Some(&alpha)
+        );
+        assert_eq!(
+            decoded.entries.get(1).map(|entry| &entry.resref),
+            Some(&gamma)
+        );
+        assert_eq!(
+            decoded.entries.get(2).map(|entry| &entry.resref),
+            Some(&beta)
+        );
         assert_eq!(
             decoded.entries.first().map(|entry| &entry.source),
             Some(&ManifestEntrySource::Primary)

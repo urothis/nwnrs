@@ -45,10 +45,10 @@ pub(crate) fn run_compile(cmd: CompileCmd) -> Result<(), String> {
     let artifacts = compile_script_file(
         &cmd.input,
         &CompileScriptOptions {
-            debug:               cmd.debug,
+            debug: cmd.debug,
             no_entrypoint_check: cmd.no_entrypoint_check,
-            langspec:            cmd.langspec.as_deref(),
-            include_dirs:        &cmd.include_dir,
+            langspec: cmd.langspec.as_deref(),
+            include_dirs: &cmd.include_dir,
             optimization,
         },
     )?;
@@ -97,19 +97,23 @@ pub(crate) fn compile_script_file(
 
     let search_roots = script_search_roots(input, options.include_dirs);
     let resolver = FilesystemScriptResolver::new(search_roots);
-    let root_name = input.file_name().and_then(OsStr::to_str).ok_or_else(|| {
-        format!("input file name is not valid UTF-8: {}", input.display())
-    })?;
+    let root_name = input
+        .file_name()
+        .and_then(OsStr::to_str)
+        .ok_or_else(|| format!("input file name is not valid UTF-8: {}", input.display()))?;
     let bundle =
         nwscript::load_source_bundle(&resolver, root_name, nwscript::SourceLoadOptions::default())
             .map_err(|error| {
-                format!("failed to load source bundle for {}: {error}", input.display())
+                format!(
+                    "failed to load source bundle for {}: {error}",
+                    input.display()
+                )
             })?;
     let script = nwscript::parse_source_bundle(&bundle, Some(&langspec))
         .map_err(|error| format!("failed to parse {}: {error}", input.display()))?;
 
     let compile_options = nwscript::CompileOptions {
-        semantic: nwscript::SemanticOptions {
+        semantic:     nwscript::SemanticOptions {
             require_entrypoint:       !options.no_entrypoint_check,
             allow_conditional_script: true,
         },
