@@ -28,6 +28,8 @@ mod tests {
     use std::io::Cursor;
 
     use nwnrs::prelude::{compressedbuf, core::Language, erf, exo, gff, resref, ssf, tlk, twoda};
+    #[cfg(target_arch = "wasm32")]
+    use wasm_bindgen_test::wasm_bindgen_test;
 
     use crate::{
         ErfDto, GffFieldDto, GffRootDto, GffStructDto, GffValueDto, SingleTlkDto, SsfRootDto,
@@ -40,7 +42,8 @@ mod tests {
         twoda::{read_twoda_dto, unchanged_twoda_bytes, write_twoda_dto},
     };
 
-    #[test]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
     fn lossless_metadata_returns_original_bytes_when_unchanged() {
         let value = TwoDaDto {
             default_value: Some("****".to_string()),
@@ -78,7 +81,8 @@ mod tests {
         assert_eq!(bytes, Some(b"original".to_vec()));
     }
 
-    #[test]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
     fn lossless_metadata_detects_semantic_change() {
         let value = TwoDaDto {
             default_value: None,
@@ -125,7 +129,8 @@ mod tests {
         assert_eq!(bytes, None);
     }
 
-    #[test]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
     fn twoda_edited_write_roundtrips_through_native_codec() {
         let mut table = twoda::TwoDa::new();
         table
@@ -167,7 +172,8 @@ mod tests {
         assert_eq!(reparsed.row_label(0), Some("custom0"));
     }
 
-    #[test]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
     fn tlk_edited_write_preserves_descriptor_metadata() {
         let mut source = tlk::SingleTlk::new();
         source.language = Language::French;
@@ -200,7 +206,8 @@ mod tests {
         assert_eq!(entry.pitch_variance, 13);
     }
 
-    #[test]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
     fn ssf_edited_write_preserves_raw_slot_bytes() {
         let mut source = ssf::new_ssf();
         let mut entry = ssf::SsfEntry::new("snd", 10);
@@ -234,7 +241,8 @@ mod tests {
         );
     }
 
-    #[test]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
     fn erf_edited_write_preserves_resource_list_padding() {
         let entries = vec![
             resref::new_resolved_res_ref_from_filename("test.utc")
@@ -289,7 +297,8 @@ mod tests {
         );
     }
 
-    #[test]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
     fn gff_edited_write_uses_native_merge_workflow() {
         let mut root = gff::GffRoot::new("UTC ");
         root.put_value("Comment", gff::GffValue::CExoString("before".to_string()))

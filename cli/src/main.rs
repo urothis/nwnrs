@@ -43,3 +43,22 @@ fn run(cli: Cli) -> Result<(), String> {
         },
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use super::{args::InspectCmd, run, Cli, Command};
+
+    #[test]
+    fn run_propagates_subcommand_errors() {
+        let cli = Cli {
+            command: Command::Inspect(InspectCmd {
+                path: PathBuf::from("unsupported.xyz"),
+            }),
+        };
+
+        let err = run(cli).expect_err("run should fail");
+        assert!(err.contains("unsupported file type"));
+    }
+}

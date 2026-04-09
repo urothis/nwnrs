@@ -287,3 +287,100 @@ pub(crate) fn expand_tilde(path: &Path) -> PathBuf {
         path.to_path_buf()
     }
 }
+
+#[allow(clippy::panic)]
+#[cfg(test)]
+mod tests {
+    use std::{
+        fs,
+        path::PathBuf,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    use crate::{Platform, find_nwnrs_root_impl, find_user_root_impl};
+
+    use super::{expand_tilde, normalize_relative_path};
+
+    fn unique_test_dir(prefix: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        std::env::temp_dir().join(format!("nwnrs-game-{prefix}-{nanos}"))
+    }
+
+    #[test]
+    fn user_root_prefers_environment_over_platform_fallback() {
+        let root = unique_test_dir("user-root");
+        let env_dir = root.join("env");
+        let home = root.join("home");
+        let fallback = home.join(".local").join("share").join("Neverwinter Nights");
+        if let Err(error) = fs::create_dir_all(&env_dir) {
+            panic!("create env dir: {error}");
+        }
+        if let Err(error) = fs::create_dir_all(&fallback) {
+            panic!("create fallback dir: {error}");
+        }
+
+        let resolved = match find_user_root_impl(
+            "",
+            |key| match key {
+                "nwnrs_HOME" => Some(env_dir.display().to_string()),
+                _ => None,
+            },
+            || Some(home.clone()),
+            Platform::Linux,
+        ) {
+            Ok(value) => value,
+            Err(error) => panic!("resolve user root: {error}"),
+        };
+        assert_eq!(resolved, env_dir);
+    }
+
+    #[test]
+    fn game_root_falls_back_to_beamdog_settings() {
+        let root = unique_test_dir("game-root");
+        let home = root.join("home");
+        let beamdog_root = root.join("beamdog");
+        let install = beamdog_root.join("00829");
+        let settings = home
+            .join(".config")
+            .join("Beamdog Client")
+            .join("settings.json");
+
+        if let Err(error) = fs::create_dir_all(&install) {
+            panic!("create install dir: {error}");
+        }
+        if let Err(error) = fs::create_dir_all(settings.parent().unwrap_or(&home)) {
+            panic!("create settings dir: {error}");
+        }
+        if let Err(error) = fs::write(&settings, format!(r#"{{"folders":["{}"]}}"#, beamdog_root.display())) {
+            panic!("write settings: {error}");
+        }
+        if let Err(error) = fs::write(install.join("databuild.txt"), "build") {
+            panic!("write databuild: {error}");
+        }
+
+        let resolved = match find_nwnrs_root_impl(
+            "",
+            |_key| None,
+            || Some(home.clone()),
+            Platform::Linux,
+        ) {
+            Ok(value) => value,
+            Err(error) => panic!("resolve game root: {error}"),
+        };
+        assert_eq!(resolved, install);
+    }
+
+    #[test]
+    fn normalizes_relative_paths_and_expands_home() {
+        assert_eq!(normalize_relative_path(r"foo\bar/baz"), PathBuf::from("foo/bar/baz"));
+        if let Some(home) = std::env::var_os("HOME") {
+            assert_eq!(
+                expand_tilde(&PathBuf::from("~/override")),
+                PathBuf::from(home).join("override")
+            );
+        }
+    }
+}

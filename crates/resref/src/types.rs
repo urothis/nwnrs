@@ -206,3 +206,38 @@ impl From<&ResolvedResRef> for ResRef {
         value.base.clone()
     }
 }
+
+#[allow(clippy::panic)]
+#[cfg(test)]
+mod tests {
+    use std::collections::HashSet;
+
+    use nwnrs_restype::ResType;
+
+    use crate::{ResRef, ResolvedResRef};
+
+    #[test]
+    fn resrefs_compare_and_hash_case_insensitively() {
+        let lower = ResRef::new("alpha", ResType(2017)).unwrap_or_else(|error| {
+            panic!("lower rr: {error}");
+        });
+        let upper = ResRef::new("ALPHA", ResType(2017)).unwrap_or_else(|error| {
+            panic!("upper rr: {error}");
+        });
+        assert_eq!(lower, upper);
+
+        let mut set = HashSet::new();
+        set.insert(lower);
+        assert!(set.contains(&upper));
+    }
+
+    #[test]
+    fn filenames_resolve_to_canonical_lowercase_names() {
+        let resolved = ResolvedResRef::from_filename("HELLO.2DA").unwrap_or_else(|error| {
+            panic!("resolve filename: {error}");
+        });
+        assert_eq!(resolved.res_ref(), "hello");
+        assert_eq!(resolved.to_file(), "hello.2da");
+        assert!(ResolvedResRef::try_from_filename("invalid.nope").is_none());
+    }
+}

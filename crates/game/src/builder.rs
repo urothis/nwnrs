@@ -142,3 +142,81 @@ pub fn new_default_resman(
     info!("built default resource manager");
     Ok(result)
 }
+
+#[allow(clippy::panic)]
+#[cfg(test)]
+mod tests {
+    use std::{fs, time::SystemTime};
+
+    use nwnrs_checksums::EMPTY_SECURE_HASH;
+
+    use super::new_default_resman;
+
+    fn unique_test_dir(prefix: &str) -> std::path::PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap_or_else(|error| panic!("clock drift: {error}"))
+            .as_nanos();
+        std::env::temp_dir().join(format!("nwnrs-game-builder-{prefix}-{nanos}"))
+    }
+
+    #[test]
+    fn rejects_missing_language_directory() {
+        let root = unique_test_dir("missing-lang-root");
+        let user = unique_test_dir("missing-lang-user");
+        fs::create_dir_all(&root).unwrap_or_else(|error| panic!("create root: {error}"));
+        fs::create_dir_all(&user).unwrap_or_else(|error| panic!("create user: {error}"));
+
+        let err = new_default_resman(&root, &user, "english", 0, false, false, &[], &[], &[], &[])
+            .expect_err("builder should fail");
+        assert!(err.to_string().contains("language"));
+    }
+
+    #[test]
+    fn rejects_missing_additional_directories() {
+        let root = unique_test_dir("dirs-root");
+        let user = unique_test_dir("dirs-user");
+        let lang_root = root.join("lang").join("english");
+        fs::create_dir_all(&lang_root).unwrap_or_else(|error| panic!("create lang root: {error}"));
+        fs::create_dir_all(&user).unwrap_or_else(|error| panic!("create user: {error}"));
+        let missing = root.join("does-not-exist");
+
+        let err = new_default_resman(
+            &root,
+            &user,
+            "english",
+            0,
+            false,
+            false,
+            &[],
+            &[],
+            &[missing],
+            &[],
+        )
+        .expect_err("builder should fail");
+        assert!(err.to_string().contains("requested --dirs not found"));
+    }
+
+    #[test]
+    fn manifests_require_existing_user_directory() {
+        let root = unique_test_dir("manifest-root");
+        let user = unique_test_dir("manifest-user-missing");
+        let lang_root = root.join("lang").join("english");
+        fs::create_dir_all(&lang_root).unwrap_or_else(|error| panic!("create lang root: {error}"));
+
+        let err = new_default_resman(
+            &root,
+            &user,
+            "english",
+            0,
+            false,
+            false,
+            &[],
+            &[],
+            &[],
+            &[EMPTY_SECURE_HASH],
+        )
+        .expect_err("builder should fail");
+        assert!(err.to_string().contains("is not a directory"));
+    }
+}

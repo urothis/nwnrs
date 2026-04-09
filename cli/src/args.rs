@@ -212,3 +212,72 @@ pub(crate) struct NwsyncWriteCmd {
     /// overwrite existing output file
     pub(crate) force: bool,
 }
+
+#[allow(clippy::panic)]
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use argh::FromArgs;
+
+    use super::{Cli, Command, NwsyncCommand};
+
+    #[test]
+    fn parses_compile_command_with_repeated_include_dirs() {
+        let cli = Cli::from_args(
+            &["nwnrs"],
+            &[
+                "compile",
+                "--debug",
+                "--no-entrypoint-check",
+                "--include-dir",
+                "inc/a",
+                "--include-dir",
+                "inc/b",
+                "--optimization",
+                "O2",
+                "-o",
+                "out/test.ncs",
+                "scripts/test.nss",
+            ],
+        )
+        .unwrap_or_else(|error| panic!("parse compile args: {error:?}"));
+
+        let Command::Compile(cmd) = cli.command else {
+            panic!("expected compile command");
+        };
+        assert!(cmd.debug);
+        assert!(cmd.no_entrypoint_check);
+        assert_eq!(cmd.optimization, "O2");
+        assert_eq!(
+            cmd.include_dir,
+            vec![PathBuf::from("inc/a"), PathBuf::from("inc/b")]
+        );
+        assert_eq!(cmd.output, Some(PathBuf::from("out/test.ncs")));
+        assert_eq!(cmd.input, PathBuf::from("scripts/test.nss"));
+    }
+
+    #[test]
+    fn parses_nwsync_fetch_command() {
+        let cli = Cli::from_args(
+            &["nwnrs"],
+            &[
+                "nwsync",
+                "fetch",
+                "https://example.invalid/manifest/abcd",
+                "-o",
+                "repo",
+            ],
+        )
+        .unwrap_or_else(|error| panic!("parse nwsync args: {error:?}"));
+
+        let Command::Nwsync(cmd) = cli.command else {
+            panic!("expected nwsync command");
+        };
+        let NwsyncCommand::Fetch(cmd) = cmd.command else {
+            panic!("expected fetch subcommand");
+        };
+        assert_eq!(cmd.url, "https://example.invalid/manifest/abcd");
+        assert_eq!(cmd.output, Some(PathBuf::from("repo")));
+    }
+}

@@ -118,3 +118,60 @@ fn collect_files(root: &Path, directory: &Path, out: &mut Vec<PathBuf>) -> io::R
     }
     Ok(())
 }
+
+#[allow(clippy::panic)]
+#[cfg(test)]
+mod tests {
+    use std::{
+        fs,
+        path::PathBuf,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    use nwnrs_resman::ResContainer;
+    use nwnrs_resref::ResolvedResRef;
+
+    use crate::read_resdir;
+
+    fn unique_test_dir(prefix: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        std::env::temp_dir().join(format!("nwnrs-resdir-{prefix}-{nanos}"))
+    }
+
+    #[test]
+    fn reads_valid_files_and_skips_unknown_extensions() {
+        let root = unique_test_dir("scan");
+        if let Err(error) = fs::create_dir_all(&root) {
+            panic!("create root: {error}");
+        }
+        if let Err(error) = fs::write(root.join("alpha.utc"), b"alpha") {
+            panic!("write alpha: {error}");
+        }
+        if let Err(error) = fs::write(root.join("notes.unknown"), b"ignored") {
+            panic!("write ignored: {error}");
+        }
+
+        let dir = match read_resdir(&root) {
+            Ok(value) => value,
+            Err(error) => panic!("read resdir: {error}"),
+        };
+        assert_eq!(dir.count(), 1);
+
+        let rr = match ResolvedResRef::from_filename("alpha.utc") {
+            Ok(value) => value,
+            Err(error) => panic!("resolve rr: {error}"),
+        };
+        let res = match dir.demand(rr.base()) {
+            Ok(value) => value,
+            Err(error) => panic!("demand alpha: {error}"),
+        };
+        let bytes = match res.read_all(false) {
+            Ok(value) => value,
+            Err(error) => panic!("read alpha: {error}"),
+        };
+        assert_eq!(bytes, b"alpha".to_vec());
+    }
+}

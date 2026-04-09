@@ -220,3 +220,28 @@ fn normalize_extension(extension: &str) -> Result<String, RegisterResTypeError> 
 
     Ok(normalized)
 }
+
+#[allow(clippy::panic)]
+#[cfg(test)]
+mod tests {
+    use crate::{
+        ResType, get_res_ext, lookup_res_type, register_custom_res_type, reset_registry_for_tests,
+    };
+
+    #[test]
+    fn builtins_roundtrip_through_registry() {
+        reset_registry_for_tests();
+        assert_eq!(lookup_res_type("2da"), Some(ResType(2017)));
+        assert_eq!(get_res_ext(ResType(2018)), "tlk");
+    }
+
+    #[test]
+    fn custom_types_are_normalized_and_validated() {
+        reset_registry_for_tests();
+        if let Err(error) = register_custom_res_type(ResType(65000), "ABC") {
+            panic!("register custom: {error}");
+        }
+        assert_eq!(lookup_res_type("abc"), Some(ResType(65000)));
+        assert!(register_custom_res_type(ResType(65001), "bad!").is_err());
+    }
+}

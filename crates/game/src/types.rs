@@ -105,3 +105,22 @@ impl From<ResNWSyncError> for GameError {
 
 /// Result type for game-level helper operations.
 pub type GameResult<T> = Result<T, GameError>;
+
+#[cfg(test)]
+mod tests {
+    use std::io;
+
+    use super::GameError;
+
+    #[test]
+    fn message_errors_display_the_original_text() {
+        let error = GameError::msg("plain message");
+        assert_eq!(error.to_string(), "plain message");
+    }
+
+    #[test]
+    fn io_errors_convert_into_game_errors() {
+        let error = GameError::from(io::Error::other("broken"));
+        assert_eq!(error.to_string(), "broken");
+    }
+}

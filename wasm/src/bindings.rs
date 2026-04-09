@@ -48,3 +48,33 @@ macro_rules! wasm_write_binding {
         }
     };
 }
+
+#[cfg(all(test, target_arch = "wasm32"))]
+mod tests {
+    use wasm_bindgen::JsValue;
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    use super::{from_js_value, js_error, to_js_value};
+
+    #[wasm_bindgen_test]
+    fn js_error_formats_context_and_message() {
+        let value = js_error("serialize dto", "bad field");
+        assert_eq!(value.as_string().as_deref(), Some("serialize dto: bad field"));
+    }
+
+    #[wasm_bindgen_test]
+    fn serde_helpers_roundtrip_js_values() {
+        let js = to_js_value(&vec!["alpha".to_string(), "beta".to_string()], "serialize vec")
+            .expect("serialize should succeed");
+        let value: Vec<String> = from_js_value(js, "deserialize vec").expect("deserialize");
+        assert_eq!(value, vec!["alpha".to_string(), "beta".to_string()]);
+    }
+
+    #[wasm_bindgen_test]
+    fn deserialize_errors_include_context() {
+        let err = from_js_value::<Vec<String>>(JsValue::from_str("not-an-array"), "read vec")
+            .expect_err("deserialization should fail");
+        let message = err.as_string().expect("error string");
+        assert!(message.contains("read vec"));
+    }
+}

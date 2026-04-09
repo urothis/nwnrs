@@ -105,3 +105,34 @@ pub mod prelude {
         pub use nwnrs_util::prelude::*;
     }
 }
+
+#[allow(clippy::panic)]
+#[cfg(test)]
+mod tests {
+    use crate::prelude;
+
+    #[test]
+    fn prelude_modules_expose_common_workspace_types() {
+        let digest = prelude::checksums::secure_hash(b"abc");
+        assert_eq!(digest.to_string(), "a9993e364706816aba3e25717850c26c9cd0d89d");
+
+        let language = prelude::core::resolve_language("en").unwrap_or_else(|error| {
+            panic!("resolve language: {error}");
+        });
+        assert_eq!(language, prelude::core::Language::English);
+
+        let res_type = prelude::restype::get_res_type("2da");
+        let rr = prelude::resref::new_res_ref("table", res_type).unwrap_or_else(|error| {
+            panic!("new rr: {error}");
+        });
+        assert_eq!(rr.to_string(), "table.2da");
+
+        let mut cache = prelude::lru::WeightedLru::new(2, 1);
+        cache.insert("k", 1);
+        assert_eq!(cache.get(&"k"), Some(&1));
+        assert_eq!(
+            prelude::exo::ExoResFileCompressionType::from_u32(1),
+            Some(prelude::exo::ExoResFileCompressionType::CompressedBuf)
+        );
+    }
+}

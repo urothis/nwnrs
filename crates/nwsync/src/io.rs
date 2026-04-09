@@ -1,4 +1,5 @@
 use std::{
+    cmp::Ordering,
     collections::HashMap,
     fs::File,
     io::{self, BufReader, BufWriter, Read, Write},
@@ -146,33 +147,24 @@ pub fn read_manifest_file(path: impl AsRef<Path>) -> ManifestResult<Manifest> {
 pub fn write_manifest<W: Write>(writer: &mut W, manifest: &Manifest) -> ManifestResult<()> {
     check(manifest.version == VERSION, "Unsupported manifest version")?;
 
-    let primary_positions = manifest
-        .entries
-        .iter()
-        .enumerate()
-        .filter_map(|(index, entry)| match entry.source {
-            ManifestEntrySource::Primary => Some(index),
-            ManifestEntrySource::Mapping {
-                ..
-            } => None,
-        })
-        .collect::<Vec<_>>();
-    let primary_ordinals = primary_positions
-        .iter()
-        .enumerate()
-        .map(|(ordinal, position)| Ok((*position, to_u32(ordinal, "manifest primary ordinal")?)))
-        .collect::<ManifestResult<HashMap<_, _>>>()?;
-    let mapping_positions = manifest
-        .entries
-        .iter()
-        .enumerate()
-        .filter_map(|(index, entry)| match entry.source {
-            ManifestEntrySource::Primary => None,
-            ManifestEntrySource::Mapping {
-                ..
-            } => Some(index),
-        })
-        .collect::<Vec<_>>();
+    let sorted_positions = sorted_manifest_positions(manifest);
+    let mut seen_hashes = HashMap::new();
+    let mut primary_positions = Vec::new();
+    let mut mapping_positions = Vec::new();
+
+    for position in sorted_positions {
+        let entry = manifest
+            .entries
+            .get(position)
+            .ok_or_else(|| ManifestError::msg("manifest entry index out of range"))?;
+        if let Some(ordinal) = seen_hashes.get(&entry.sha1).copied() {
+            mapping_positions.push((ordinal, position));
+        } else {
+            let ordinal = to_u32(primary_positions.len(), "manifest primary ordinal")?;
+            seen_hashes.insert(entry.sha1, ordinal);
+            primary_positions.push(position);
+        }
+    }
 
     writer.write_all(MAGIC)?;
     write_u32(writer, manifest.version)?;
@@ -195,26 +187,12 @@ pub fn write_manifest<W: Write>(writer: &mut W, manifest: &Manifest) -> Manifest
         write_resref(writer, entry)?;
     }
 
-    for position in &mapping_positions {
+    for (ordinal, position) in &mapping_positions {
         let entry = manifest
             .entries
             .get(*position)
             .ok_or_else(|| ManifestError::msg("mapping entry index out of range"))?;
-        let target = match entry.source {
-            ManifestEntrySource::Mapping {
-                target,
-            } => target,
-            ManifestEntrySource::Primary => {
-                return Err(ManifestError::msg("mapping table contained primary entry"));
-            }
-        };
-        let ordinal = primary_ordinals.get(&target).copied().ok_or_else(|| {
-            ManifestError::msg(format!(
-                "mapping entry {} references non-primary target {}",
-                position, target
-            ))
-        })?;
-        write_u32(writer, ordinal)?;
+        write_u32(writer, *ordinal)?;
         write_resref(writer, entry)?;
     }
 
@@ -224,6 +202,31 @@ pub fn write_manifest<W: Write>(writer: &mut W, manifest: &Manifest) -> Manifest
         "wrote nwsync manifest"
     );
     Ok(())
+}
+
+fn sorted_manifest_positions(manifest: &Manifest) -> Vec<usize> {
+    let mut positions = (0..manifest.entries.len()).collect::<Vec<_>>();
+    positions.sort_by(|left, right| compare_manifest_entries(
+        manifest.entries.get(*left),
+        manifest.entries.get(*right),
+    ));
+    positions
+}
+
+fn compare_manifest_entries(
+    left: Option<&ManifestEntry>,
+    right: Option<&ManifestEntry>,
+) -> Ordering {
+    match (left, right) {
+        (Some(left), Some(right)) => left
+            .sha1
+            .as_bytes()
+            .cmp(right.sha1.as_bytes())
+            .then_with(|| left.resref.res_ref().cmp(right.resref.res_ref())),
+        (None, Some(_)) => Ordering::Less,
+        (Some(_), None) => Ordering::Greater,
+        (None, None) => Ordering::Equal,
+    }
 }
 
 /// Writes a manifest file to disk.
@@ -246,24 +249,14 @@ fn read_resref<R: Read>(reader: &mut R) -> ManifestResult<(ResRef, [u8; 16])> {
 }
 
 fn write_resref<W: Write>(writer: &mut W, entry: &ManifestEntry) -> ManifestResult<()> {
-    let raw = if decode_manifest_resref(&entry.raw_resref) == entry.resref.res_ref() {
-        entry.raw_resref
-    } else {
-        let normalized = entry.resref.res_ref().to_ascii_lowercase();
-        let mut raw = [0_u8; 16];
-        if let Some(prefix) = raw.get_mut(..normalized.len()) {
-            prefix.copy_from_slice(normalized.as_bytes());
-        }
-        raw
-    };
+    let normalized = entry.resref.res_ref().to_ascii_lowercase();
+    let mut raw = [0_u8; 16];
+    if let Some(prefix) = raw.get_mut(..normalized.len()) {
+        prefix.copy_from_slice(normalized.as_bytes());
+    }
     writer.write_all(&raw)?;
     write_u16(writer, entry.resref.res_type().0)?;
     Ok(())
-}
-
-fn decode_manifest_resref(raw: &[u8; 16]) -> String {
-    let end = raw.iter().position(|byte| *byte == 0).unwrap_or(raw.len());
-    String::from_utf8_lossy(raw.get(..end).unwrap_or(raw)).to_ascii_lowercase()
 }
 
 fn read_secure_hash<R: Read>(reader: &mut R) -> ManifestResult<SecureHash> {
@@ -321,7 +314,7 @@ mod tests {
     use crate::{Manifest, ManifestEntry, ManifestEntrySource, read_manifest, write_manifest};
 
     #[test]
-    fn manifest_edit_preserves_primary_and_mapping_structure() {
+    fn manifest_edit_rewrites_canonical_primary_and_mapping_structure() {
         let primary_rr = match new_res_ref("hello", ResType(2017)) {
             Ok(resref) => resref,
             Err(error) => panic!("resref: {error}"),
@@ -391,11 +384,77 @@ mod tests {
         );
         assert_eq!(
             redecoded.entries.first().map(|entry| entry.raw_resref),
-            decoded.entries.first().map(|entry| entry.raw_resref)
+            Some(*b"hello\0\0\0\0\0\0\0\0\0\0\0")
         );
         assert_eq!(
             redecoded.entries.get(1).map(|entry| entry.raw_resref),
-            decoded.entries.get(1).map(|entry| entry.raw_resref)
+            Some(*b"world\0\0\0\0\0\0\0\0\0\0\0")
+        );
+    }
+
+    #[test]
+    fn manifest_write_canonicalizes_order_and_hash_mappings() {
+        let alpha = new_res_ref("alpha", ResType(2017)).unwrap_or_else(|error| {
+            panic!("alpha resref: {error}");
+        });
+        let beta = new_res_ref("beta", ResType(2017)).unwrap_or_else(|error| {
+            panic!("beta resref: {error}");
+        });
+        let gamma = new_res_ref("gamma", ResType(2017)).unwrap_or_else(|error| {
+            panic!("gamma resref: {error}");
+        });
+
+        let sha1_a = secure_hash(b"payload-a");
+        let sha1_b = secure_hash(b"payload-b");
+        let mut manifest = Manifest::default();
+        manifest.entries.push(ManifestEntry {
+            sha1:       sha1_b,
+            size:       9,
+            resref:     gamma.clone(),
+            raw_resref: *b"GAMMA\0\0\0\0\0\0\0\0\0\0\0",
+            source:     ManifestEntrySource::Primary,
+        });
+        manifest.entries.push(ManifestEntry {
+            sha1:       sha1_a,
+            size:       9,
+            resref:     beta.clone(),
+            raw_resref: *b"BETA\0\0\0\0\0\0\0\0\0\0\0\0",
+            source:     ManifestEntrySource::Primary,
+        });
+        manifest.entries.push(ManifestEntry {
+            sha1:       sha1_a,
+            size:       9,
+            resref:     alpha.clone(),
+            raw_resref: *b"ALPHA\0\0\0\0\0\0\0\0\0\0\0",
+            source:     ManifestEntrySource::Primary,
+        });
+
+        let mut encoded = Vec::new();
+        if let Err(error) = write_manifest(&mut encoded, &manifest) {
+            panic!("write manifest: {error}");
+        }
+
+        let decoded = match read_manifest(&mut &encoded[..]) {
+            Ok(manifest) => manifest,
+            Err(error) => panic!("read manifest: {error}"),
+        };
+        assert_eq!(decoded.entries.len(), 3);
+        assert_eq!(decoded.entries.first().map(|entry| &entry.resref), Some(&alpha));
+        assert_eq!(decoded.entries.get(1).map(|entry| &entry.resref), Some(&gamma));
+        assert_eq!(decoded.entries.get(2).map(|entry| &entry.resref), Some(&beta));
+        assert_eq!(
+            decoded.entries.first().map(|entry| &entry.source),
+            Some(&ManifestEntrySource::Primary)
+        );
+        assert_eq!(
+            decoded.entries.get(1).map(|entry| &entry.source),
+            Some(&ManifestEntrySource::Primary)
+        );
+        assert_eq!(
+            decoded.entries.get(2).map(|entry| &entry.source),
+            Some(&ManifestEntrySource::Mapping {
+                target: 0
+            })
         );
     }
 }

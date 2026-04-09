@@ -58,3 +58,17 @@ pub(crate) fn run_inspect(path: &Path) -> Result<(), String> {
         None => Err(format!("unsupported file type for {}", path.display())),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use super::run_inspect;
+
+    #[test]
+    fn rejects_unsupported_extensions_before_reading() {
+        let err = run_inspect(Path::new("unsupported.xyz")).expect_err("inspect should fail");
+        assert!(err.contains("unsupported file type"));
+        assert!(err.contains("unsupported.xyz"));
+    }
+}

@@ -64,3 +64,35 @@ pub(crate) fn load_key(
     info!(path = %key_path.display(), "loaded key table");
     Ok(())
 }
+
+#[allow(clippy::panic)]
+#[cfg(test)]
+mod tests {
+    use std::{fs, time::SystemTime};
+
+    use nwnrs_resman::ResMan;
+
+    use super::load_key;
+
+    fn unique_test_dir(prefix: &str) -> std::path::PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap_or_else(|error| panic!("clock drift: {error}"))
+            .as_nanos();
+        std::env::temp_dir().join(format!("nwnrs-game-keyload-{prefix}-{nanos}"))
+    }
+
+    #[test]
+    fn missing_key_file_is_skipped_without_modifying_manager() {
+        let root = unique_test_dir("root");
+        let lang_root = root.join("lang").join("english");
+        fs::create_dir_all(root.join("data")).unwrap_or_else(|error| panic!("create data: {error}"));
+        fs::create_dir_all(&lang_root).unwrap_or_else(|error| panic!("create lang root: {error}"));
+        let mut manager = ResMan::new(0);
+
+        load_key(&mut manager, &root, &lang_root, "missing")
+            .unwrap_or_else(|error| panic!("load missing key: {error}"));
+
+        assert!(manager.containers().is_empty());
+    }
+}

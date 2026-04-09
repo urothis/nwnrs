@@ -215,3 +215,33 @@ where
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::WeightedLru;
+
+    #[test]
+    fn get_promotes_entries_and_tracks_usecount() {
+        let mut cache = WeightedLru::new(3, 1);
+        cache.insert("a", 1);
+        cache.insert("b", 2);
+        assert_eq!(cache.keys(), vec!["b", "a"]);
+
+        assert_eq!(cache.get(&"a"), Some(&1));
+        assert_eq!(cache.keys(), vec!["a", "b"]);
+        assert_eq!(cache.uses(&"a"), 1);
+    }
+
+    #[test]
+    fn weighted_insert_evicts_oldest_entries_over_budget() {
+        let mut cache = WeightedLru::new(3, 1);
+        cache.insert_weighted("a", 2, 1);
+        cache.insert_weighted("b", 1, 2);
+        cache.insert_weighted("c", 2, 3);
+
+        assert!(!cache.contains_key(&"a"));
+        assert!(cache.contains_key(&"b"));
+        assert!(cache.contains_key(&"c"));
+        assert_eq!(cache.weight(), 3);
+    }
+}

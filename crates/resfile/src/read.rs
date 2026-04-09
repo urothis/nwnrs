@@ -68,3 +68,80 @@ pub fn read_resfile_as(path: impl AsRef<Path>, resref: ResRef) -> ResFileResult<
     debug!(io_size, "read resource file");
     Ok(result)
 }
+
+#[allow(clippy::panic)]
+#[cfg(test)]
+mod tests {
+    use std::{
+        fs,
+        path::PathBuf,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    use nwnrs_resman::ResContainer;
+    use nwnrs_resref::{ResolvedResRef, new_res_ref};
+    use nwnrs_restype::ResType;
+
+    use crate::{read_resfile, read_resfile_as};
+
+    fn unique_test_dir(prefix: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        std::env::temp_dir().join(format!("nwnrs-rf-{prefix}-{nanos}"))
+    }
+
+    #[test]
+    fn reads_resref_from_filename() {
+        let root = unique_test_dir("auto");
+        if let Err(error) = fs::create_dir_all(&root) {
+            panic!("create root: {error}");
+        }
+        let path = root.join("alpha.utc");
+        if let Err(error) = fs::write(&path, b"payload") {
+            panic!("write file: {error}");
+        }
+
+        let resfile = match read_resfile(&path) {
+            Ok(value) => value,
+            Err(error) => panic!("read resfile: {error}"),
+        };
+        let filename = match path.file_name().and_then(|value| value.to_str()) {
+            Some(value) => value,
+            None => panic!("filename should be valid utf-8"),
+        };
+        let rr = match ResolvedResRef::from_filename(filename) {
+            Ok(value) => value,
+            Err(error) => panic!("resolve rr: {error}"),
+        };
+        assert!(resfile.contains(rr.base()));
+        let bytes = match resfile.res().read_all(false) {
+            Ok(value) => value,
+            Err(error) => panic!("read payload: {error}"),
+        };
+        assert_eq!(bytes, b"payload".to_vec());
+    }
+
+    #[test]
+    fn supports_explicit_resref_override() {
+        let root = unique_test_dir("override");
+        if let Err(error) = fs::create_dir_all(&root) {
+            panic!("create root: {error}");
+        }
+        let path = root.join("payload.bin");
+        if let Err(error) = fs::write(&path, b"payload") {
+            panic!("write file: {error}");
+        }
+        let rr = match new_res_ref("custom", ResType(2027)) {
+            Ok(value) => value,
+            Err(error) => panic!("custom rr: {error}"),
+        };
+
+        let resfile = match read_resfile_as(&path, rr.clone()) {
+            Ok(value) => value,
+            Err(error) => panic!("read resfile as: {error}"),
+        };
+        assert!(resfile.contains(&rr));
+    }
+}

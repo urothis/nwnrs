@@ -34,3 +34,22 @@ impl fmt::Display for ExoResFileCompressionType {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::ExoResFileCompressionType;
+
+    #[test]
+    fn converts_and_formats_known_compression_markers() {
+        assert_eq!(
+            ExoResFileCompressionType::from_u32(0),
+            Some(ExoResFileCompressionType::None)
+        );
+        assert_eq!(
+            ExoResFileCompressionType::from_u32(1),
+            Some(ExoResFileCompressionType::CompressedBuf)
+        );
+        assert_eq!(ExoResFileCompressionType::from_u32(7), None);
+        assert_eq!(ExoResFileCompressionType::CompressedBuf.to_string(), "CompressedBuf");
+    }
+}
