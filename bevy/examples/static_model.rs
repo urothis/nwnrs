@@ -2,7 +2,7 @@
 
 use std::{
     collections::{BTreeMap, BTreeSet},
-    f32::consts::FRAC_PI_2,
+    f32::consts::{FRAC_PI_2, PI},
 };
 
 use bevy::{input::mouse::AccumulatedMouseMotion, prelude::*};
@@ -33,6 +33,11 @@ struct DemoAppearanceState {
     overrides:  BTreeMap<String, String>,
 }
 
+#[derive(Resource, Default)]
+struct DemoUiState {
+    model_query: String,
+}
+
 #[derive(Component)]
 struct FlyCam {
     move_speed:        f32,
@@ -51,6 +56,7 @@ fn main() {
         .init_resource::<DemoModelCatalog>()
         .init_resource::<DemoModelState>()
         .init_resource::<DemoAppearanceState>()
+        .init_resource::<DemoUiState>()
         .add_systems(Startup, setup)
         .add_systems(
             Update,
@@ -249,6 +255,9 @@ fn reload_current_model(
 
     let unresolved = model.unresolved.len();
     let root = spawn_nwn_model(&mut commands, &model);
+    commands
+        .entity(root)
+        .insert(Transform::from_rotation(Quat::from_rotation_z(PI)));
     state.root = Some(root);
     state.needs_reload = false;
 
@@ -285,11 +294,12 @@ fn reload_current_model(
 
 fn appearance_panel(
     mut contexts: EguiContexts<'_, '_>,
-    catalog: Res<'_, DemoModelCatalog>,
+    mut catalog: ResMut<'_, DemoModelCatalog>,
     mut appearance: ResMut<'_, DemoAppearanceState>,
+    mut ui_state: ResMut<'_, DemoUiState>,
     mut model_state: ResMut<'_, DemoModelState>,
 ) -> bevy::ecs::error::Result {
-    let Some(current_model) = catalog.names.get(catalog.index) else {
+    let Some(current_model) = catalog.names.get(catalog.index).cloned() else {
         return Ok(());
     };
     let ctx = contexts.ctx_mut()?;
@@ -299,9 +309,53 @@ fn appearance_panel(
         .default_width(280.0)
         .show(ctx, |ui| {
             ui.heading("Appearance");
-            ui.label(format!("Model: {current_model}"));
+            let mut selected_model = current_model.clone();
+            ui.label("Model");
+            ui.add(
+                egui::TextEdit::singleline(&mut ui_state.model_query)
+                    .hint_text("Filter models")
+                    .desired_width(220.0),
+            );
+            let query = ui_state.model_query.trim().to_ascii_lowercase();
+            let filtered_names = filtered_model_names(&catalog, query.as_str());
+            egui::ComboBox::from_id_salt("model_selector")
+                .selected_text(selected_model.as_str())
+                .width(220.0)
+                .show_ui(ui, |ui| {
+                    for (index, name) in filtered_names {
+                        if ui
+                            .selectable_label(index == catalog.index, name.as_str())
+                            .clicked()
+                        {
+                            selected_model = name.clone();
+                        }
+                    }
+                });
+            if let Some(new_index) = catalog
+                .names
+                .iter()
+                .position(|name| *name == selected_model)
+                && new_index != catalog.index
+            {
+                catalog.index = new_index;
+                model_state.needs_reload = true;
+            }
+            ui.small("Keyboard: Z/X also cycle models");
+            if !query.is_empty() {
+                let total_matches = catalog
+                    .names
+                    .iter()
+                    .filter(|name| name.to_ascii_lowercase().contains(query.as_str()))
+                    .count();
+                if total_matches > MODEL_SELECTOR_LIMIT {
+                    ui.small(format!(
+                        "Showing first {} of {} matches",
+                        MODEL_SELECTOR_LIMIT, total_matches
+                    ));
+                }
+            }
 
-            if appearance.model_name != *current_model {
+            if appearance.model_name != current_model {
                 ui.separator();
                 ui.label("Waiting for model load...");
                 return;
@@ -374,6 +428,33 @@ fn appearance_panel(
         });
 
     Ok(())
+}
+
+const MODEL_SELECTOR_LIMIT: usize = 200;
+
+fn filtered_model_names(catalog: &DemoModelCatalog, query: &str) -> Vec<(usize, String)> {
+    if catalog.names.is_empty() {
+        return Vec::new();
+    }
+
+    if query.is_empty() {
+        let start = catalog.index.saturating_sub(MODEL_SELECTOR_LIMIT / 2);
+        let end = (start + MODEL_SELECTOR_LIMIT).min(catalog.names.len());
+        return catalog.names[start..end]
+            .iter()
+            .enumerate()
+            .map(|(offset, name)| (start + offset, name.clone()))
+            .collect();
+    }
+
+    catalog
+        .names
+        .iter()
+        .enumerate()
+        .filter(|(_index, name)| name.to_ascii_lowercase().contains(query))
+        .take(MODEL_SELECTOR_LIMIT)
+        .map(|(index, name)| (index, name.clone()))
+        .collect()
 }
 
 fn update_flycam(
