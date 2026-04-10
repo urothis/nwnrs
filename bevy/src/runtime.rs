@@ -1,4 +1,4 @@
-use std::io::Cursor;
+use std::{collections::BTreeMap, io::Cursor};
 
 use bevy::{
     asset::{Assets, Handle},
@@ -15,9 +15,10 @@ use nwnrs_resref::prelude::ResRef;
 use nwnrs_tga::prelude::read_tga;
 
 use crate::{
-    NwnBevyError, NwnModelAsset, NwnModelNodeAsset, NwnPrimitiveAsset, NwnTextureLoadReason,
-    NwnUnresolvedTexture, image_from_dds, image_from_plt, image_from_tga, mesh_from_primitive,
-    standard_material_from_nwn, transform_from_nwn,
+    NwnAppearanceOverrides, NwnBevyError, NwnModelAsset, NwnModelNodeAsset, NwnPrimitiveAsset,
+    NwnTextureLoadReason, NwnUnresolvedTexture, apply_appearance_overrides, image_from_dds,
+    image_from_plt, image_from_tga, mesh_from_primitive, standard_material_from_nwn,
+    transform_from_nwn,
 };
 
 /// Loads one NWN model from `resman` and converts it into Bevy-side assets.
@@ -28,12 +29,32 @@ pub fn load_nwn_model_from_resman(
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
 ) -> Result<NwnModelAsset, NwnBevyError> {
+    load_nwn_model_from_resman_with_overrides(
+        resman,
+        model_name,
+        &NwnAppearanceOverrides::default(),
+        images,
+        meshes,
+        materials,
+    )
+}
+
+/// Loads one NWN model from `resman` and applies explicit appearance/part
+/// overrides before converting it into Bevy-side assets.
+pub fn load_nwn_model_from_resman_with_overrides(
+    resman: &mut ResMan,
+    model_name: &str,
+    overrides: &NwnAppearanceOverrides,
+    images: &mut Assets<Image>,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+) -> Result<NwnModelAsset, NwnBevyError> {
     let resref = ResRef::new(model_name.to_string(), MODEL_RES_TYPE)
         .map_err(|error| NwnBevyError::msg(format!("invalid mdl resref {model_name}: {error}")))?;
     let res = resman
         .get(&resref)
         .ok_or_else(|| NwnBevyError::msg(format!("model not found in ResMan: {model_name}.mdl")))?;
-    let scene = read_scene_model_auto_from_res(&res, true)?;
+    let scene = apply_appearance_overrides(&read_scene_model_auto_from_res(&res, true)?, overrides);
 
     let material_bindings = load_runtime_materials(&scene, resman, images, materials)?;
     let mesh_bindings = load_runtime_meshes(&scene, meshes)?;
@@ -90,7 +111,7 @@ fn load_runtime_materials(
     let mut bindings = Vec::with_capacity(scene.materials.len());
     for (material_index, material) in scene.materials.iter().enumerate() {
         let texture_result =
-            load_runtime_material_texture(material_index, material, resman, images)?;
+            load_runtime_material_texture(scene, material_index, material, resman, images)?;
         let texture_handle = texture_result.texture.clone();
         let material_handle = materials.add(standard_material_from_nwn(material, texture_handle));
         bindings.push(RuntimeMaterialBinding {
@@ -104,6 +125,7 @@ fn load_runtime_materials(
 }
 
 fn load_runtime_material_texture(
+    scene: &NwnScene,
     material_index: usize,
     material: &NwnMaterial,
     resman: &mut ResMan,
@@ -118,16 +140,29 @@ fn load_runtime_material_texture(
     }
 
     let mut attempted = Vec::new();
+    let texture_names = texture
+        .map(|texture| scene_texture_resolution_names(scene, material, texture))
+        .unwrap_or_default();
+    let mtr_names = mtr_candidate_names(material, &texture_names);
 
     if let Some(texture) = texture {
-        match resolve_texture_ref(texture, resman, &runtime_texture_resolver_options()) {
-            Ok(resolved) => {
+        match resolve_scene_texture_ref_with_policy(
+            scene,
+            material,
+            texture,
+            resman,
+            &runtime_texture_resolver_options(),
+        ) {
+            SceneTextureResolution::Resolved(resolved) => {
                 return Ok(RuntimeMaterialTextureLoad {
                     texture:    Some(images.add(image_from_runtime_resolved_texture(&resolved)?)),
                     unresolved: Vec::new(),
                 });
             }
-            Err(missing) => attempted.extend(
+            SceneTextureResolution::Ignored => {
+                attempted.extend(deferred_attempts(&texture_names, &mtr_names));
+            }
+            SceneTextureResolution::Missing(missing) => attempted.extend(
                 missing
                     .attempted
                     .into_iter()
@@ -136,7 +171,7 @@ fn load_runtime_material_texture(
         }
     }
 
-    for mtr_name in mtr_candidate_names(material, texture) {
+    for mtr_name in mtr_names {
         let Some(mtr_rr) = ResRef::new(mtr_name.clone(), MTR_RES_TYPE).ok() else {
             continue;
         };
@@ -203,20 +238,21 @@ fn image_from_runtime_resolved_texture(resolved: &ResolvedTexture) -> Result<Ima
     }
 }
 
-fn mtr_candidate_names(material: &NwnMaterial, bitmap: Option<&NwnTextureRef>) -> Vec<String> {
+fn mtr_candidate_names(material: &NwnMaterial, bitmap_names: &[String]) -> Vec<String> {
     let mut names = Vec::new();
     if let Some(material_name) = material.material_name.as_deref()
         && is_mtr_candidate(material_name)
     {
         names.push(material_name.to_string());
     }
-    if let Some(bitmap) = bitmap
-        && is_mtr_candidate(bitmap.name.as_str())
-        && !names
-            .iter()
-            .any(|existing| existing.eq_ignore_ascii_case(bitmap.name.as_str()))
-    {
-        names.push(bitmap.name.clone());
+    for bitmap_name in bitmap_names {
+        if is_mtr_candidate(bitmap_name)
+            && !names
+                .iter()
+                .any(|existing| existing.eq_ignore_ascii_case(bitmap_name.as_str()))
+        {
+            names.push(bitmap_name.clone());
+        }
     }
     names
 }
@@ -228,6 +264,24 @@ fn is_mtr_candidate(name: &str) -> bool {
         && std::path::Path::new(trimmed).extension().is_none()
         && !trimmed.contains('/')
         && !trimmed.contains('\\')
+}
+
+fn deferred_attempts(texture_names: &[String], mtr_names: &[String]) -> Vec<String> {
+    let mut attempted = BTreeMap::<String, ()>::new();
+    for texture_name in texture_names {
+        for candidate in [
+            format!("{texture_name}.dds"),
+            format!("{texture_name}.tga"),
+            format!("{texture_name}.plt"),
+            format!("{texture_name}.mdl"),
+        ] {
+            attempted.insert(candidate, ());
+        }
+    }
+    for mtr_name in mtr_names {
+        attempted.insert(format!("{mtr_name}.mtr"), ());
+    }
+    attempted.into_keys().collect()
 }
 
 fn load_runtime_meshes(

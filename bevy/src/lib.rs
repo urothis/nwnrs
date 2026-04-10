@@ -9,6 +9,7 @@
 //! - build basic `StandardMaterial` assets
 //! - expose a spawn helper for the loaded model hierarchy
 
+mod appearance;
 mod assets;
 mod convert;
 mod error;
@@ -19,6 +20,7 @@ mod plugin;
 mod runtime;
 mod spawn;
 
+pub use appearance::*;
 pub use assets::*;
 pub use convert::*;
 pub use error::*;

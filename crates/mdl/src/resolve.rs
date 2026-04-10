@@ -1,8 +1,13 @@
+use std::collections::BTreeSet;
+
 use nwnrs_resman::prelude::*;
 use nwnrs_resref::prelude::*;
 use nwnrs_restype::prelude::*;
 
-use crate::{NwnMaterial, NwnScene, NwnTextureRef};
+use crate::{
+    MODEL_RES_TYPE, NwnMaterial, NwnScene, NwnTextureRef, NwnTextureSlot,
+    read_scene_model_auto_from_res,
+};
 
 /// NWN texture resource kinds the model resolver can search for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -89,6 +94,18 @@ pub struct ResolvedMaterialTextures {
     pub missing:        Vec<UnresolvedTexture>,
 }
 
+/// One scene-aware texture resolution outcome.
+#[derive(Debug, Clone)]
+pub enum SceneTextureResolution {
+    /// A final texture asset was resolved.
+    Resolved(ResolvedTexture),
+    /// The token is an appearance/helper reference and should not be treated as
+    /// a missing standalone texture.
+    Ignored,
+    /// No texture asset could be resolved.
+    Missing(UnresolvedTexture),
+}
+
 /// Resolves one texture reference through `resman`.
 pub fn resolve_texture_ref(
     texture: &NwnTextureRef,
@@ -116,8 +133,71 @@ pub fn resolve_texture_ref(
     })
 }
 
+/// Returns ordered texture-name fallbacks for one scene material texture.
+///
+/// The returned names always start with the original texture name and then add
+/// appearance-aware aliases, such as body-part name normalization and nearest
+/// ancestor bitmap inheritance for placeholder child meshes.
+pub fn scene_texture_resolution_names(
+    scene: &NwnScene,
+    material: &NwnMaterial,
+    texture: &NwnTextureRef,
+) -> Vec<String> {
+    let mut names = vec![texture.name.clone()];
+
+    if let Some(normalized) = normalize_body_part_texture_name(texture.name.as_str()) {
+        push_unique_case_insensitive(&mut names, normalized);
+    }
+
+    for inherited in inherited_bitmap_names(scene, material.source_node) {
+        push_unique_case_insensitive(&mut names, inherited);
+    }
+
+    names
+}
+
+/// Resolves one texture reference through `resman`, including scene-aware
+/// appearance fallbacks.
+pub fn resolve_scene_texture_ref(
+    scene: &NwnScene,
+    material: &NwnMaterial,
+    texture: &NwnTextureRef,
+    resman: &mut ResMan,
+    options: &TextureResolverOptions,
+) -> Result<ResolvedTexture, UnresolvedTexture> {
+    match resolve_scene_texture_ref_with_policy(scene, material, texture, resman, options) {
+        SceneTextureResolution::Resolved(hit) => Ok(hit),
+        SceneTextureResolution::Ignored => Err(UnresolvedTexture {
+            texture:   texture.clone(),
+            attempted: Vec::new(),
+        }),
+        SceneTextureResolution::Missing(miss) => Err(miss),
+    }
+}
+
+/// Resolves one texture reference through `resman`, including scene-aware
+/// appearance fallbacks and model-backed body-part references.
+pub fn resolve_scene_texture_ref_with_policy(
+    scene: &NwnScene,
+    material: &NwnMaterial,
+    texture: &NwnTextureRef,
+    resman: &mut ResMan,
+    options: &TextureResolverOptions,
+) -> SceneTextureResolution {
+    let mut visited_models = BTreeSet::new();
+    resolve_scene_texture_ref_internal(
+        scene,
+        material,
+        texture,
+        resman,
+        options,
+        &mut visited_models,
+    )
+}
+
 /// Resolves all textures referenced by one material.
 pub fn resolve_material_textures(
+    scene: &NwnScene,
     material_index: usize,
     material: &NwnMaterial,
     resman: &mut ResMan,
@@ -127,9 +207,10 @@ pub fn resolve_material_textures(
     let mut missing = Vec::new();
 
     for texture in &material.textures {
-        match resolve_texture_ref(texture, resman, options) {
-            Ok(hit) => resolved.push(hit),
-            Err(miss) => missing.push(miss),
+        match resolve_scene_texture_ref_with_policy(scene, material, texture, resman, options) {
+            SceneTextureResolution::Resolved(hit) => resolved.push(hit),
+            SceneTextureResolution::Ignored => {}
+            SceneTextureResolution::Missing(miss) => missing.push(miss),
         }
     }
 
@@ -152,9 +233,225 @@ pub fn resolve_scene_textures(
         .iter()
         .enumerate()
         .map(|(material_index, material)| {
-            resolve_material_textures(material_index, material, resman, options)
+            resolve_material_textures(scene, material_index, material, resman, options)
         })
         .collect()
+}
+
+fn normalize_body_part_texture_name(name: &str) -> Option<String> {
+    let trimmed = name.trim();
+    let lower = trimmed.to_ascii_lowercase();
+    if lower.len() < 2 || !lower.ends_with('g') {
+        return None;
+    }
+
+    let base = &trimmed[..trimmed.len() - 1];
+    let base_lower = base.to_ascii_lowercase();
+    let looks_like_body_part = (base_lower.starts_with('p') || base_lower.starts_with('i'))
+        && base_lower.contains('_')
+        && base_lower.chars().any(|ch| ch.is_ascii_digit());
+    looks_like_body_part.then(|| base.to_string())
+}
+
+fn resolve_scene_texture_ref_internal(
+    scene: &NwnScene,
+    material: &NwnMaterial,
+    texture: &NwnTextureRef,
+    resman: &mut ResMan,
+    options: &TextureResolverOptions,
+    visited_models: &mut BTreeSet<String>,
+) -> SceneTextureResolution {
+    let resolution_names = scene_texture_resolution_names(scene, material, texture);
+    let mut attempted = Vec::new();
+
+    for candidate_name in &resolution_names {
+        let candidate_ref = NwnTextureRef {
+            slot: texture.slot.clone(),
+            name: candidate_name.clone(),
+        };
+        match resolve_texture_ref(&candidate_ref, resman, options) {
+            Ok(mut hit) => {
+                hit.texture = texture.clone();
+                return SceneTextureResolution::Resolved(hit);
+            }
+            Err(miss) => merge_attempted(&mut attempted, miss.attempted),
+        }
+
+        match resolve_model_backed_texture_candidate(
+            candidate_name,
+            texture,
+            resman,
+            options,
+            visited_models,
+        ) {
+            SceneTextureResolution::Resolved(hit) => return SceneTextureResolution::Resolved(hit),
+            SceneTextureResolution::Ignored => {}
+            SceneTextureResolution::Missing(miss) => {
+                merge_attempted(&mut attempted, miss.attempted)
+            }
+        }
+    }
+
+    if should_ignore_unresolved_texture(&resolution_names, resman) {
+        return SceneTextureResolution::Ignored;
+    }
+
+    SceneTextureResolution::Missing(UnresolvedTexture {
+        texture: texture.clone(),
+        attempted,
+    })
+}
+
+fn resolve_model_backed_texture_candidate(
+    candidate_name: &str,
+    original_texture: &NwnTextureRef,
+    resman: &mut ResMan,
+    options: &TextureResolverOptions,
+    visited_models: &mut BTreeSet<String>,
+) -> SceneTextureResolution {
+    let trimmed = candidate_name.trim();
+    if trimmed.is_empty() {
+        return SceneTextureResolution::Missing(UnresolvedTexture {
+            texture:   original_texture.clone(),
+            attempted: Vec::new(),
+        });
+    }
+
+    let Some(model_ref) = ResRef::new(trimmed.to_string(), MODEL_RES_TYPE).ok() else {
+        return SceneTextureResolution::Missing(UnresolvedTexture {
+            texture:   original_texture.clone(),
+            attempted: Vec::new(),
+        });
+    };
+    let Some(model_res) = resman.get(&model_ref) else {
+        return SceneTextureResolution::Missing(UnresolvedTexture {
+            texture:   original_texture.clone(),
+            attempted: Vec::new(),
+        });
+    };
+    if !visited_models.insert(trimmed.to_ascii_lowercase()) {
+        return SceneTextureResolution::Ignored;
+    }
+
+    let nested_scene = match read_scene_model_auto_from_res(&model_res, true) {
+        Ok(scene) => scene,
+        Err(_) => {
+            visited_models.remove(&trimmed.to_ascii_lowercase());
+            return SceneTextureResolution::Ignored;
+        }
+    };
+
+    let mut attempted = Vec::new();
+    for nested_material in &nested_scene.materials {
+        let Some(nested_texture) = nested_material
+            .textures
+            .iter()
+            .find(|texture| matches!(texture.slot, NwnTextureSlot::Bitmap))
+        else {
+            continue;
+        };
+        match resolve_scene_texture_ref_internal(
+            &nested_scene,
+            nested_material,
+            nested_texture,
+            resman,
+            options,
+            visited_models,
+        ) {
+            SceneTextureResolution::Resolved(mut hit) => {
+                hit.texture = original_texture.clone();
+                visited_models.remove(&trimmed.to_ascii_lowercase());
+                return SceneTextureResolution::Resolved(hit);
+            }
+            SceneTextureResolution::Ignored => {}
+            SceneTextureResolution::Missing(miss) => {
+                merge_attempted(&mut attempted, miss.attempted)
+            }
+        }
+    }
+
+    visited_models.remove(&trimmed.to_ascii_lowercase());
+    if attempted.is_empty() {
+        SceneTextureResolution::Ignored
+    } else {
+        SceneTextureResolution::Missing(UnresolvedTexture {
+            texture: original_texture.clone(),
+            attempted,
+        })
+    }
+}
+
+fn should_ignore_unresolved_texture(candidate_names: &[String], resman: &mut ResMan) -> bool {
+    candidate_names.iter().any(|name| {
+        let trimmed = name.trim();
+        is_helper_texture_token(trimmed)
+            || looks_like_body_part_model_name(trimmed)
+            || ResRef::new(trimmed.to_string(), MODEL_RES_TYPE)
+                .ok()
+                .and_then(|resref| resman.get(&resref))
+                .is_some()
+    })
+}
+
+fn is_helper_texture_token(name: &str) -> bool {
+    name.eq_ignore_ascii_case("coat_bones")
+}
+
+fn looks_like_body_part_model_name(name: &str) -> bool {
+    let lower = name.trim().to_ascii_lowercase();
+    if lower.is_empty() || lower.contains('.') || !lower.contains('_') {
+        return false;
+    }
+
+    let mut chars = lower.chars();
+    matches!(
+        (chars.next(), chars.next(), chars.next()),
+        (Some('p' | 'i'), Some('m' | 'f'), Some(race))
+            if race.is_ascii_alphabetic()
+                && lower.chars().any(|ch| ch.is_ascii_digit())
+    )
+}
+
+fn merge_attempted(
+    attempted: &mut Vec<ResolvedResRef>,
+    candidates: impl IntoIterator<Item = ResolvedResRef>,
+) {
+    for candidate in candidates {
+        if !attempted.iter().any(|existing| existing == &candidate) {
+            attempted.push(candidate);
+        }
+    }
+}
+
+fn inherited_bitmap_names(scene: &NwnScene, source_node: usize) -> Vec<String> {
+    let mut names = Vec::new();
+    let mut current = scene.nodes.get(source_node).and_then(|node| node.parent);
+
+    while let Some(node_index) = current {
+        if let Some(material) = scene
+            .materials
+            .iter()
+            .find(|material| material.source_node == node_index)
+        {
+            for texture in &material.textures {
+                if matches!(texture.slot, NwnTextureSlot::Bitmap) {
+                    push_unique_case_insensitive(&mut names, texture.name.clone());
+                }
+            }
+        }
+        current = scene.nodes.get(node_index).and_then(|node| node.parent);
+    }
+
+    names
+}
+
+fn push_unique_case_insensitive(values: &mut Vec<String>, candidate: String) {
+    if !values
+        .iter()
+        .any(|existing| existing.eq_ignore_ascii_case(candidate.as_str()))
+    {
+        values.push(candidate);
+    }
 }
 
 fn texture_candidates(
@@ -197,8 +494,10 @@ mod tests {
     use nwnrs_resref::ResolvedResRef;
 
     use crate::{
-        NwnMaterial, NwnTextureRef, NwnTextureSlot, TextureResolverOptions, TextureResourceKind,
-        parse_scene_model, resolve_material_textures, resolve_scene_textures, resolve_texture_ref,
+        NwnMaterial, NwnTextureRef, NwnTextureSlot, SceneTextureResolution, TextureResolverOptions,
+        TextureResourceKind, parse_scene_model, resolve_material_textures,
+        resolve_scene_texture_ref_with_policy, resolve_scene_textures, resolve_texture_ref,
+        scene_texture_resolution_names,
     };
 
     fn build_manager(entries: &[(&str, &str, &[u8])]) -> ResMan {
@@ -327,6 +626,52 @@ donemodel demo
 
     #[test]
     fn resolves_single_material_with_missing_entries() {
+        let scene = parse_scene_model(
+            "\
+newmodel demo
+setsupermodel demo null
+classification character
+setanimationscale 1
+beginmodelgeom demo
+node dummy demo
+  parent NULL
+endnode
+node trimesh mesh01
+  parent demo
+  render 1
+  bitmap present
+  verts 3
+    0 0 0
+    1 0 0
+    0 1 0
+  faces 1
+    0 1 2  0  0 1 2  0
+  tverts 3
+    0 0 0
+    1 0 0
+    0 1 0
+endnode
+node trimesh mesh02
+  parent mesh01
+  render 1
+  bitmap missing
+  verts 3
+    0 0 0
+    1 0 0
+    0 1 0
+  faces 1
+    0 1 2  0  0 1 2  0
+  tverts 3
+    0 0 0
+    1 0 0
+    0 1 0
+endnode
+endmodelgeom demo
+donemodel demo
+",
+        )
+        .unwrap_or_else(|error| panic!("parse scene fixture: {error}"));
+
         let material = NwnMaterial {
             source_node:       3,
             render_enabled:    true,
@@ -357,6 +702,7 @@ donemodel demo
         };
         let mut manager = build_manager(&[("present", "present.dds", b"present")]);
         let resolved = resolve_material_textures(
+            &scene,
             0,
             &material,
             &mut manager,
@@ -378,5 +724,270 @@ donemodel demo
             resolved.missing.first().map(|miss| miss.attempted.len()),
             Some(3)
         );
+    }
+
+    #[test]
+    fn scene_texture_resolution_normalizes_body_part_suffixes() {
+        let scene = parse_scene_model(
+            "\
+newmodel demo
+setsupermodel demo null
+classification character
+setanimationscale 1
+beginmodelgeom demo
+node dummy demo
+  parent NULL
+endnode
+node trimesh head
+  parent demo
+  render 1
+  bitmap pmh0_head001g
+  verts 3
+    0 0 0
+    1 0 0
+    0 1 0
+  faces 1
+    0 1 2  0  0 1 2  0
+  tverts 3
+    0 0 0
+    1 0 0
+    0 1 0
+endnode
+endmodelgeom demo
+donemodel demo
+",
+        )
+        .unwrap_or_else(|error| panic!("parse scene fixture: {error}"));
+        let material = scene
+            .materials
+            .first()
+            .unwrap_or_else(|| panic!("material"));
+        let texture = material
+            .textures
+            .first()
+            .unwrap_or_else(|| panic!("bitmap texture"));
+
+        assert_eq!(
+            scene_texture_resolution_names(&scene, material, texture),
+            vec!["pmh0_head001g".to_string(), "pmh0_head001".to_string()]
+        );
+    }
+
+    #[test]
+    fn scene_texture_resolution_inherits_parent_bitmap_names() {
+        let scene = parse_scene_model(
+            "\
+newmodel demo
+setsupermodel demo null
+classification character
+setanimationscale 1
+beginmodelgeom demo
+node dummy demo
+  parent NULL
+endnode
+node trimesh belt
+  parent demo
+  render 1
+  bitmap pmh0_pelvis001
+  verts 3
+    0 0 0
+    1 0 0
+    0 1 0
+  faces 1
+    0 1 2  0  0 1 2  0
+  tverts 3
+    0 0 0
+    1 0 0
+    0 1 0
+endnode
+node trimesh flap
+  parent belt
+  render 1
+  bitmap TF3_g
+  verts 3
+    0 0 0
+    1 0 0
+    0 1 0
+  faces 1
+    0 1 2  0  0 1 2  0
+  tverts 3
+    0 0 0
+    1 0 0
+    0 1 0
+endnode
+endmodelgeom demo
+donemodel demo
+",
+        )
+        .unwrap_or_else(|error| panic!("parse scene fixture: {error}"));
+        let material = scene
+            .materials
+            .iter()
+            .find(|material| material.source_node == 2)
+            .unwrap_or_else(|| panic!("child material"));
+        let texture = material
+            .textures
+            .first()
+            .unwrap_or_else(|| panic!("bitmap texture"));
+
+        assert_eq!(
+            scene_texture_resolution_names(&scene, material, texture),
+            vec!["TF3_g".to_string(), "pmh0_pelvis001".to_string()]
+        );
+    }
+
+    #[test]
+    fn resolves_body_part_models_to_nested_texture_assets() {
+        let scene = parse_scene_model(
+            "\
+newmodel demo
+setsupermodel demo null
+classification character
+setanimationscale 1
+beginmodelgeom demo
+node dummy demo
+  parent NULL
+endnode
+node trimesh pelvis
+  parent demo
+  render 1
+  bitmap pmh2_pelvis001
+  verts 3
+    0 0 0
+    1 0 0
+    0 1 0
+  faces 1
+    0 1 2  0  0 1 2  0
+  tverts 3
+    0 0 0
+    1 0 0
+    0 1 0
+endnode
+endmodelgeom demo
+donemodel demo
+",
+        )
+        .unwrap_or_else(|error| panic!("parse scene fixture: {error}"));
+        let material = scene
+            .materials
+            .first()
+            .unwrap_or_else(|| panic!("material"));
+        let texture = material
+            .textures
+            .first()
+            .unwrap_or_else(|| panic!("bitmap texture"));
+        let mut manager = build_manager(&[
+            (
+                "pmh2_pelvis001 mdl",
+                "pmh2_pelvis001.mdl",
+                br#"newmodel pmh2_pelvis001
+setsupermodel pmh2_pelvis001 null
+classification character
+setanimationscale 1
+beginmodelgeom pmh2_pelvis001
+node dummy pmh2_pelvis001
+  parent NULL
+endnode
+node trimesh pelvis
+  parent pmh2_pelvis001
+  render 1
+  bitmap pmh0_pelvis001
+  verts 3
+    0 0 0
+    1 0 0
+    0 1 0
+  faces 1
+    0 1 2  0  0 1 2  0
+  tverts 3
+    0 0 0
+    1 0 0
+    0 1 0
+endnode
+endmodelgeom pmh2_pelvis001
+donemodel pmh2_pelvis001"#,
+            ),
+            ("pmh0_pelvis001 plt", "pmh0_pelvis001.plt", b"plt"),
+        ]);
+
+        let outcome = resolve_scene_texture_ref_with_policy(
+            &scene,
+            material,
+            texture,
+            &mut manager,
+            &TextureResolverOptions::default(),
+        );
+
+        match outcome {
+            SceneTextureResolution::Resolved(hit) => {
+                assert_eq!(hit.resolved.to_file(), "pmh0_pelvis001.plt");
+                assert_eq!(hit.texture.name, "pmh2_pelvis001");
+            }
+            other => panic!("expected resolved nested texture, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn ignores_helper_and_appearance_tokens_without_warning() {
+        let scene = parse_scene_model(
+            "\
+newmodel demo
+setsupermodel demo null
+classification character
+setanimationscale 1
+beginmodelgeom demo
+node dummy demo
+  parent NULL
+endnode
+node trimesh coat
+  parent demo
+  render 1
+  bitmap coat_bones
+  verts 3
+    0 0 0
+    1 0 0
+    0 1 0
+  faces 1
+    0 1 2  0  0 1 2  0
+  tverts 3
+    0 0 0
+    1 0 0
+    0 1 0
+endnode
+node trimesh robe
+  parent demo
+  render 1
+  bitmap pmh0_robe035
+  verts 3
+    0 0 0
+    1 0 0
+    0 1 0
+  faces 1
+    0 1 2  0  0 1 2  0
+  tverts 3
+    0 0 0
+    1 0 0
+    0 1 0
+endnode
+endmodelgeom demo
+donemodel demo
+",
+        )
+        .unwrap_or_else(|error| panic!("parse scene fixture: {error}"));
+        let mut manager = build_manager(&[]);
+
+        for material in &scene.materials {
+            let texture = material
+                .textures
+                .first()
+                .unwrap_or_else(|| panic!("bitmap texture"));
+            let outcome = resolve_scene_texture_ref_with_policy(
+                &scene,
+                material,
+                texture,
+                &mut manager,
+                &TextureResolverOptions::default(),
+            );
+            assert!(matches!(outcome, SceneTextureResolution::Ignored));
+        }
     }
 }

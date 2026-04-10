@@ -45,6 +45,7 @@ nwnrs-util = { path = "crates/util" }
 # external dependencies
 argh = { version = "0.1.19", default-features = false, features = ["help"] }
 bevy = "0.18.1"
+bevy_egui = "0.39.1"
 codepage = { version = "0.1.2", default-features = false }
 encoding_rs = { version = "0.8.35", default-features = false, features = [
     "alloc",

@@ -139,22 +139,24 @@ async fn load_material_texture(
     }
 
     let mut attempted = Vec::new();
-    match load_material_texture_from_resman(load_context, material_index, material, texture)? {
+    let texture_names = texture
+        .map(|texture| scene_texture_resolution_names(scene, material, texture))
+        .unwrap_or_default();
+    match load_material_texture_from_resman(load_context, scene, material_index, material, texture)?
+    {
         InstallTextureLoad::Loaded(texture_load) => return Ok(texture_load),
         InstallTextureLoad::Missing(candidates) => attempted.extend(candidates),
         InstallTextureLoad::Unavailable => {}
     }
 
-    if let Some(texture) = texture {
-        match load_asset_texture_candidate(load_context, material_index, texture.name.as_str())
-            .await?
-        {
+    for texture_name in &texture_names {
+        match load_asset_texture_candidate(load_context, material_index, texture_name).await? {
             Some(texture_load) => return Ok(texture_load),
-            None => attempted.extend(texture_candidates(texture.name.as_str())),
+            None => attempted.extend(texture_candidates(texture_name)),
         }
     }
 
-    let mtr_names = mtr_candidate_names(material, texture);
+    let mtr_names = mtr_candidate_names(material, &texture_names);
     for mtr_name in &mtr_names {
         let mtr_filename = format!("{mtr_name}.mtr");
         let asset_path = resolve_relative_asset_path(load_context, &mtr_filename)?;
@@ -191,6 +193,7 @@ async fn load_material_texture(
 
 fn load_material_texture_from_resman(
     load_context: &mut LoadContext<'_>,
+    scene: &NwnScene,
     material_index: usize,
     material: &NwnMaterial,
     texture: Option<&NwnTextureRef>,
@@ -204,10 +207,19 @@ fn load_material_texture_from_resman(
         Err(error) => error.into_inner(),
     };
     let mut attempted = Vec::new();
+    let texture_names = texture
+        .map(|texture| scene_texture_resolution_names(scene, material, texture))
+        .unwrap_or_default();
 
     if let Some(texture) = texture {
-        match resolve_texture_ref(texture, &mut resman, &texture_resolver_options()) {
-            Ok(resolved) => {
+        match resolve_scene_texture_ref_with_policy(
+            scene,
+            material,
+            texture,
+            &mut resman,
+            &texture_resolver_options(),
+        ) {
+            SceneTextureResolution::Resolved(resolved) => {
                 drop(resman);
                 let image = image_from_resolved_texture(&resolved)?;
                 let handle = load_context.labeled_asset_scope(
@@ -219,7 +231,11 @@ fn load_material_texture_from_resman(
                     unresolved: Vec::new(),
                 }));
             }
-            Err(missing) => attempted.extend(
+            SceneTextureResolution::Ignored => {
+                drop(resman);
+                return Ok(InstallTextureLoad::Loaded(MaterialTextureLoad::default()));
+            }
+            SceneTextureResolution::Missing(missing) => attempted.extend(
                 missing
                     .attempted
                     .into_iter()
@@ -228,7 +244,7 @@ fn load_material_texture_from_resman(
         }
     }
 
-    for mtr_name in mtr_candidate_names(material, texture) {
+    for mtr_name in mtr_candidate_names(material, &texture_names) {
         let Some(mtr_rr) = ResRef::new(mtr_name.clone(), MTR_RES_TYPE).ok() else {
             continue;
         };
@@ -295,20 +311,21 @@ async fn load_asset_texture_candidate(
     Ok(None)
 }
 
-fn mtr_candidate_names(material: &NwnMaterial, bitmap: Option<&NwnTextureRef>) -> Vec<String> {
+fn mtr_candidate_names(material: &NwnMaterial, bitmap_names: &[String]) -> Vec<String> {
     let mut names = Vec::new();
     if let Some(material_name) = material.material_name.as_deref()
         && is_mtr_candidate(material_name)
     {
         names.push(material_name.to_string());
     }
-    if let Some(bitmap) = bitmap
-        && is_mtr_candidate(bitmap.name.as_str())
-        && !names
-            .iter()
-            .any(|existing| existing.eq_ignore_ascii_case(bitmap.name.as_str()))
-    {
-        names.push(bitmap.name.clone());
+    for bitmap_name in bitmap_names {
+        if is_mtr_candidate(bitmap_name)
+            && !names
+                .iter()
+                .any(|existing| existing.eq_ignore_ascii_case(bitmap_name.as_str()))
+        {
+            names.push(bitmap_name.clone());
+        }
     }
     names
 }
@@ -600,7 +617,10 @@ mod tests {
         };
 
         assert_eq!(
-            super::mtr_candidate_names(&material, material.textures.first()),
+            super::mtr_candidate_names(
+                &material,
+                &[String::from("weaponstex"), String::from("weaponstex")]
+            ),
             vec!["Stone".to_string(), "weaponstex".to_string()]
         );
     }

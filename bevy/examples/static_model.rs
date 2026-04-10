@@ -1,10 +1,15 @@
 //! Minimal phase-1 viewer for static NWN models loaded from the installed game.
 
-use std::{collections::BTreeSet, f32::consts::FRAC_PI_2};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    f32::consts::FRAC_PI_2,
+};
 
 use bevy::{input::mouse::AccumulatedMouseMotion, prelude::*};
+use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass, egui};
 use nwnrs_bevy::{
-    NwnBevyPlugin, NwnInstall, NwnInstallPlugin, load_nwn_model_from_resman, spawn_nwn_model,
+    NwnAppearanceOverrides, NwnAppearanceSlot, NwnBevyPlugin, NwnInstall, NwnInstallPlugin,
+    collect_appearance_slots, load_nwn_model_from_resman_with_overrides, spawn_nwn_model,
 };
 use nwnrs_mdl::prelude::MODEL_RES_TYPE;
 use tracing::{info, warn};
@@ -21,6 +26,13 @@ struct DemoModelState {
     needs_reload: bool,
 }
 
+#[derive(Resource, Default)]
+struct DemoAppearanceState {
+    model_name: String,
+    slots:      Vec<NwnAppearanceSlot>,
+    overrides:  BTreeMap<String, String>,
+}
+
 #[derive(Component)]
 struct FlyCam {
     move_speed:        f32,
@@ -30,9 +42,15 @@ struct FlyCam {
 
 fn main() {
     App::new()
-        .add_plugins((DefaultPlugins, NwnBevyPlugin, NwnInstallPlugin::default()))
+        .add_plugins((
+            DefaultPlugins,
+            EguiPlugin::default(),
+            NwnBevyPlugin,
+            NwnInstallPlugin::default(),
+        ))
         .init_resource::<DemoModelCatalog>()
         .init_resource::<DemoModelState>()
+        .init_resource::<DemoAppearanceState>()
         .add_systems(Startup, setup)
         .add_systems(
             Update,
@@ -44,6 +62,7 @@ fn main() {
                 rotate_loaded_model,
             ),
         )
+        .add_systems(EguiPrimaryContextPass, appearance_panel)
         .run();
 }
 
@@ -151,6 +170,7 @@ fn reload_current_model(
     install: Option<Res<'_, NwnInstall>>,
     catalog: Res<'_, DemoModelCatalog>,
     mut state: ResMut<'_, DemoModelState>,
+    mut appearance: ResMut<'_, DemoAppearanceState>,
     mut images: ResMut<'_, Assets<Image>>,
     mut meshes: ResMut<'_, Assets<Mesh>>,
     mut materials: ResMut<'_, Assets<StandardMaterial>>,
@@ -171,14 +191,17 @@ fn reload_current_model(
         Ok(manager) => manager,
         Err(error) => error.into_inner(),
     };
-    let model = load_nwn_model_from_resman(
+    let overrides = NwnAppearanceOverrides {
+        slots: appearance.overrides.clone(),
+    };
+    let model = load_nwn_model_from_resman_with_overrides(
         &mut manager,
         &current,
+        &overrides,
         &mut images,
         &mut meshes,
         &mut materials,
     );
-    drop(manager);
 
     let model = match model {
         Ok(model) => model,
@@ -191,6 +214,32 @@ fn reload_current_model(
             return;
         }
     };
+
+    let collected_slots = collect_appearance_slots(&model.scene, &manager);
+    drop(manager);
+
+    match collected_slots {
+        Ok(slots) => {
+            appearance.model_name = current.clone();
+            appearance.slots = slots;
+            let valid_slots = appearance.slots.clone();
+            appearance.overrides.retain(|token, selected| {
+                valid_slots.iter().any(|slot| {
+                    slot.id.eq_ignore_ascii_case(token)
+                        && slot
+                            .options
+                            .iter()
+                            .any(|candidate| candidate.eq_ignore_ascii_case(selected))
+                })
+            });
+        }
+        Err(error) => {
+            warn!(
+                model = current.as_str(),
+                "failed to collect appearance slots: {error}"
+            );
+        }
+    }
 
     if let Some(root) = state.root.take() {
         let mut entity = commands.entity(root);
@@ -232,6 +281,99 @@ fn reload_current_model(
             );
         }
     }
+}
+
+fn appearance_panel(
+    mut contexts: EguiContexts<'_, '_>,
+    catalog: Res<'_, DemoModelCatalog>,
+    mut appearance: ResMut<'_, DemoAppearanceState>,
+    mut model_state: ResMut<'_, DemoModelState>,
+) -> bevy::ecs::error::Result {
+    let Some(current_model) = catalog.names.get(catalog.index) else {
+        return Ok(());
+    };
+    let ctx = contexts.ctx_mut()?;
+
+    egui::SidePanel::left("appearance_panel")
+        .resizable(true)
+        .default_width(280.0)
+        .show(ctx, |ui| {
+            ui.heading("Appearance");
+            ui.label(format!("Model: {current_model}"));
+
+            if appearance.model_name != *current_model {
+                ui.separator();
+                ui.label("Waiting for model load...");
+                return;
+            }
+
+            if appearance.slots.is_empty() {
+                ui.separator();
+                ui.label("No selectable part slots detected.");
+                return;
+            }
+
+            let mut clear_all = false;
+            if ui.button("Reset Overrides").clicked() {
+                clear_all = true;
+            }
+            if clear_all {
+                appearance.overrides.clear();
+                model_state.needs_reload = true;
+            }
+
+            ui.separator();
+            let slots = appearance.slots.clone();
+            for slot in &slots {
+                ui.label(slot.label.as_str());
+                let current_value = appearance
+                    .overrides
+                    .get(slot.id.as_str())
+                    .cloned()
+                    .unwrap_or_default();
+                let selected_label = if current_value.is_empty() {
+                    if slot.token.eq_ignore_ascii_case(slot.normalized.as_str()) {
+                        format!("authored ({})", slot.token)
+                    } else {
+                        format!("authored ({})", slot.normalized)
+                    }
+                } else {
+                    current_value.clone()
+                };
+
+                let mut chosen = current_value;
+                egui::ComboBox::from_id_salt(format!("appearance_slot:{}", slot.id))
+                    .selected_text(selected_label)
+                    .width(220.0)
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut chosen, String::new(), "authored");
+                        for option in &slot.options {
+                            ui.selectable_value(&mut chosen, option.clone(), option);
+                        }
+                    });
+
+                let previous = appearance
+                    .overrides
+                    .get(slot.id.as_str())
+                    .cloned()
+                    .unwrap_or_default();
+                if chosen != previous {
+                    if chosen.is_empty() {
+                        appearance.overrides.remove(slot.id.as_str());
+                    } else {
+                        appearance.overrides.insert(slot.id.clone(), chosen);
+                    }
+                    model_state.needs_reload = true;
+                }
+                ui.small(format!("family: {}", slot.family));
+                if !slot.node_names.is_empty() {
+                    ui.small(format!("nodes: {}", slot.node_names.join(", ")));
+                }
+                ui.separator();
+            }
+        });
+
+    Ok(())
 }
 
 fn update_flycam(

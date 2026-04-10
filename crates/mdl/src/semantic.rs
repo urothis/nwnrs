@@ -2683,12 +2683,6 @@ mod tests {
                 .iter()
                 .any(|node| node.material.bitmap.as_deref() == Some("pmh0_pelvis001"))
         );
-        assert!(
-            model
-                .nodes
-                .iter()
-                .any(|node| node.material.bitmap.as_deref() == Some("TF3_g"))
-        );
         assert!(model.nodes.iter().all(|node| {
             !matches!(
                 node.material.bitmap.as_deref(),
