@@ -3,7 +3,7 @@
 
 [bans]
 # The lint level for duplicate dependencies
-multiple-versions = "warn"
+multiple-versions = "deny"
 
 # forbid wildcard version requirements like foo = "*"
 wildcards = "deny"

@@ -1,8 +1,6 @@
 use bevy::{
     asset::{Handle, RenderAssetUsages},
-    image::{
-        Image, ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor,
-    },
+    image::{Image, ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor},
     mesh::{Indices, Mesh, PrimitiveTopology},
     pbr::StandardMaterial,
     prelude::{AlphaMode, Color},
@@ -40,15 +38,24 @@ pub fn image_from_plt(plt: &PltTexture) -> Result<Image, NwnBevyError> {
 }
 
 /// Converts one NWN static primitive into a Bevy `Mesh`.
-pub fn mesh_from_primitive(primitive: &NwnPrimitive) -> Result<Mesh, NwnBevyError> {
+pub fn mesh_from_primitive(
+    primitive: &NwnPrimitive,
+    coordinate_system: NwnCoordinateSystem,
+) -> Result<Mesh, NwnBevyError> {
     let mut positions = Vec::with_capacity(primitive.faces.len() * 3);
     let mut normals = Vec::with_capacity(primitive.faces.len() * 3);
     let mut uvs = Vec::with_capacity(primitive.faces.len() * 3);
     let mut indices = Vec::with_capacity(primitive.faces.len() * 3);
     let primary_uv_set = primitive.uv_sets.first();
+    let source_positions = primitive
+        .positions
+        .iter()
+        .copied()
+        .map(|position| position_from_nwn(position, coordinate_system))
+        .collect::<Vec<_>>();
 
     for face in &primitive.faces {
-        let face_normal = compute_face_normal(face, &primitive.positions);
+        let face_normal = compute_face_normal(face, &source_positions);
         for corner in 0..3 {
             let position_index_raw = *face.vertex_indices.get(corner).ok_or_else(|| {
                 NwnBevyError::msg(format!("mesh corner {corner} is out of range"))
@@ -56,8 +63,7 @@ pub fn mesh_from_primitive(primitive: &NwnPrimitive) -> Result<Mesh, NwnBevyErro
             let position_index = usize::try_from(position_index_raw).map_err(|error| {
                 NwnBevyError::msg(format!("mesh position index conversion failed: {error}"))
             })?;
-            let position = primitive
-                .positions
+            let position = source_positions
                 .get(position_index)
                 .copied()
                 .ok_or_else(|| {
@@ -68,8 +74,8 @@ pub fn mesh_from_primitive(primitive: &NwnPrimitive) -> Result<Mesh, NwnBevyErro
                 })?;
             positions.push(position);
 
-            if let Some(normal) = primitive.normals.get(position_index) {
-                normals.push(*normal);
+            if let Some(normal) = primitive.normals.get(position_index).copied() {
+                normals.push(direction_from_nwn(normal, coordinate_system));
             } else {
                 normals.push(face_normal);
             }
@@ -138,8 +144,12 @@ pub fn standard_material_from_nwn(
 }
 
 /// Converts one NWN local transform into a Bevy transform.
-pub fn transform_from_nwn(transform: &NwnTransform) -> Transform {
+pub fn transform_from_nwn(
+    transform: &NwnTransform,
+    coordinate_system: NwnCoordinateSystem,
+) -> Transform {
     let [axis_x, axis_y, axis_z, angle] = transform.rotation_axis_angle;
+    let [axis_x, axis_y, axis_z] = direction_from_nwn([axis_x, axis_y, axis_z], coordinate_system);
     let rotation = if angle.abs() < f32::EPSILON {
         bevy::math::Quat::IDENTITY
     } else {
@@ -149,13 +159,27 @@ pub fn transform_from_nwn(transform: &NwnTransform) -> Transform {
     };
 
     Transform {
-        translation: bevy::math::Vec3::new(
-            transform.translation[0],
-            transform.translation[1],
-            transform.translation[2],
-        ),
+        translation: bevy::math::Vec3::from_array(position_from_nwn(
+            transform.translation,
+            coordinate_system,
+        )),
         rotation,
         scale: bevy::math::Vec3::new(transform.scale[0], transform.scale[1], transform.scale[2]),
+    }
+}
+
+fn position_from_nwn(position: [f32; 3], coordinate_system: NwnCoordinateSystem) -> [f32; 3] {
+    match coordinate_system {
+        // Aurora source-space matches Blender-style coordinates: X right,
+        // Y forward, Z up. Bevy's 3D world conventions are Y up with forward
+        // along -Z, so rotate the horizontal plane from XY onto XZ.
+        NwnCoordinateSystem::AuroraSource => [position[0], position[2], -position[1]],
+    }
+}
+
+fn direction_from_nwn(direction: [f32; 3], coordinate_system: NwnCoordinateSystem) -> [f32; 3] {
+    match coordinate_system {
+        NwnCoordinateSystem::AuroraSource => [direction[0], direction[2], -direction[1]],
     }
 }
 
@@ -289,7 +313,8 @@ fn compute_face_normal(face: &NwnFace, positions: &[[f32; 3]]) -> [f32; 3] {
 mod tests {
     use bevy::asset::Handle;
     use nwnrs_mdl::prelude::{
-        NwnFace, NwnMaterial, NwnPrimitive, NwnTextureRef, NwnTextureSlot, NwnTransform, NwnUvSet,
+        NwnCoordinateSystem, NwnFace, NwnMaterial, NwnPrimitive, NwnTextureRef, NwnTextureSlot,
+        NwnTransform, NwnUvSet,
     };
 
     use super::{
@@ -300,28 +325,28 @@ mod tests {
     #[test]
     fn builds_basic_triangle_mesh() {
         let primitive = NwnPrimitive {
-            positions: vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
-            faces: vec![NwnFace {
+            positions:       vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            faces:           vec![NwnFace {
                 vertex_indices: [0, 1, 2],
-                group: 0,
-                uv_indices: [0, 1, 2],
+                group:          0,
+                uv_indices:     [0, 1, 2],
                 material_index: 0,
             }],
-            uv_sets: vec![NwnUvSet {
-                index: 0,
+            uv_sets:         vec![NwnUvSet {
+                index:       0,
                 coordinates: vec![[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]],
             }],
-            normals: vec![],
-            tangents: vec![],
-            color_rows: vec![],
-            weight_rows: vec![],
+            normals:         vec![],
+            tangents:        vec![],
+            color_rows:      vec![],
+            weight_rows:     vec![],
             constraint_rows: vec![],
-            surface_labels: vec![],
-            texture_names: vec![],
-            material: Some(0),
+            surface_labels:  vec![],
+            texture_names:   vec![],
+            material:        Some(0),
         };
 
-        let mesh = mesh_from_primitive(&primitive);
+        let mesh = mesh_from_primitive(&primitive, NwnCoordinateSystem::AuroraSource);
         assert!(mesh.is_ok(), "build mesh failed: {mesh:?}");
         if let Ok(mesh) = mesh {
             assert_eq!(
@@ -335,7 +360,10 @@ mod tests {
     fn rgba_images_get_repeat_sampler_and_mips() {
         let pixels = vec![255_u8; 4 * 4 * 4];
         let image = image_from_rgba8(4, 4, pixels);
-        assert_eq!(image.texture_descriptor.mip_level_count, mip_level_count(4, 4));
+        assert_eq!(
+            image.texture_descriptor.mip_level_count,
+            mip_level_count(4, 4)
+        );
 
         match image.sampler {
             bevy::image::ImageSampler::Descriptor(descriptor) => {
@@ -357,29 +385,32 @@ mod tests {
         }
 
         let expected_bytes = ((4 * 4) + (2 * 2) + (1 * 1)) * 4;
-        assert_eq!(image.data.unwrap_or_default().len(), expected_bytes as usize);
+        assert_eq!(
+            image.data.unwrap_or_default().len(),
+            expected_bytes as usize
+        );
     }
 
     #[test]
     fn maps_nwn_material_alpha_to_blend_mode() {
         let material = NwnMaterial {
-            source_node: 0,
-            render_enabled: true,
-            shadow_enabled: true,
-            beaming: 0,
-            inherit_color: 0,
-            tilefade: 0,
-            rotate_texture: 0,
+            source_node:       0,
+            render_enabled:    true,
+            shadow_enabled:    true,
+            beaming:           0,
+            inherit_color:     0,
+            tilefade:          0,
+            rotate_texture:    0,
             transparency_hint: 0,
-            shininess: 1.0,
-            alpha: 0.5,
-            ambient: [1.0, 1.0, 1.0],
-            diffuse: [1.0, 0.5, 0.25],
-            specular: [0.0, 0.0, 0.0],
-            self_illum_color: [0.0, 0.0, 0.0],
-            material_name: None,
-            render_hint: None,
-            textures: vec![NwnTextureRef {
+            shininess:         1.0,
+            alpha:             0.5,
+            ambient:           [1.0, 1.0, 1.0],
+            diffuse:           [1.0, 0.5, 0.25],
+            specular:          [0.0, 0.0, 0.0],
+            self_illum_color:  [0.0, 0.0, 0.0],
+            material_name:     None,
+            render_hint:       None,
+            textures:          vec![NwnTextureRef {
                 slot: NwnTextureSlot::Bitmap,
                 name: "demo".to_string(),
             }],
@@ -395,23 +426,23 @@ mod tests {
     #[test]
     fn maps_zero_specular_material_to_non_shiny_surface() {
         let material = NwnMaterial {
-            source_node: 0,
-            render_enabled: true,
-            shadow_enabled: true,
-            beaming: 0,
-            inherit_color: 0,
-            tilefade: 0,
-            rotate_texture: 0,
+            source_node:       0,
+            render_enabled:    true,
+            shadow_enabled:    true,
+            beaming:           0,
+            inherit_color:     0,
+            tilefade:          0,
+            rotate_texture:    0,
             transparency_hint: 0,
-            shininess: 0.0,
-            alpha: 1.0,
-            ambient: [1.0, 1.0, 1.0],
-            diffuse: [0.4, 0.7, 0.3],
-            specular: [0.0, 0.0, 0.0],
-            self_illum_color: [0.0, 0.0, 0.0],
-            material_name: None,
-            render_hint: None,
-            textures: Vec::new(),
+            shininess:         0.0,
+            alpha:             1.0,
+            ambient:           [1.0, 1.0, 1.0],
+            diffuse:           [0.4, 0.7, 0.3],
+            specular:          [0.0, 0.0, 0.0],
+            self_illum_color:  [0.0, 0.0, 0.0],
+            material_name:     None,
+            render_hint:       None,
+            textures:          Vec::new(),
         };
 
         let bevy_material = standard_material_from_nwn(&material, None);
@@ -423,13 +454,13 @@ mod tests {
     #[test]
     fn converts_axis_angle_transform_without_panicking() {
         let transform = NwnTransform {
-            translation: [1.0, 2.0, 3.0],
+            translation:         [1.0, 2.0, 3.0],
             rotation_axis_angle: [0.0, 0.0, 1.0, core::f32::consts::FRAC_PI_2],
-            scale: [1.0, 2.0, 3.0],
+            scale:               [1.0, 2.0, 3.0],
         };
 
-        let bevy_transform = transform_from_nwn(&transform);
-        assert_eq!(bevy_transform.translation.to_array(), [1.0, 2.0, 3.0]);
+        let bevy_transform = transform_from_nwn(&transform, NwnCoordinateSystem::AuroraSource);
+        assert_eq!(bevy_transform.translation.to_array(), [1.0, 3.0, -2.0]);
         assert_eq!(bevy_transform.scale.to_array(), [1.0, 2.0, 3.0]);
     }
 }

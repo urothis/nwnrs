@@ -4128,6 +4128,7 @@ dependencies = [
  "nwnrs-resnwsync",
  "nwnrs-resref",
  "nwnrs-restype",
+ "nwnrs-set",
  "nwnrs-ssf",
  "nwnrs-streamext",
  "nwnrs-tga",
@@ -4152,6 +4153,7 @@ dependencies = [
  "nwnrs-resman",
  "nwnrs-resmemfile",
  "nwnrs-resref",
+ "nwnrs-set",
  "nwnrs-tga",
  "serde",
  "tracing",
@@ -4428,6 +4430,16 @@ version = "0.1.0"
 dependencies = [
  "nwnrs-util",
  "serde",
+ "tracing",
+]
+
+[[package]]
+name = "nwnrs-set"
+version = "0.1.0"
+dependencies = [
+ "nwnrs-resman",
+ "nwnrs-resref",
+ "nwnrs-restype",
  "tracing",
 ]
 

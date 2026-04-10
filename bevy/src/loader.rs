@@ -86,16 +86,16 @@ impl AssetLoader for NwnMdlAssetLoader {
 
 #[derive(Debug, Clone)]
 struct MaterialBinding {
-    material: Handle<StandardMaterial>,
-    texture: Option<Handle<Image>>,
+    material:   Handle<StandardMaterial>,
+    texture:    Option<Handle<Image>>,
     unresolved: Vec<NwnUnresolvedTexture>,
 }
 
 #[derive(Debug, Clone)]
 struct MeshBinding {
     scene_mesh_index: usize,
-    primitive_index: usize,
-    mesh: Handle<Mesh>,
+    primitive_index:  usize,
+    mesh:             Handle<Mesh>,
 }
 
 async fn load_materials(
@@ -111,8 +111,8 @@ async fn load_materials(
                 Ok::<_, NwnBevyError>(standard_material_from_nwn(material, texture_handle))
             })?;
         bindings.push(MaterialBinding {
-            material: material_handle,
-            texture: texture_result.texture,
+            material:   material_handle,
+            texture:    texture_result.texture,
             unresolved: texture_result.unresolved,
         });
     }
@@ -175,7 +175,7 @@ async fn load_material_texture(
     }
 
     Ok(MaterialTextureLoad {
-        texture: None,
+        texture:    None,
         unresolved: vec![NwnUnresolvedTexture {
             material_index,
             slot: texture
@@ -227,7 +227,7 @@ fn load_material_texture_from_resman(
                     |_labeled| Ok::<_, NwnBevyError>(image.clone()),
                 )?;
                 return Ok(InstallTextureLoad::Loaded(MaterialTextureLoad {
-                    texture: Some(handle),
+                    texture:    Some(handle),
                     unresolved: Vec::new(),
                 }));
             }
@@ -272,7 +272,7 @@ fn load_material_texture_from_resman(
                     |_labeled| Ok::<_, NwnBevyError>(image.clone()),
                 )?;
                 return Ok(InstallTextureLoad::Loaded(MaterialTextureLoad {
-                    texture: Some(handle),
+                    texture:    Some(handle),
                     unresolved: Vec::new(),
                 }));
             }
@@ -304,7 +304,7 @@ async fn load_asset_texture_candidate(
         let handle = load_context
             .labeled_asset_scope(label, |_labeled| Ok::<_, NwnBevyError>(image.clone()))?;
         return Ok(Some(MaterialTextureLoad {
-            texture: Some(handle),
+            texture:    Some(handle),
             unresolved: Vec::new(),
         }));
     }
@@ -386,7 +386,7 @@ fn load_meshes(
     for (scene_mesh_index, mesh) in scene.meshes.iter().enumerate() {
         for (primitive_index, primitive) in mesh.primitives.iter().enumerate() {
             let label = format!("mesh/{scene_mesh_index}/{primitive_index}");
-            let bevy_mesh = mesh_from_primitive(primitive)?;
+            let bevy_mesh = mesh_from_primitive(primitive, scene.coordinate_system)?;
             let mesh_handle = load_context
                 .labeled_asset_scope(label, |_labeled| Ok::<_, NwnBevyError>(bevy_mesh))?;
             bindings.push(MeshBinding {
@@ -437,9 +437,9 @@ fn build_node_assets(
                                 .get(material_index)
                                 .map(|binding| binding.material.clone())?;
                             Some(NwnPrimitiveAsset {
-                                label: format!("{}:{primitive_index}", mesh.name),
-                                mesh: mesh_handle,
-                                material: material_handle,
+                                label:          format!("{}:{primitive_index}", mesh.name),
+                                mesh:           mesh_handle,
+                                material:       material_handle,
                                 shadow_enabled: material.shadow_enabled,
                             })
                         })
@@ -450,7 +450,7 @@ fn build_node_assets(
                 name: node.name.clone(),
                 kind: node.kind.clone(),
                 parent: node.parent,
-                transform: transform_from_nwn(&node.local_transform),
+                transform: transform_from_nwn(&node.local_transform, scene.coordinate_system),
                 primitives,
             }
         })
@@ -493,7 +493,7 @@ fn is_explicit_plt(name: &str) -> bool {
 
 #[derive(Debug, Default)]
 struct MaterialTextureLoad {
-    texture: Option<Handle<Image>>,
+    texture:    Option<Handle<Image>>,
     unresolved: Vec<NwnUnresolvedTexture>,
 }
 
@@ -595,23 +595,23 @@ mod tests {
     #[test]
     fn mtr_candidates_prefer_material_name_then_bitmap() {
         let material = NwnMaterial {
-            source_node: 0,
-            render_enabled: true,
-            shadow_enabled: true,
-            beaming: 0,
-            inherit_color: 0,
-            tilefade: 0,
-            rotate_texture: 0,
+            source_node:       0,
+            render_enabled:    true,
+            shadow_enabled:    true,
+            beaming:           0,
+            inherit_color:     0,
+            tilefade:          0,
+            rotate_texture:    0,
             transparency_hint: 0,
-            shininess: 0.0,
-            alpha: 1.0,
-            ambient: [1.0, 1.0, 1.0],
-            diffuse: [1.0, 1.0, 1.0],
-            specular: [0.0, 0.0, 0.0],
-            self_illum_color: [0.0, 0.0, 0.0],
-            material_name: Some("Stone".to_string()),
-            render_hint: None,
-            textures: vec![NwnTextureRef {
+            shininess:         0.0,
+            alpha:             1.0,
+            ambient:           [1.0, 1.0, 1.0],
+            diffuse:           [1.0, 1.0, 1.0],
+            specular:          [0.0, 0.0, 0.0],
+            self_illum_color:  [0.0, 0.0, 0.0],
+            material_name:     Some("Stone".to_string()),
+            render_hint:       None,
+            textures:          vec![NwnTextureRef {
                 slot: NwnTextureSlot::Bitmap,
                 name: "weaponstex".to_string(),
             }],

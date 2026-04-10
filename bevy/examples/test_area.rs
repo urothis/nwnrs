@@ -22,83 +22,99 @@ use nwnrs_bevy::{
 use nwnrs_erf::prelude::{Erf, read_erf_from_file};
 use nwnrs_gff::prelude::{GffCExoLocString, GffStruct, GffValue, read_gff_root};
 use nwnrs_resman::prelude::ResContainer;
-use nwnrs_resref::prelude::ResolvedResRef;
+use nwnrs_set::prelude::{SetFile, read_set_from_resman};
 use tracing::{debug, info, warn};
 
 const DEFAULT_MODULE_PATH: &str = "assets/testing/test.mod";
-const TILE_SIZE: f32 = 10.0;
+const BASE_TILE_SPACING: f32 = 10.0;
+const FALLBACK_TILE_SIZE: f32 = 10.0;
 const TILE_THICKNESS: f32 = 0.2;
 const TILE_HEIGHT_STEP: f32 = 1.5;
 const MODULE_SELECTOR_LIMIT: usize = 200;
 
 #[derive(Component)]
 struct FlyCam {
-    move_speed: f32,
-    boost_multiplier: f32,
+    move_speed:        f32,
+    boost_multiplier:  f32,
     mouse_sensitivity: Vec2,
 }
 
 #[derive(Resource, Default)]
 struct AreaViewerCatalog {
-    modules: Vec<ModuleChoice>,
-    module_index: usize,
-    module_query: String,
-    roots: Vec<PathBuf>,
+    modules:           Vec<ModuleChoice>,
+    module_index:      usize,
+    module_query:      String,
+    roots:             Vec<PathBuf>,
     extra_search_path: Option<PathBuf>,
-    needs_refresh: bool,
+    needs_refresh:     bool,
 }
 
 #[derive(Resource, Default)]
 struct AreaViewerState {
-    areas: Vec<AreaChoice>,
-    area_index: usize,
-    scene_root: Option<Entity>,
-    active_module_path: Option<PathBuf>,
-    active_module_archive: Option<Arc<Erf>>,
+    areas:                   Vec<AreaChoice>,
+    area_index:              usize,
+    scene_root:              Option<Entity>,
+    active_module_path:      Option<PathBuf>,
+    active_area_resref:      Option<String>,
+    active_module_archive:   Option<Arc<Erf>>,
     active_module_container: Option<Arc<dyn ResContainer>>,
     needs_area_list_refresh: bool,
-    needs_scene_reload: bool,
-    status_message: String,
+    needs_scene_reload:      bool,
+    status_message:          String,
 }
 
 #[derive(Resource, Default)]
 struct AreaRenderCache {
-    models: BTreeMap<(PathBuf, String), NwnModelAsset>,
+    models:   BTreeMap<(PathBuf, String), NwnModelAsset>,
+    tilesets: BTreeMap<(PathBuf, String), SetFile>,
 }
 
 #[derive(Debug, Clone)]
 struct ModuleChoice {
-    path: PathBuf,
+    path:  PathBuf,
     label: String,
 }
 
 #[derive(Debug, Clone)]
 struct AreaChoice {
     resref: String,
-    label: String,
+    label:  String,
 }
 
 #[derive(Debug, Clone)]
 struct TestArea {
-    name: String,
-    resref: String,
+    name:    String,
+    resref:  String,
     tileset: String,
-    width: u32,
-    height: u32,
-    tiles: Vec<TestAreaTile>,
+    width:   u32,
+    height:  u32,
+    tiles:   Vec<TestAreaTile>,
 }
 
 #[derive(Debug, Clone, Copy)]
 struct TestAreaTile {
-    id: u32,
+    id:          u32,
     orientation: u32,
-    height: i32,
+    height:      i32,
 }
 
-#[derive(Debug, Default)]
-struct TilesetDefinition {
-    tile_models: BTreeMap<u32, String>,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TileOrientationMapping {
+    turn_offset:    u8,
+    turn_direction: i8,
+    rows_go_south:  bool,
 }
+
+// SET tiles define their canonical shape in top/right/bottom/left order.
+// ARE `Tile_Orientation` uses the opposite quarter-turn sign from the first
+// convention we tried, and area rows advance opposite the assumed southward
+// direction. In Bevy world space that means decrementing Z for later rows and
+// rotating tile wrappers with the inverse quarter-turn order.
+const AREA_TILE_ORIENTATION_MAPPING: TileOrientationMapping = TileOrientationMapping {
+    turn_offset:    0,
+    turn_direction: -1,
+    rows_go_south:  false,
+};
 
 fn main() {
     let extra_search_path = std::env::args_os().nth(1).map(PathBuf::from);
@@ -135,10 +151,10 @@ fn main() {
 fn setup(mut commands: Commands<'_, '_>) {
     commands.spawn((
         Camera3d::default(),
-        Transform::from_xyz(10.0, -36.0, 24.0).looking_at(Vec3::new(0.0, 0.0, 0.0), Vec3::Z),
+        Transform::from_xyz(10.0, 24.0, -36.0).looking_at(Vec3::new(0.0, 0.0, 0.0), Vec3::Y),
         FlyCam {
-            move_speed: 24.0,
-            boost_multiplier: 3.0,
+            move_speed:        24.0,
+            boost_multiplier:  3.0,
             mouse_sensitivity: Vec2::new(0.003, 0.002),
         },
     ));
@@ -158,7 +174,7 @@ fn setup(mut commands: Commands<'_, '_>) {
             shadows_enabled: false,
             ..Default::default()
         },
-        Transform::from_xyz(0.0, 0.0, 28.0),
+        Transform::from_xyz(0.0, 28.0, 0.0),
     ));
 }
 
@@ -205,14 +221,20 @@ fn refresh_module_catalog(
         .as_ref()
         .and_then(|path| modules.iter().position(|module| &module.path == path))
         .or_else(|| {
-            default_module_path().and_then(|path| modules.iter().position(|module| module.path == path))
+            default_module_path()
+                .and_then(|path| modules.iter().position(|module| module.path == path))
         })
         .unwrap_or(0);
 
     catalog.module_index = selected_index;
     catalog.modules = modules;
     state.area_index = previous_area
-        .and_then(|area_resref| state.areas.iter().position(|area| area.resref == area_resref))
+        .and_then(|area_resref| {
+            state
+                .areas
+                .iter()
+                .position(|area| area.resref == area_resref)
+        })
         .unwrap_or(0);
     state.needs_area_list_refresh = true;
 
@@ -241,7 +263,10 @@ fn refresh_area_catalog(
 
     match inspect_module_areas(&module.path) {
         Ok(areas) => {
-            let previous_resref = state.areas.get(state.area_index).map(|area| area.resref.clone());
+            let previous_resref = state
+                .areas
+                .get(state.area_index)
+                .map(|area| area.resref.clone());
             state.area_index = previous_resref
                 .as_ref()
                 .and_then(|resref| areas.iter().position(|area| &area.resref == resref))
@@ -374,11 +399,22 @@ fn reload_selected_area_scene(
         state.active_module_container = Some(module_container);
     }
 
+    let reframe_camera = state.scene_root.is_none()
+        || state
+            .active_module_path
+            .as_ref()
+            .is_none_or(|path| path != &module.path)
+        || state
+            .active_area_resref
+            .as_ref()
+            .is_none_or(|resref| resref != &area_choice.resref);
+
     let scene_root = match spawn_area_scene(
         &mut commands,
         &install,
         &module.path,
         &area,
+        reframe_camera,
         &mut render_cache,
         &mut images,
         &mut meshes,
@@ -419,6 +455,7 @@ fn reload_selected_area_scene(
     );
 
     state.scene_root = Some(scene_root);
+    state.active_area_resref = Some(area.resref.clone());
     state.needs_scene_reload = false;
     state.status_message = format!("Loaded {} from {}", area.name, module.label);
 }
@@ -484,10 +521,8 @@ fn area_selector_panel(
                     catalog.module_index = new_index;
                     state.area_index = 0;
                     state.needs_area_list_refresh = true;
-                    state.status_message = format!(
-                        "Inspecting {}",
-                        catalog.modules[catalog.module_index].label
-                    );
+                    state.status_message =
+                        format!("Inspecting {}", catalog.modules[catalog.module_index].label);
                 }
                 if let Some(module) = catalog.modules.get(catalog.module_index) {
                     ui.small(module.path.display().to_string());
@@ -552,7 +587,6 @@ fn area_selector_panel(
                     state.needs_scene_reload = true;
                 }
             }
-
             ui.separator();
             ui.small("Camera: hold right mouse to look, WASD to move, Q/E up and down.");
             if !catalog.roots.is_empty() {
@@ -565,7 +599,10 @@ fn area_selector_panel(
             if let Some(extra_path) = &catalog.extra_search_path {
                 ui.small(format!("Extra search path: {}", extra_path.display()));
             } else {
-                ui.small("Tip: pass a directory or .mod/.nwm path after `--example test_area --` to add another search root.");
+                ui.small(
+                    "Tip: pass a directory or .mod/.nwm path after `--example test_area --` to \
+                     add another search root.",
+                );
             }
         });
 
@@ -578,7 +615,9 @@ fn filtered_module_entries(catalog: &AreaViewerCatalog, query: &str) -> Vec<(usi
     }
 
     if query.is_empty() {
-        let start = catalog.module_index.saturating_sub(MODULE_SELECTOR_LIMIT / 2);
+        let start = catalog
+            .module_index
+            .saturating_sub(MODULE_SELECTOR_LIMIT / 2);
         let end = (start + MODULE_SELECTOR_LIMIT).min(catalog.modules.len());
         return catalog.modules[start..end]
             .iter()
@@ -751,7 +790,10 @@ fn inspect_module_areas(path: &Path) -> Result<Vec<AreaChoice>, String> {
     Ok(areas)
 }
 
-fn load_area_from_archive(archive: &Erf, requested_resref: Option<&str>) -> Result<TestArea, String> {
+fn load_area_from_archive(
+    archive: &Erf,
+    requested_resref: Option<&str>,
+) -> Result<TestArea, String> {
     let area_entry = archive
         .entries()
         .iter()
@@ -802,6 +844,17 @@ fn parse_area_bytes(bytes: &[u8]) -> Result<TestArea, String> {
         .map(parse_tile)
         .collect::<Result<Vec<_>, _>>()?;
 
+    let expected_tile_count = area_tile_count(width, height)?;
+    if tiles.len() != expected_tile_count {
+        warn!(
+            width,
+            height,
+            expected_tile_count,
+            actual_tile_count = tiles.len(),
+            "ARE tile list size does not match Width x Height"
+        );
+    }
+
     Ok(TestArea {
         name,
         resref,
@@ -817,32 +870,58 @@ fn spawn_area_scene(
     install: &NwnInstall,
     module_path: &Path,
     area: &TestArea,
+    reframe_camera: bool,
     render_cache: &mut AreaRenderCache,
     images: &mut Assets<Image>,
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
     camera_transform: &mut Transform,
 ) -> Result<Entity, String> {
-    let tileset = {
-        let mut resman = match install.resman.lock() {
-            Ok(resman) => resman,
-            Err(error) => error.into_inner(),
+    let tileset_cache_key = (module_path.to_path_buf(), area.tileset.clone());
+    let tileset = if let Some(tileset) = render_cache.tilesets.get(&tileset_cache_key).cloned() {
+        tileset
+    } else {
+        let parsed_tileset = {
+            let mut resman = match install.resman.lock() {
+                Ok(resman) => resman,
+                Err(error) => error.into_inner(),
+            };
+            read_set_from_resman(&mut resman, &area.tileset, true)
+                .map_err(|error| format!("read tileset {}: {error}", area.tileset))?
         };
-        load_tileset_definition(&mut resman, &area.tileset)?
+        render_cache
+            .tilesets
+            .insert(tileset_cache_key.clone(), parsed_tileset.clone());
+        parsed_tileset
     };
-    log_area_layout(area, &tileset);
+    let tile_spacing = BASE_TILE_SPACING;
+    let orientation_mapping = AREA_TILE_ORIENTATION_MAPPING;
+    log_area_layout(area, &tileset, orientation_mapping);
 
-    let area_extent_x = area.width as f32 * TILE_SIZE;
-    let area_extent_y = area.height as f32 * TILE_SIZE;
-    let max_extent = area_extent_x.max(area_extent_y);
-    let camera_distance = max_extent.max(40.0) * 0.9;
-    let camera_height = (area.height.max(area.width) as f32 * TILE_HEIGHT_STEP) + max_extent * 0.55;
-    let x_origin = -((area.width as f32 - 1.0) * TILE_SIZE * 0.5);
-    let y_origin = -((area.height as f32 - 1.0) * TILE_SIZE * 0.5);
+    if reframe_camera {
+        let area_extent_x = area.width as f32 * tile_spacing;
+        let area_extent_z = area.height as f32 * tile_spacing;
+        let max_extent = area_extent_x.max(area_extent_z);
+        let camera_distance = max_extent.max(40.0) * 0.9;
+        let camera_height =
+            (area.height.max(area.width) as f32 * TILE_HEIGHT_STEP) + max_extent * 0.55;
 
-    *camera_transform =
-        Transform::from_xyz(area_extent_x * 0.25, -camera_distance, camera_height)
-            .looking_at(Vec3::new(0.0, 0.0, 0.0), Vec3::Z);
+        *camera_transform =
+            Transform::from_xyz(area_extent_x * 0.25, camera_height, -camera_distance)
+                .looking_at(Vec3::new(0.0, 0.0, 0.0), Vec3::Y);
+    }
+
+    let x_origin = -((area.width as f32 - 1.0) * tile_spacing * 0.5);
+    let z_origin = if orientation_mapping.rows_go_south {
+        -((area.height as f32 - 1.0) * tile_spacing * 0.5)
+    } else {
+        (area.height as f32 - 1.0) * tile_spacing * 0.5
+    };
+    let row_spacing = if orientation_mapping.rows_go_south {
+        tile_spacing
+    } else {
+        -tile_spacing
+    };
 
     let mut resman = match install.resman.lock() {
         Ok(resman) => resman,
@@ -850,22 +929,34 @@ fn spawn_area_scene(
     };
 
     let area_root = commands
-        .spawn(Name::new(format!("area_{}", area.resref)))
+        .spawn((
+            Name::new(format!("area_{}", area.resref)),
+            area_spatial_components(Transform::default()),
+        ))
         .id();
-    let mut tile_index = 0_usize;
     for row in 0..area.height {
         for col in 0..area.width {
+            let tile_index = (row * area.width + col) as usize;
             let Some(tile) = area.tiles.get(tile_index).copied() else {
+                warn!(
+                    row,
+                    col,
+                    tile_index,
+                    width = area.width,
+                    height = area.height,
+                    actual_tile_count = area.tiles.len(),
+                    "area layout is missing a tile for this cell"
+                );
                 break;
             };
-            tile_index += 1;
 
             let translation = Vec3::new(
-                x_origin + col as f32 * TILE_SIZE,
-                y_origin + row as f32 * TILE_SIZE,
+                x_origin + col as f32 * tile_spacing,
                 tile.height as f32 * TILE_HEIGHT_STEP,
+                z_origin + row as f32 * row_spacing,
             );
-            let orientation_angle = tile.orientation as f32 * FRAC_PI_2;
+            let clockwise_turns = tile_orientation_turns(tile.orientation, orientation_mapping);
+            let orientation_angle = clockwise_turns as f32 * FRAC_PI_2;
             let tile_name = format!(
                 "tile_{row}_{col}_id{}_rot{}_h{}",
                 tile.id, tile.orientation, tile.height
@@ -873,13 +964,16 @@ fn spawn_area_scene(
             let tile_entity = commands
                 .spawn((
                     Name::new(tile_name),
-                    Transform::from_translation(translation)
-                        .with_rotation(Quat::from_rotation_z(orientation_angle)),
+                    area_spatial_components(
+                        Transform::from_translation(translation)
+                            .with_rotation(Quat::from_rotation_y(-orientation_angle)),
+                    ),
                 ))
                 .id();
             commands.entity(area_root).add_child(tile_entity);
 
-            let maybe_model_name = tileset.tile_models.get(&tile.id).cloned();
+            let tile_definition = tileset.tiles.get(&tile.id);
+            let maybe_model_name = tile_definition.and_then(|tile_def| tile_def.model.as_deref());
             let Some(model_name) = maybe_model_name else {
                 spawn_tile_fallback(
                     commands,
@@ -887,7 +981,11 @@ fn spawn_area_scene(
                     materials,
                     tile_entity,
                     tile,
-                    format!("tile {} is missing from {}.set", tile.id, area.tileset),
+                    FALLBACK_TILE_SIZE,
+                    format!(
+                        "tile {} is missing or has no model in {}.set",
+                        tile.id, area.tileset
+                    ),
                 );
                 continue;
             };
@@ -897,47 +995,39 @@ fn spawn_area_scene(
                 tile_id = tile.id,
                 orientation = tile.orientation,
                 height = tile.height,
-                model = model_name.as_str(),
+                model = model_name,
+                path_node = tile_definition
+                    .and_then(|tile_def| tile_def.path_node.as_deref())
+                    .unwrap_or(""),
+                door_count = tile_definition
+                    .and_then(|tile_def| tile_def.doors)
+                    .unwrap_or(0),
                 "placing area tile"
             );
 
-            let cache_key = (module_path.to_path_buf(), model_name.clone());
-            let model = if let Some(model) = render_cache.models.get(&cache_key).cloned() {
-                model
-            } else {
-                match load_nwn_model_from_resman(
-                    &mut resman,
-                    &model_name,
-                    images,
-                    meshes,
-                    materials,
-                ) {
-                    Ok(model) => {
-                        log_model_diagnostics(&model_name, &model);
-                        if !model.unresolved.is_empty() {
-                            warn!(
-                                model = model_name.as_str(),
-                                unresolved = model.unresolved.len(),
-                                "loaded tile model with unresolved textures"
-                            );
-                        }
-                        render_cache.models.insert(cache_key, model.clone());
-                        model
-                    }
-                    Err(error) => {
-                        spawn_tile_fallback(
-                            commands,
-                            meshes,
-                            materials,
-                            tile_entity,
-                            tile,
-                            format!("failed to load {model_name}.mdl: {error}"),
-                        );
-                        continue;
-                    }
+            let model = match load_cached_model_asset(
+                &mut resman,
+                module_path,
+                model_name,
+                render_cache,
+                images,
+                meshes,
+                materials,
+            ) {
+                Ok(model) => model,
+                Err(error) => {
+                    spawn_tile_fallback(
+                        commands,
+                        meshes,
+                        materials,
+                        tile_entity,
+                        tile,
+                        FALLBACK_TILE_SIZE,
+                        format!("failed to load {model_name}.mdl: {error}"),
+                    );
+                    continue;
                 }
             };
-
             let model_root = spawn_nwn_model(commands, &model);
             commands.entity(model_root).insert(Transform::default());
             commands.entity(tile_entity).add_child(model_root);
@@ -947,12 +1037,211 @@ fn spawn_area_scene(
     Ok(area_root)
 }
 
+fn load_cached_model_asset(
+    resman: &mut nwnrs_resman::prelude::ResMan,
+    module_path: &Path,
+    model_name: &str,
+    render_cache: &mut AreaRenderCache,
+    images: &mut Assets<Image>,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+) -> Result<NwnModelAsset, String> {
+    let cache_key = (module_path.to_path_buf(), model_name.to_string());
+    if let Some(model) = render_cache.models.get(&cache_key).cloned() {
+        return Ok(model);
+    }
+
+    let model = load_nwn_model_from_resman(resman, model_name, images, meshes, materials)
+        .map_err(|error| error.to_string())?;
+    log_model_diagnostics(model_name, &model);
+    if !model.unresolved.is_empty() {
+        warn!(
+            model = model_name,
+            unresolved = model.unresolved.len(),
+            "loaded tile model with unresolved textures"
+        );
+    }
+    render_cache.models.insert(cache_key, model.clone());
+    Ok(model)
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct TileOrientationValidation {
+    horizontal_matches:       usize,
+    horizontal_mismatches:    usize,
+    vertical_matches:         usize,
+    vertical_mismatches:      usize,
+    missing_tile_definitions: usize,
+}
+
+fn validate_tile_orientation_mapping(
+    area: &TestArea,
+    tileset: &SetFile,
+    mapping: TileOrientationMapping,
+) -> TileOrientationValidation {
+    let mut validation = TileOrientationValidation::default();
+
+    for row in 0..area.height {
+        for col in 0..area.width {
+            let index = (row * area.width + col) as usize;
+            let Some(tile) = area.tiles.get(index) else {
+                continue;
+            };
+            let Some(tile_set) = tileset.tiles.get(&tile.id) else {
+                validation.missing_tile_definitions += 1;
+                continue;
+            };
+            let current = rotated_tile_signature(tile_set, tile.orientation, mapping);
+
+            if col + 1 < area.width {
+                let east_index = (row * area.width + (col + 1)) as usize;
+                if let Some(east_tile) = area.tiles.get(east_index) {
+                    let Some(east_set) = tileset.tiles.get(&east_tile.id) else {
+                        validation.missing_tile_definitions += 1;
+                        continue;
+                    };
+                    let east = rotated_tile_signature(east_set, east_tile.orientation, mapping);
+                    if tile_edges_match(current.right, east.left)
+                        && tile_corners_match(current.top_right, east.top_left)
+                        && tile_corners_match(current.bottom_right, east.bottom_left)
+                    {
+                        validation.horizontal_matches += 1;
+                    } else {
+                        validation.horizontal_mismatches += 1;
+                    }
+                }
+            }
+
+            if row + 1 < area.height {
+                let next_row_index = ((row + 1) * area.width + col) as usize;
+                if let Some(next_tile) = area.tiles.get(next_row_index) {
+                    let Some(next_set) = tileset.tiles.get(&next_tile.id) else {
+                        validation.missing_tile_definitions += 1;
+                        continue;
+                    };
+                    let next = rotated_tile_signature(next_set, next_tile.orientation, mapping);
+                    let matches = if mapping.rows_go_south {
+                        tile_edges_match(current.bottom, next.top)
+                            && tile_corners_match(current.bottom_left, next.top_left)
+                            && tile_corners_match(current.bottom_right, next.top_right)
+                    } else {
+                        tile_edges_match(current.top, next.bottom)
+                            && tile_corners_match(current.top_left, next.bottom_left)
+                            && tile_corners_match(current.top_right, next.bottom_right)
+                    };
+                    if matches {
+                        validation.vertical_matches += 1;
+                    } else {
+                        validation.vertical_mismatches += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    validation
+}
+
+#[derive(Clone, Copy)]
+struct RotatedTileSignature<'a> {
+    top:          Option<&'a str>,
+    right:        Option<&'a str>,
+    bottom:       Option<&'a str>,
+    left:         Option<&'a str>,
+    top_left:     TileCornerSignature<'a>,
+    top_right:    TileCornerSignature<'a>,
+    bottom_right: TileCornerSignature<'a>,
+    bottom_left:  TileCornerSignature<'a>,
+}
+
+#[derive(Clone, Copy)]
+struct TileCornerSignature<'a> {
+    terrain: Option<&'a str>,
+    height:  Option<i32>,
+}
+
+fn rotated_tile_signature<'a>(
+    tile: &'a nwnrs_set::prelude::SetTile,
+    raw_orientation: u32,
+    mapping: TileOrientationMapping,
+) -> RotatedTileSignature<'a> {
+    let turns = tile_orientation_turns(raw_orientation, mapping) as usize;
+
+    let edges = [
+        tile.edge_crossers.top.as_deref(),
+        tile.edge_crossers.right.as_deref(),
+        tile.edge_crossers.bottom.as_deref(),
+        tile.edge_crossers.left.as_deref(),
+    ];
+    let corners = [
+        TileCornerSignature {
+            terrain: tile.top_left.terrain.as_deref(),
+            height:  tile.top_left.height,
+        },
+        TileCornerSignature {
+            terrain: tile.top_right.terrain.as_deref(),
+            height:  tile.top_right.height,
+        },
+        TileCornerSignature {
+            terrain: tile.bottom_right.terrain.as_deref(),
+            height:  tile.bottom_right.height,
+        },
+        TileCornerSignature {
+            terrain: tile.bottom_left.terrain.as_deref(),
+            height:  tile.bottom_left.height,
+        },
+    ];
+
+    let mut rotated_edges = [None; 4];
+    let mut rotated_corners = [TileCornerSignature {
+        terrain: None,
+        height:  None,
+    }; 4];
+
+    for (index, edge) in edges.into_iter().enumerate() {
+        rotated_edges[(index + turns) % 4] = edge;
+    }
+    for (index, corner) in corners.into_iter().enumerate() {
+        rotated_corners[(index + turns) % 4] = corner;
+    }
+
+    RotatedTileSignature {
+        top:          rotated_edges[0],
+        right:        rotated_edges[1],
+        bottom:       rotated_edges[2],
+        left:         rotated_edges[3],
+        top_left:     rotated_corners[0],
+        top_right:    rotated_corners[1],
+        bottom_right: rotated_corners[2],
+        bottom_left:  rotated_corners[3],
+    }
+}
+
+fn tile_orientation_turns(raw_orientation: u32, mapping: TileOrientationMapping) -> u8 {
+    let raw = (raw_orientation % 4) as i32;
+    let direction = i32::from(mapping.turn_direction);
+    ((i32::from(mapping.turn_offset) + (direction * raw)).rem_euclid(4)) as u8
+}
+
+fn tile_edges_match(left: Option<&str>, right: Option<&str>) -> bool {
+    match (left, right) {
+        (Some(left), Some(right)) => left == right,
+        (None, None) => true,
+        _ => false,
+    }
+}
+
+fn tile_corners_match(left: TileCornerSignature<'_>, right: TileCornerSignature<'_>) -> bool {
+    left.terrain == right.terrain && left.height == right.height
+}
+
 fn spawn_tile_fallback(
     commands: &mut Commands<'_, '_>,
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
     tile_entity: Entity,
     tile: TestAreaTile,
+    tile_size: f32,
     reason: String,
 ) {
     warn!(
@@ -964,11 +1253,11 @@ fn spawn_tile_fallback(
 
     let base_color = color_for_tile(tile.id);
     let tile_mesh = meshes.add(Cuboid::new(
-        TILE_SIZE * 0.96,
-        TILE_SIZE * 0.96,
+        tile_size * 0.96,
         TILE_THICKNESS,
+        tile_size * 0.96,
     ));
-    let indicator_mesh = meshes.add(Cuboid::new(TILE_SIZE * 0.18, TILE_SIZE * 0.48, 0.4));
+    let indicator_mesh = meshes.add(Cuboid::new(tile_size * 0.18, 0.4, tile_size * 0.48));
     let tile_material = materials.add(StandardMaterial {
         base_color,
         perceptual_roughness: 0.92,
@@ -990,7 +1279,7 @@ fn spawn_tile_fallback(
         ));
 
         let indicator_offset =
-            Vec3::Y * (TILE_SIZE * 0.28) + Vec3::new(0.0, 0.0, TILE_THICKNESS * 0.5 + 0.25);
+            Vec3::Z * (tile_size * 0.28) + Vec3::new(0.0, TILE_THICKNESS * 0.5 + 0.25, 0.0);
         children.spawn((
             Name::new("fallback_orientation"),
             Mesh3d(indicator_mesh),
@@ -1000,27 +1289,44 @@ fn spawn_tile_fallback(
     });
 }
 
-fn load_tileset_definition(
-    resman: &mut nwnrs_resman::prelude::ResMan,
-    tileset_name: &str,
-) -> Result<TilesetDefinition, String> {
-    let resolved = ResolvedResRef::from_filename(&format!("{tileset_name}.set"))
-        .map_err(|error| format!("tileset resref: {error}"))?;
-    let res = resman
-        .get_resolved(&resolved)
-        .ok_or_else(|| format!("tileset not found in ResMan: {resolved}"))?;
-    let bytes = res
-        .read_all(true)
-        .map_err(|error| format!("read tileset: {error}"))?;
-    parse_tileset_definition(&bytes)
-}
-
-fn log_area_layout(area: &TestArea, tileset: &TilesetDefinition) {
+fn log_area_layout(
+    area: &TestArea,
+    tileset: &SetFile,
+    orientation_mapping: TileOrientationMapping,
+) {
+    let validation = validate_tile_orientation_mapping(area, tileset, orientation_mapping);
     info!(
+        width = area.width,
+        height = area.height,
+        actual_tile_count = area.tiles.len(),
+        expected_tile_count = area_tile_count(area.width, area.height).unwrap_or(0),
         tileset = area.tileset.as_str(),
-        mapped_tiles = tileset.tile_models.len(),
+        mapped_tiles = tileset.tiles.len(),
+        group_count = tileset.groups.len(),
+        terrain_count = tileset.terrains.len(),
+        crosser_count = tileset.crossers.len(),
+        orientation_turn_offset = orientation_mapping.turn_offset,
+        orientation_turn_direction = orientation_mapping.turn_direction,
+        orientation_rows_go_south = orientation_mapping.rows_go_south,
+        horizontal_matches = validation.horizontal_matches,
+        horizontal_mismatches = validation.horizontal_mismatches,
+        vertical_matches = validation.vertical_matches,
+        vertical_mismatches = validation.vertical_mismatches,
+        missing_tile_definitions = validation.missing_tile_definitions,
         "resolved tileset definition"
     );
+    if validation.horizontal_mismatches > 0
+        || validation.vertical_mismatches > 0
+        || validation.missing_tile_definitions > 0
+    {
+        warn!(
+            tileset = area.tileset.as_str(),
+            horizontal_mismatches = validation.horizontal_mismatches,
+            vertical_mismatches = validation.vertical_mismatches,
+            missing_tile_definitions = validation.missing_tile_definitions,
+            "SET-driven tile orientation validation found mismatches"
+        );
+    }
 
     for row in 0..area.height {
         let mut cells = Vec::new();
@@ -1029,14 +1335,15 @@ fn log_area_layout(area: &TestArea, tileset: &TilesetDefinition) {
             let Some(tile) = area.tiles.get(index) else {
                 continue;
             };
+            let turns = tile_orientation_turns(tile.orientation, orientation_mapping);
             let model_name = tileset
-                .tile_models
+                .tiles
                 .get(&tile.id)
-                .map(String::as_str)
+                .and_then(|tile_def| tile_def.model.as_deref())
                 .unwrap_or("<missing>");
             cells.push(format!(
-                "({row},{col}) id={} rot={} h={} model={model_name}",
-                tile.id, tile.orientation, tile.height
+                "({row},{col}) id={} raw_rot={} turns={} h={} model={model_name}",
+                tile.id, tile.orientation, turns, tile.height
             ));
         }
         debug!(row, layout = cells.join(" | "), "expected area row");
@@ -1083,51 +1390,6 @@ fn log_model_diagnostics(model_name: &str, model: &NwnModelAsset) {
             "tile model material"
         );
     }
-}
-
-fn parse_tileset_definition(bytes: &[u8]) -> Result<TilesetDefinition, String> {
-    let text = String::from_utf8_lossy(bytes);
-    let mut current_section = String::new();
-    let mut tile_models = BTreeMap::new();
-
-    for raw_line in text.lines() {
-        let line = raw_line.trim();
-        if line.is_empty() || line.starts_with(';') || line.starts_with("//") {
-            continue;
-        }
-
-        if line.starts_with('[') && line.ends_with(']') {
-            current_section = line[1..line.len() - 1].trim().to_ascii_lowercase();
-            continue;
-        }
-
-        let Some((key, value)) = line.split_once('=') else {
-            continue;
-        };
-        if !current_section.starts_with("tile") {
-            continue;
-        }
-
-        let tile_id = current_section["tile".len()..].trim().parse::<u32>().ok();
-        if !key.trim().eq_ignore_ascii_case("model") {
-            continue;
-        }
-
-        let Some(tile_id) = tile_id else {
-            continue;
-        };
-        let model_name = value.trim().trim_matches('"');
-        if model_name.is_empty() || model_name == "****" {
-            continue;
-        }
-        tile_models.insert(tile_id, model_name.to_string());
-    }
-
-    if tile_models.is_empty() {
-        return Err("tileset file contained no tile model mappings".to_string());
-    }
-
-    Ok(TilesetDefinition { tile_models })
 }
 
 fn parse_tile(value: &GffStruct) -> Result<TestAreaTile, String> {
@@ -1195,6 +1457,34 @@ fn gff_list(value: &GffValue) -> Option<&Vec<GffStruct>> {
     }
 }
 
+fn area_tile_count(width: u32, height: u32) -> Result<usize, String> {
+    let width =
+        usize::try_from(width).map_err(|error| format!("area width out of range: {error}"))?;
+    let height =
+        usize::try_from(height).map_err(|error| format!("area height out of range: {error}"))?;
+    width
+        .checked_mul(height)
+        .ok_or_else(|| format!("area tile count overflows usize: {width} x {height}"))
+}
+
+fn area_spatial_components(
+    transform: Transform,
+) -> (
+    Transform,
+    GlobalTransform,
+    Visibility,
+    InheritedVisibility,
+    ViewVisibility,
+) {
+    (
+        transform,
+        GlobalTransform::default(),
+        Visibility::Inherited,
+        InheritedVisibility::default(),
+        ViewVisibility::default(),
+    )
+}
+
 fn color_for_tile(tile_id: u32) -> Color {
     let hue = (tile_id.wrapping_mul(37) % 360) as f32;
     Color::hsl(hue, 0.45, 0.52)
@@ -1239,7 +1529,7 @@ fn update_flycam(
         let movement = movement.normalize();
         let forward = transform.rotation * Vec3::NEG_Z;
         let right = transform.rotation * Vec3::X;
-        let up = Vec3::Z;
+        let up = Vec3::Y;
         transform.translation += (right * movement.x + up * movement.y + forward * movement.z)
             * speed
             * time.delta_secs();

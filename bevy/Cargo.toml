@@ -18,6 +18,7 @@ nwnrs-mtr.workspace = true
 nwnrs-plt.workspace = true
 nwnrs-resman.workspace = true
 nwnrs-resref.workspace = true
+nwnrs-set.workspace = true
 nwnrs-tga.workspace = true
 serde = { workspace = true, features = ["derive"] }
 tracing.workspace = true

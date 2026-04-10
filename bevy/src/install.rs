@@ -16,31 +16,31 @@ use crate::install_state::set_shared_resman;
 #[derive(Debug, Clone, Resource)]
 pub struct NwnInstallSettings {
     /// Optional NWN install-root override passed through to `nwnrs-game`.
-    pub root_override: String,
+    pub root_override:  String,
     /// Optional NWN user-directory override passed through to `nwnrs-game`.
-    pub user_override: String,
+    pub user_override:  String,
     /// Language folder under `lang/`.
-    pub language: String,
+    pub language:       String,
     /// ResMan cache size.
-    pub cache_size: usize,
+    pub cache_size:     usize,
     /// Whether to load KEY/BIF containers.
-    pub load_keys: bool,
+    pub load_keys:      bool,
     /// Whether to load override directories.
     pub load_overrides: bool,
     /// Explicit key basenames, or empty for the default load order.
-    pub keys: Vec<String>,
+    pub keys:           Vec<String>,
 }
 
 impl Default for NwnInstallSettings {
     fn default() -> Self {
         Self {
-            root_override: String::new(),
-            user_override: String::new(),
-            language: "english".to_string(),
-            cache_size: 0,
-            load_keys: true,
+            root_override:  String::new(),
+            user_override:  String::new(),
+            language:       "english".to_string(),
+            cache_size:     0,
+            load_keys:      true,
             load_overrides: false,
-            keys: Vec::new(),
+            keys:           Vec::new(),
         }
     }
 }
@@ -49,15 +49,15 @@ impl Default for NwnInstallSettings {
 #[derive(Resource)]
 pub struct NwnInstall {
     /// Resolved NWN install root.
-    pub root: PathBuf,
+    pub root:          PathBuf,
     /// Resolved NWN user directory.
-    pub user_root: PathBuf,
+    pub user_root:     PathBuf,
     /// Resolved language root.
     pub language_root: PathBuf,
     /// KEY paths found under the install.
-    pub key_paths: Vec<PathBuf>,
+    pub key_paths:     Vec<PathBuf>,
     /// Loaded NWN resource manager.
-    pub resman: Arc<Mutex<ResMan>>,
+    pub resman:        Arc<Mutex<ResMan>>,
 }
 
 /// Bevy plugin that discovers an NWN install, loads KEYs, and stores the
@@ -70,7 +70,9 @@ pub struct NwnInstallPlugin {
 impl NwnInstallPlugin {
     /// Creates the plugin with explicit settings.
     pub fn new(settings: NwnInstallSettings) -> Self {
-        Self { settings }
+        Self {
+            settings,
+        }
     }
 }
 
@@ -183,7 +185,8 @@ fn warn_or_error_for_missing_user_root(message: &str, fallback: Option<&PathBuf>
             "failed to resolve NWN user directory: {message}; continuing without a discovered user directory"
         ),
         None => error!(
-            "failed to resolve NWN user directory: {message}; continuing without a discovered user directory"
+            "failed to resolve NWN user directory: {message}; continuing without a discovered \
+             user directory"
         ),
     }
 }

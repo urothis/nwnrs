@@ -406,15 +406,11 @@ mod tests {
             panic!("create mac fallback dir: {error}");
         }
 
-        let resolved = match find_user_root_impl(
-            "",
-            |_key| None,
-            || Some(home.clone()),
-            Platform::MacOs,
-        ) {
-            Ok(value) => value,
-            Err(error) => panic!("resolve mac user root: {error}"),
-        };
+        let resolved =
+            match find_user_root_impl("", |_key| None, || Some(home.clone()), Platform::MacOs) {
+                Ok(value) => value,
+                Err(error) => panic!("resolve mac user root: {error}"),
+            };
         assert_eq!(resolved, fallback);
     }
 
@@ -434,15 +430,11 @@ mod tests {
             panic!("create mac application support dir: {error}");
         }
 
-        let resolved = match find_user_root_impl(
-            "",
-            |_key| None,
-            || Some(home.clone()),
-            Platform::MacOs,
-        ) {
-            Ok(value) => value,
-            Err(error) => panic!("resolve mac user root: {error}"),
-        };
+        let resolved =
+            match find_user_root_impl("", |_key| None, || Some(home.clone()), Platform::MacOs) {
+                Ok(value) => value,
+                Err(error) => panic!("resolve mac user root: {error}"),
+            };
         assert_eq!(resolved, documents);
     }
 

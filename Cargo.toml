@@ -36,6 +36,7 @@ nwnrs-resmemfile = { path = "crates/resmemfile" }
 nwnrs-resnwsync = { path = "crates/resnwsync" }
 nwnrs-resref = { path = "crates/resref" }
 nwnrs-restype = { path = "crates/restype" }
+nwnrs-set = { path = "crates/set" }
 nwnrs-ssf = { path = "crates/ssf" }
 nwnrs-streamext = { path = "crates/streamext" }
 nwnrs-tga = { path = "crates/tga" }

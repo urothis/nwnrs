@@ -100,6 +100,10 @@ pub mod prelude {
     pub mod restype {
         pub use nwnrs_restype::prelude::*;
     }
+    /// Export tileset `SET` types and traits.
+    pub mod set {
+        pub use nwnrs_set::prelude::*;
+    }
     /// Export structured storage file types and traits.
     pub mod ssf {
         pub use nwnrs_ssf::prelude::*;

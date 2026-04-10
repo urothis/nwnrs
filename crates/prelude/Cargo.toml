@@ -28,6 +28,7 @@ nwnrs-resmemfile.workspace = true
 nwnrs-resnwsync.workspace = true
 nwnrs-resref.workspace = true
 nwnrs-restype.workspace = true
+nwnrs-set.workspace = true
 nwnrs-ssf.workspace = true
 nwnrs-streamext.workspace = true
 nwnrs-tga.workspace = true

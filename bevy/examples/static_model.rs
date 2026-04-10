@@ -22,15 +22,15 @@ struct DemoModelCatalog {
 
 #[derive(Resource, Default)]
 struct DemoModelState {
-    root: Option<Entity>,
+    root:         Option<Entity>,
     needs_reload: bool,
 }
 
 #[derive(Resource, Default)]
 struct DemoAppearanceState {
     model_name: String,
-    slots: Vec<NwnAppearanceSlot>,
-    overrides: BTreeMap<String, String>,
+    slots:      Vec<NwnAppearanceSlot>,
+    overrides:  BTreeMap<String, String>,
 }
 
 #[derive(Resource, Default)]
@@ -40,8 +40,8 @@ struct DemoUiState {
 
 #[derive(Component)]
 struct FlyCam {
-    move_speed: f32,
-    boost_multiplier: f32,
+    move_speed:        f32,
+    boost_multiplier:  f32,
     mouse_sensitivity: Vec2,
 }
 
@@ -75,10 +75,10 @@ fn main() {
 fn setup(mut commands: Commands<'_, '_>) {
     commands.spawn((
         Camera3d::default(),
-        Transform::from_xyz(2.5, -6.0, 2.5).looking_at(Vec3::new(0.0, 0.0, 1.0), Vec3::Z),
+        Transform::from_xyz(2.5, 2.5, -6.0).looking_at(Vec3::new(0.0, 1.0, 0.0), Vec3::Y),
         FlyCam {
-            move_speed: 4.0,
-            boost_multiplier: 3.0,
+            move_speed:        4.0,
+            boost_multiplier:  3.0,
             mouse_sensitivity: Vec2::new(0.003, 0.002),
         },
     ));
@@ -89,7 +89,7 @@ fn setup(mut commands: Commands<'_, '_>) {
             shadows_enabled: true,
             ..Default::default()
         },
-        Transform::from_xyz(6.0, -4.0, 8.0),
+        Transform::from_xyz(6.0, 8.0, -4.0),
     ));
 }
 
@@ -257,7 +257,7 @@ fn reload_current_model(
     let root = spawn_nwn_model(&mut commands, &model);
     commands
         .entity(root)
-        .insert(Transform::from_rotation(Quat::from_rotation_z(PI)));
+        .insert(Transform::from_rotation(Quat::from_rotation_y(PI)));
     state.root = Some(root);
     state.needs_reload = false;
 
@@ -496,7 +496,7 @@ fn update_flycam(
         let movement = movement.normalize();
         let forward = transform.rotation * Vec3::NEG_Z;
         let right = transform.rotation * Vec3::X;
-        let up = Vec3::Z;
+        let up = Vec3::Y;
         transform.translation += (right * movement.x + up * movement.y + forward * movement.z)
             * speed
             * time.delta_secs();

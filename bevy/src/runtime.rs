@@ -90,16 +90,16 @@ pub fn load_nwn_model_from_resman_with_overrides(
 
 #[derive(Debug, Clone)]
 struct RuntimeMaterialBinding {
-    material: Handle<StandardMaterial>,
-    texture: Option<Handle<Image>>,
+    material:   Handle<StandardMaterial>,
+    texture:    Option<Handle<Image>>,
     unresolved: Vec<NwnUnresolvedTexture>,
 }
 
 #[derive(Debug, Clone)]
 struct RuntimeMeshBinding {
     scene_mesh_index: usize,
-    primitive_index: usize,
-    mesh: Handle<Mesh>,
+    primitive_index:  usize,
+    mesh:             Handle<Mesh>,
 }
 
 fn load_runtime_materials(
@@ -115,8 +115,8 @@ fn load_runtime_materials(
         let texture_handle = texture_result.texture.clone();
         let material_handle = materials.add(standard_material_from_nwn(material, texture_handle));
         bindings.push(RuntimeMaterialBinding {
-            material: material_handle,
-            texture: texture_result.texture,
+            material:   material_handle,
+            texture:    texture_result.texture,
             unresolved: texture_result.unresolved,
         });
     }
@@ -155,7 +155,7 @@ fn load_runtime_material_texture(
         ) {
             SceneTextureResolution::Resolved(resolved) => {
                 return Ok(RuntimeMaterialTextureLoad {
-                    texture: Some(images.add(image_from_runtime_resolved_texture(&resolved)?)),
+                    texture:    Some(images.add(image_from_runtime_resolved_texture(&resolved)?)),
                     unresolved: Vec::new(),
                 });
             }
@@ -190,7 +190,7 @@ fn load_runtime_material_texture(
         match resolve_texture_ref(&texture_ref, resman, &runtime_texture_resolver_options()) {
             Ok(resolved) => {
                 return Ok(RuntimeMaterialTextureLoad {
-                    texture: Some(images.add(image_from_runtime_resolved_texture(&resolved)?)),
+                    texture:    Some(images.add(image_from_runtime_resolved_texture(&resolved)?)),
                     unresolved: Vec::new(),
                 });
             }
@@ -204,7 +204,7 @@ fn load_runtime_material_texture(
     }
 
     Ok(RuntimeMaterialTextureLoad {
-        texture: None,
+        texture:    None,
         unresolved: vec![NwnUnresolvedTexture {
             material_index,
             slot: texture
@@ -291,7 +291,7 @@ fn load_runtime_meshes(
     let mut bindings = Vec::new();
     for (scene_mesh_index, mesh) in scene.meshes.iter().enumerate() {
         for (primitive_index, primitive) in mesh.primitives.iter().enumerate() {
-            let mesh_handle = meshes.add(mesh_from_primitive(primitive)?);
+            let mesh_handle = meshes.add(mesh_from_primitive(primitive, scene.coordinate_system)?);
             bindings.push(RuntimeMeshBinding {
                 scene_mesh_index,
                 primitive_index,
@@ -340,9 +340,9 @@ fn build_runtime_node_assets(
                                 .get(material_index)
                                 .map(|binding| binding.material.clone())?;
                             Some(NwnPrimitiveAsset {
-                                label: format!("{}:{primitive_index}", mesh.name),
-                                mesh: mesh_handle,
-                                material: material_handle,
+                                label:          format!("{}:{primitive_index}", mesh.name),
+                                mesh:           mesh_handle,
+                                material:       material_handle,
                                 shadow_enabled: material.shadow_enabled,
                             })
                         })
@@ -353,7 +353,7 @@ fn build_runtime_node_assets(
                 name: node.name.clone(),
                 kind: node.kind.clone(),
                 parent: node.parent,
-                transform: transform_from_nwn(&node.local_transform),
+                transform: transform_from_nwn(&node.local_transform, scene.coordinate_system),
                 primitives,
             }
         })
@@ -372,6 +372,6 @@ fn runtime_texture_resolver_options() -> TextureResolverOptions {
 
 #[derive(Debug, Default)]
 struct RuntimeMaterialTextureLoad {
-    texture: Option<Handle<Image>>,
+    texture:    Option<Handle<Image>>,
     unresolved: Vec<NwnUnresolvedTexture>,
 }
