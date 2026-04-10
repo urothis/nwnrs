@@ -1,6 +1,8 @@
 use bevy::{
     asset::{Handle, RenderAssetUsages},
-    image::Image,
+    image::{
+        Image, ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor,
+    },
     mesh::{Indices, Mesh, PrimitiveTopology},
     pbr::StandardMaterial,
     prelude::{AlphaMode, Color},
@@ -105,6 +107,10 @@ pub fn standard_material_from_nwn(
     material: &NwnMaterial,
     base_color_texture: Option<Handle<Image>>,
 ) -> StandardMaterial {
+    let specular_average =
+        (material.specular[0] + material.specular[1] + material.specular[2]) / 3.0;
+    let shininess = material.shininess.clamp(0.0, 128.0);
+    let roughness = (1.0 - (shininess / 128.0)).clamp(0.08, 1.0);
     StandardMaterial {
         base_color: Color::srgba(
             material.diffuse[0],
@@ -113,6 +119,15 @@ pub fn standard_material_from_nwn(
             material.alpha,
         ),
         base_color_texture,
+        emissive: Color::srgb(
+            material.self_illum_color[0],
+            material.self_illum_color[1],
+            material.self_illum_color[2],
+        )
+        .into(),
+        metallic: 0.0,
+        perceptual_roughness: roughness,
+        reflectance: (specular_average * 0.5).clamp(0.0, 0.5),
         alpha_mode: if material.alpha < 0.999 {
             AlphaMode::Blend
         } else {
@@ -145,17 +160,106 @@ pub fn transform_from_nwn(transform: &NwnTransform) -> Transform {
 }
 
 fn image_from_rgba8(width: u32, height: u32, rgba: Vec<u8>) -> Image {
-    Image::new(
+    let mip_chain = build_rgba8_mip_chain(width, height, rgba);
+    let mut image = Image::new_uninit(
         Extent3d {
             width,
             height,
             depth_or_array_layers: 1,
         },
         TextureDimension::D2,
-        rgba,
         TextureFormat::Rgba8UnormSrgb,
         RenderAssetUsages::default(),
-    )
+    );
+    image.texture_descriptor.mip_level_count = mip_level_count(width, height);
+    image.data = Some(mip_chain);
+    image.sampler = ImageSampler::Descriptor(nwn_texture_sampler());
+    image
+}
+
+fn nwn_texture_sampler() -> ImageSamplerDescriptor {
+    let mut sampler = ImageSamplerDescriptor::default();
+    sampler.address_mode_u = ImageAddressMode::Repeat;
+    sampler.address_mode_v = ImageAddressMode::Repeat;
+    sampler.address_mode_w = ImageAddressMode::Repeat;
+    sampler.mag_filter = ImageFilterMode::Linear;
+    sampler.min_filter = ImageFilterMode::Linear;
+    sampler.mipmap_filter = ImageFilterMode::Linear;
+    sampler.anisotropy_clamp = 8;
+    sampler
+}
+
+fn mip_level_count(width: u32, height: u32) -> u32 {
+    let largest_dimension = width.max(height).max(1);
+    u32::BITS - largest_dimension.leading_zeros()
+}
+
+fn build_rgba8_mip_chain(width: u32, height: u32, base_level: Vec<u8>) -> Vec<u8> {
+    let mut output = Vec::new();
+    let mut current_width = width.max(1);
+    let mut current_height = height.max(1);
+    let mut current_level = base_level;
+
+    loop {
+        output.extend_from_slice(&current_level);
+        if current_width == 1 && current_height == 1 {
+            break;
+        }
+
+        let next_width = (current_width / 2).max(1);
+        let next_height = (current_height / 2).max(1);
+        current_level = downsample_rgba8_box(
+            &current_level,
+            current_width as usize,
+            current_height as usize,
+            next_width as usize,
+            next_height as usize,
+        );
+        current_width = next_width;
+        current_height = next_height;
+    }
+
+    output
+}
+
+fn downsample_rgba8_box(
+    source: &[u8],
+    source_width: usize,
+    source_height: usize,
+    target_width: usize,
+    target_height: usize,
+) -> Vec<u8> {
+    let mut output = vec![0_u8; target_width * target_height * 4];
+
+    for y in 0..target_height {
+        for x in 0..target_width {
+            let source_x0 = x * 2;
+            let source_y0 = y * 2;
+            let source_x1 = (source_x0 + 1).min(source_width - 1);
+            let source_y1 = (source_y0 + 1).min(source_height - 1);
+
+            let mut rgba_sum = [0_u32; 4];
+            let mut sample_count = 0_u32;
+            for source_y in [source_y0, source_y1] {
+                for source_x in [source_x0, source_x1] {
+                    let index = (source_y * source_width + source_x) * 4;
+                    rgba_sum[0] += u32::from(source[index]);
+                    rgba_sum[1] += u32::from(source[index + 1]);
+                    rgba_sum[2] += u32::from(source[index + 2]);
+                    rgba_sum[3] += u32::from(source[index + 3]);
+                    sample_count += 1;
+                }
+            }
+
+            let index = (y * target_width + x) * 4;
+            output[index] = (rgba_sum[0] / sample_count) as u8;
+            output[index + 1] = (rgba_sum[1] / sample_count) as u8;
+            output[index + 2] = (rgba_sum[2] / sample_count) as u8;
+            output[index + 3] = (rgba_sum[3] / sample_count) as u8;
+        }
+    }
+
+    output
 }
 
 fn compute_face_normal(face: &NwnFace, positions: &[[f32; 3]]) -> [f32; 3] {
@@ -188,30 +292,33 @@ mod tests {
         NwnFace, NwnMaterial, NwnPrimitive, NwnTextureRef, NwnTextureSlot, NwnTransform, NwnUvSet,
     };
 
-    use super::{mesh_from_primitive, standard_material_from_nwn, transform_from_nwn};
+    use super::{
+        image_from_rgba8, mesh_from_primitive, mip_level_count, standard_material_from_nwn,
+        transform_from_nwn,
+    };
 
     #[test]
     fn builds_basic_triangle_mesh() {
         let primitive = NwnPrimitive {
-            positions:       vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
-            faces:           vec![NwnFace {
+            positions: vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            faces: vec![NwnFace {
                 vertex_indices: [0, 1, 2],
-                group:          0,
-                uv_indices:     [0, 1, 2],
+                group: 0,
+                uv_indices: [0, 1, 2],
                 material_index: 0,
             }],
-            uv_sets:         vec![NwnUvSet {
-                index:       0,
+            uv_sets: vec![NwnUvSet {
+                index: 0,
                 coordinates: vec![[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]],
             }],
-            normals:         vec![],
-            tangents:        vec![],
-            color_rows:      vec![],
-            weight_rows:     vec![],
+            normals: vec![],
+            tangents: vec![],
+            color_rows: vec![],
+            weight_rows: vec![],
             constraint_rows: vec![],
-            surface_labels:  vec![],
-            texture_names:   vec![],
-            material:        Some(0),
+            surface_labels: vec![],
+            texture_names: vec![],
+            material: Some(0),
         };
 
         let mesh = mesh_from_primitive(&primitive);
@@ -225,25 +332,54 @@ mod tests {
     }
 
     #[test]
+    fn rgba_images_get_repeat_sampler_and_mips() {
+        let pixels = vec![255_u8; 4 * 4 * 4];
+        let image = image_from_rgba8(4, 4, pixels);
+        assert_eq!(image.texture_descriptor.mip_level_count, mip_level_count(4, 4));
+
+        match image.sampler {
+            bevy::image::ImageSampler::Descriptor(descriptor) => {
+                assert_eq!(
+                    descriptor.address_mode_u,
+                    bevy::image::ImageAddressMode::Repeat
+                );
+                assert_eq!(
+                    descriptor.address_mode_v,
+                    bevy::image::ImageAddressMode::Repeat
+                );
+                assert_eq!(
+                    descriptor.mipmap_filter,
+                    bevy::image::ImageFilterMode::Linear
+                );
+                assert_eq!(descriptor.anisotropy_clamp, 8);
+            }
+            bevy::image::ImageSampler::Default => panic!("expected custom sampler"),
+        }
+
+        let expected_bytes = ((4 * 4) + (2 * 2) + (1 * 1)) * 4;
+        assert_eq!(image.data.unwrap_or_default().len(), expected_bytes as usize);
+    }
+
+    #[test]
     fn maps_nwn_material_alpha_to_blend_mode() {
         let material = NwnMaterial {
-            source_node:       0,
-            render_enabled:    true,
-            shadow_enabled:    true,
-            beaming:           0,
-            inherit_color:     0,
-            tilefade:          0,
-            rotate_texture:    0,
+            source_node: 0,
+            render_enabled: true,
+            shadow_enabled: true,
+            beaming: 0,
+            inherit_color: 0,
+            tilefade: 0,
+            rotate_texture: 0,
             transparency_hint: 0,
-            shininess:         1.0,
-            alpha:             0.5,
-            ambient:           [1.0, 1.0, 1.0],
-            diffuse:           [1.0, 0.5, 0.25],
-            specular:          [0.0, 0.0, 0.0],
-            self_illum_color:  [0.0, 0.0, 0.0],
-            material_name:     None,
-            render_hint:       None,
-            textures:          vec![NwnTextureRef {
+            shininess: 1.0,
+            alpha: 0.5,
+            ambient: [1.0, 1.0, 1.0],
+            diffuse: [1.0, 0.5, 0.25],
+            specular: [0.0, 0.0, 0.0],
+            self_illum_color: [0.0, 0.0, 0.0],
+            material_name: None,
+            render_hint: None,
+            textures: vec![NwnTextureRef {
                 slot: NwnTextureSlot::Bitmap,
                 name: "demo".to_string(),
             }],
@@ -257,11 +393,39 @@ mod tests {
     }
 
     #[test]
+    fn maps_zero_specular_material_to_non_shiny_surface() {
+        let material = NwnMaterial {
+            source_node: 0,
+            render_enabled: true,
+            shadow_enabled: true,
+            beaming: 0,
+            inherit_color: 0,
+            tilefade: 0,
+            rotate_texture: 0,
+            transparency_hint: 0,
+            shininess: 0.0,
+            alpha: 1.0,
+            ambient: [1.0, 1.0, 1.0],
+            diffuse: [0.4, 0.7, 0.3],
+            specular: [0.0, 0.0, 0.0],
+            self_illum_color: [0.0, 0.0, 0.0],
+            material_name: None,
+            render_hint: None,
+            textures: Vec::new(),
+        };
+
+        let bevy_material = standard_material_from_nwn(&material, None);
+        assert_eq!(bevy_material.metallic, 0.0);
+        assert!(bevy_material.perceptual_roughness >= 0.95);
+        assert_eq!(bevy_material.reflectance, 0.0);
+    }
+
+    #[test]
     fn converts_axis_angle_transform_without_panicking() {
         let transform = NwnTransform {
-            translation:         [1.0, 2.0, 3.0],
+            translation: [1.0, 2.0, 3.0],
             rotation_axis_angle: [0.0, 0.0, 1.0, core::f32::consts::FRAC_PI_2],
-            scale:               [1.0, 2.0, 3.0],
+            scale: [1.0, 2.0, 3.0],
         };
 
         let bevy_transform = transform_from_nwn(&transform);

@@ -26,21 +26,21 @@ impl NwnAppearanceOverrides {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NwnAppearanceSlot {
     /// Stable slot identifier used for overrides.
-    pub id:          String,
+    pub id: String,
     /// Human-readable label for UI display.
-    pub label:       String,
+    pub label: String,
     /// Authored token found in the model.
-    pub token:       String,
+    pub token: String,
     /// Source node names using this slot.
-    pub node_names:  Vec<String>,
+    pub node_names: Vec<String>,
     /// Parsed `#part-number` when present.
     pub part_number: Option<i32>,
     /// Normalized form used for matching shipped assets.
-    pub normalized:  String,
+    pub normalized: String,
     /// Stable stem shared by all candidate model names for this slot.
-    pub family:      String,
+    pub family: String,
     /// Selectable model-name candidates.
-    pub options:     Vec<String>,
+    pub options: Vec<String>,
 }
 
 /// Collects appearance slots from a lowered model scene by scanning model-like
@@ -84,14 +84,14 @@ pub fn collect_appearance_slots(
             let entry = slots_by_id
                 .entry(slot_id.clone())
                 .or_insert_with(|| NwnAppearanceSlot {
-                    id:          slot_id.clone(),
-                    label:       slot_label(source_node.name.as_str(), source_node.part_number),
-                    token:       parsed.token.clone(),
-                    node_names:  Vec::new(),
+                    id: slot_id.clone(),
+                    label: slot_label(source_node.name.as_str(), source_node.part_number),
+                    token: parsed.token.clone(),
+                    node_names: Vec::new(),
                     part_number: source_node.part_number,
-                    normalized:  parsed.normalized.clone(),
-                    family:      parsed.family.clone(),
-                    options:     options.clone(),
+                    normalized: parsed.normalized.clone(),
+                    family: parsed.family.clone(),
+                    options: options.clone(),
                 });
             if !entry
                 .node_names
@@ -155,9 +155,9 @@ fn slot_label(node_name: &str, part_number: Option<i32>) -> String {
 
 #[derive(Debug, Clone)]
 struct ParsedAppearanceToken {
-    token:      String,
+    token: String,
     normalized: String,
-    family:     String,
+    family: String,
 }
 
 fn parse_appearance_token(texture: &NwnTextureRef) -> Option<ParsedAppearanceToken> {

@@ -1,6 +1,7 @@
 use bevy::{
     asset::Handle,
     ecs::system::EntityCommands,
+    light::{NotShadowCaster, NotShadowReceiver},
     mesh::Mesh3d,
     pbr::{MeshMaterial3d, StandardMaterial},
     prelude::{
@@ -50,6 +51,7 @@ pub fn spawn_nwn_model(commands: &mut Commands<'_, '_>, model: &NwnModelAsset) -
                     primitive.mesh.clone(),
                     primitive.material.clone(),
                     primitive.label.clone(),
+                    primitive.shadow_enabled,
                 );
             }
         }
@@ -63,14 +65,18 @@ fn spawn_primitive_child(
     mesh: Handle<bevy::mesh::Mesh>,
     material: Handle<StandardMaterial>,
     label: String,
+    shadow_enabled: bool,
 ) {
     entity.with_children(|children| {
-        children.spawn((
+        let mut child = children.spawn((
             Name::new(label),
             Mesh3d(mesh),
             MeshMaterial3d(material),
             spatial_components(Transform::default()),
         ));
+        if !shadow_enabled {
+            child.insert((NotShadowCaster, NotShadowReceiver));
+        }
     });
 }
 

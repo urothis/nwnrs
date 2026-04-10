@@ -22,15 +22,15 @@ struct DemoModelCatalog {
 
 #[derive(Resource, Default)]
 struct DemoModelState {
-    root:         Option<Entity>,
+    root: Option<Entity>,
     needs_reload: bool,
 }
 
 #[derive(Resource, Default)]
 struct DemoAppearanceState {
     model_name: String,
-    slots:      Vec<NwnAppearanceSlot>,
-    overrides:  BTreeMap<String, String>,
+    slots: Vec<NwnAppearanceSlot>,
+    overrides: BTreeMap<String, String>,
 }
 
 #[derive(Resource, Default)]
@@ -40,8 +40,8 @@ struct DemoUiState {
 
 #[derive(Component)]
 struct FlyCam {
-    move_speed:        f32,
-    boost_multiplier:  f32,
+    move_speed: f32,
+    boost_multiplier: f32,
     mouse_sensitivity: Vec2,
 }
 
@@ -77,8 +77,8 @@ fn setup(mut commands: Commands<'_, '_>) {
         Camera3d::default(),
         Transform::from_xyz(2.5, -6.0, 2.5).looking_at(Vec3::new(0.0, 0.0, 1.0), Vec3::Z),
         FlyCam {
-            move_speed:        4.0,
-            boost_multiplier:  3.0,
+            move_speed: 4.0,
+            boost_multiplier: 3.0,
             mouse_sensitivity: Vec2::new(0.003, 0.002),
         },
     ));

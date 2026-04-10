@@ -82,24 +82,20 @@ where
     H: Fn() -> Option<PathBuf>,
 {
     debug!("resolving user root");
-    let result = first_nonempty_path(
+    let explicit = first_nonempty_path(
         override_dir,
         env_get("nwnrs_HOME").as_deref(),
         env_get("nwnrs_USER_DIRECTORY").as_deref(),
-        match platform {
-            Platform::MacOs => {
-                home_dir().map(|home| home.join("Documents").join("Neverwinter Nights"))
-            }
-            Platform::Linux => {
-                home_dir().map(|home| home.join(".local").join("share").join("Neverwinter Nights"))
-            }
-            Platform::Windows => {
-                home_dir().map(|home| home.join("Documents").join("Neverwinter Nights"))
-            }
-        },
+        None,
     );
 
-    match result {
+    let result = explicit.or_else(|| {
+        user_root_candidates(platform, &home_dir)
+            .into_iter()
+            .find(|path| path.is_dir())
+    });
+
+    match result.or_else(|| user_root_candidates(platform, &home_dir).into_iter().next()) {
         Some(path) if path.is_dir() => {
             info!(path = %path.display(), "resolved user root");
             Ok(path)
@@ -108,6 +104,26 @@ where
             "Could not locate NWN user directory; try --userdirectory or set nwnrs_HOME \
              (nwnrs_USER_DIRECTORY also works, but is considered alternate)",
         )),
+    }
+}
+
+fn user_root_candidates<H>(platform: Platform, home_dir: &H) -> Vec<PathBuf>
+where
+    H: Fn() -> Option<PathBuf>,
+{
+    let Some(home) = home_dir() else {
+        return Vec::new();
+    };
+
+    match platform {
+        Platform::MacOs => vec![
+            home.join("Documents").join("Neverwinter Nights"),
+            home.join("Library")
+                .join("Application Support")
+                .join("Neverwinter Nights"),
+        ],
+        Platform::Linux => vec![home.join(".local").join("share").join("Neverwinter Nights")],
+        Platform::Windows => vec![home.join("Documents").join("Neverwinter Nights")],
     }
 }
 
@@ -376,6 +392,58 @@ mod tests {
             Err(error) => panic!("resolve user root: {error}"),
         };
         assert_eq!(resolved, env_dir);
+    }
+
+    #[test]
+    fn macos_user_root_falls_back_to_application_support() {
+        let root = unique_test_dir("mac-user-root");
+        let home = root.join("home");
+        let fallback = home
+            .join("Library")
+            .join("Application Support")
+            .join("Neverwinter Nights");
+        if let Err(error) = fs::create_dir_all(&fallback) {
+            panic!("create mac fallback dir: {error}");
+        }
+
+        let resolved = match find_user_root_impl(
+            "",
+            |_key| None,
+            || Some(home.clone()),
+            Platform::MacOs,
+        ) {
+            Ok(value) => value,
+            Err(error) => panic!("resolve mac user root: {error}"),
+        };
+        assert_eq!(resolved, fallback);
+    }
+
+    #[test]
+    fn macos_user_root_prefers_documents_per_readme() {
+        let root = unique_test_dir("mac-user-root-documents");
+        let home = root.join("home");
+        let documents = home.join("Documents").join("Neverwinter Nights");
+        let application_support = home
+            .join("Library")
+            .join("Application Support")
+            .join("Neverwinter Nights");
+        if let Err(error) = fs::create_dir_all(&documents) {
+            panic!("create mac documents dir: {error}");
+        }
+        if let Err(error) = fs::create_dir_all(&application_support) {
+            panic!("create mac application support dir: {error}");
+        }
+
+        let resolved = match find_user_root_impl(
+            "",
+            |_key| None,
+            || Some(home.clone()),
+            Platform::MacOs,
+        ) {
+            Ok(value) => value,
+            Err(error) => panic!("resolve mac user root: {error}"),
+        };
+        assert_eq!(resolved, documents);
     }
 
     #[test]
