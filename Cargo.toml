@@ -45,7 +45,7 @@ encoding_rs = { version = "0.8.35", default-features = false, features = [
 flate2 = { version = "1.1.9", default-features = false, features = [
     "rust_backend",
 ] }
-indexmap = { version = "2.13.1", default-features = false }
+indexmap = { version = "2.14.0", default-features = false }
 md5 = { version = "0.8.0", default-features = false }
 reqwest = { version = "0.13.2", default-features = false, features = [
     "json",
