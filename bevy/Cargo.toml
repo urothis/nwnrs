@@ -4,10 +4,10 @@ version.workspace = true
 edition.workspace = true
 publish.workspace = true
 license.workspace = true
-description = "Bevy 0.18.1 integration layer for Neverwinter Nights assets"
+description = "Bevy integration layer for Neverwinter Nights assets"
 
 [dependencies]
-bevy = "0.18.1"
+bevy.workspace = true
 nwnrs-dds.workspace = true
 nwnrs-game.workspace = true
 nwnrs-mdl.workspace = true
