@@ -152,6 +152,45 @@ impl PltPixel {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// Simple RGBA color policy for rendering a PLT into a final bitmap.
+pub struct PltRenderSpec {
+    /// RGBA colors keyed by known [`PltLayer`] id.
+    pub layer_colors:        [[u8; 4]; 10],
+    /// Fallback color for unknown layer ids.
+    pub unknown_layer_color: [u8; 4],
+}
+
+impl Default for PltRenderSpec {
+    fn default() -> Self {
+        Self {
+            layer_colors:        [
+                [224, 191, 160, 255],
+                [74, 52, 26, 255],
+                [176, 184, 192, 255],
+                [226, 168, 60, 255],
+                [171, 47, 39, 255],
+                [42, 86, 173, 255],
+                [92, 62, 41, 255],
+                [128, 92, 58, 255],
+                [37, 152, 117, 255],
+                [108, 64, 160, 255],
+            ],
+            unknown_layer_color: [255, 0, 255, 255],
+        }
+    }
+}
+
+impl PltRenderSpec {
+    /// Returns the base RGBA color for one PLT layer id.
+    pub fn color_for_layer_id(&self, layer_id: u8) -> [u8; 4] {
+        self.layer_colors
+            .get(usize::from(layer_id))
+            .copied()
+            .unwrap_or(self.unknown_layer_color)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 /// Parsed PLT texture payload.
 pub struct PltTexture {
     /// Four-byte file type tag, typically `PLT `.
@@ -214,6 +253,31 @@ impl PltTexture {
     /// Parses a typed PLT texture directly from raw bytes.
     pub fn read_from_texture_bytes(bytes: &[u8]) -> PltResult<Self> {
         parse_plt_bytes(bytes)
+    }
+
+    /// Renders the PLT into RGBA8 pixels using the provided render spec.
+    pub fn render_rgba8(&self, spec: &PltRenderSpec) -> PltResult<Vec<u8>> {
+        let expected_pixels = self.pixel_count()?;
+        if self.pixels.len() != expected_pixels {
+            return Err(PltError::msg(format!(
+                "PLT pixel buffer has {} entries but dimensions {}x{} require {}",
+                self.pixels.len(),
+                self.width,
+                self.height,
+                expected_pixels
+            )));
+        }
+
+        let mut rgba = Vec::with_capacity(expected_pixels.saturating_mul(4));
+        for pixel in &self.pixels {
+            let [r, g, b, a] = spec.color_for_layer_id(pixel.layer_id);
+            let value = u16::from(pixel.value);
+            rgba.push(scale_channel(r, value));
+            rgba.push(scale_channel(g, value));
+            rgba.push(scale_channel(b, value));
+            rgba.push(scale_channel(a, value));
+        }
+        Ok(rgba)
     }
 }
 
@@ -376,11 +440,16 @@ fn read_u32_at(bytes: &[u8], offset: usize) -> PltResult<u32> {
     Ok(u32::from_le_bytes([a, b, c, d]))
 }
 
+fn scale_channel(channel: u8, value: u16) -> u8 {
+    let scaled = (u16::from(channel) * value) / 255;
+    u8::try_from(scaled).unwrap_or(u8::MAX)
+}
+
 /// Common imports for consumers of this crate.
 pub mod prelude {
     pub use crate::{
-        PLT_HEADER_SIZE, PLT_RES_TYPE, PLT_SIGNATURE, PltError, PltLayer, PltPixel, PltResult,
-        PltTexture, read_plt, read_plt_from_file, read_plt_from_res, write_plt,
+        PLT_HEADER_SIZE, PLT_RES_TYPE, PLT_SIGNATURE, PltError, PltLayer, PltPixel, PltRenderSpec,
+        PltResult, PltTexture, read_plt, read_plt_from_file, read_plt_from_res, write_plt,
     };
 }
 
@@ -390,12 +459,12 @@ mod tests {
     use std::{fs, io::Cursor, path::PathBuf};
 
     use crate::{
-        PLT_HEADER_SIZE, PLT_RES_TYPE, PLT_SIGNATURE, PltLayer, PltPixel, PltTexture, read_plt,
-        read_plt_from_file, write_plt,
+        PLT_HEADER_SIZE, PLT_RES_TYPE, PLT_SIGNATURE, PltLayer, PltPixel, PltRenderSpec,
+        PltTexture, read_plt, read_plt_from_file, write_plt,
     };
 
     fn fixture_path() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../cloak_001.plt")
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/testing/cloak_001.plt")
     }
 
     #[test]
@@ -502,5 +571,35 @@ mod tests {
         assert_eq!(PltLayer::Tattoo1.id(), 8);
         assert_eq!(PltLayer::Tattoo2.id(), 9);
         assert_eq!(PltLayer::from_id(10), None);
+    }
+
+    #[test]
+    fn render_rgba8_modulates_default_layer_color_by_value() {
+        let plt = PltTexture {
+            file_type:     *b"PLT ",
+            file_version:  *b"V1  ",
+            unused1:       [10, 0, 0, 0],
+            unused2:       [0, 0, 0, 0],
+            width:         2,
+            height:        1,
+            pixels:        vec![
+                PltPixel {
+                    value:    255,
+                    layer_id: PltLayer::Cloth1.id(),
+                },
+                PltPixel {
+                    value:    128,
+                    layer_id: 99,
+                },
+            ],
+            trailing_data: Vec::new(),
+        };
+
+        let rendered = plt
+            .render_rgba8(&PltRenderSpec::default())
+            .unwrap_or_else(|error| panic!("render plt: {error}"));
+
+        assert_eq!(rendered.get(0..4), Some(&[171, 47, 39, 255][..]));
+        assert_eq!(rendered.get(4..8), Some(&[128, 0, 128, 128][..]));
     }
 }

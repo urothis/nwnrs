@@ -44,15 +44,7 @@ pub fn new_default_resman(
     info!("building default resource manager");
     let root = root.as_ref();
     let user_directory = user_directory.as_ref();
-    let resolved_language = language;
-    let resolved_language_root = root.join("lang").join(resolved_language);
-
-    if !resolved_language_root.is_dir() {
-        return Err(GameError::msg(format!(
-            "language {} not found",
-            resolved_language_root.display()
-        )));
-    }
+    let resolved_language_root = crate::resolve_language_root(root, language)?;
 
     let autodetect_keys = keys.is_empty() || matches!(keys, [single] if single == "autodetect");
     let actual_keys = if !autodetect_keys {
@@ -151,6 +143,7 @@ mod tests {
     use nwnrs_checksums::EMPTY_SECURE_HASH;
 
     use super::new_default_resman;
+    use crate::resolve_language_root;
 
     fn unique_test_dir(prefix: &str) -> std::path::PathBuf {
         let nanos = SystemTime::now()
@@ -173,10 +166,22 @@ mod tests {
     }
 
     #[test]
+    fn language_aliases_resolve_short_folder_names() {
+        let root = unique_test_dir("lang-alias-root");
+        let alias_root = root.join("lang").join("en");
+        fs::create_dir_all(&alias_root)
+            .unwrap_or_else(|error| panic!("create alias root: {error}"));
+
+        let resolved = resolve_language_root(&root, "english")
+            .unwrap_or_else(|error| panic!("resolve language alias: {error}"));
+        assert_eq!(resolved, alias_root);
+    }
+
+    #[test]
     fn rejects_missing_additional_directories() {
         let root = unique_test_dir("dirs-root");
         let user = unique_test_dir("dirs-user");
-        let lang_root = root.join("lang").join("english");
+        let lang_root = root.join("lang").join("en");
         fs::create_dir_all(&lang_root).unwrap_or_else(|error| panic!("create lang root: {error}"));
         fs::create_dir_all(&user).unwrap_or_else(|error| panic!("create user: {error}"));
         let missing = root.join("does-not-exist");
@@ -201,7 +206,7 @@ mod tests {
     fn manifests_require_existing_user_directory() {
         let root = unique_test_dir("manifest-root");
         let user = unique_test_dir("manifest-user-missing");
-        let lang_root = root.join("lang").join("english");
+        let lang_root = root.join("lang").join("en");
         fs::create_dir_all(&lang_root).unwrap_or_else(|error| panic!("create lang root: {error}"));
 
         let err = new_default_resman(

@@ -1,6 +1,6 @@
 [workspace]
 default-members = ["cli"]
-members = ["cli", "crates/*", "wasm"]
+members = ["bevy", "cli", "crates/*", "wasm"]
 exclude = ["crates/texture"]
 resolver = "3"
 
@@ -25,6 +25,7 @@ nwnrs-key = { path = "crates/key" }
 nwnrs-lru = { path = "crates/lru" }
 nwnrs-masterlist = { path = "crates/masterlist" }
 nwnrs-mdl = { path = "crates/mdl" }
+nwnrs-mtr = { path = "crates/mtr" }
 nwnrs-nwscript = { path = "crates/nwscript" }
 nwnrs-nwsync = { path = "crates/nwsync" }
 nwnrs-plt = { path = "crates/plt" }

@@ -8,6 +8,7 @@ This repository is organized as a layered toolkit:
 - resource identity, type, checksum, encoding, and stream utilities
 - container adapters that expose archives, directories, single files, in-memory buffers, and NWSync manifests through a shared resource-manager abstraction
 - a high-level game crate for installation discovery and default resource loading
+- a root `nwnrs-bevy` crate for loading static NWN `mdl` assets into Bevy `0.18.1`
 - a CLI for inspection, packing, unpacking, selected NWSync workflows, and NWScript compilation
 
 ## What This Workspace Does
@@ -23,6 +24,7 @@ At a high level:
 - format crates such as `nwnrs-gff`, `nwnrs-twoda`, `nwnrs-tlk`, `nwnrs-ssf`, `nwnrs-mdl`, `nwnrs-tga`, `nwnrs-dds`, `nwnrs-plt`, and `nwnrs-nwsync` provide typed parsers and writers, with the texture crates now split cleanly by on-disk format
 - `nwnrs-nwscript` provides the NWScript frontend and compiler pipeline: source loading, preprocessing, lexing, parsing, semantic analysis, optimization, and `NCS`/`NDB` emission
 - `nwnrs-game` composes those pieces into a default game-facing resource-loading stack
+- `nwnrs-bevy` is the first Bevy-facing integration layer, currently scoped to static `mdl` loading plus NWN `dds`/`tga` texture decode for Bevy `Image` assets
 
 ## Usage
 
@@ -107,12 +109,14 @@ The workspace supports:
 - parsing, decoding, writing, and RGBA-encoding NWN `dds` textures through `nwnrs-dds`
 - parsing and writing typed `plt` palette textures through `nwnrs-plt`, including explicit per-pixel `value` and `layer_id` data plus known layer mappings
 - converting image inputs (`png`, `jpg`, `tga`, `dds`) into `tga`, NWN `dds`, or `webp`
+- loading static ASCII `mdl` models into Bevy `0.18.1` meshes, materials, and images through `nwnrs-bevy`
 - compiling NWScript `.nss` files to `.ncs` and optional `.ndb`
 - parsing and semantically analyzing NWScript source through the `nwnrs-nwscript` crate
 - unpacking ERF archives and KEY/BIF sets into directory form
 - opening NWSync repositories and printing manifest contents
 - building a layered `ResMan` from game roots, override directories, ERFs, and NWSync manifests
 - treating `plt` as typed file ownership only for now; final color rendering and game-accurate material mapping are still future work
+- keeping Bevy phase 1 intentionally narrow: static meshes plus NWN `dds`/`tga` textures only, with animation, skinning, and `plt` rendering deferred
 
 ## Contributing
 

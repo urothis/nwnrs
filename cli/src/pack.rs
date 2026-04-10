@@ -368,7 +368,7 @@ fn pack_texture_resource(input: &Path, output: &Path, force: bool) -> Result<(),
             return Err(format!(
                 "unsupported texture format for {}",
                 input.display()
-            ))
+            ));
         }
     }
     fs::write(output, bytes.into_inner())

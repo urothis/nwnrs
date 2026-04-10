@@ -1193,7 +1193,7 @@ mod tests {
             other => {
                 return Err(
                     std::io::Error::other(format!("expected declaration, got {other:?}")).into(),
-                )
+                );
             }
         }
 
@@ -1218,7 +1218,7 @@ mod tests {
             other => {
                 return Err(
                     std::io::Error::other(format!("expected declaration, got {other:?}")).into(),
-                )
+                );
             }
         }
         Ok(())
@@ -1262,14 +1262,14 @@ mod tests {
                     return Err(std::io::Error::other(format!(
                         "expected direct call, got {other:?}"
                     ))
-                    .into())
+                    .into());
                 }
             },
             other => {
                 return Err(std::io::Error::other(format!(
                     "expected expression statement, got {other:?}"
                 ))
-                .into())
+                .into());
             }
         }
 
@@ -1286,14 +1286,14 @@ mod tests {
                     return Err(std::io::Error::other(format!(
                         "expected builtin call, got {other:?}"
                     ))
-                    .into())
+                    .into());
                 }
             },
             other => {
                 return Err(std::io::Error::other(format!(
                     "expected expression statement, got {other:?}"
                 ))
-                .into())
+                .into());
             }
         }
         Ok(())

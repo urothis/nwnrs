@@ -239,7 +239,7 @@ pub fn write_payload_writer<W: Write + ?Sized>(
         _ => {
             return Err(CompressedBufError::msg(
                 "algorithm header does not match algorithm",
-            ))
+            ));
         }
     }
 

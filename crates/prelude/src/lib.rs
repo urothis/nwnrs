@@ -56,6 +56,10 @@ pub mod prelude {
     pub mod mdl {
         pub use nwnrs_mdl::prelude::*;
     }
+    /// Export MTR material types and traits.
+    pub mod mtr {
+        pub use nwnrs_mtr::prelude::*;
+    }
     /// Export NWScript compiler and format types and traits.
     pub mod nwscript {
         pub use nwnrs_nwscript::prelude::*;

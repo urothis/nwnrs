@@ -2117,7 +2117,7 @@ fn emit_push_literal(
             return Err(CodegenError::new(
                 span,
                 "magic literal code generation is not implemented yet",
-            ))
+            ));
         }
     }
 
@@ -2344,7 +2344,7 @@ fn aux_for_engine_structure(
             return Err(CodegenError::new(
                 None,
                 format!("engine structure index out of range for {:?}", name),
-            ))
+            ));
         }
     })
 }
@@ -2390,7 +2390,7 @@ fn field_layout(
                     return Err(CodegenError::new(
                         span,
                         format!("field {:?} does not exist on vector", field),
-                    ))
+                    ));
                 }
             };
             Ok(FieldLayout {

@@ -18,6 +18,7 @@ This directory contains all the workspace crates that provide the core functiona
 | `nwnrs-lru` | Small weighted LRU cache used by higher-level crates. |
 | `nwnrs-masterlist` | Async client for the Beamdog masterlist API. |
 | `nwnrs-mdl` | Reads and writes raw Neverwinter Nights model (`MDL`) payloads. |
+| `nwnrs-mtr` | Parses and writes text Neverwinter Nights material (`MTR`) payloads. |
 | `nwnrs-nwscript` | Pure Rust NWScript frontend and compiler pipeline, including preprocessing, parsing, semantic analysis, optimization, and `NCS`/`NDB` support. |
 | `nwnrs-nwsync` | Reads and writes manifest files used by NWSync repositories. |
 | `nwnrs-plt` | Parses and writes typed Neverwinter Nights palette texture (`PLT`) payloads. |
@@ -51,7 +52,7 @@ The repository is intentionally split by responsibility rather than by applicati
 
 1. Identity and primitives — `nwnrs-core`, `nwnrs-restype`, `nwnrs-resref`, `nwnrs-checksums`, `nwnrs-util`, and `nwnrs-streamext` define the small reusable types that every higher layer depends on.
 2. Resource backends — `nwnrs-erf`, `nwnrs-key`, `nwnrs-resdir`, `nwnrs-resfile`, `nwnrs-resmemfile`, and `nwnrs-resnwsync` translate specific storage layouts into a common container interface.
-3. Format codecs — `nwnrs-gff`, `nwnrs-twoda`, `nwnrs-tlk`, `nwnrs-ssf`, `nwnrs-mdl`, `nwnrs-tga`, `nwnrs-dds`, `nwnrs-plt`, `nwnrs-nwsync`, and `nwnrs-compressedbuf` focus on decoding and encoding individual file formats.
+3. Format codecs — `nwnrs-gff`, `nwnrs-twoda`, `nwnrs-tlk`, `nwnrs-ssf`, `nwnrs-mdl`, `nwnrs-mtr`, `nwnrs-tga`, `nwnrs-dds`, `nwnrs-plt`, `nwnrs-nwsync`, and `nwnrs-compressedbuf` focus on decoding and encoding individual file formats.
 4. Language tooling — `nwnrs-nwscript` provides the NWScript compiler stack, from source resolution and preprocessing through parsing, semantic analysis, optimization, and code generation.
 5. Composition and tooling — `nwnrs-resman` resolves resources across multiple containers. `nwnrs-game` chooses a conventional load order for a real installation.
 
@@ -70,6 +71,7 @@ The repository is intentionally split by responsibility rather than by applicati
 - [`tlk/src/io.rs`](./tlk/src/io.rs)
 - [`ssf/src/io.rs`](./ssf/src/io.rs)
 - [`mdl/src/io.rs`](./mdl/src/io.rs)
+- [`mtr/src/lib.rs`](./mtr/src/lib.rs)
 - [`tga/src/lib.rs`](./tga/src/lib.rs)
 - [`dds/src/lib.rs`](./dds/src/lib.rs)
 - [`plt/src/lib.rs`](./plt/src/lib.rs)

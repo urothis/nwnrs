@@ -41,6 +41,30 @@ pub fn find_nwnrs_root(override_dir: &str) -> GameResult<PathBuf> {
     )
 }
 
+/// Resolves an NWN language folder under `root/lang`, accepting both common
+/// long-form names such as `english` and short on-disk codes such as `en`.
+#[instrument(level = "info", skip_all, err, fields(root = %root.as_ref().display(), language))]
+pub fn resolve_language_root(root: impl AsRef<Path>, language: &str) -> GameResult<PathBuf> {
+    let root = root.as_ref();
+    let language_root = root.join("lang");
+    let requested = language_root.join(language);
+    if requested.is_dir() {
+        return Ok(requested);
+    }
+
+    for alias in language_aliases(language) {
+        let candidate = language_root.join(alias);
+        if candidate.is_dir() {
+            return Ok(candidate);
+        }
+    }
+
+    Err(GameError::msg(format!(
+        "language {} not found",
+        requested.display()
+    )))
+}
+
 #[instrument(
     level = "info",
     skip(env_get, home_dir),
@@ -288,6 +312,24 @@ pub(crate) fn expand_tilde(path: &Path) -> PathBuf {
     }
 }
 
+fn language_aliases(language: &str) -> &'static [&'static str] {
+    match language.to_ascii_lowercase().as_str() {
+        "english" => &["en"],
+        "en" => &["english"],
+        "german" | "deutsch" => &["de"],
+        "de" => &["german", "deutsch"],
+        "spanish" => &["es"],
+        "es" => &["spanish"],
+        "french" => &["fr"],
+        "fr" => &["french"],
+        "italian" => &["it"],
+        "it" => &["italian"],
+        "polish" => &["pl"],
+        "pl" => &["polish"],
+        _ => &[],
+    }
+}
+
 #[allow(clippy::panic)]
 #[cfg(test)]
 mod tests {
@@ -297,7 +339,7 @@ mod tests {
         time::{SystemTime, UNIX_EPOCH},
     };
 
-    use super::{expand_tilde, normalize_relative_path};
+    use super::{expand_tilde, normalize_relative_path, resolve_language_root};
     use crate::{Platform, find_nwnrs_root_impl, find_user_root_impl};
 
     fn unique_test_dir(prefix: &str) -> PathBuf {
@@ -383,5 +425,20 @@ mod tests {
                 PathBuf::from(home).join("override")
             );
         }
+    }
+
+    #[test]
+    fn resolves_language_alias_to_short_folder_name() {
+        let root = unique_test_dir("language-alias");
+        let alias_root = root.join("lang").join("en");
+        if let Err(error) = fs::create_dir_all(&alias_root) {
+            panic!("create alias dir: {error}");
+        }
+
+        let resolved = match resolve_language_root(&root, "english") {
+            Ok(value) => value,
+            Err(error) => panic!("resolve english alias: {error}"),
+        };
+        assert_eq!(resolved, alias_root);
     }
 }

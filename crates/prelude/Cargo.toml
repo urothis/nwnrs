@@ -17,6 +17,7 @@ nwnrs-key.workspace = true
 nwnrs-lru.workspace = true
 nwnrs-masterlist.workspace = true
 nwnrs-mdl.workspace = true
+nwnrs-mtr.workspace = true
 nwnrs-nwscript.workspace = true
 nwnrs-nwsync.workspace = true
 nwnrs-plt.workspace = true

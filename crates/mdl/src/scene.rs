@@ -9,7 +9,7 @@ use crate::{
     SemanticAnimationNode, SemanticEmitter, SemanticEmitterProperty, SemanticFace, SemanticLight,
     SemanticMaterial, SemanticMesh, SemanticModel, SemanticPropertyValue, SemanticReference,
     SemanticSkinWeight, SemanticTextureBinding, SemanticUvLayer, Vec3Key, Vec4Key,
-    parse_semantic_model, read_semantic_model,
+    parse_semantic_model, parse_semantic_model_auto, read_semantic_model, read_semantic_model_auto,
 };
 
 /// An engine-neutral scene representation lowered from a semantic NWN model.
@@ -404,11 +404,23 @@ impl Model {
     pub fn parse_scene(&self) -> ModelResult<NwnScene> {
         lower_semantic_model_to_scene(&self.parse_semantic()?)
     }
+
+    /// Parses and lowers the raw payload into an engine-neutral NWN scene
+    /// using automatic ASCII/compiled dispatch.
+    pub fn parse_scene_auto(&self) -> ModelResult<NwnScene> {
+        lower_semantic_model_to_scene(&self.parse_semantic_auto()?)
+    }
 }
 
 /// Parses and lowers an engine-neutral scene from ASCII MDL text.
 pub fn parse_scene_model(text: &str) -> ModelResult<NwnScene> {
     lower_semantic_model_to_scene(&parse_semantic_model(text)?)
+}
+
+/// Parses and lowers an engine-neutral scene from raw MDL bytes using
+/// automatic ASCII/compiled dispatch.
+pub fn parse_scene_model_auto(bytes: &[u8]) -> ModelResult<NwnScene> {
+    lower_semantic_model_to_scene(&parse_semantic_model_auto(bytes)?)
 }
 
 /// Reads and lowers an engine-neutral scene from `reader`.
@@ -418,11 +430,27 @@ pub fn read_scene_model<R: Read>(reader: &mut R) -> ModelResult<NwnScene> {
     lower_semantic_model_to_scene(&semantic)
 }
 
+/// Reads and lowers an engine-neutral scene from `reader` using automatic
+/// ASCII/compiled dispatch.
+#[instrument(level = "debug", skip_all, err)]
+pub fn read_scene_model_auto<R: Read>(reader: &mut R) -> ModelResult<NwnScene> {
+    let semantic = read_semantic_model_auto(reader)?;
+    lower_semantic_model_to_scene(&semantic)
+}
+
 /// Reads and lowers an engine-neutral scene from disk.
 #[instrument(level = "debug", skip_all, err, fields(path = %path.as_ref().display()))]
 pub fn read_scene_model_from_file(path: impl AsRef<Path>) -> ModelResult<NwnScene> {
     let mut file = File::open(path.as_ref())?;
     read_scene_model(&mut file)
+}
+
+/// Reads and lowers an engine-neutral scene from disk using automatic
+/// ASCII/compiled dispatch.
+#[instrument(level = "debug", skip_all, err, fields(path = %path.as_ref().display()))]
+pub fn read_scene_model_auto_from_file(path: impl AsRef<Path>) -> ModelResult<NwnScene> {
+    let mut file = File::open(path.as_ref())?;
+    read_scene_model_auto(&mut file)
 }
 
 /// Reads and lowers an engine-neutral scene from a [`Res`].
@@ -439,6 +467,21 @@ pub fn read_scene_model_from_res(res: &Res, use_cache: bool) -> ModelResult<NwnS
     lower_semantic_model_to_scene(&semantic)
 }
 
+/// Reads and lowers an engine-neutral scene from a [`Res`] using automatic
+/// ASCII/compiled dispatch.
+#[instrument(level = "debug", skip_all, err, fields(resref = %res.resref(), use_cache))]
+pub fn read_scene_model_auto_from_res(res: &Res, use_cache: bool) -> ModelResult<NwnScene> {
+    if res.resref().res_type() != MODEL_RES_TYPE {
+        return Err(ModelError::msg(format!(
+            "expected mdl resource, got {}",
+            res.resref()
+        )));
+    }
+
+    let semantic = crate::read_semantic_model_auto_from_res(res, use_cache)?;
+    lower_semantic_model_to_scene(&semantic)
+}
+
 /// Lowers a semantic MDL model into an engine-neutral scene representation.
 pub fn lower_semantic_model_to_scene(model: &SemanticModel) -> ModelResult<NwnScene> {
     let mut diagnostics = model.diagnostics.clone();
@@ -449,6 +492,10 @@ pub fn lower_semantic_model_to_scene(model: &SemanticModel) -> ModelResult<NwnSc
         .enumerate()
         .map(|(index, node)| (node.name.to_ascii_lowercase(), index))
         .collect::<BTreeMap<_, _>>();
+    let node_names = node_name_to_index
+        .keys()
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>();
 
     let mut nodes = Vec::with_capacity(model.nodes.len());
     let mut meshes = Vec::new();
@@ -456,11 +503,28 @@ pub fn lower_semantic_model_to_scene(model: &SemanticModel) -> ModelResult<NwnSc
     let mut base_mesh_layouts = BTreeMap::new();
 
     for (node_index, node) in model.nodes.iter().enumerate() {
-        let parent = node.parent.as_ref().and_then(|parent| {
-            node_name_to_index
-                .get(&parent.to_ascii_lowercase())
-                .copied()
-        });
+        let parent = node
+            .parent
+            .as_ref()
+            .and_then(|parent| {
+                node_name_to_index
+                    .get(&parent.to_ascii_lowercase())
+                    .copied()
+            })
+            .and_then(|parent_index| {
+                if parent_index == node_index {
+                    diagnostics.push(ModelDiagnostic {
+                        kind:    ModelDiagnosticKind::MissingParent,
+                        message: format!(
+                            "scene node {} resolved its parent to itself; treating it as a root",
+                            node.name
+                        ),
+                    });
+                    None
+                } else {
+                    Some(parent_index)
+                }
+            });
 
         if let Some(mesh) = &node.mesh {
             base_mesh_layouts.insert(
@@ -478,7 +542,7 @@ pub fn lower_semantic_model_to_scene(model: &SemanticModel) -> ModelResult<NwnSc
 
         let mesh_index = node.mesh.as_ref().map(|mesh| {
             let material_index = materials.len();
-            materials.push(lower_material(&node.material, node_index));
+            materials.push(lower_material(&node.material, node_index, &node_names));
             let lowered_mesh = lower_mesh(mesh, node_index, node.name.clone(), material_index);
             let mesh_index = meshes.len();
             meshes.push(lowered_mesh);
@@ -541,16 +605,24 @@ fn lower_transform(
     }
 }
 
-fn lower_material(material: &SemanticMaterial, source_node: usize) -> NwnMaterial {
+fn lower_material(
+    material: &SemanticMaterial,
+    source_node: usize,
+    node_names: &std::collections::BTreeSet<String>,
+) -> NwnMaterial {
     let mut textures = Vec::new();
-    if let Some(bitmap) = &material.bitmap {
+    if let Some(bitmap) = &material.bitmap
+        && let Some(name) = normalize_texture_name(bitmap, node_names)
+    {
         textures.push(NwnTextureRef {
             slot: NwnTextureSlot::Bitmap,
-            name: bitmap.clone(),
+            name,
         });
     }
     for texture in &material.textures {
-        textures.push(lower_texture_ref(texture));
+        if let Some(texture) = lower_texture_ref(texture, node_names) {
+            textures.push(texture);
+        }
     }
 
     NwnMaterial {
@@ -574,11 +646,31 @@ fn lower_material(material: &SemanticMaterial, source_node: usize) -> NwnMateria
     }
 }
 
-fn lower_texture_ref(binding: &SemanticTextureBinding) -> NwnTextureRef {
-    NwnTextureRef {
+fn lower_texture_ref(
+    binding: &SemanticTextureBinding,
+    node_names: &std::collections::BTreeSet<String>,
+) -> Option<NwnTextureRef> {
+    let name = normalize_texture_name(&binding.name, node_names)?;
+    Some(NwnTextureRef {
         slot: NwnTextureSlot::Texture(binding.index),
-        name: binding.name.clone(),
+        name,
+    })
+}
+
+fn normalize_texture_name(
+    name: &str,
+    node_names: &std::collections::BTreeSet<String>,
+) -> Option<String> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("null") {
+        return None;
     }
+
+    if node_names.contains(&trimmed.to_ascii_lowercase()) {
+        return None;
+    }
+
+    Some(trimmed.to_string())
 }
 
 fn lower_mesh(
@@ -964,10 +1056,17 @@ struct BaseMeshLayout {
 mod tests {
     use std::path::PathBuf;
 
-    use crate::{NwnPropertyValue, NwnTextureSlot, parse_scene_model, read_scene_model_from_file};
+    use crate::{
+        NwnPropertyValue, NwnTextureSlot, parse_scene_model, read_scene_model_auto_from_file,
+        read_scene_model_from_file,
+    };
 
     fn fixture_path() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/testing/test.mdl")
+    }
+
+    fn compiled_fixture_path() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/testing/a_ba2_compiled.mdl")
     }
 
     #[test]
@@ -1030,6 +1129,37 @@ mod tests {
         assert!(rootdummy.target_node.is_some());
         assert_eq!(rootdummy.transform.translation_keys.len(), 5);
         assert_eq!(rootdummy.transform.rotation_axis_angle_keys.len(), 2);
+    }
+
+    #[test]
+    fn compiled_fixture_lowers_to_scene_graph_and_tracks() {
+        let scene =
+            read_scene_model_auto_from_file(compiled_fixture_path()).unwrap_or_else(|error| {
+                panic!("read compiled scene fixture: {error}");
+            });
+
+        assert_eq!(scene.name, "a_ba2");
+        assert_eq!(scene.supermodel.as_deref(), Some("a_ba"));
+        assert_eq!(scene.nodes.len(), 57);
+        assert_eq!(scene.animations.len(), 20);
+
+        let torso = scene.node("torso_g").unwrap_or_else(|| {
+            panic!("missing compiled torso_g scene node");
+        });
+        let parent_name = torso
+            .parent
+            .and_then(|index| scene.nodes.get(index))
+            .map(|node| node.name.as_str());
+        assert_eq!(parent_name, Some("rootdummy"));
+        assert!(torso.mesh.is_some());
+
+        let salute = scene.animation("salute").unwrap_or_else(|| {
+            panic!("missing compiled salute animation");
+        });
+        assert_eq!(salute.length, 0.5);
+        assert_eq!(salute.transition_time, 0.4);
+        assert_eq!(salute.root_name.as_deref(), Some("torso_g"));
+        assert!(salute.node_track("rootdummy").is_some());
     }
 
     #[test]

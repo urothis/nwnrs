@@ -1730,7 +1730,7 @@ mod tests {
                 return Err(std::io::Error::other(format!(
                     "expected global declaration, got {other:?}"
                 ))
-                .into())
+                .into());
             }
         }
         Ok(())
@@ -1749,7 +1749,7 @@ mod tests {
                 return Err(std::io::Error::other(format!(
                     "expected struct declaration, got global {decl:?}"
                 ))
-                .into())
+                .into());
             }
             Some(TopLevelItem::Struct(def)) => {
                 assert_eq!(def.name, "Foo");
@@ -1768,7 +1768,7 @@ mod tests {
                 return Err(std::io::Error::other(format!(
                     "expected struct declaration, got {other:?}"
                 ))
-                .into())
+                .into());
             }
         }
         Ok(())
@@ -1787,7 +1787,7 @@ mod tests {
             other => {
                 return Err(
                     std::io::Error::other(format!("expected function, got {other:?}")).into(),
-                )
+                );
             }
         };
         let body = function
@@ -1800,7 +1800,7 @@ mod tests {
                 return Err(std::io::Error::other(format!(
                     "expected expression statement, got {other:?}"
                 ))
-                .into())
+                .into());
             }
         };
 
@@ -1812,7 +1812,7 @@ mod tests {
                 return Err(std::io::Error::other(format!(
                     "expected assignment expression, got {other:?}"
                 ))
-                .into())
+                .into());
             }
         }
         Ok(())
@@ -1833,7 +1833,7 @@ mod tests {
             other => {
                 return Err(
                     std::io::Error::other(format!("expected function, got {other:?}")).into(),
-                )
+                );
             }
         };
         let body = function
@@ -1860,7 +1860,7 @@ mod tests {
             other => {
                 return Err(
                     std::io::Error::other(format!("expected function, got {other:?}")).into(),
-                )
+                );
             }
         };
         let body = function
@@ -1879,7 +1879,7 @@ mod tests {
             other => {
                 return Err(
                     std::io::Error::other(format!("expected declaration, got {other:?}")).into(),
-                )
+                );
             }
         }
         Ok(())
@@ -1904,7 +1904,7 @@ mod tests {
             other => {
                 return Err(
                     std::io::Error::other(format!("expected parse error, got {other:?}")).into(),
-                )
+                );
             }
         }
         Ok(())
@@ -1958,7 +1958,7 @@ int helper = UTIL_PLUS;
             other => {
                 return Err(
                     std::io::Error::other(format!("expected function, got {other:?}")).into(),
-                )
+                );
             }
         };
         let default = function

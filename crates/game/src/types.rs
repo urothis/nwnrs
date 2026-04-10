@@ -11,12 +11,7 @@ pub const GFF_EXTENSIONS: &[&str] = &[
     "fac", "dlg", "itp", "bic", "jrl", "gff", "gui",
 ];
 /// KEY basenames loaded by default when no explicit key list is supplied.
-pub const DEFAULT_KEYFILES: &[&str] = &[
-    "nwnrs_base",
-    "nwnrs_base_loc",
-    "nwnrs_retail",
-    "nwnrs_retail_loc",
-];
+pub const DEFAULT_KEYFILES: &[&str] = &["nwn_base", "nwn_base_loc", "nwn_retail", "nwn_retail_loc"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(dead_code)]

@@ -319,7 +319,7 @@ fn parse_dds_bytes(bytes: &[u8]) -> DdsResult<DdsTexture> {
         _ => {
             return Err(DdsError::msg(format!(
                 "unsupported NWN DDS channel count: {channels}"
-            )))
+            )));
         }
     };
 
