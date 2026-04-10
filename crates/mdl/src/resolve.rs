@@ -287,7 +287,7 @@ fn resolve_scene_texture_ref_internal(
             SceneTextureResolution::Resolved(hit) => return SceneTextureResolution::Resolved(hit),
             SceneTextureResolution::Ignored => {}
             SceneTextureResolution::Missing(miss) => {
-                merge_attempted(&mut attempted, miss.attempted)
+                merge_attempted(&mut attempted, miss.attempted);
             }
         }
     }
@@ -365,7 +365,7 @@ fn resolve_model_backed_texture_candidate(
             }
             SceneTextureResolution::Ignored => {}
             SceneTextureResolution::Missing(miss) => {
-                merge_attempted(&mut attempted, miss.attempted)
+                merge_attempted(&mut attempted, miss.attempted);
             }
         }
     }
