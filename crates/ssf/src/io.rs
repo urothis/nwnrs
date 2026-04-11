@@ -3,7 +3,9 @@ use std::io::{self, Read, Seek, SeekFrom, Write};
 use nwnrs_util::prelude::*;
 use tracing::{debug, instrument};
 
-use crate::{ENTRY_DATA_SIZE, HEADER_MAGIC, HEADER_VERSION, TABLE_OFFSET, prelude::*};
+use crate::{
+    ENTRY_DATA_SIZE, HEADER_MAGIC, HEADER_VERSION, TABLE_OFFSET, decode_resref, prelude::*,
+};
 
 /// Reads an `SSF` document from `reader`.
 #[instrument(level = "debug", skip_all, err)]
@@ -46,8 +48,11 @@ pub fn read_ssf<R: Read + Seek>(reader: &mut R) -> io::Result<SsfRoot> {
         reader.seek(SeekFrom::Start(u64::from(offset)))?;
         let raw_resref = read_bytes_or_err(reader, 16)?;
         let strref = read_u32(reader)?;
+        let mut raw_resref_bytes = [0_u8; 16];
+        raw_resref_bytes.copy_from_slice(&raw_resref);
 
         Ok(SsfEntry {
+            raw_resref: raw_resref_bytes,
             resref: decode_resref(&raw_resref),
             strref,
         })
@@ -84,19 +89,7 @@ pub fn write_ssf<W: Write>(writer: &mut W, ssf: &SsfRoot) -> io::Result<()> {
     }
 
     for entry in &ssf.entries {
-        expect(
-            entry.resref.len() <= 16,
-            format!("resref {:?} exceeds 16 bytes", entry.resref),
-        )
-        .map_err(invalid_data)?;
-
-        let mut padded = [0_u8; 16];
-        let bytes = entry.resref.as_bytes();
-        let slot = padded
-            .get_mut(..bytes.len())
-            .ok_or_else(|| invalid_message("SSF resref padding overflow"))?;
-        slot.copy_from_slice(bytes);
-        writer.write_all(&padded)?;
+        writer.write_all(&entry.stored_resref_bytes()?)?;
         writer.write_all(&entry.strref.to_le_bytes())?;
     }
 
@@ -110,11 +103,6 @@ fn read_u32<R: Read>(reader: &mut R) -> io::Result<u32> {
     Ok(u32::from_le_bytes(bytes))
 }
 
-fn decode_resref(raw: &[u8]) -> String {
-    let end = raw.iter().position(|byte| *byte == 0).unwrap_or(raw.len());
-    String::from_utf8_lossy(raw.get(..end).unwrap_or(&[])).to_string()
-}
-
 fn invalid_data(error: impl std::error::Error + Send + Sync + 'static) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, error)
 }
@@ -125,4 +113,79 @@ fn invalid_message(message: impl Into<String>) -> io::Error {
 
 fn to_u32(value: usize, what: &str) -> io::Result<u32> {
     u32::try_from(value).map_err(|_error| invalid_message(format!("{what} exceeds 32-bit range")))
+}
+
+#[allow(clippy::panic)]
+#[cfg(test)]
+mod tests {
+    use std::io::Cursor;
+
+    use crate::{SsfEntry, new_ssf, read_ssf, write_ssf};
+
+    #[test]
+    fn ssf_preserves_raw_resref_bytes_when_only_strref_changes() {
+        let mut original = Vec::new();
+        original.extend_from_slice(b"SSF ");
+        original.extend_from_slice(b"V1.0");
+        original.extend_from_slice(&1_u32.to_le_bytes());
+        original.extend_from_slice(&40_u32.to_le_bytes());
+        original.extend_from_slice(&[0_u8; 24]);
+        original.extend_from_slice(&44_u32.to_le_bytes());
+        let mut raw = [0_u8; 16];
+        if let Some(prefix) = raw.get_mut(..5) {
+            prefix.copy_from_slice(b"HELLO");
+        } else {
+            panic!("fixture resref slice should be in bounds");
+        }
+        original.extend_from_slice(&raw);
+        original.extend_from_slice(&7_u32.to_le_bytes());
+
+        let mut cursor = Cursor::new(original.clone());
+        let mut ssf = match read_ssf(&mut cursor) {
+            Ok(ssf) => ssf,
+            Err(error) => panic!("read ssf: {error}"),
+        };
+        if let Some(entry) = ssf.entries.get_mut(0) {
+            entry.strref = 9;
+        } else {
+            panic!("fixture should contain one SSF entry");
+        }
+
+        let mut encoded = Vec::new();
+        if let Err(error) = write_ssf(&mut encoded, &ssf) {
+            panic!("write ssf: {error}");
+        }
+
+        assert_eq!(
+            encoded.get(..44),
+            original.get(..44),
+            "header prefix should exist"
+        );
+        assert_eq!(
+            encoded.get(44..60),
+            original.get(44..60),
+            "resref should exist"
+        );
+        assert_eq!(encoded.get(60..64), Some(&9_u32.to_le_bytes()[..]));
+    }
+
+    #[test]
+    fn ssf_new_entry_uses_canonical_padding() {
+        let mut ssf = new_ssf();
+        ssf.entries.push(SsfEntry::new("hello", 7));
+
+        let mut encoded = Vec::new();
+        if let Err(error) = write_ssf(&mut encoded, &ssf) {
+            panic!("write ssf: {error}");
+        }
+
+        assert_eq!(encoded.get(44..49), Some(&b"hello"[..]));
+        assert!(
+            encoded
+                .get(49..60)
+                .unwrap_or(&[])
+                .iter()
+                .all(|byte| *byte == 0)
+        );
+    }
 }

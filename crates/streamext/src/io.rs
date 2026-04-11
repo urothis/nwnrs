@@ -181,3 +181,49 @@ where
         io::Error::other("internal error: collected array length did not match requested size")
     })
 }
+
+#[allow(clippy::panic)]
+#[cfg(test)]
+mod tests {
+    use std::io::{Cursor, Read, Write};
+
+    use crate::{
+        read_fixed_value, read_size_prefixed_seq, write_size_prefixed_seq,
+        write_size_prefixed_string,
+    };
+
+    #[test]
+    fn size_prefixed_sequences_roundtrip() {
+        let mut bytes = Vec::new();
+        if let Err(error) =
+            write_size_prefixed_seq::<u16, _, _, _>(&mut bytes, &[1_u8, 2, 3], |w, v| {
+                w.write_all(&[*v])
+            })
+        {
+            panic!("write seq: {error}");
+        }
+
+        let values = match read_size_prefixed_seq::<u16, _, _, _>(&mut Cursor::new(bytes), |r| {
+            let mut byte = [0_u8; 1];
+            r.read_exact(&mut byte)?;
+            Ok(byte[0])
+        }) {
+            Ok(values) => values,
+            Err(error) => panic!("read seq: {error}"),
+        };
+        assert_eq!(values, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn fixed_value_reports_mismatch() {
+        let mut bytes = Vec::new();
+        if let Err(error) = write_size_prefixed_string::<u8, _>(&mut bytes, "ok") {
+            panic!("write string: {error}");
+        }
+        let error = match read_fixed_value(&mut Cursor::new(bytes), b"no") {
+            Ok(()) => panic!("fixed value mismatch should fail"),
+            Err(error) => error,
+        };
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+    }
+}

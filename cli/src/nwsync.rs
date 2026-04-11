@@ -1,9 +1,13 @@
 use std::{
+    collections::HashSet,
     fs,
+    io::Cursor,
     path::{Path, PathBuf},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use nwnrs::prelude::{resman::ResContainer, *};
+use reqwest::Url;
 use tracing::{debug, info, instrument};
 
 use crate::{
@@ -211,7 +215,7 @@ fn collect_files_recursively(
 pub(crate) fn run_nwsync_prune(cmd: NwsyncPruneCmd) -> Result<(), String> {
     info!("pruning nwsync repository");
 
-    let nwsync = resnwsync::open_nwsync(&cmd.repository).map_err(|error| {
+    let mut nwsync = resnwsync::open_nwsync(&cmd.repository).map_err(|error| {
         format!(
             "failed to open nwsync repo {}: {error}",
             cmd.repository.display()
@@ -270,14 +274,14 @@ pub(crate) fn run_nwsync_prune(cmd: NwsyncPruneCmd) -> Result<(), String> {
         return Ok(());
     }
 
-    // TODO: Implement actual removal from database
-    // This would require adding removal methods to nwnrs_resnwsync
-    // For now, just report what would be removed
+    let deleted = nwsync
+        .delete_resref_data(&unreferenced_sha1s)
+        .map_err(|error| format!("failed to prune {}: {error}", cmd.repository.display()))?;
     for sha1 in &unreferenced_sha1s {
-        write_stdout_line(&format!("would remove: {sha1}"))?;
+        write_stdout_line(&format!("removed: {sha1}"))?;
     }
 
-    info!("prune operation not yet fully implemented - dry run shown above");
+    info!(deleted, "prune completed");
     Ok(())
 }
 
@@ -290,14 +294,232 @@ pub(crate) fn run_nwsync_prune(cmd: NwsyncPruneCmd) -> Result<(), String> {
 pub(crate) fn run_nwsync_fetch(cmd: NwsyncFetchCmd) -> Result<(), String> {
     info!("fetching nwsync manifest");
 
-    // For now, just show what would be done
-    // TODO: Implement HTTP download and aria2c integration
+    let output = cmd.output.unwrap_or_else(|| PathBuf::from("."));
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|error| format!("failed to initialize async runtime: {error}"))?;
+    let summary = runtime.block_on(fetch_manifest_repository(&cmd.url, &output))?;
 
-    write_stdout_line(&format!("would fetch manifest from: {}", cmd.url))?;
-    if let Some(output) = &cmd.output {
-        write_stdout_line(&format!("would save to: {}", output.display()))?;
+    write_stdout_line(&format!("manifest {}", summary.manifest_sha1))?;
+    write_stdout_line(&format!("downloaded {}", summary.downloaded))?;
+    write_stdout_line(&format!("skipped {}", summary.skipped))?;
+    write_stdout_line(&format!("output {}", output.display()))?;
+    Ok(())
+}
+
+struct FetchSummary {
+    manifest_sha1: checksums::SecureHash,
+    downloaded:    usize,
+    skipped:       usize,
+}
+
+async fn fetch_manifest_repository(url: &str, output: &Path) -> Result<FetchSummary, String> {
+    let manifest_url = Url::parse(url).map_err(|error| format!("invalid url {url}: {error}"))?;
+    let base_url = manifest_repository_base_url(&manifest_url)?;
+    let client = reqwest::Client::builder()
+        .build()
+        .map_err(|error| format!("failed to build http client: {error}"))?;
+
+    let manifest_bytes = fetch_bytes(&client, &manifest_url).await?;
+    let manifest_sha1 = checksums::secure_hash(&manifest_bytes);
+    if let Some(url_sha1) = manifest_sha1_from_url(&manifest_url)?
+        && url_sha1 != manifest_sha1
+    {
+        return Err(format!(
+            "manifest sha1 in url ({url_sha1}) does not match downloaded payload ({manifest_sha1})"
+        ));
     }
 
-    info!("fetch operation not yet implemented");
-    Ok(())
+    let manifest = nwsync::read_manifest(&mut Cursor::new(&manifest_bytes))
+        .map_err(|error| format!("failed to parse manifest {manifest_url}: {error}"))?;
+    let hash_tree_depth = manifest
+        .hash_tree_depth()
+        .map_err(|error| format!("failed to read manifest hash tree depth: {error}"))?;
+
+    let mut repo = resnwsync::open_or_create_nwsync(output)
+        .map_err(|error| format!("failed to open output repo {}: {error}", output.display()))?;
+
+    let mut seen = HashSet::new();
+    let mut downloaded = 0_usize;
+    let mut skipped = 0_usize;
+    for entry in manifest.entries() {
+        if !seen.insert(entry.sha1) {
+            continue;
+        }
+
+        if repo.contains_resref_data(entry.sha1) {
+            skipped += 1;
+            continue;
+        }
+
+        let blob_url = manifest_entry_data_url(&base_url, entry.sha1, hash_tree_depth)?;
+        let blob = fetch_bytes(&client, &blob_url).await?;
+        let inserted = repo
+            .put_resref_data(entry.sha1, &blob)
+            .map_err(|error| format!("failed to store {blob_url}: {error}"))?;
+        if inserted {
+            downloaded += 1;
+        } else {
+            skipped += 1;
+        }
+    }
+
+    let created_at = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let created_at = i64::try_from(created_at).unwrap_or(i64::MAX);
+    repo.put_manifest(manifest_sha1, &manifest, created_at)
+        .map_err(|error| format!("failed to store manifest {manifest_sha1}: {error}"))?;
+
+    Ok(FetchSummary {
+        manifest_sha1,
+        downloaded,
+        skipped,
+    })
+}
+
+async fn fetch_bytes(client: &reqwest::Client, url: &Url) -> Result<Vec<u8>, String> {
+    client
+        .get(url.clone())
+        .send()
+        .await
+        .map_err(|error| format!("failed to fetch {url}: {error}"))?
+        .error_for_status()
+        .map_err(|error| format!("request failed for {url}: {error}"))?
+        .bytes()
+        .await
+        .map(|bytes| bytes.to_vec())
+        .map_err(|error| format!("failed to read response body for {url}: {error}"))
+}
+
+fn manifest_repository_base_url(manifest_url: &Url) -> Result<Url, String> {
+    let segments = manifest_url
+        .path_segments()
+        .ok_or_else(|| format!("url has no path segments: {manifest_url}"))?
+        .filter(|segment| !segment.is_empty())
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    if segments.is_empty() {
+        return Err(format!("url has no manifest path: {manifest_url}"));
+    }
+
+    let trim = if segments.len() >= 2
+        && matches!(
+            segments.get(segments.len() - 2).map(String::as_str),
+            Some("manifest") | Some("manifests")
+        ) {
+        2
+    } else {
+        1
+    };
+
+    let mut base = manifest_url.clone();
+    base.set_query(None);
+    base.set_fragment(None);
+    {
+        let mut parts = base
+            .path_segments_mut()
+            .map_err(|error| format!("cannot derive base path from {manifest_url}: {error:?}"))?;
+        parts.clear();
+        let keep = segments.len() - trim;
+        for segment in segments.iter().take(keep) {
+            parts.push(segment);
+        }
+    }
+    Ok(base)
+}
+
+fn manifest_sha1_from_url(url: &Url) -> Result<Option<checksums::SecureHash>, String> {
+    let Some(last) = url
+        .path_segments()
+        .and_then(|mut segments| segments.rfind(|segment| !segment.is_empty()))
+    else {
+        return Ok(None);
+    };
+
+    match last.parse() {
+        Ok(value) => Ok(Some(value)),
+        Err(_error) => Ok(None),
+    }
+}
+
+fn manifest_entry_data_url(
+    base_url: &Url,
+    sha1: checksums::SecureHash,
+    hash_tree_depth: usize,
+) -> Result<Url, String> {
+    let sha1_hex = sha1.to_string();
+    let mut url = base_url.clone();
+    let base_segments = base_url
+        .path_segments()
+        .ok_or_else(|| format!("cannot build data url from {base_url}"))?
+        .filter(|segment| !segment.is_empty())
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    {
+        let mut parts = url
+            .path_segments_mut()
+            .map_err(|error| format!("cannot build data url from {base_url}: {error:?}"))?;
+        parts.clear();
+        for segment in &base_segments {
+            parts.push(segment);
+        }
+        parts.push("data");
+        parts.push("sha1");
+        for index in 0..hash_tree_depth {
+            let start = index * 2;
+            let prefix = sha1_hex.get(start..start + 2).ok_or_else(|| {
+                format!("sha1 too short for hash tree depth {hash_tree_depth}: {sha1_hex}")
+            })?;
+            parts.push(prefix);
+        }
+        parts.push(&sha1_hex);
+    }
+    Ok(url)
+}
+
+#[allow(clippy::panic)]
+#[cfg(test)]
+mod tests {
+    use nwnrs::prelude::checksums::parse_secure_hash;
+    use reqwest::Url;
+
+    use super::{manifest_entry_data_url, manifest_repository_base_url};
+
+    #[test]
+    fn manifest_base_url_strips_manifest_path() {
+        let url = match Url::parse(
+            "https://example.com/nwsync/manifests/0123456789012345678901234567890123456789",
+        ) {
+            Ok(value) => value,
+            Err(error) => panic!("parse url: {error}"),
+        };
+        let base = match manifest_repository_base_url(&url) {
+            Ok(value) => value,
+            Err(error) => panic!("base url: {error}"),
+        };
+        assert_eq!(base.as_str(), "https://example.com/nwsync");
+    }
+
+    #[test]
+    fn manifest_data_url_uses_hash_tree_layout() {
+        let base = match Url::parse("https://example.com/nwsync/") {
+            Ok(value) => value,
+            Err(error) => panic!("parse base: {error}"),
+        };
+        let sha1 = match parse_secure_hash("0123456789012345678901234567890123456789") {
+            Ok(value) => value,
+            Err(error) => panic!("parse sha1: {error}"),
+        };
+        let url = match manifest_entry_data_url(&base, sha1, 2) {
+            Ok(value) => value,
+            Err(error) => panic!("data url: {error}"),
+        };
+        assert_eq!(
+            url.as_str(),
+            "https://example.com/nwsync/data/sha1/01/23/0123456789012345678901234567890123456789"
+        );
+    }
 }

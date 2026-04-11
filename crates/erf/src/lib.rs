@@ -18,7 +18,7 @@ pub use types::*;
 /// Common imports for consumers of this crate.
 pub mod prelude {
     pub use crate::{
-        Erf, ErfError, ErfResult, ErfVersion, read_erf, read_erf_from_file, read_erf_shared,
-        write_erf,
+        Erf, ErfError, ErfResult, ErfVersion, ErfWriteOptions, read_erf, read_erf_from_file,
+        read_erf_shared, write_erf, write_erf_archive, write_erf_with_options,
     };
 }

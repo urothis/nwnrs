@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, hash_map::RandomState},
     fmt,
     io::{self, Cursor},
     path::{Path, PathBuf},
@@ -10,9 +10,10 @@ use indexmap::IndexSet;
 use nwnrs_checksums::prelude::*;
 use nwnrs_compressedbuf::prelude::*;
 use nwnrs_exo::prelude::*;
+use nwnrs_nwsync::Manifest;
 use nwnrs_resman::prelude::*;
 use nwnrs_resref::prelude::*;
-use rusqlite::{Connection, OptionalExtension};
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 
 /// The compressed-buffer magic used by NWSync shards.
 pub const NWSYNC_COMPRESSED_BUF_MAGIC_STR: &str = "NSYC";
@@ -98,6 +99,7 @@ impl From<CompressedBufError> for ResNWSyncError {
 pub type ResNWSyncResult<T> = Result<T, ResNWSyncError>;
 
 type ShardId = i64;
+pub(crate) const DEFAULT_SHARD_ID: ShardId = 1;
 /// SHA-1 identifier for a manifest row.
 pub type ManifestSha1 = SecureHash;
 /// SHA-1 identifier for a resource payload row.
@@ -147,6 +149,11 @@ impl NWSync {
         self.shardmap.keys().copied().collect()
     }
 
+    /// Returns whether the repository already stores a payload for `sha1`.
+    pub fn contains_resref_data(&self, sha1: ResRefSha1) -> bool {
+        self.shardmap.contains_key(&sha1)
+    }
+
     /// Reads a resource payload by hash, decompressing `NSYC` buffers when
     /// needed.
     pub fn read_resref_data(&self, sha1: ResRefSha1) -> ResNWSyncResult<Vec<u8>> {
@@ -187,6 +194,88 @@ impl NWSync {
             .ok_or_else(|| ResNWSyncError::msg(format!("unknown shard: {shard_id}")))?;
         Ok(Connection::open(&shard.path)?)
     }
+
+    /// Writes a payload blob to the default shard when it is not already
+    /// present.
+    pub fn put_resref_data(&mut self, sha1: ResRefSha1, data: &[u8]) -> ResNWSyncResult<bool> {
+        if self.shardmap.contains_key(&sha1) {
+            return Ok(false);
+        }
+
+        let mut conn = self.shard_connection(DEFAULT_SHARD_ID)?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        tx.execute(
+            "insert or ignore into resrefs (sha1, data) values (?, ?)",
+            params![sha1.to_string(), data],
+        )?;
+        tx.commit()?;
+
+        self.shardmap.insert(sha1, DEFAULT_SHARD_ID);
+        Ok(true)
+    }
+
+    /// Stores or replaces manifest metadata and resource mappings.
+    pub fn put_manifest(
+        &self,
+        manifest_sha1: ManifestSha1,
+        manifest: &Manifest,
+        created_at: i64,
+    ) -> ResNWSyncResult<()> {
+        let mut conn = self.meta_connection()?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        tx.execute(
+            "insert into manifests (sha1, created_at) values (?, ?)
+             on conflict(sha1) do update set created_at = excluded.created_at",
+            params![manifest_sha1.to_string(), created_at],
+        )?;
+        tx.execute(
+            "delete from manifest_resrefs where manifest_sha1 = ?",
+            params![manifest_sha1.to_string()],
+        )?;
+        {
+            let mut stmt = tx.prepare(
+                "insert into manifest_resrefs (manifest_sha1, resref, restype, resref_sha1)
+                 values (?, ?, ?, ?)",
+            )?;
+            for entry in manifest.entries() {
+                stmt.execute(params![
+                    manifest_sha1.to_string(),
+                    entry.resref.res_ref(),
+                    i64::from(entry.resref.res_type().0),
+                    entry.sha1.to_string(),
+                ])?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Deletes payload blobs by SHA-1 and returns the number of deleted rows.
+    pub fn delete_resref_data(&mut self, sha1s: &[ResRefSha1]) -> ResNWSyncResult<usize> {
+        let mut grouped = HashMap::<ShardId, Vec<ResRefSha1>>::new();
+        for sha1 in sha1s {
+            if let Some(shard_id) = self.shardmap.get(sha1).copied() {
+                grouped.entry(shard_id).or_default().push(*sha1);
+            }
+        }
+
+        let mut deleted = 0_usize;
+        for (shard_id, hashes) in grouped {
+            let mut conn = self.shard_connection(shard_id)?;
+            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            for sha1 in &hashes {
+                deleted += tx.execute(
+                    "delete from resrefs where sha1 = ?",
+                    params![sha1.to_string()],
+                )?;
+            }
+            tx.commit()?;
+            for sha1 in hashes {
+                self.shardmap.remove(&sha1);
+            }
+        }
+        Ok(deleted)
+    }
 }
 
 /// A single NWSync manifest exposed as a resource container.
@@ -195,7 +284,7 @@ pub struct ResNWSyncManifest {
     pub(crate) nwsync:        NWSync,
     pub(crate) manifest_sha1: ManifestSha1,
     pub(crate) mtime:         SystemTime,
-    pub(crate) contents:      IndexSet<ResRef>,
+    pub(crate) contents:      IndexSet<ResRef, RandomState>,
     pub(crate) sha1map:       HashMap<ResRef, ResRefSha1>,
 }
 
@@ -265,6 +354,7 @@ impl ResContainer for ResNWSyncManifest {
             data.len() as i64,
             0,
             ExoResFileCompressionType::None,
+            None,
             data.len(),
             sha1,
         ))

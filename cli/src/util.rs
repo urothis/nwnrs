@@ -10,12 +10,14 @@ use nwnrs::prelude::*;
 
 pub(crate) const RESOURCE_METADATA_FILENAME: &str = "resource.json";
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Kind {
     Gff,
     Ssf,
     Tlk,
     TwoDa,
+    Model,
+    Texture,
     Erf,
     Key,
 }
@@ -30,6 +32,8 @@ pub(crate) fn detect_kind(path: &Path) -> Option<Kind> {
     Some(match extension.as_str() {
         "gff" | "are" | "bic" | "dlg" | "git" | "ifo" | "itp" | "jrl" | "utc" | "utd" | "ute"
         | "uti" | "utm" | "utp" | "uts" | "utt" | "utw" => Kind::Gff,
+        "mdl" => Kind::Model,
+        "dds" | "plt" | "tga" => Kind::Texture,
         "ssf" => Kind::Ssf,
         "tlk" => Kind::Tlk,
         "2da" => Kind::TwoDa,
@@ -37,12 +41,6 @@ pub(crate) fn detect_kind(path: &Path) -> Option<Kind> {
         "key" => Kind::Key,
         _ => return None,
     })
-}
-
-pub(crate) fn is_gff_extension(extension: &str) -> bool {
-    game::GFF_EXTENSIONS
-        .iter()
-        .any(|candidate| candidate.eq_ignore_ascii_case(extension))
 }
 
 pub(crate) fn unpacked_raw_target(destination: &Path, file_name: &str, extension: &str) -> PathBuf {
@@ -173,31 +171,6 @@ pub(crate) fn entry_is_file(path: &Path, no_symlinks: bool) -> Result<bool, Stri
         return Ok(path.is_file());
     }
     Ok(meta.is_file())
-}
-
-pub(crate) fn collect_key_bif_entries(
-    dir: &Path,
-    no_symlinks: bool,
-) -> Result<Vec<resref::ResRef>, String> {
-    let mut entries = Vec::new();
-    for entry in sorted_dir_entries(dir)? {
-        if !entry_is_file(&entry.path, no_symlinks)? {
-            continue;
-        }
-        let file_name = entry.path.file_name().and_then(OsStr::to_str).unwrap_or("");
-        let rr = resref::new_resolved_res_ref_from_filename(file_name)
-            .map_err(|error| format!("invalid source file {}: {error}", entry.path.display()))?;
-        entries.push(rr.into());
-    }
-    entries.sort_by(|lhs: &resref::ResRef, rhs: &resref::ResRef| {
-        lhs.resolve()
-            .map(|resolved| resolved.to_file().to_ascii_uppercase())
-            .cmp(
-                &rhs.resolve()
-                    .map(|resolved| resolved.to_file().to_ascii_uppercase()),
-            )
-    });
-    Ok(entries)
 }
 
 pub(crate) fn infer_erf_type(path: &Path, explicit: Option<&str>) -> Result<String, String> {

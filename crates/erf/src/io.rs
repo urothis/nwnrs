@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, hash_map::RandomState},
     fs::File,
     io::{self, Read, Seek, SeekFrom, Write},
     path::Path,
@@ -14,7 +14,9 @@ use nwnrs_resref::prelude::*;
 use nwnrs_util::prelude::*;
 use tracing::{debug, instrument};
 
-use crate::{Erf, ErfError, ErfResMeta, ErfResult, ErfVersion, HEADER_SIZE, VALID_ERF_TYPES};
+use crate::{
+    Erf, ErfError, ErfResMeta, ErfResult, ErfVersion, ErfWriteOptions, HEADER_SIZE, VALID_ERF_TYPES,
+};
 
 /// Reads an ERF-family archive from a seekable reader.
 ///
@@ -86,11 +88,30 @@ pub fn read_erf_shared(stream: SharedReadSeek, filename: String) -> ErfResult<Er
 
     let _is_known_erf_type = VALID_ERF_TYPES.contains(&file_type.as_str());
 
-    let offset_to_resource_list = normalize_resource_list_offset(
-        io.as_mut(),
-        offset_to_resource_list,
-        entry_count,
-        file_version,
+    let key_entry_size = match file_version {
+        ErfVersion::V1 => 24_u64,
+        ErfVersion::E1 => 44_u64,
+    };
+    let resource_entry_size = match file_version {
+        ErfVersion::V1 => 8_u64,
+        ErfVersion::E1 => 16_u64,
+    };
+    let expected_resource_list_offset = offset_to_key_list
+        + key_entry_size
+            * u64::try_from(entry_count)
+                .map_err(|_error| ErfError::msg("ERF entry count exceeds 64-bit range"))?;
+    let file_len = io.seek(SeekFrom::End(0))?;
+    let resource_list_size = resource_entry_size
+        .checked_mul(
+            u64::try_from(entry_count)
+                .map_err(|_error| ErfError::msg("ERF entry count exceeds 64-bit range"))?,
+        )
+        .ok_or_else(|| ErfError::msg("ERF resource list size overflow"))?;
+    expect(
+        offset_to_resource_list
+            .checked_add(resource_list_size)
+            .is_some_and(|end| end <= file_len),
+        "ERF resource list offset out of range",
     )?;
     io.seek(SeekFrom::Start(offset_to_resource_list))?;
     let mut resources = Vec::with_capacity(entry_count);
@@ -106,6 +127,15 @@ pub fn read_erf_shared(stream: SharedReadSeek, filename: String) -> ErfResult<Er
                 (compression, uncompressed_size)
             }
         };
+        let disk_size_u64 = u64::try_from(disk_size)
+            .map_err(|_error| ErfError::msg("ERF resource size exceeds 64-bit range"))?;
+        expect(offset != 0, "ERF resource offset must be non-zero")?;
+        expect(
+            offset
+                .checked_add(disk_size_u64)
+                .is_some_and(|end| end <= file_len),
+            "ERF resource payload out of range",
+        )?;
 
         resources.push(ErfResMeta {
             offset,
@@ -116,7 +146,8 @@ pub fn read_erf_shared(stream: SharedReadSeek, filename: String) -> ErfResult<Er
     }
 
     let origin_container = format!("Erf:{filename}");
-    let mut entries: indexmap::IndexMap<ResRef, Res> = indexmap::IndexMap::new();
+    let mut entries: indexmap::IndexMap<ResRef, Res, RandomState> =
+        indexmap::IndexMap::with_hasher(RandomState::new());
     io.seek(SeekFrom::Start(offset_to_key_list))?;
     for (index, meta) in resources.iter().enumerate().take(entry_count) {
         let res_ref_raw = trim_trailing_nuls(&read_bytes_or_err(io.as_mut(), 16)?);
@@ -156,6 +187,7 @@ pub fn read_erf_shared(stream: SharedReadSeek, filename: String) -> ErfResult<Er
             meta.disk_size as i64,
             meta.offset,
             meta.compression,
+            read_compressed_buf_algorithm(io.as_mut(), meta)?,
             meta.uncompressed_size,
             sha1,
         );
@@ -178,79 +210,29 @@ pub fn read_erf_shared(stream: SharedReadSeek, filename: String) -> ErfResult<Er
         loc_strings,
         entries,
         oid,
+        resource_list_padding: offset_to_resource_list
+            .saturating_sub(expected_resource_list_offset),
     };
     debug!(entry_count = erf.entries.len(), file_type = %erf.file_type, "read erf archive");
     Ok(erf)
 }
 
-fn normalize_resource_list_offset<R: Read + Seek + ?Sized>(
+fn read_compressed_buf_algorithm<R: Read + Seek + ?Sized>(
     io: &mut R,
-    declared_offset: u64,
-    entry_count: usize,
-    file_version: ErfVersion,
-) -> ErfResult<u64> {
-    if entry_count == 0 {
-        return Ok(declared_offset);
+    meta: &ErfResMeta,
+) -> ErfResult<Option<Algorithm>> {
+    if meta.compression != ExoResFileCompressionType::CompressedBuf {
+        return Ok(None);
     }
 
-    let file_len = io.seek(SeekFrom::End(0))?;
-    let entry_size = match file_version {
-        ErfVersion::V1 => 8_u64,
-        ErfVersion::E1 => 16_u64,
-    };
-    let probe_count = entry_count.min(5);
-
-    if resource_table_offset_looks_valid(io, declared_offset, probe_count, entry_size, file_len)? {
-        return Ok(declared_offset);
-    }
-
-    let mut candidates = Vec::new();
-    for delta in -4_i64..=4_i64 {
-        let Some(candidate) = declared_offset.checked_add_signed(delta) else {
-            continue;
-        };
-        if resource_table_offset_looks_valid(io, candidate, probe_count, entry_size, file_len)? {
-            candidates.push(candidate);
-        }
-    }
-
-    if candidates.len() == 1 {
-        return Ok(candidates.first().copied().unwrap_or(declared_offset));
-    }
-
-    Ok(declared_offset)
-}
-
-fn resource_table_offset_looks_valid<R: Read + Seek + ?Sized>(
-    io: &mut R,
-    offset: u64,
-    probe_count: usize,
-    entry_size: u64,
-    file_len: u64,
-) -> ErfResult<bool> {
-    if offset + (probe_count as u64 * entry_size) > file_len {
-        return Ok(false);
-    }
-
-    io.seek(SeekFrom::Start(offset))?;
-    let mut previous_offset = 0_u64;
-    for idx in 0..probe_count {
-        let resource_offset = u64::from(read_u32(io)?);
-        let resource_size = u64::from(read_u32(io)?);
-        if idx > 0 && resource_offset < previous_offset {
-            return Ok(false);
-        }
-        if resource_offset == 0 || resource_size == 0 || resource_offset + resource_size > file_len
-        {
-            return Ok(false);
-        }
-        if entry_size == 16 {
-            io.seek(SeekFrom::Current(8))?;
-        }
-        previous_offset = resource_offset;
-    }
-
-    Ok(true)
+    let current = io.stream_position()?;
+    io.seek(SeekFrom::Start(meta.offset))?;
+    let _magic = read_u32(io)?;
+    let _version = read_u32(io)?;
+    let algorithm = Algorithm::from_u32(read_u32(io)?)
+        .map_err(|_error| ErfError::msg("invalid compressed buffer algorithm"))?;
+    io.seek(SeekFrom::Start(current))?;
+    Ok(Some(algorithm))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -277,7 +259,198 @@ pub fn write_erf<W, F>(
     str_ref: i32,
     entries: &[ResRef],
     erf_oid: Option<&str>,
+    entry_writer: F,
+    entry_algorithm: impl FnMut(&ResRef) -> Algorithm,
+) -> ErfResult<()>
+where
+    W: Write + Seek,
+    F: FnMut(&ResRef, &mut dyn Write) -> ErfResult<(usize, SecureHash)>,
+{
+    write_erf_with_options(
+        writer,
+        file_type,
+        file_version,
+        build_year,
+        build_day,
+        exocomp,
+        compalg,
+        loc_strings,
+        str_ref,
+        entries,
+        erf_oid,
+        ErfWriteOptions::default(),
+        entry_writer,
+        entry_algorithm,
+    )
+}
+
+#[allow(
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::items_after_test_module,
+    clippy::panic
+)]
+#[cfg(test)]
+mod tests {
+    use std::{collections::BTreeMap, io::Cursor};
+
+    use nwnrs_checksums::prelude::secure_hash;
+    use nwnrs_compressedbuf::prelude::Algorithm;
+    use nwnrs_exo::prelude::ExoResFileCompressionType;
+    use nwnrs_resref::prelude::new_resolved_res_ref_from_filename;
+
+    use super::{ErfVersion, read_erf, write_erf_with_options};
+    use crate::ErfWriteOptions;
+
+    #[test]
+    fn malformed_erf_resource_list_offset_is_rejected() {
+        let entry = new_resolved_res_ref_from_filename("test.utc")
+            .expect("resref")
+            .into();
+        let mut encoded = Cursor::new(Vec::new());
+        write_erf_with_options(
+            &mut encoded,
+            "ERF ",
+            ErfVersion::V1,
+            2026,
+            98,
+            ExoResFileCompressionType::None,
+            Algorithm::None,
+            &BTreeMap::new(),
+            -1,
+            &[entry],
+            None,
+            ErfWriteOptions::default(),
+            |_rr, out| {
+                out.write_all(b"abc")?;
+                Ok((3, secure_hash(b"abc")))
+            },
+            |_rr| Algorithm::None,
+        )
+        .expect("encode erf");
+        let mut bytes = encoded.into_inner();
+
+        let resource_list_offset =
+            u32::from_le_bytes(bytes[28..32].try_into().expect("resource list offset"));
+        bytes[28..32].copy_from_slice(&(resource_list_offset + 1).to_le_bytes());
+
+        let error =
+            read_erf(Cursor::new(bytes), "broken.erf".to_string()).expect_err("malformed erf");
+        assert!(
+            error.to_string().contains("offset out of range")
+                || error.to_string().contains("payload out of range")
+                || error.to_string().contains("invalid")
+                || error.to_string().contains("not found"),
+            "unexpected error: {error}"
+        );
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+/// Writes an ERF-family archive with explicit preserved-layout options.
+pub fn write_erf_with_options<W, F>(
+    writer: &mut W,
+    file_type: &str,
+    file_version: ErfVersion,
+    build_year: u32,
+    build_day: u32,
+    exocomp: ExoResFileCompressionType,
+    compalg: Algorithm,
+    loc_strings: &BTreeMap<i32, String>,
+    str_ref: i32,
+    entries: &[ResRef],
+    erf_oid: Option<&str>,
+    options: ErfWriteOptions,
+    entry_writer: F,
+    entry_algorithm: impl FnMut(&ResRef) -> Algorithm,
+) -> ErfResult<()>
+where
+    W: Write + Seek,
+    F: FnMut(&ResRef, &mut dyn Write) -> ErfResult<(usize, SecureHash)>,
+{
+    write_erf_inner(
+        writer,
+        file_type,
+        file_version,
+        build_year,
+        build_day,
+        exocomp,
+        compalg,
+        loc_strings,
+        str_ref,
+        entries,
+        erf_oid,
+        options.resource_list_padding,
+        entry_writer,
+        entry_algorithm,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+/// Writes a decoded ERF-family archive back out using its preserved layout.
+pub fn write_erf_archive<W>(writer: &mut W, value: &Erf) -> ErfResult<()>
+where
+    W: Write + Seek,
+{
+    let entries = value.entries().keys().cloned().collect::<Vec<_>>();
+    let mut payloads = BTreeMap::new();
+    let mut algorithms = BTreeMap::new();
+    let mut exocomp = ExoResFileCompressionType::None;
+
+    for (rr, res) in value.entries() {
+        payloads.insert(rr.clone(), res.read_all(false)?);
+        let algorithm = res.compressed_buf_algorithm().unwrap_or(Algorithm::None);
+        if algorithm != Algorithm::None {
+            exocomp = ExoResFileCompressionType::CompressedBuf;
+        }
+        algorithms.insert(rr.clone(), algorithm);
+    }
+
+    write_erf_with_options(
+        writer,
+        &value.file_type,
+        value.file_version,
+        u32::try_from(value.build_year)
+            .map_err(|_error| ErfError::msg("ERF build year exceeds 32-bit range"))?,
+        u32::try_from(value.build_day)
+            .map_err(|_error| ErfError::msg("ERF build day exceeds 32-bit range"))?,
+        exocomp,
+        Algorithm::None,
+        value.loc_strings(),
+        value.str_ref,
+        &entries,
+        value.oid(),
+        ErfWriteOptions {
+            resource_list_padding: value.resource_list_padding(),
+        },
+        |rr, out| {
+            let bytes = payloads
+                .get(rr)
+                .ok_or_else(|| io::Error::other(format!("missing ERF payload for {rr}")))?;
+            out.write_all(bytes)?;
+            Ok((bytes.len(), secure_hash(bytes)))
+        },
+        |rr| algorithms.get(rr).copied().unwrap_or(Algorithm::None),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+/// Internal ERF-family archive writer with explicit padding control.
+fn write_erf_inner<W, F>(
+    writer: &mut W,
+    file_type: &str,
+    file_version: ErfVersion,
+    build_year: u32,
+    build_day: u32,
+    exocomp: ExoResFileCompressionType,
+    _compalg: Algorithm,
+    loc_strings: &BTreeMap<i32, String>,
+    str_ref: i32,
+    entries: &[ResRef],
+    erf_oid: Option<&str>,
+    resource_list_padding: u64,
     mut entry_writer: F,
+    mut entry_algorithm: impl FnMut(&ResRef) -> Algorithm,
 ) -> ErfResult<()>
 where
     W: Write + Seek,
@@ -305,7 +478,7 @@ where
     let key_list_size = key_entry_size
         * u64::try_from(entries.len())
             .map_err(|_error| ErfError::msg("ERF entry count exceeds 64-bit range"))?;
-    let offset_to_resource_list = offset_to_key_list + key_list_size;
+    let offset_to_resource_list = offset_to_key_list + key_list_size + resource_list_padding;
     let resource_entry_size = match file_version {
         ErfVersion::V1 => 8_u64,
         ErfVersion::E1 => 16_u64,
@@ -371,6 +544,12 @@ where
     ])?;
     writer.write_all(&vec![
         0_u8;
+        usize::try_from(resource_list_padding).map_err(
+            |_error| ErfError::msg("ERF resource list padding exceeds usize")
+        )?
+    ])?;
+    writer.write_all(&vec![
+        0_u8;
         usize::try_from(resource_list_size).map_err(
             |_error| ErfError::msg("ERF resource list size exceeds usize")
         )?
@@ -388,7 +567,13 @@ where
             ExoResFileCompressionType::CompressedBuf => {
                 let mut buffer = Vec::new();
                 let (uncompressed_size, sha1) = entry_writer(rr, &mut buffer)?;
-                compress_writer(writer, &buffer, compalg, EXO_RES_FILE_COMPRESSED_BUF_MAGIC)?;
+                let algorithm = entry_algorithm(rr);
+                compress_writer(
+                    writer,
+                    &buffer,
+                    algorithm,
+                    EXO_RES_FILE_COMPRESSED_BUF_MAGIC,
+                )?;
                 let disk_size = usize::try_from(writer.stream_position()? - pos)
                     .map_err(|_error| ErfError::msg("ERF compressed entry size exceeds usize"))?;
                 (disk_size, uncompressed_size, sha1)

@@ -52,6 +52,10 @@ masterlist:
   - changed-files:
       - any-glob-to-any-file: ["crates/masterlist/**/*"]
 
+nwscript:
+  - changed-files:
+      - any-glob-to-any-file: ["crates/nwscript/**/*"]
+
 nwsync:
   - changed-files:
       - any-glob-to-any-file: ["crates/nwsync/**/*"]

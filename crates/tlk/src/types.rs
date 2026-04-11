@@ -73,17 +73,138 @@ pub type TlkResult<T> = Result<T, TlkError>;
 /// A single TLK entry.
 pub struct TlkEntry {
     /// Localized text content.
-    pub text:          String,
+    pub text:              String,
+    /// Original encoded text bytes when this entry was read from disk.
+    pub raw_text:          Option<Vec<u8>>,
     /// Associated sound resource reference.
-    pub sound_res_ref: String,
+    pub sound_res_ref:     String,
+    /// Raw 16-byte sound resource slot.
+    pub raw_sound_res_ref: [u8; 16],
     /// Sound length in seconds.
-    pub sound_length:  f32,
+    pub sound_length:      f32,
+    /// Raw IEEE-754 bits for the stored sound length field.
+    pub sound_length_bits: u32,
+    /// Raw TLK entry flags.
+    pub flags:             i32,
+    /// Stored volume variance field.
+    pub volume_variance:   i32,
+    /// Stored pitch variance field.
+    pub pitch_variance:    i32,
 }
 
 impl TlkEntry {
+    /// Creates a canonical TLK entry with no preserved descriptor provenance.
+    pub fn new(
+        text: impl Into<String>,
+        sound_res_ref: impl Into<String>,
+        sound_length: f32,
+    ) -> Self {
+        let text = text.into();
+        let sound_res_ref = sound_res_ref.into();
+        let flags = Self::canonical_flags_from_parts(&text, &sound_res_ref);
+        let mut raw_sound_res_ref = [0_u8; 16];
+        let bytes = sound_res_ref.as_bytes();
+        let count = bytes.len().min(raw_sound_res_ref.len());
+        if let (Some(dst), Some(src)) = (raw_sound_res_ref.get_mut(..count), bytes.get(..count)) {
+            dst.copy_from_slice(src);
+        }
+        Self {
+            text,
+            raw_text: None,
+            sound_res_ref,
+            raw_sound_res_ref,
+            sound_length,
+            sound_length_bits: sound_length.to_bits(),
+            flags,
+            volume_variance: 0,
+            pitch_variance: 0,
+        }
+    }
+
     /// Returns `true` when the entry contains either text or a sound reference.
     pub fn has_value(&self) -> bool {
-        !self.text.is_empty() || !self.sound_res_ref.is_empty()
+        !self.text.is_empty()
+            || !self.sound_res_ref.is_empty()
+            || self.flags != 0
+            || self.volume_variance != 0
+            || self.pitch_variance != 0
+            || self.sound_length_bits != 0
+    }
+
+    pub(crate) fn canonical_flags(&self) -> i32 {
+        Self::canonical_flags_from_parts(&self.text, &self.sound_res_ref)
+    }
+
+    fn canonical_flags_from_parts(text: &str, sound_res_ref: &str) -> i32 {
+        let mut flags = 0;
+        if !text.is_empty() {
+            flags |= 0x1;
+        }
+        if !sound_res_ref.is_empty() {
+            flags |= 0x6;
+        }
+        flags
+    }
+
+    pub(crate) fn stored_flags(&self) -> i32 {
+        let raw_sound = decode_sound_res_ref(&self.raw_sound_res_ref);
+        let raw_text_matches = self
+            .raw_text
+            .as_ref()
+            .and_then(|bytes| from_nwnrs_encoding(bytes).ok())
+            .is_some_and(|decoded| decoded == self.text);
+        let raw_sound_matches = raw_sound == self.sound_res_ref;
+        let raw_length_matches =
+            f32::from_bits(self.sound_length_bits).to_bits() == self.sound_length.to_bits();
+
+        if raw_text_matches
+            && raw_sound_matches
+            && raw_length_matches
+            && self.volume_variance == 0
+            && self.pitch_variance == 0
+        {
+            self.flags
+        } else {
+            self.canonical_flags()
+        }
+    }
+
+    pub(crate) fn stored_sound_res_ref_bytes(&self) -> TlkResult<[u8; 16]> {
+        if decode_sound_res_ref(&self.raw_sound_res_ref) == self.sound_res_ref {
+            return Ok(self.raw_sound_res_ref);
+        }
+
+        if self.sound_res_ref.len() > 16 {
+            return Err(TlkError::msg(format!(
+                "sound resref {:?} exceeds 16 bytes",
+                self.sound_res_ref
+            )));
+        }
+
+        let mut raw = [0_u8; 16];
+        let bytes = self.sound_res_ref.as_bytes();
+        if let Some(prefix) = raw.get_mut(..bytes.len()) {
+            prefix.copy_from_slice(bytes);
+        }
+        Ok(raw)
+    }
+
+    pub(crate) fn stored_text_bytes(&self) -> TlkResult<Vec<u8>> {
+        if let Some(raw_text) = &self.raw_text
+            && from_nwnrs_encoding(raw_text)? == self.text
+        {
+            return Ok(raw_text.clone());
+        }
+
+        Ok(to_nwnrs_encoding(&self.text)?)
+    }
+
+    pub(crate) fn stored_sound_length_bits(&self) -> u32 {
+        if f32::from_bits(self.sound_length_bits).to_bits() == self.sound_length.to_bits() {
+            self.sound_length_bits
+        } else {
+            self.sound_length.to_bits()
+        }
     }
 }
 
@@ -106,6 +227,8 @@ pub struct SingleTlk {
     pub(crate) io_start_pos: u64,
     pub(crate) io_entry_count: usize,
     pub(crate) io_entries_offset: u64,
+    pub(crate) source_bytes: Option<Vec<u8>>,
+    pub(crate) source_language: Option<Language>,
     /// Whether lazy reads should populate the internal entry cache.
     pub use_cache: bool,
     pub(crate) io_cache: Option<WeightedLru<StrRef, TlkEntry>>,
@@ -160,6 +283,8 @@ impl SingleTlk {
             io_start_pos:           0,
             io_entry_count:         0,
             io_entries_offset:      0,
+            source_bytes:           None,
+            source_language:        None,
             use_cache:              true,
             io_cache:               None,
         }
@@ -226,14 +351,7 @@ impl SingleTlk {
 
     /// Convenience helper that sets only the text portion of an entry.
     pub fn set_text(&mut self, str_ref: StrRef, text: impl Into<String>) {
-        self.set_entry(
-            str_ref,
-            TlkEntry {
-                text:          text.into(),
-                sound_res_ref: String::new(),
-                sound_length:  0.0,
-            },
-        );
+        self.set_entry(str_ref, TlkEntry::new(text, String::new(), 0.0));
     }
 
     fn get_from_io(&self, str_ref: StrRef) -> TlkResult<(usize, TlkEntry)> {
@@ -245,6 +363,16 @@ impl Default for SingleTlk {
     fn default() -> Self {
         Self::new()
     }
+}
+
+pub(crate) fn decode_sound_res_ref(bytes: &[u8]) -> String {
+    let end = bytes
+        .iter()
+        .position(|byte| *byte == 0)
+        .unwrap_or(bytes.len());
+    String::from_utf8_lossy(bytes.get(..end).unwrap_or(&[]))
+        .trim_matches(|ch: char| ch == '\u{00c0}' || ch.is_ascii_whitespace())
+        .to_string()
 }
 
 impl Tlk {

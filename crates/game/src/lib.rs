@@ -25,6 +25,6 @@ pub use types::*;
 pub mod prelude {
     pub use crate::{
         DEFAULT_KEYFILES, GFF_EXTENSIONS, GameError, GameResult, find_nwnrs_root, find_user_root,
-        new_default_resman,
+        new_default_resman, resolve_language_root,
     };
 }

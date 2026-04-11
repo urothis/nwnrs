@@ -164,3 +164,58 @@ pub async fn get_servers_by_ip_and_port(
     info!("fetching masterlist servers by address");
     get_json(format!("{URL}/servers/{ip}/{port}")).await
 }
+
+#[allow(clippy::panic)]
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use crate::Server;
+
+    #[test]
+    fn deserializes_masterlist_server_wire_shape() {
+        let value = json!({
+            "first_seen": 1,
+            "last_advertisement": 2,
+            "session_name": "Test Server",
+            "module_name": "Module",
+            "module_description": "Desc",
+            "passworded": false,
+            "min_level": 1,
+            "max_level": 40,
+            "current_players": 3,
+            "max_players": 64,
+            "build": "8193.37",
+            "rev": 42,
+            "pvp": 1,
+            "servervault": true,
+            "elc": false,
+            "ilr": false,
+            "one_party": true,
+            "player_pause": false,
+            "os": 2,
+            "language": 0,
+            "game_type": 5,
+            "latency": 12,
+            "host": "127.0.0.1",
+            "port": 5121,
+            "kx_pk": "kx",
+            "sign_pk": "sign",
+            "connecthint": "hint",
+            "nwsync": {
+                "url": "https://example.com/nwsync",
+                "manifests": [
+                    { "required": true, "hash": "abc" }
+                ]
+            }
+        });
+
+        let server: Server = match serde_json::from_value(value) {
+            Ok(value) => value,
+            Err(error) => panic!("deserialize server: {error}"),
+        };
+        assert_eq!(server.session_name, "Test Server");
+        assert_eq!(server.nwsync.as_ref().map(|n| n.manifests.len()), Some(1));
+        assert_eq!(server.kx_pk.as_deref(), Some("kx"));
+    }
+}

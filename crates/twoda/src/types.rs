@@ -69,14 +69,71 @@ impl From<EncodingConversionError> for TwoDaError {
 /// Result type for 2DA operations.
 pub type TwoDaResult<T> = Result<T, TwoDaError>;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 /// An in-memory `2DA V2.0` table.
 pub struct TwoDa {
     pub(crate) default_value: Cell,
     pub(crate) headers: Vec<String>,
     pub(crate) headers_for_lookup: Vec<String>,
+    pub(crate) row_labels: Vec<String>,
     /// Ordered row contents.
     pub rows: Vec<Row>,
+    pub(crate) source_bytes: Option<Vec<u8>>,
+    pub(crate) source_snapshot: Option<TwoDaSnapshot>,
+    pub(crate) source_layout: Option<TwoDaSourceLayout>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TwoDaSnapshot {
+    pub(crate) default_value: Cell,
+    pub(crate) headers:       Vec<String>,
+    pub(crate) row_labels:    Vec<String>,
+    pub(crate) rows:          Vec<Row>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct TwoDaSourceLayout {
+    pub(crate) lines: Vec<TwoDaSourceLine>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum TwoDaSourceLine {
+    HeaderMagic {
+        raw:         String,
+        line_ending: String,
+    },
+    Blank {
+        raw:         String,
+        line_ending: String,
+    },
+    Default {
+        prefix:      String,
+        value:       Option<TwoDaTokenLayout>,
+        trailing:    String,
+        line_ending: String,
+    },
+    HeaderRow {
+        leading:     String,
+        columns:     Vec<String>,
+        separators:  Vec<String>,
+        trailing:    String,
+        line_ending: String,
+    },
+    DataRow {
+        row_index:   usize,
+        after_label: String,
+        cells:       Vec<TwoDaTokenLayout>,
+        separators:  Vec<String>,
+        trailing:    String,
+        line_ending: String,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct TwoDaTokenLayout {
+    pub(crate) value:  Cell,
+    pub(crate) quoted: bool,
+    pub(crate) raw:    String,
 }
 
 impl TwoDa {
@@ -86,7 +143,11 @@ impl TwoDa {
             default_value:      None,
             headers:            Vec::new(),
             headers_for_lookup: Vec::new(),
+            row_labels:         Vec::new(),
             rows:               Vec::new(),
+            source_bytes:       None,
+            source_snapshot:    None,
+            source_layout:      None,
         }
     }
 
@@ -102,8 +163,10 @@ impl TwoDa {
         } else {
             while self.rows.len() < row {
                 self.rows.push(Vec::new());
+                self.row_labels.push(self.row_labels.len().to_string());
             }
             self.rows.push(data);
+            self.row_labels.push(row.to_string());
         }
     }
 
@@ -189,6 +252,31 @@ impl TwoDa {
         self.default_value = value;
     }
 
+    /// Returns the stored row label, if present.
+    pub fn row_label(&self, row: usize) -> Option<&str> {
+        self.row_labels.get(row).map(String::as_str)
+    }
+
+    /// Replaces the stored row label.
+    pub fn set_row_label(&mut self, row: usize, label: impl Into<String>) -> TwoDaResult<()> {
+        let slot = self
+            .row_labels
+            .get_mut(row)
+            .ok_or_else(|| TwoDaError::msg("Row out of bounds"))?;
+        *slot = label.into();
+        Ok(())
+    }
+
+    /// Replaces all rows and row labels at once.
+    pub fn replace_rows(&mut self, rows: Vec<Row>, row_labels: Vec<String>) -> TwoDaResult<()> {
+        if rows.len() != row_labels.len() {
+            return Err(TwoDaError::msg("row data and row labels length mismatch"));
+        }
+        self.rows = rows;
+        self.row_labels = row_labels;
+        Ok(())
+    }
+
     /// Returns the ordered column names.
     pub fn columns(&self) -> &[String] {
         &self.headers
@@ -213,6 +301,15 @@ impl TwoDa {
         self.headers = columns;
         Ok(())
     }
+
+    pub(crate) fn snapshot(&self) -> TwoDaSnapshot {
+        TwoDaSnapshot {
+            default_value: self.default_value.clone(),
+            headers:       self.headers.clone(),
+            row_labels:    self.row_labels.clone(),
+            rows:          self.rows.clone(),
+        }
+    }
 }
 
 impl Default for TwoDa {
@@ -220,3 +317,14 @@ impl Default for TwoDa {
         Self::new()
     }
 }
+
+impl PartialEq for TwoDa {
+    fn eq(&self, other: &Self) -> bool {
+        self.default_value == other.default_value
+            && self.headers == other.headers
+            && self.row_labels == other.row_labels
+            && self.rows == other.rows
+    }
+}
+
+impl Eq for TwoDa {}

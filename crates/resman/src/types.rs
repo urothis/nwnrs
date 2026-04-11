@@ -121,15 +121,16 @@ pub(crate) struct ResMutableState {
 }
 
 pub(crate) struct ResInner {
-    pub mtime:             SystemTime,
-    pub io_offset:         u64,
-    pub io_size:           i64,
-    pub resref:            ResRef,
-    pub compression:       ExoResFileCompressionType,
-    pub uncompressed_size: usize,
-    pub origin:            ResOrigin,
-    pub backing:           ResBacking,
-    pub state:             Mutex<ResMutableState>,
+    pub mtime:                    SystemTime,
+    pub io_offset:                u64,
+    pub io_size:                  i64,
+    pub resref:                   ResRef,
+    pub compression:              ExoResFileCompressionType,
+    pub compressed_buf_algorithm: Option<Algorithm>,
+    pub uncompressed_size:        usize,
+    pub origin:                   ResOrigin,
+    pub backing:                  ResBacking,
+    pub state:                    Mutex<ResMutableState>,
 }
 
 #[derive(Clone)]
@@ -171,6 +172,7 @@ impl Res {
         io_size: i64,
         io_offset: u64,
         compression: ExoResFileCompressionType,
+        compressed_buf_algorithm: Option<Algorithm>,
         uncompressed_size: usize,
         sha1: SecureHash,
     ) -> Self {
@@ -182,6 +184,7 @@ impl Res {
             io_size,
             io_offset,
             compression,
+            compressed_buf_algorithm,
             uncompressed_size,
             sha1,
         )
@@ -200,6 +203,7 @@ impl Res {
         io_size: i64,
         io_offset: u64,
         compression: ExoResFileCompressionType,
+        compressed_buf_algorithm: Option<Algorithm>,
         uncompressed_size: usize,
         sha1: SecureHash,
     ) -> Self {
@@ -211,6 +215,7 @@ impl Res {
             io_size,
             io_offset,
             compression,
+            compressed_buf_algorithm,
             uncompressed_size,
             sha1,
         )
@@ -225,6 +230,7 @@ impl Res {
         io_size: i64,
         io_offset: u64,
         compression: ExoResFileCompressionType,
+        compressed_buf_algorithm: Option<Algorithm>,
         uncompressed_size: usize,
         sha1: SecureHash,
     ) -> Self {
@@ -242,6 +248,7 @@ impl Res {
                 io_size,
                 resref,
                 compression,
+                compressed_buf_algorithm,
                 uncompressed_size: effective_uncompressed,
                 origin,
                 backing,
@@ -290,6 +297,12 @@ impl Res {
     /// Returns the EXO compression marker for this payload.
     pub fn compression_algorithm(&self) -> ExoResFileCompressionType {
         self.inner.compression
+    }
+
+    /// Returns the compressed-buffer algorithm stored in an ERF payload, when
+    /// known.
+    pub fn compressed_buf_algorithm(&self) -> Option<Algorithm> {
+        self.inner.compressed_buf_algorithm
     }
 
     /// Returns the descriptive origin for this payload.

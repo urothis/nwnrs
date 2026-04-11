@@ -1,6 +1,7 @@
 [workspace]
 default-members = ["cli"]
-members = ["cli", "crates/*", "wasm"]
+members = ["bevy", "cli", "crates/*", "wasm"]
+exclude = ["crates/texture"]
 resolver = "3"
 
 [workspace.package]
@@ -15,15 +16,19 @@ nwnrs = { path = "crates/prelude" }
 nwnrs-checksums = { path = "crates/checksums" }
 nwnrs-compressedbuf = { path = "crates/compressedbuf" }
 nwnrs-core = { path = "crates/core" }
+nwnrs-dds = { path = "crates/dds" }
 nwnrs-erf = { path = "crates/erf" }
 nwnrs-exo = { path = "crates/exo" }
 nwnrs-game = { path = "crates/game" }
 nwnrs-gff = { path = "crates/gff" }
-nwnrs-gffjson = { path = "crates/gffjson" }
 nwnrs-key = { path = "crates/key" }
 nwnrs-lru = { path = "crates/lru" }
 nwnrs-masterlist = { path = "crates/masterlist" }
+nwnrs-mdl = { path = "crates/mdl" }
+nwnrs-mtr = { path = "crates/mtr" }
+nwnrs-nwscript = { path = "crates/nwscript" }
 nwnrs-nwsync = { path = "crates/nwsync" }
+nwnrs-plt = { path = "crates/plt" }
 nwnrs-resdir = { path = "crates/resdir" }
 nwnrs-resfile = { path = "crates/resfile" }
 nwnrs-resman = { path = "crates/resman" }
@@ -31,13 +36,17 @@ nwnrs-resmemfile = { path = "crates/resmemfile" }
 nwnrs-resnwsync = { path = "crates/resnwsync" }
 nwnrs-resref = { path = "crates/resref" }
 nwnrs-restype = { path = "crates/restype" }
+nwnrs-set = { path = "crates/set" }
 nwnrs-ssf = { path = "crates/ssf" }
 nwnrs-streamext = { path = "crates/streamext" }
+nwnrs-tga = { path = "crates/tga" }
 nwnrs-tlk = { path = "crates/tlk" }
 nwnrs-twoda = { path = "crates/twoda" }
 nwnrs-util = { path = "crates/util" }
 # external dependencies
 argh = { version = "0.1.19", default-features = false, features = ["help"] }
+bevy = "0.18.1"
+bevy_egui = "0.39.1"
 codepage = { version = "0.1.2", default-features = false }
 encoding_rs = { version = "0.8.35", default-features = false, features = [
     "alloc",
@@ -45,7 +54,13 @@ encoding_rs = { version = "0.8.35", default-features = false, features = [
 flate2 = { version = "1.1.9", default-features = false, features = [
     "rust_backend",
 ] }
-indexmap = { version = "2.13.1", default-features = false }
+image = { version = "0.25.8", default-features = false, features = [
+    "jpeg",
+    "png",
+    "tga",
+    "webp",
+] }
+indexmap = { version = "2.14.0", default-features = false }
 md5 = { version = "0.8.0", default-features = false }
 reqwest = { version = "0.13.2", default-features = false, features = [
     "json",
@@ -62,9 +77,12 @@ tracing = { version = "0.1.44", default-features = false, features = [
     "std",
 ] }
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt"] }
+tokio = { version = "1.51.1", features = ["full"] }
+texpresso = { version = "2.0.2", default-features = false }
 wasm-bindgen = { version = "0.2.117", default-features = false, features = [
     "std",
 ] }
+wasm-bindgen-test = { version = "0.3.50" }
 zstd = { version = "0.13.3", default-features = false, features = [
     "arrays",
     "legacy",

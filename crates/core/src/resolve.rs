@@ -36,3 +36,25 @@ pub fn resolve_language(input: &str) -> Result<Language, ParseLanguageError> {
         _ => Err(ParseLanguageError::new(input, "no such language name")),
     }
 }
+
+#[allow(clippy::panic)]
+#[cfg(test)]
+mod tests {
+    use crate::{Language, resolve_language};
+
+    #[test]
+    fn resolves_languages_from_id_code_and_name() {
+        assert_eq!(resolve_language("1"), Ok(Language::French));
+        assert_eq!(resolve_language("EN"), Ok(Language::English));
+        assert_eq!(resolve_language("polish"), Ok(Language::Polish));
+    }
+
+    #[test]
+    fn rejects_unknown_languages_with_context() {
+        let error = match resolve_language("xx") {
+            Ok(_value) => panic!("invalid language should fail"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("xx"));
+    }
+}

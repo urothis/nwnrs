@@ -12,10 +12,70 @@ pub(crate) struct Cli {
 #[derive(FromArgs)]
 #[argh(subcommand)]
 pub(crate) enum Command {
+    Compile(CompileCmd),
+    Convert(ConvertCmd),
     Inspect(InspectCmd),
     Pack(PackCmd),
     Unpack(UnpackCmd),
     Nwsync(NwsyncCmd),
+}
+
+#[derive(FromArgs)]
+#[argh(subcommand, name = "compile")]
+/// compile one NWScript source file to NCS and optional NDB output
+pub(crate) struct CompileCmd {
+    #[argh(switch, short = 'f')]
+    /// overwrite existing output files
+    pub(crate) force: bool,
+
+    #[argh(switch)]
+    /// also write debugger output as a sibling .ndb file
+    pub(crate) debug: bool,
+
+    #[argh(switch)]
+    /// skip main/StartingConditional entrypoint validation
+    pub(crate) no_entrypoint_check: bool,
+
+    #[argh(option, short = 'o')]
+    /// output NCS file path, defaults to INPUT with .ncs extension
+    pub(crate) output: Option<PathBuf>,
+
+    #[argh(option)]
+    /// explicit nwscript.nss path; defaults to nwscript.nss beside INPUT
+    pub(crate) langspec: Option<PathBuf>,
+
+    #[argh(option)]
+    /// extra directory to search for #include files; may be repeated
+    pub(crate) include_dir: Vec<PathBuf>,
+
+    #[argh(option, default = "String::from(\"O0\")")]
+    /// optimization level: O0, O1, O2, or O3
+    pub(crate) optimization: String,
+
+    #[argh(positional)]
+    /// input .nss file to compile
+    pub(crate) input: PathBuf,
+}
+
+#[derive(FromArgs)]
+#[argh(subcommand, name = "convert")]
+/// convert image assets between supported formats
+pub(crate) struct ConvertCmd {
+    #[argh(switch, short = 'f')]
+    /// overwrite existing output files
+    pub(crate) force: bool,
+
+    #[argh(option, default = "String::from(\"dxt5\")")]
+    /// dds block format when OUTPUT ends in .dds: dxt1 or dxt5
+    pub(crate) dds_format: String,
+
+    #[argh(positional)]
+    /// input image path
+    pub(crate) input: PathBuf,
+
+    #[argh(positional)]
+    /// output image path
+    pub(crate) output: PathBuf,
 }
 
 #[derive(FromArgs)]
@@ -29,7 +89,7 @@ pub(crate) struct InspectCmd {
 
 #[derive(FromArgs)]
 #[argh(subcommand, name = "unpack")]
-/// unpack a resource into a directory or source-like text form
+/// unpack a resource into a directory
 pub(crate) struct UnpackCmd {
     #[argh(option, short = 'd', default = "PathBuf::from(\".\")")]
     /// destination directory
@@ -46,7 +106,7 @@ pub(crate) struct UnpackCmd {
 
 #[derive(FromArgs)]
 #[argh(subcommand, name = "pack")]
-/// pack a source file or directory into NWN binary form
+/// pack a directory into NWN binary form
 pub(crate) struct PackCmd {
     #[argh(switch, short = 'f')]
     /// overwrite existing output files
@@ -173,4 +233,73 @@ pub(crate) struct NwsyncWriteCmd {
     #[argh(switch, short = 'f')]
     /// overwrite existing output file
     pub(crate) force: bool,
+}
+
+#[allow(clippy::panic)]
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use argh::FromArgs;
+
+    use super::{Cli, Command, NwsyncCommand};
+
+    #[test]
+    fn parses_compile_command_with_repeated_include_dirs() {
+        let cli = Cli::from_args(
+            &["nwnrs"],
+            &[
+                "compile",
+                "--debug",
+                "--no-entrypoint-check",
+                "--include-dir",
+                "inc/a",
+                "--include-dir",
+                "inc/b",
+                "--optimization",
+                "O2",
+                "-o",
+                "out/test.ncs",
+                "scripts/test.nss",
+            ],
+        )
+        .unwrap_or_else(|error| panic!("parse compile args: {error:?}"));
+
+        let Command::Compile(cmd) = cli.command else {
+            panic!("expected compile command");
+        };
+        assert!(cmd.debug);
+        assert!(cmd.no_entrypoint_check);
+        assert_eq!(cmd.optimization, "O2");
+        assert_eq!(
+            cmd.include_dir,
+            vec![PathBuf::from("inc/a"), PathBuf::from("inc/b")]
+        );
+        assert_eq!(cmd.output, Some(PathBuf::from("out/test.ncs")));
+        assert_eq!(cmd.input, PathBuf::from("scripts/test.nss"));
+    }
+
+    #[test]
+    fn parses_nwsync_fetch_command() {
+        let cli = Cli::from_args(
+            &["nwnrs"],
+            &[
+                "nwsync",
+                "fetch",
+                "https://example.invalid/manifest/abcd",
+                "-o",
+                "repo",
+            ],
+        )
+        .unwrap_or_else(|error| panic!("parse nwsync args: {error:?}"));
+
+        let Command::Nwsync(cmd) = cli.command else {
+            panic!("expected nwsync command");
+        };
+        let NwsyncCommand::Fetch(cmd) = cmd.command else {
+            panic!("expected fetch subcommand");
+        };
+        assert_eq!(cmd.url, "https://example.invalid/manifest/abcd");
+        assert_eq!(cmd.output, Some(PathBuf::from("repo")));
+    }
 }

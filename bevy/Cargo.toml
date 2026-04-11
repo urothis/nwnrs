@@ -1,0 +1,31 @@
+[package]
+name = "nwnrs-bevy"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+description = "Bevy integration layer for Neverwinter Nights assets"
+
+[dependencies]
+bevy.workspace = true
+bevy_egui.workspace = true
+nwnrs-dds.workspace = true
+nwnrs-erf.workspace = true
+nwnrs-game.workspace = true
+nwnrs-gff.workspace = true
+nwnrs-mdl.workspace = true
+nwnrs-mtr.workspace = true
+nwnrs-plt.workspace = true
+nwnrs-resman.workspace = true
+nwnrs-resref.workspace = true
+nwnrs-set.workspace = true
+nwnrs-tga.workspace = true
+serde = { workspace = true, features = ["derive"] }
+tracing.workspace = true
+
+[dev-dependencies]
+nwnrs-resmemfile.workspace = true
+nwnrs-resref.workspace = true
+
+[lints]
+workspace = true

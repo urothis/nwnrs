@@ -9,3 +9,14 @@ pub(crate) fn init_tracing() {
         .with_target(true)
         .try_init();
 }
+
+#[cfg(test)]
+mod tests {
+    use super::init_tracing;
+
+    #[test]
+    fn tracing_initialization_is_idempotent() {
+        init_tracing();
+        init_tracing();
+    }
+}

@@ -188,7 +188,8 @@ impl GffValue {
 /// Labels are stored on the containing [`GffStruct`]; this type only wraps the
 /// typed value.
 pub struct GffField {
-    value: GffValue,
+    pub(crate) value:      GffValue,
+    pub(crate) provenance: Option<GffFieldProvenance>,
 }
 
 impl GffField {
@@ -196,6 +197,14 @@ impl GffField {
     pub fn new(value: GffValue) -> Self {
         Self {
             value,
+            provenance: None,
+        }
+    }
+
+    pub(crate) fn with_provenance(value: GffValue, provenance: GffFieldProvenance) -> Self {
+        Self {
+            value,
+            provenance: Some(provenance),
         }
     }
 
@@ -210,13 +219,27 @@ impl GffField {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct GffFieldProvenance {
+    pub(crate) label_bytes:        [u8; 16],
+    pub(crate) original_value:     GffValue,
+    pub(crate) raw_data_or_offset: i32,
+    pub(crate) raw_field_data:     Option<Vec<u8>>,
+}
+
 /// A GFF structure containing labeled fields.
 #[derive(Debug, Clone, PartialEq)]
 /// Fields preserve insertion order and labels are unique within a structure.
 pub struct GffStruct {
     /// The structure id stored in the document.
-    pub id: i32,
-    fields: Vec<(String, GffField)>,
+    pub id:                i32,
+    pub(crate) fields:     Vec<(String, GffField)>,
+    pub(crate) provenance: Option<GffStructProvenance>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct GffStructProvenance {
+    pub(crate) field_labels: Vec<String>,
 }
 
 impl GffStruct {
@@ -225,6 +248,7 @@ impl GffStruct {
         Self {
             id,
             fields: Vec::new(),
+            provenance: None,
         }
     }
 
@@ -267,24 +291,35 @@ impl GffStruct {
 }
 
 /// A complete GFF document.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 /// NWN conventionally stores the root structure with id `-1`.
 pub struct GffRoot {
     /// The four-byte document type tag.
-    pub file_type:    String,
+    pub file_type:              String,
     /// The four-byte document version tag.
-    pub file_version: String,
+    pub file_version:           String,
     /// The root structure.
-    pub root:         GffStruct,
+    pub root:                   GffStruct,
+    pub(crate) source_bytes:    Option<Vec<u8>>,
+    pub(crate) source_snapshot: Option<GffRootSnapshot>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct GffRootSnapshot {
+    pub(crate) file_type:    String,
+    pub(crate) file_version: String,
+    pub(crate) root:         GffStruct,
 }
 
 impl GffRoot {
     /// Creates a new root document with version `V3.2`.
     pub fn new(file_type: impl Into<String>) -> Self {
         Self {
-            file_type:    file_type.into(),
-            file_version: "V3.2".to_string(),
-            root:         GffStruct::new(-1),
+            file_type:       file_type.into(),
+            file_version:    "V3.2".to_string(),
+            root:            GffStruct::new(-1),
+            source_bytes:    None,
+            source_snapshot: None,
         }
     }
 
@@ -296,6 +331,14 @@ impl GffRoot {
     /// Inserts or replaces a labeled value on the root structure.
     pub fn put_value(&mut self, label: impl Into<String>, value: GffValue) -> GffResult<()> {
         self.root.put_value(label, value)
+    }
+
+    pub(crate) fn snapshot(&self) -> GffRootSnapshot {
+        GffRootSnapshot {
+            file_type:    self.file_type.clone(),
+            file_version: self.file_version.clone(),
+            root:         self.root.clone(),
+        }
     }
 }
 
@@ -364,4 +407,12 @@ pub fn new_gff_root(file_type: &str) -> GffRoot {
 /// Creates an empty localized string with [`BAD_STRREF`] and no inline entries.
 pub fn new_c_exo_loc_string() -> GffCExoLocString {
     GffCExoLocString::default()
+}
+
+impl PartialEq for GffRoot {
+    fn eq(&self, other: &Self) -> bool {
+        self.file_type == other.file_type
+            && self.file_version == other.file_version
+            && self.root == other.root
+    }
 }

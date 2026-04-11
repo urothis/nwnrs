@@ -41,6 +41,30 @@ pub fn find_nwnrs_root(override_dir: &str) -> GameResult<PathBuf> {
     )
 }
 
+/// Resolves an NWN language folder under `root/lang`, accepting both common
+/// long-form names such as `english` and short on-disk codes such as `en`.
+#[instrument(level = "info", skip_all, err, fields(root = %root.as_ref().display(), language))]
+pub fn resolve_language_root(root: impl AsRef<Path>, language: &str) -> GameResult<PathBuf> {
+    let root = root.as_ref();
+    let language_root = root.join("lang");
+    let requested = language_root.join(language);
+    if requested.is_dir() {
+        return Ok(requested);
+    }
+
+    for alias in language_aliases(language) {
+        let candidate = language_root.join(alias);
+        if candidate.is_dir() {
+            return Ok(candidate);
+        }
+    }
+
+    Err(GameError::msg(format!(
+        "language {} not found",
+        requested.display()
+    )))
+}
+
 #[instrument(
     level = "info",
     skip(env_get, home_dir),
@@ -58,24 +82,20 @@ where
     H: Fn() -> Option<PathBuf>,
 {
     debug!("resolving user root");
-    let result = first_nonempty_path(
+    let explicit = first_nonempty_path(
         override_dir,
         env_get("nwnrs_HOME").as_deref(),
         env_get("nwnrs_USER_DIRECTORY").as_deref(),
-        match platform {
-            Platform::MacOs => {
-                home_dir().map(|home| home.join("Documents").join("Neverwinter Nights"))
-            }
-            Platform::Linux => {
-                home_dir().map(|home| home.join(".local").join("share").join("Neverwinter Nights"))
-            }
-            Platform::Windows => {
-                home_dir().map(|home| home.join("Documents").join("Neverwinter Nights"))
-            }
-        },
+        None,
     );
 
-    match result {
+    let result = explicit.or_else(|| {
+        user_root_candidates(platform, &home_dir)
+            .into_iter()
+            .find(|path| path.is_dir())
+    });
+
+    match result.or_else(|| user_root_candidates(platform, &home_dir).into_iter().next()) {
         Some(path) if path.is_dir() => {
             info!(path = %path.display(), "resolved user root");
             Ok(path)
@@ -84,6 +104,26 @@ where
             "Could not locate NWN user directory; try --userdirectory or set nwnrs_HOME \
              (nwnrs_USER_DIRECTORY also works, but is considered alternate)",
         )),
+    }
+}
+
+fn user_root_candidates<H>(platform: Platform, home_dir: &H) -> Vec<PathBuf>
+where
+    H: Fn() -> Option<PathBuf>,
+{
+    let Some(home) = home_dir() else {
+        return Vec::new();
+    };
+
+    match platform {
+        Platform::MacOs => vec![
+            home.join("Documents").join("Neverwinter Nights"),
+            home.join("Library")
+                .join("Application Support")
+                .join("Neverwinter Nights"),
+        ],
+        Platform::Linux => vec![home.join(".local").join("share").join("Neverwinter Nights")],
+        Platform::Windows => vec![home.join("Documents").join("Neverwinter Nights")],
     }
 }
 
@@ -285,5 +325,180 @@ pub(crate) fn expand_tilde(path: &Path) -> PathBuf {
             .join(rest)
     } else {
         path.to_path_buf()
+    }
+}
+
+fn language_aliases(language: &str) -> &'static [&'static str] {
+    match language.to_ascii_lowercase().as_str() {
+        "english" => &["en"],
+        "en" => &["english"],
+        "german" | "deutsch" => &["de"],
+        "de" => &["german", "deutsch"],
+        "spanish" => &["es"],
+        "es" => &["spanish"],
+        "french" => &["fr"],
+        "fr" => &["french"],
+        "italian" => &["it"],
+        "it" => &["italian"],
+        "polish" => &["pl"],
+        "pl" => &["polish"],
+        _ => &[],
+    }
+}
+
+#[allow(clippy::panic)]
+#[cfg(test)]
+mod tests {
+    use std::{
+        fs,
+        path::PathBuf,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    use super::{expand_tilde, normalize_relative_path, resolve_language_root};
+    use crate::{Platform, find_nwnrs_root_impl, find_user_root_impl};
+
+    fn unique_test_dir(prefix: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        std::env::temp_dir().join(format!("nwnrs-game-{prefix}-{nanos}"))
+    }
+
+    #[test]
+    fn user_root_prefers_environment_over_platform_fallback() {
+        let root = unique_test_dir("user-root");
+        let env_dir = root.join("env");
+        let home = root.join("home");
+        let fallback = home.join(".local").join("share").join("Neverwinter Nights");
+        if let Err(error) = fs::create_dir_all(&env_dir) {
+            panic!("create env dir: {error}");
+        }
+        if let Err(error) = fs::create_dir_all(&fallback) {
+            panic!("create fallback dir: {error}");
+        }
+
+        let resolved = match find_user_root_impl(
+            "",
+            |key| match key {
+                "nwnrs_HOME" => Some(env_dir.display().to_string()),
+                _ => None,
+            },
+            || Some(home.clone()),
+            Platform::Linux,
+        ) {
+            Ok(value) => value,
+            Err(error) => panic!("resolve user root: {error}"),
+        };
+        assert_eq!(resolved, env_dir);
+    }
+
+    #[test]
+    fn macos_user_root_falls_back_to_application_support() {
+        let root = unique_test_dir("mac-user-root");
+        let home = root.join("home");
+        let fallback = home
+            .join("Library")
+            .join("Application Support")
+            .join("Neverwinter Nights");
+        if let Err(error) = fs::create_dir_all(&fallback) {
+            panic!("create mac fallback dir: {error}");
+        }
+
+        let resolved =
+            match find_user_root_impl("", |_key| None, || Some(home.clone()), Platform::MacOs) {
+                Ok(value) => value,
+                Err(error) => panic!("resolve mac user root: {error}"),
+            };
+        assert_eq!(resolved, fallback);
+    }
+
+    #[test]
+    fn macos_user_root_prefers_documents_per_readme() {
+        let root = unique_test_dir("mac-user-root-documents");
+        let home = root.join("home");
+        let documents = home.join("Documents").join("Neverwinter Nights");
+        let application_support = home
+            .join("Library")
+            .join("Application Support")
+            .join("Neverwinter Nights");
+        if let Err(error) = fs::create_dir_all(&documents) {
+            panic!("create mac documents dir: {error}");
+        }
+        if let Err(error) = fs::create_dir_all(&application_support) {
+            panic!("create mac application support dir: {error}");
+        }
+
+        let resolved =
+            match find_user_root_impl("", |_key| None, || Some(home.clone()), Platform::MacOs) {
+                Ok(value) => value,
+                Err(error) => panic!("resolve mac user root: {error}"),
+            };
+        assert_eq!(resolved, documents);
+    }
+
+    #[test]
+    fn game_root_falls_back_to_beamdog_settings() {
+        let root = unique_test_dir("game-root");
+        let home = root.join("home");
+        let beamdog_root = root.join("beamdog");
+        let install = beamdog_root.join("00829");
+        let settings = home
+            .join(".config")
+            .join("Beamdog Client")
+            .join("settings.json");
+
+        if let Err(error) = fs::create_dir_all(&install) {
+            panic!("create install dir: {error}");
+        }
+        if let Err(error) = fs::create_dir_all(settings.parent().unwrap_or(&home)) {
+            panic!("create settings dir: {error}");
+        }
+        if let Err(error) = fs::write(
+            &settings,
+            format!(r#"{{"folders":["{}"]}}"#, beamdog_root.display()),
+        ) {
+            panic!("write settings: {error}");
+        }
+        if let Err(error) = fs::write(install.join("databuild.txt"), "build") {
+            panic!("write databuild: {error}");
+        }
+
+        let resolved =
+            match find_nwnrs_root_impl("", |_key| None, || Some(home.clone()), Platform::Linux) {
+                Ok(value) => value,
+                Err(error) => panic!("resolve game root: {error}"),
+            };
+        assert_eq!(resolved, install);
+    }
+
+    #[test]
+    fn normalizes_relative_paths_and_expands_home() {
+        assert_eq!(
+            normalize_relative_path(r"foo\bar/baz"),
+            PathBuf::from("foo/bar/baz")
+        );
+        if let Some(home) = std::env::var_os("HOME") {
+            assert_eq!(
+                expand_tilde(&PathBuf::from("~/override")),
+                PathBuf::from(home).join("override")
+            );
+        }
+    }
+
+    #[test]
+    fn resolves_language_alias_to_short_folder_name() {
+        let root = unique_test_dir("language-alias");
+        let alias_root = root.join("lang").join("en");
+        if let Err(error) = fs::create_dir_all(&alias_root) {
+            panic!("create alias dir: {error}");
+        }
+
+        let resolved = match resolve_language_root(&root, "english") {
+            Ok(value) => value,
+            Err(error) => panic!("resolve english alias: {error}"),
+        };
+        assert_eq!(resolved, alias_root);
     }
 }

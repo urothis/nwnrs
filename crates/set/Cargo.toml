@@ -1,0 +1,15 @@
+[package]
+name = "nwnrs-set"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+nwnrs-resman.workspace = true
+nwnrs-resref.workspace = true
+nwnrs-restype.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true

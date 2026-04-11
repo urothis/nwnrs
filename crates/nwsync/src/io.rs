@@ -1,4 +1,5 @@
 use std::{
+    cmp::Ordering,
     collections::HashMap,
     fs::File,
     io::{self, BufReader, BufWriter, Read, Write},
@@ -11,7 +12,8 @@ use nwnrs_restype::prelude::*;
 use tracing::{debug, instrument};
 
 use crate::{
-    HASH_TREE_DEPTH, MAGIC, Manifest, ManifestEntry, ManifestError, ManifestResult, VERSION,
+    HASH_TREE_DEPTH, MAGIC, Manifest, ManifestEntry, ManifestEntrySource, ManifestError,
+    ManifestResult, VERSION,
 };
 
 /// Returns the on-disk payload path for a hashed manifest entry.
@@ -60,10 +62,11 @@ pub fn read_manifest<R: Read>(reader: &mut R) -> ManifestResult<Manifest> {
     let mut manifest = Manifest::new(HASH_TREE_DEPTH);
     manifest.version = version;
 
+    let mut primary_positions = Vec::with_capacity(entry_count as usize);
     for index in 0..entry_count {
         let sha1 = read_secure_hash(reader)?;
         let size = read_u32(reader)?;
-        let resref = read_resref(reader)?;
+        let (resref, raw_resref) = read_resref(reader)?;
         check(
             resref.resolve().is_some(),
             format!(
@@ -72,23 +75,50 @@ pub fn read_manifest<R: Read>(reader: &mut R) -> ManifestResult<Manifest> {
             ),
         )?;
 
-        manifest.add_entry(ManifestEntry::new(sha1, size, resref));
+        primary_positions.push(manifest.entries.len());
+        manifest.add_entry(ManifestEntry {
+            sha1,
+            size,
+            resref,
+            raw_resref,
+            source: ManifestEntrySource::Primary,
+        });
     }
 
     for index in 0..mapping_count {
         let entry_index = read_u32(reader)? as usize;
-        let resref = read_resref(reader)?;
+        let (resref, raw_resref) = read_resref(reader)?;
         check(
-            entry_index < manifest.entries.len(),
+            entry_index < primary_positions.len(),
             format!("Mapping {index} references non-existent entry {entry_index}"),
         )?;
 
-        let mapped = manifest.entries.get(entry_index).cloned().ok_or_else(|| {
-            ManifestError::msg(format!(
-                "Mapping {index} references non-existent entry {entry_index}"
-            ))
-        })?;
-        manifest.add_entry(ManifestEntry::new(mapped.sha1, mapped.size, resref));
+        let mapped = manifest
+            .entries
+            .get(*primary_positions.get(entry_index).ok_or_else(|| {
+                ManifestError::msg(format!(
+                    "Mapping {index} references non-existent entry {entry_index}"
+                ))
+            })?)
+            .cloned()
+            .ok_or_else(|| {
+                ManifestError::msg(format!(
+                    "Mapping {index} references non-existent entry {entry_index}"
+                ))
+            })?;
+        manifest.add_entry(ManifestEntry {
+            sha1: mapped.sha1,
+            size: mapped.size,
+            resref,
+            raw_resref,
+            source: ManifestEntrySource::Mapping {
+                target: *primary_positions.get(entry_index).ok_or_else(|| {
+                    ManifestError::msg(format!(
+                        "Mapping {index} references non-existent entry {entry_index}"
+                    ))
+                })?,
+            },
+        });
     }
 
     debug!(
@@ -117,46 +147,85 @@ pub fn read_manifest_file(path: impl AsRef<Path>) -> ManifestResult<Manifest> {
 pub fn write_manifest<W: Write>(writer: &mut W, manifest: &Manifest) -> ManifestResult<()> {
     check(manifest.version == VERSION, "Unsupported manifest version")?;
 
-    let mut seen_hashes = HashMap::<SecureHash, u32>::new();
-    let mut entry_count = 0_u32;
-    let mut mapping_count = 0_u32;
-    let mut entries_bytes = Vec::new();
-    let mut mapping_bytes = Vec::new();
+    let sorted_positions = sorted_manifest_positions(manifest);
+    let mut seen_hashes = HashMap::new();
+    let mut primary_positions = Vec::new();
+    let mut mapping_positions = Vec::new();
 
-    let mut sorted_entries = manifest.entries.clone();
-    sorted_entries.sort_by(|a, b| {
-        a.sha1.to_string().cmp(&b.sha1.to_string()).then_with(|| {
-            a.resref
-                .res_ref()
-                .to_ascii_lowercase()
-                .cmp(&b.resref.res_ref().to_ascii_lowercase())
-        })
-    });
-
-    for entry in sorted_entries {
-        if let Some(index) = seen_hashes.get(&entry.sha1).copied() {
-            write_u32(&mut mapping_bytes, index)?;
-            write_resref(&mut mapping_bytes, &entry.resref)?;
-            mapping_count += 1;
+    for position in sorted_positions {
+        let entry = manifest
+            .entries
+            .get(position)
+            .ok_or_else(|| ManifestError::msg("manifest entry index out of range"))?;
+        if let Some(ordinal) = seen_hashes.get(&entry.sha1).copied() {
+            mapping_positions.push((ordinal, position));
         } else {
-            seen_hashes.insert(entry.sha1, entry_count);
-            entry_count += 1;
-
-            entries_bytes.write_all(entry.sha1.as_bytes())?;
-            write_u32(&mut entries_bytes, entry.size)?;
-            write_resref(&mut entries_bytes, &entry.resref)?;
+            let ordinal = to_u32(primary_positions.len(), "manifest primary ordinal")?;
+            seen_hashes.insert(entry.sha1, ordinal);
+            primary_positions.push(position);
         }
     }
 
     writer.write_all(MAGIC)?;
     write_u32(writer, manifest.version)?;
-    write_u32(writer, entry_count)?;
-    write_u32(writer, mapping_count)?;
-    writer.write_all(&entries_bytes)?;
-    writer.write_all(&mapping_bytes)?;
+    write_u32(
+        writer,
+        to_u32(primary_positions.len(), "manifest primary count")?,
+    )?;
+    write_u32(
+        writer,
+        to_u32(mapping_positions.len(), "manifest mapping count")?,
+    )?;
 
-    debug!(entry_count, mapping_count, "wrote nwsync manifest");
+    for position in &primary_positions {
+        let entry = manifest
+            .entries
+            .get(*position)
+            .ok_or_else(|| ManifestError::msg("primary entry index out of range"))?;
+        writer.write_all(entry.sha1.as_bytes())?;
+        write_u32(writer, entry.size)?;
+        write_resref(writer, entry)?;
+    }
+
+    for (ordinal, position) in &mapping_positions {
+        let entry = manifest
+            .entries
+            .get(*position)
+            .ok_or_else(|| ManifestError::msg("mapping entry index out of range"))?;
+        write_u32(writer, *ordinal)?;
+        write_resref(writer, entry)?;
+    }
+
+    debug!(
+        entry_count = manifest.entries.len(),
+        version = manifest.version,
+        "wrote nwsync manifest"
+    );
     Ok(())
+}
+
+fn sorted_manifest_positions(manifest: &Manifest) -> Vec<usize> {
+    let mut positions = (0..manifest.entries.len()).collect::<Vec<_>>();
+    positions.sort_by(|left, right| {
+        compare_manifest_entries(manifest.entries.get(*left), manifest.entries.get(*right))
+    });
+    positions
+}
+
+fn compare_manifest_entries(
+    left: Option<&ManifestEntry>,
+    right: Option<&ManifestEntry>,
+) -> Ordering {
+    match (left, right) {
+        (Some(left), Some(right)) => left
+            .sha1
+            .as_bytes()
+            .cmp(right.sha1.as_bytes())
+            .then_with(|| left.resref.res_ref().cmp(right.resref.res_ref())),
+        (None, Some(_)) => Ordering::Less,
+        (Some(_), None) => Ordering::Greater,
+        (None, None) => Ordering::Equal,
+    }
 }
 
 /// Writes a manifest file to disk.
@@ -169,20 +238,23 @@ pub fn write_manifest_file(path: impl AsRef<Path>, manifest: &Manifest) -> Manif
     Ok(())
 }
 
-fn read_resref<R: Read>(reader: &mut R) -> ManifestResult<ResRef> {
+fn read_resref<R: Read>(reader: &mut R) -> ManifestResult<(ResRef, [u8; 16])> {
     let mut raw = [0_u8; 16];
     reader.read_exact(&mut raw)?;
     let end = raw.iter().position(|byte| *byte == 0).unwrap_or(raw.len());
     let res_ref = String::from_utf8_lossy(raw.get(..end).unwrap_or(&raw)).to_ascii_lowercase();
     let res_type = ResType(read_u16(reader)?);
-    Ok(new_res_ref(res_ref, res_type)?)
+    Ok((new_res_ref(res_ref, res_type)?, raw))
 }
 
-fn write_resref<W: Write>(writer: &mut W, resref: &ResRef) -> ManifestResult<()> {
-    let normalized = resref.res_ref().to_ascii_lowercase();
-    writer.write_all(normalized.as_bytes())?;
-    writer.write_all(&vec![0_u8; 16 - normalized.len()])?;
-    write_u16(writer, resref.res_type().0)?;
+fn write_resref<W: Write>(writer: &mut W, entry: &ManifestEntry) -> ManifestResult<()> {
+    let normalized = entry.resref.res_ref().to_ascii_lowercase();
+    let mut raw = [0_u8; 16];
+    if let Some(prefix) = raw.get_mut(..normalized.len()) {
+        prefix.copy_from_slice(normalized.as_bytes());
+    }
+    writer.write_all(&raw)?;
+    write_u16(writer, entry.resref.res_type().0)?;
     Ok(())
 }
 
@@ -218,10 +290,179 @@ fn write_u32<W: Write>(writer: &mut W, value: u32) -> io::Result<()> {
     writer.write_all(&value.to_le_bytes())
 }
 
+fn to_u32(value: usize, what: &str) -> ManifestResult<u32> {
+    u32::try_from(value)
+        .map_err(|_error| ManifestError::msg(format!("{what} exceeds 32-bit range")))
+}
+
 fn check(condition: bool, message: impl Into<String>) -> ManifestResult<()> {
     if condition {
         Ok(())
     } else {
         Err(ManifestError::msg(message))
+    }
+}
+
+#[allow(clippy::panic)]
+#[cfg(test)]
+mod tests {
+    use nwnrs_checksums::secure_hash;
+    use nwnrs_resref::new_res_ref;
+    use nwnrs_restype::ResType;
+
+    use crate::{Manifest, ManifestEntry, ManifestEntrySource, read_manifest, write_manifest};
+
+    #[test]
+    fn manifest_edit_rewrites_canonical_primary_and_mapping_structure() {
+        let primary_rr = match new_res_ref("hello", ResType(2017)) {
+            Ok(resref) => resref,
+            Err(error) => panic!("resref: {error}"),
+        };
+        let mapping_rr = match new_res_ref("world", ResType(2017)) {
+            Ok(resref) => resref,
+            Err(error) => panic!("resref: {error}"),
+        };
+        let mut manifest = Manifest::default();
+        manifest.entries.push(ManifestEntry {
+            sha1:       secure_hash(b"first"),
+            size:       5,
+            resref:     primary_rr.clone(),
+            raw_resref: *b"HELLO\0\0\0\0\0\0\0\0\0\0\0",
+            source:     ManifestEntrySource::Primary,
+        });
+        manifest.entries.push(ManifestEntry {
+            sha1:       secure_hash(b"first"),
+            size:       5,
+            resref:     mapping_rr,
+            raw_resref: *b"WORLD\0\0\0\0\0\0\0\0\0\0\0",
+            source:     ManifestEntrySource::Mapping {
+                target: 0
+            },
+        });
+
+        let mut encoded = Vec::new();
+        if let Err(error) = write_manifest(&mut encoded, &manifest) {
+            panic!("write manifest: {error}");
+        }
+
+        let decoded = match read_manifest(&mut &encoded[..]) {
+            Ok(manifest) => manifest,
+            Err(error) => panic!("read manifest: {error}"),
+        };
+        assert_eq!(decoded.entries.len(), 2);
+        assert_eq!(
+            decoded.entries.first().map(|entry| &entry.source),
+            Some(&ManifestEntrySource::Primary)
+        );
+        assert_eq!(
+            decoded.entries.get(1).map(|entry| &entry.source),
+            Some(&ManifestEntrySource::Mapping {
+                target: 0
+            })
+        );
+
+        let mut edited = decoded.clone();
+        if let Some(entry) = edited.entries.get_mut(0) {
+            entry.size = 7;
+        } else {
+            panic!("decoded manifest should contain primary entry");
+        }
+        let mut reencoded = Vec::new();
+        if let Err(error) = write_manifest(&mut reencoded, &edited) {
+            panic!("rewrite manifest: {error}");
+        }
+        let redecoded = match read_manifest(&mut &reencoded[..]) {
+            Ok(manifest) => manifest,
+            Err(error) => panic!("re-read manifest: {error}"),
+        };
+        assert_eq!(
+            redecoded.entries.get(1).map(|entry| &entry.source),
+            Some(&ManifestEntrySource::Mapping {
+                target: 0
+            })
+        );
+        assert_eq!(
+            redecoded.entries.first().map(|entry| entry.raw_resref),
+            Some(*b"hello\0\0\0\0\0\0\0\0\0\0\0")
+        );
+        assert_eq!(
+            redecoded.entries.get(1).map(|entry| entry.raw_resref),
+            Some(*b"world\0\0\0\0\0\0\0\0\0\0\0")
+        );
+    }
+
+    #[test]
+    fn manifest_write_canonicalizes_order_and_hash_mappings() {
+        let alpha = new_res_ref("alpha", ResType(2017)).unwrap_or_else(|error| {
+            panic!("alpha resref: {error}");
+        });
+        let beta = new_res_ref("beta", ResType(2017)).unwrap_or_else(|error| {
+            panic!("beta resref: {error}");
+        });
+        let gamma = new_res_ref("gamma", ResType(2017)).unwrap_or_else(|error| {
+            panic!("gamma resref: {error}");
+        });
+
+        let sha1_a = secure_hash(b"payload-a");
+        let sha1_b = secure_hash(b"payload-b");
+        let mut manifest = Manifest::default();
+        manifest.entries.push(ManifestEntry {
+            sha1:       sha1_b,
+            size:       9,
+            resref:     gamma.clone(),
+            raw_resref: *b"GAMMA\0\0\0\0\0\0\0\0\0\0\0",
+            source:     ManifestEntrySource::Primary,
+        });
+        manifest.entries.push(ManifestEntry {
+            sha1:       sha1_a,
+            size:       9,
+            resref:     beta.clone(),
+            raw_resref: *b"BETA\0\0\0\0\0\0\0\0\0\0\0\0",
+            source:     ManifestEntrySource::Primary,
+        });
+        manifest.entries.push(ManifestEntry {
+            sha1:       sha1_a,
+            size:       9,
+            resref:     alpha.clone(),
+            raw_resref: *b"ALPHA\0\0\0\0\0\0\0\0\0\0\0",
+            source:     ManifestEntrySource::Primary,
+        });
+
+        let mut encoded = Vec::new();
+        if let Err(error) = write_manifest(&mut encoded, &manifest) {
+            panic!("write manifest: {error}");
+        }
+
+        let decoded = match read_manifest(&mut &encoded[..]) {
+            Ok(manifest) => manifest,
+            Err(error) => panic!("read manifest: {error}"),
+        };
+        assert_eq!(decoded.entries.len(), 3);
+        assert_eq!(
+            decoded.entries.first().map(|entry| &entry.resref),
+            Some(&alpha)
+        );
+        assert_eq!(
+            decoded.entries.get(1).map(|entry| &entry.resref),
+            Some(&gamma)
+        );
+        assert_eq!(
+            decoded.entries.get(2).map(|entry| &entry.resref),
+            Some(&beta)
+        );
+        assert_eq!(
+            decoded.entries.first().map(|entry| &entry.source),
+            Some(&ManifestEntrySource::Primary)
+        );
+        assert_eq!(
+            decoded.entries.get(1).map(|entry| &entry.source),
+            Some(&ManifestEntrySource::Primary)
+        );
+        assert_eq!(
+            decoded.entries.get(2).map(|entry| &entry.source),
+            Some(&ManifestEntrySource::Mapping {
+                target: 0
+            })
+        );
     }
 }
