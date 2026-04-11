@@ -1,0 +1,17 @@
+[package]
+name = "nwnrs-localization"
+version.workspace = true
+edition.workspace = true
+publish = true
+license.workspace = true
+description = "Shared Neverwinter Nights localization vocabulary and language helpers"
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/nwnrs-localization"
+readme = "README.md"
+
+[dependencies]
+tracing.workspace = true
+
+[lints]
+workspace = true

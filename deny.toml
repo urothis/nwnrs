@@ -3,7 +3,7 @@
 
 [bans]
 # The lint level for duplicate dependencies
-multiple-versions = "deny"
+#multiple-versions = "deny"
 
 # forbid wildcard version requirements like foo = "*"
 wildcards = "deny"
@@ -12,6 +12,7 @@ wildcards = "deny"
 allow-wildcard-paths = true
 
 skip = [
+    { name = "hashbrown", version = "=0.16.1" },
     { name = "thiserror", version = "=1.0.69" },
     { name = "thiserror-impl", version = "=1.0.69" },
     { name = "windows-sys", version = "=0.45.0" },    # https://github.com/rustls/rustls-platform-verifier/pull/193

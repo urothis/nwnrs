@@ -2,11 +2,16 @@
 name = "nwnrs-wasm"
 version.workspace = true
 edition.workspace = true
-publish.workspace = true
 license.workspace = true
+publish = false
+description = "WebAssembly DTO bindings for Neverwinter Nights resource formats"
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+exclude = ["pkg/**"]
 
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 nwnrs.workspace = true

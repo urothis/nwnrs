@@ -27,7 +27,9 @@ pub use twoda::{TwoDaDto, read_twoda_from_bytes, write_twoda_to_bytes};
 mod tests {
     use std::io::Cursor;
 
-    use nwnrs::prelude::{compressedbuf, core::Language, erf, exo, gff, resref, ssf, tlk, twoda};
+    use nwnrs::prelude::{
+        compressedbuf, erf, exo, gff, localization::Language, resref, ssf, tlk, twoda,
+    };
     #[cfg(target_arch = "wasm32")]
     use wasm_bindgen_test::wasm_bindgen_test;
 

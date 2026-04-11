@@ -4,6 +4,12 @@ The command-line interface for inspecting, packing, unpacking, and managing NWN 
 
 ## Quick Start
 
+Install from crates.io:
+
+```bash
+cargo install nwnrs-cli
+```
+
 Build or run the CLI from the workspace root:
 
 ```bash
@@ -18,7 +24,7 @@ Useful patterns:
 
 - compile `.nss` to `.ncs` using a sibling `nwscript.nss`, or override it with `--langspec`
 - unpack a KEY/BIF set, preserve `resource.json`, and repack without losing archive ordering
-- open a game install with `nwnrs-game`, then query resources through `nwnrs-resman`
+- open an install with `nwnrs-install`, then query resources through `nwnrs-resman`
 
 ## CLI Behavior and Supported Commands
 

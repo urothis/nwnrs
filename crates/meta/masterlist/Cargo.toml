@@ -1,0 +1,22 @@
+[package]
+name = "nwnrs-masterlist"
+version.workspace = true
+edition.workspace = true
+publish = true
+license.workspace = true
+description = "Neverwinter Nights server master-list client"
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/nwnrs-masterlist"
+readme = "README.md"
+
+[dependencies]
+reqwest.workspace = true
+serde.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+
+[lints]
+workspace = true

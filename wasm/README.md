@@ -31,6 +31,40 @@ Edited DTO writes are supported for `GFF`, `2DA`, `TLK`, `SSF`, and `ERF`. The w
 
 ## Installation
 
+## Building
+
+This crate is not consumed directly with `cargo build`. The intended output is
+the generated JavaScript package under `wasm/pkg`.
+
+Prerequisites:
+
+- the `wasm32-unknown-unknown` Rust target
+- `wasm-pack`
+
+Install them once:
+
+```bash
+rustup target add wasm32-unknown-unknown
+cargo install wasm-pack
+```
+
+Build the package from the repository root:
+
+```bash
+wasm-pack build wasm --target bundler --out-dir pkg
+```
+
+That command writes the generated WebAssembly module, JavaScript loader, and
+TypeScript declarations into [`wasm/pkg`](./pkg).
+
+If you need a different JavaScript environment, change `--target` accordingly:
+
+- `bundler` for Vite, Webpack, Rollup, and similar toolchains
+- `web` for direct browser usage without a bundler
+- `nodejs` for direct Node.js consumption
+
+Rebuild `wasm/pkg` whenever the Rust bindings change.
+
 If you are consuming the generated package directly:
 
 ```bash

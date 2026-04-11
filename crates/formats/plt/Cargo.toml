@@ -1,0 +1,19 @@
+[package]
+name = "nwnrs-plt"
+version.workspace = true
+edition.workspace = true
+publish = true
+license.workspace = true
+description = "Typed Neverwinter Nights PLT parser and writer with explicit value/layer pixels"
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/nwnrs-plt"
+readme = "README.md"
+
+[dependencies]
+nwnrs-resman.workspace = true
+nwnrs-restype.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true

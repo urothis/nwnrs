@@ -1,0 +1,25 @@
+[package]
+name = "nwnrs-nwscript"
+version.workspace = true
+edition.workspace = true
+publish = true
+license.workspace = true
+description = "Neverwinter Nights NWScript resource and compiler-data helpers"
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/nwnrs-nwscript"
+readme = "README.md"
+
+[dependencies]
+nwnrs-restype.workspace = true
+nwnrs-io.workspace = true
+serde.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+reqwest.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+
+[lints]
+workspace = true
