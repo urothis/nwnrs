@@ -17,6 +17,7 @@ In other words, the wasm crate is a thin ABI layer over the Rust format crates. 
 - `TLK`
 - `SSF`
 - `ERF`
+- `MDL`
 
 Each format has a pair of functions:
 
@@ -27,7 +28,7 @@ The returned objects are DTOs serialized with `serde_wasm_bindgen`. In JavaScrip
 
 For every supported format, the read API also carries hidden provenance metadata in the top-level DTO. If you read bytes and write the DTO back unchanged, the original bytes are returned exactly.
 
-Edited DTO writes are supported for `GFF`, `2DA`, `TLK`, `SSF`, and `ERF`. The wasm layer delegates preservation behavior to the native crates instead of maintaining a second set of format rules.
+Edited DTO writes are supported for `GFF`, `2DA`, `TLK`, `SSF`, `ERF`, and ASCII `MDL`. The wasm layer delegates preservation behavior to the native crates instead of maintaining a second set of format rules.
 
 ## Installation
 
@@ -77,6 +78,8 @@ npm install ./wasm/pkg
 import init, {
   read_gff_from_bytes,
   write_gff_to_bytes,
+  read_mdl_from_bytes,
+  write_mdl_to_bytes,
   read_twoda_from_bytes,
   write_twoda_to_bytes,
 } from "nwnrs-wasm";
@@ -87,6 +90,11 @@ const gffBytes = await fetch("/fixture.utc").then((r) => r.arrayBuffer());
 const gff = read_gff_from_bytes(new Uint8Array(gffBytes));
 
 const encodedGff = write_gff_to_bytes(gff);
+
+const mdlBytes = await fetch("/model.mdl").then((r) => r.arrayBuffer());
+const mdl = read_mdl_from_bytes(new Uint8Array(mdlBytes));
+
+const encodedMdl = write_mdl_to_bytes(mdl);
 
 const twodaBytes = await fetch("/appearance.2da").then((r) => r.arrayBuffer());
 const twoda = read_twoda_from_bytes(new Uint8Array(twodaBytes));
@@ -182,6 +190,21 @@ ERF is exposed as archive metadata plus ordered entries:
 ```
 
 `read_erf_from_bytes(bytes, filename)` requires the source filename because ERF parsing uses it to resolve archive context. Edited writes preserve untouched archive layout metadata such as resource-list padding.
+
+### MDL
+
+MDL is exposed as:
+
+```ts
+{
+  encoding: "ascii" | "compiled",
+  text: string
+}
+```
+
+ASCII source is returned as text directly. Compiled MDL is lowered to canonical ASCII text on read.
+
+Unchanged writes preserve the exact original bytes for both encodings. Edited writes are supported when `encoding` is `"ascii"`. Edited writes for `"compiled"` are rejected for now instead of silently emitting lossy or incorrect rebuilt bytes.
 
 ## Error Model
 

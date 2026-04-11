@@ -6,6 +6,7 @@ mod compile;
 mod convert;
 mod inspect;
 mod logging;
+mod mdl;
 mod metadata;
 mod nwsync;
 mod pack;
@@ -35,6 +36,7 @@ fn run(cli: Cli) -> Result<(), String> {
         Command::Compile(cmd) => compile::run_compile(cmd),
         Command::Convert(cmd) => convert::run_convert(cmd),
         Command::Inspect(cmd) => inspect::run_inspect(&cmd.path),
+        Command::Mdl(cmd) => mdl::run_mdl(cmd),
         Command::Pack(cmd) => pack::run_pack(cmd),
         Command::Unpack(cmd) => unpack::run_unpack(cmd),
         Command::Nwsync(cmd) => match cmd.command {

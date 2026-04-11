@@ -15,6 +15,7 @@ pub(crate) enum Command {
     Compile(CompileCmd),
     Convert(ConvertCmd),
     Inspect(InspectCmd),
+    Mdl(MdlCmd),
     Pack(PackCmd),
     Unpack(UnpackCmd),
     Nwsync(NwsyncCmd),
@@ -85,6 +86,55 @@ pub(crate) struct InspectCmd {
     #[argh(positional)]
     /// path to the file to inspect
     pub(crate) path: PathBuf,
+}
+
+#[derive(FromArgs)]
+#[argh(subcommand, name = "mdl")]
+/// mdl conversion utilities
+pub(crate) struct MdlCmd {
+    #[argh(subcommand)]
+    pub(crate) command: MdlCommand,
+}
+
+#[derive(FromArgs)]
+#[argh(subcommand)]
+pub(crate) enum MdlCommand {
+    ToAscii(MdlToAsciiCmd),
+    ToCompiled(MdlToCompiledCmd),
+}
+
+#[derive(FromArgs)]
+#[argh(subcommand, name = "to-ascii")]
+/// lower an mdl file to canonical ascii text
+pub(crate) struct MdlToAsciiCmd {
+    #[argh(switch, short = 'f')]
+    /// overwrite existing output files
+    pub(crate) force: bool,
+
+    #[argh(positional)]
+    /// input mdl path
+    pub(crate) input: PathBuf,
+
+    #[argh(positional)]
+    /// output ascii mdl path
+    pub(crate) output: PathBuf,
+}
+
+#[derive(FromArgs)]
+#[argh(subcommand, name = "to-compiled")]
+/// rebuild compiled mdl bytes from canonical ascii produced by to-ascii
+pub(crate) struct MdlToCompiledCmd {
+    #[argh(switch, short = 'f')]
+    /// overwrite existing output files
+    pub(crate) force: bool,
+
+    #[argh(positional)]
+    /// input canonical ascii mdl path
+    pub(crate) input: PathBuf,
+
+    #[argh(positional)]
+    /// output compiled mdl path
+    pub(crate) output: PathBuf,
 }
 
 #[derive(FromArgs)]
@@ -242,7 +292,7 @@ mod tests {
 
     use argh::FromArgs;
 
-    use super::{Cli, Command, NwsyncCommand};
+    use super::{Cli, Command, MdlCommand, NwsyncCommand};
 
     #[test]
     fn parses_compile_command_with_repeated_include_dirs() {
@@ -301,5 +351,30 @@ mod tests {
         };
         assert_eq!(cmd.url, "https://example.invalid/manifest/abcd");
         assert_eq!(cmd.output, Some(PathBuf::from("repo")));
+    }
+
+    #[test]
+    fn parses_mdl_to_ascii_command() {
+        let cli = Cli::from_args(
+            &["nwnrs"],
+            &[
+                "mdl",
+                "to-ascii",
+                "-f",
+                "models/input.mdl",
+                "models/output.mdl",
+            ],
+        )
+        .unwrap_or_else(|error| panic!("parse mdl args: {error:?}"));
+
+        let Command::Mdl(cmd) = cli.command else {
+            panic!("expected mdl command");
+        };
+        let MdlCommand::ToAscii(cmd) = cmd.command else {
+            panic!("expected mdl to-ascii subcommand");
+        };
+        assert!(cmd.force);
+        assert_eq!(cmd.input, PathBuf::from("models/input.mdl"));
+        assert_eq!(cmd.output, PathBuf::from("models/output.mdl"));
     }
 }

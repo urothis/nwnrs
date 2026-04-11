@@ -6,6 +6,7 @@ mod bindings;
 mod erf;
 mod gff;
 mod lossless;
+mod mdl;
 mod ssf;
 mod tlk;
 mod twoda;
@@ -19,6 +20,7 @@ pub use gff::{
     read_gff_from_bytes, write_gff_to_bytes,
 };
 pub use lossless::LosslessDtoMetadata;
+pub use mdl::{MdlDto, MdlEncodingDto, read_mdl_from_bytes, write_mdl_to_bytes};
 pub use ssf::{SsfEntryDto, SsfRootDto, read_ssf_from_bytes, write_ssf_to_bytes};
 pub use tlk::{SingleTlkDto, TlkEntryDto, read_tlk_from_bytes, write_tlk_to_bytes};
 pub use twoda::{TwoDaDto, read_twoda_from_bytes, write_twoda_to_bytes};
@@ -28,17 +30,19 @@ mod tests {
     use std::io::Cursor;
 
     use nwnrs::prelude::{
-        compressedbuf, erf, exo, gff, localization::Language, resref, ssf, tlk, twoda,
+        compressedbuf, erf, exo, gff, localization::Language, mdl, resref, ssf, tlk, twoda,
     };
+    use nwnrs_test_support::{demand_resource, require_game_resource};
     #[cfg(target_arch = "wasm32")]
     use wasm_bindgen_test::wasm_bindgen_test;
 
     use crate::{
-        ErfDto, GffFieldDto, GffRootDto, GffStructDto, GffValueDto, SingleTlkDto, SsfRootDto,
-        TwoDaDto,
+        ErfDto, GffFieldDto, GffRootDto, GffStructDto, GffValueDto, MdlDto, MdlEncodingDto,
+        SingleTlkDto, SsfRootDto, TwoDaDto,
         erf::{read_erf_dto, write_erf_dto},
         gff::{read_gff_dto, write_gff_dto},
         lossless::with_lossless_metadata,
+        mdl::{read_mdl_dto, write_mdl_dto},
         ssf::{read_ssf_dto, write_ssf_dto},
         tlk::{read_tlk_dto, write_tlk_dto},
         twoda::{read_twoda_dto, unchanged_twoda_bytes, write_twoda_dto},
@@ -354,5 +358,53 @@ mod tests {
             }
         };
         assert_eq!(items.len(), 2);
+    }
+
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    fn ascii_mdl_edited_write_roundtrips_through_native_codec() {
+        let source = b"newmodel demo\nsetsupermodel demo null\nclassification character\nsetanimationscale 1\nbeginmodelgeom demo\nnode dummy demo\n  parent null\nendnode\nendmodelgeom demo\ndonemodel demo\n";
+        let value: MdlDto = read_mdl_dto(source).expect("read wasm MDL");
+        let mut edited = value.clone();
+        edited.text = edited.text.replace("demo", "renamed");
+        edited.encoding = MdlEncodingDto::Ascii;
+
+        let rewritten = write_mdl_dto(&edited).expect("write ascii mdl");
+        let mut cursor = Cursor::new(rewritten);
+        let reparsed = mdl::read_ascii_model(&mut cursor).expect("reparse mdl");
+        assert_eq!(reparsed.geometry_name, "renamed");
+    }
+
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    fn compiled_mdl_unchanged_write_reuses_original_bytes() {
+        let result = require_game_resource(demand_resource("a_ba2", mdl::MODEL_RES_TYPE));
+        let Ok(res) = result else {
+            return;
+        };
+        let bytes = res.read_all(false).expect("read shipped mdl bytes");
+
+        let value: MdlDto = read_mdl_dto(&bytes).expect("read wasm compiled mdl");
+        assert_eq!(value.encoding, MdlEncodingDto::Compiled);
+
+        let rewritten = write_mdl_dto(&value).expect("write unchanged compiled mdl");
+        assert_eq!(rewritten, bytes);
+    }
+
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    fn compiled_mdl_edited_write_is_rejected() {
+        let result = require_game_resource(demand_resource("a_ba2", mdl::MODEL_RES_TYPE));
+        let Ok(res) = result else {
+            return;
+        };
+        let bytes = res.read_all(false).expect("read shipped mdl bytes");
+
+        let mut value: MdlDto = read_mdl_dto(&bytes).expect("read wasm compiled mdl");
+        value.text.push_str("\n# edited\n");
+
+        let err = write_mdl_dto(&value).expect_err("edited compiled mdl should fail");
+        let message = err.as_string().expect("error string");
+        assert!(message.contains("edited compiled MDL writes are not supported yet"));
     }
 }

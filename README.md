@@ -1,34 +1,172 @@
-# `nwn-rs`
+<h1 align="center">
+  <img src="assets/logo/icon.svg" width="150"/><br>
+</h1>
+<div align="center">
+  <a href="https://discord.gg/VChctxJCMM">
+    <img src="https://img.shields.io/discord/721439329079263232.svg?colorB=7289DA&label=Discord&logo=Discord&logoColor=7289DA&style=flat-square"
+    alt="chat" />
+  </a>
+  <br />
+</div>
 
-Rust workspace for reading, writing, inspecting, and composing Neverwinter Nights resource data.
+# nwnrs
 
-This repository is organized as a layered toolkit:
+`nwnrs` is a Rust workspace for Neverwinter Nights data.
 
-- low-level binary and text codecs for NWN file formats such as `GFF`, `2DA`, `TLK`, `SSF`, `MDL`, `TGA`, NWN `DDS`, typed palette texture payloads (`PLT`), `ERF`, `KEY/BIF`, and `NWSync`
-- resource identity, type, checksum, encoding, and stream utilities
-- container adapters that expose archives, directories, single files, in-memory buffers, and NWSync manifests through a shared resource-manager abstraction
-- a high-level install crate for installation discovery and default resource loading
-- a root `nwnrs-bevy` crate for loading static NWN `mdl` assets into Bevy `0.18.1`
-- a CLI for inspection, packing, unpacking, selected NWSync workflows, and NWScript compilation
+It is built around one practical goal: take real NWN resources from installs, archives, or loose files, and make them easy to inspect, decode, rewrite, repack, and load through one coherent set of crates.
 
-## What This Workspace Does
+## What You Get
 
-The codebase is designed around one practical question: given an NWN installation or archive, how do you identify resources, open them reliably, and transform them into forms that are easier to inspect or rebuild?
+- Typed readers and writers for core NWN formats such as `GFF`, `2DA`, `TLK`, `SSF`, `ERF`, `KEY/BIF`, `MDL`, `TGA`, NWN `DDS`, `PLT`, and `NWSync`
+- A shared resource vocabulary and manager stack for `resref`, `restype`, archives, directories, manifests, and install-backed lookups
+- An NWScript frontend and compiler pipeline with preprocessing, parsing, semantic analysis, optimization, and `NCS`/`NDB` emission
+- A CLI for inspection, texture conversion, packing, unpacking, NWSync workflows, NWScript compilation, and MDL conversion
+- A wasm boundary for web-facing DTO workflows over selected formats
 
-At a high level:
+## Project Shape
 
-- `nwnrs-cli` exposes the current main workflows
-- `nwnrs-resref`, `nwnrs-restype`, and `nwnrs-localization` define the shared identity vocabulary
-- `nwnrs-resman` defines a common `Res`/`ResContainer` model and a layered `ResMan`
-- container crates such as `nwnrs-erf`, `nwnrs-key`, `nwnrs-resdir`, `nwnrs-resfile`, `nwnrs-resmemfile`, and `nwnrs-resnwsync` project different storage backends into that shared model
-- format crates such as `nwnrs-gff`, `nwnrs-twoda`, `nwnrs-tlk`, `nwnrs-ssf`, `nwnrs-mdl`, `nwnrs-tga`, `nwnrs-dds`, `nwnrs-plt`, and `nwnrs-nwsync` provide typed parsers and writers, with the texture crates now split cleanly by on-disk format
-- `nwnrs-nwscript` provides the NWScript frontend and compiler pipeline: source loading, preprocessing, lexing, parsing, semantic analysis, optimization, and `NCS`/`NDB` emission
-- `nwnrs-install` composes those pieces into a default install-facing resource-loading stack
-- `nwnrs-bevy` is the first Bevy-facing integration layer, currently scoped to static `mdl` loading plus NWN `dds`/`tga` texture decode for Bevy `Image` assets
+The workspace is layered on purpose.
+
+- Foundation crates handle checksums, encoding, IO, localization, LRU caching, and stream helpers.
+- Format crates handle the actual file formats.
+- Resource crates make archives, directories, files, memory buffers, and NWSync repositories look uniform through `Res` and `ResMan`.
+- Language crates handle NWScript.
+- Meta crates provide the umbrella `nwnrs` import surface.
+
+If you just want one dependency, use [`nwnrs`](./crates/meta/prelude/README.md).
+If you want a narrow codec or subsystem, depend on the individual crate directly.
+
+## Quick Start
+
+### Rust
+
+This workspace is currently Git-first rather than crates.io-first, so depend on it from the repository:
+
+```toml
+[dependencies]
+nwnrs = { git = "https://github.com/urothis/nwnrs" }
+```
+
+Minimal example:
+
+```rust
+use nwnrs::{
+    gff::{GffRoot, GffValue},
+    twoda::TwoDa,
+};
+
+let mut root = GffRoot::new("UTC ");
+root.put_value("Tag", GffValue::CExoString("nw_chicken".to_string()))?;
+
+let mut table = TwoDa::new();
+table.set_columns(vec!["Label".to_string()])?;
+table.replace_rows(
+    vec![vec![Some("Chicken".to_string())]],
+    vec!["0".to_string()],
+)?;
+
+assert_eq!(root.file_type, "UTC ");
+assert_eq!(table.cell_or(0, "Label", ""), "Chicken");
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+### CLI
+
+Install the CLI from the repo:
+
+```bash
+cargo install --git https://github.com/urothis/nwnrs --bin nwnrs-cli
+```
+
+Common workflows:
+
+```bash
+# Inspect a resource by extension
+nwnrs-cli inspect path/to/file.utc
+nwnrs-cli inspect path/to/model.mdl
+
+# Compile NWScript
+nwnrs-cli compile --debug path/to/script.nss
+
+# Convert textures
+nwnrs-cli convert input.png output.tga
+nwnrs-cli convert input.jpg output.dds --dds-format dxt1
+nwnrs-cli convert input.dds output.webp
+
+# Lower compiled MDL to canonical ASCII
+nwnrs-cli mdl to-ascii path/to/model.mdl out/model_ascii.mdl
+
+# Rebuild compiled MDL from canonical ASCII generated by to-ascii
+nwnrs-cli mdl to-compiled out/model_ascii.mdl rebuilt/model.mdl
+
+# Unpack and repack archives
+nwnrs-cli unpack path/to/module.mod -d out/
+nwnrs-cli pack out/ rebuilt.mod
+
+# Work with NWSync
+nwnrs-cli nwsync print path/to/repository --manifest <sha1>
+```
+
+CLI implementation notes live in [`cli/README.md`](./cli/README.md).
+
+### WebAssembly
+
+The wasm crate exposes DTO-style bindings for browser or Node.js consumers.
+
+```bash
+wasm-pack build wasm --target bundler --out-dir pkg
+```
+
+The generated package exports helpers such as:
+
+- `read_gff_from_bytes` / `write_gff_to_bytes`
+- `read_twoda_from_bytes` / `write_twoda_to_bytes`
+- `read_tlk_from_bytes` / `write_tlk_to_bytes`
+- `read_ssf_from_bytes` / `write_ssf_to_bytes`
+- `read_erf_from_bytes` / `write_erf_to_bytes`
+- `read_mdl_from_bytes` / `write_mdl_to_bytes`
+
+See [`wasm/README.md`](./wasm/README.md) for the supported DTO shapes and write semantics.
+
+## Major Capabilities
+
+### Resource Loading
+
+- Resolve resources by `resref` and `restype`
+- Layer loose files, archives, install roots, override directories, and NWSync repositories behind one `ResMan`
+- Discover local game and user installs through `nwnrs-install`
+
+### Binary and Text Formats
+
+- Parse and write `GFF`, `2DA`, `TLK`, `SSF`, `ERF`, `KEY/BIF`, `TXI`, `SET`, and related NWN data
+- Decode and encode NWN `TGA` and NWN `DDS`
+- Parse typed `PLT` palette textures
+- Parse, inspect, and lower `MDL`
+
+### NWScript
+
+- Load source through install-backed or custom resolvers
+- Preprocess includes and defines
+- Parse and semantically analyze scripts
+- Compile to `NCS`
+- Optionally emit `NDB`
+
+## MDL Status
+
+MDL now has a clear public conversion story:
+
+- compiled MDL can be lowered to canonical ASCII
+- that canonical ASCII can be reparsed and lowered through the semantic and scene layers
+- compiled rebuild currently supports canonical ASCII generated by `lower_binary_model_to_ascii`
+
+That last constraint is deliberate. The current compiled rebuild path is reversible for the supported workflow, but it is not yet a general-purpose arbitrary ASCII-to-compiled compiler.
+
+The CLI and wasm bindings expose that limitation honestly:
+
+- `nwnrs-cli mdl to-compiled` is intended for canonical ASCII produced by `mdl to-ascii`
+- wasm allows edited ASCII writes, exact unchanged compiled roundtrips, and rejects edited compiled writes instead of silently producing incorrect bytes
 
 ## Crate Map
-
-The publishable crate tree is grouped by responsibility.
 
 ### Foundation
 
@@ -81,169 +219,27 @@ The publishable crate tree is grouped by responsibility.
 
 ## Choosing a Crate
 
-- Use [`nwnrs`](./crates/meta/prelude/README.md) if you want one umbrella dependency with stable root modules such as `nwnrs::gff` and `nwnrs::resman`.
-- Use [`nwnrs-resman`](./crates/resources/resman/README.md) if you are composing resources from directories, archives, and manifests behind one retrieval model.
-- Use [`nwnrs-install`](./crates/resources/install/README.md) if you want install discovery and a default Neverwinter Nights resource-loading stack.
-- Use the format crates directly when you only need a codec, for example [`nwnrs-gff`](./crates/formats/gff/README.md), [`nwnrs-twoda`](./crates/formats/twoda/README.md), or [`nwnrs-tlk`](./crates/formats/tlk/README.md).
+- Use [`nwnrs`](./crates/meta/prelude/README.md) when you want one stable umbrella import path like `nwnrs::gff` or `nwnrs::resman`.
+- Use [`nwnrs-resman`](./crates/resources/resman/README.md) when your problem is resource retrieval across mixed backends.
+- Use [`nwnrs-install`](./crates/resources/install/README.md) when you want install discovery plus a default resource-loading stack.
+- Use individual format crates when you only need one codec and do not want the larger surface area.
 
-## Usage
+## Development
 
-Since this workspace is not published to [crates.io](https://crates.io), you can depend on individual crates using Git dependencies in your `Cargo.toml`:
-
-```toml
-# You more than likely only need the prelude
-[dependencies]
-nwnrs = { git = "https://github.com/urothis/nwn-rs" }
-```
-
-```rust
-use nwnrs::{gff, localization};
-
-let language = localization::resolve_language("en")?;
-let root = gff::GffRoot::new("UTC ");
-# let _ = (language, root);
-# Ok::<(), Box<dyn std::error::Error>>(())
-```
-
-Or depend on individual crates directly:
-
-```toml
-# Core types and utilities
-nwnrs-localization = { git = "https://github.com/urothis/nwn-rs" }
-nwnrs-resref = { git = "https://github.com/urothis/nwn-rs" }
-nwnrs-restype = { git = "https://github.com/urothis/nwn-rs" }
-
-# Resource management
-nwnrs-resman = { git = "https://github.com/urothis/nwn-rs" }
-
-# Format codecs
-nwnrs-gff = { git = "https://github.com/urothis/nwn-rs" }
-nwnrs-twoda = { git = "https://github.com/urothis/nwn-rs" }
-nwnrs-tlk = { git = "https://github.com/urothis/nwn-rs" }
-
-# Container formats
-nwnrs-erf = { git = "https://github.com/urothis/nwn-rs" }
-nwnrs-key = { git = "https://github.com/urothis/nwn-rs" }
-
-# Install integration
-nwnrs-install = { git = "https://github.com/urothis/nwn-rs" }
-```
-
-### Pinning Git Dependencies
-
-If you want reproducible builds, pin the repository explicitly instead of tracking the moving default branch.
-
-Pin to a commit:
-
-```toml
-[dependencies]
-nwnrs = { git = "https://github.com/urothis/nwn-rs", rev = "<commit-sha>" }
-```
-
-Pin to a tag:
-
-```toml
-[dependencies]
-nwnrs = { git = "https://github.com/urothis/nwn-rs", tag = "<tag>" }
-```
-
-Track a branch deliberately:
-
-```toml
-[dependencies]
-nwnrs = { git = "https://github.com/urothis/nwn-rs", branch = "main" }
-```
-
-The same pattern works for individual crates such as `nwnrs-gff`, `nwnrs-resman`, or `nwnrs-install`.
-
-### Updating a Pinned Dependency
-
-There are two sane workflows:
-
-1. Change the `rev`, `tag`, or `branch` in `Cargo.toml`, then run:
+Useful repo-level checks:
 
 ```bash
-cargo update -p nwnrs
+cargo test --workspace
+cargo clippy --workspace --all-targets -- -D warnings
+cargo fmt --check
 ```
 
-2. If you already know the exact commit you want, update the lockfile directly:
+Dependency and policy checks are configured through:
 
-```bash
-cargo update -p nwnrs --precise <commit-sha>
-```
+- [`deny.toml`](./deny.toml)
+- [`clippy.toml`](./clippy.toml)
+- [`rustfmt.toml`](./rustfmt.toml)
 
-If you depend on individual crates instead of `nwnrs`, replace `nwnrs` in the command with the specific package name, for example:
+## License
 
-```bash
-cargo update -p nwnrs-gff
-```
-
-### CLI Usage
-
-For command-line usage, you can install the CLI directly from the repository:
-
-```bash
-cargo install --git https://github.com/urothis/nwn-rs --bin nwnrs-cli
-```
-
-You can pin the install the same way:
-
-```bash
-cargo install --git https://github.com/urothis/nwn-rs --rev <commit-sha> --bin nwnrs-cli
-```
-
-Or run it directly:
-
-```bash
-cargo run --git https://github.com/urothis/nwn-rs --bin nwnrs-cli -- --help
-```
-
-Compile one NWScript source file:
-
-```bash
-cargo run -p nwnrs-cli -- compile --debug path/to/script.nss
-```
-
-Convert images between supported texture formats:
-
-```bash
-cargo run -p nwnrs-cli -- convert input.png output.tga
-cargo run -p nwnrs-cli -- convert input.jpg output.dds --dds-format dxt1
-cargo run -p nwnrs-cli -- convert ashlw_066.dds output.webp
-```
-
-Inspect the dedicated texture formats directly:
-
-```bash
-cargo run -p nwnrs-cli -- inspect amp01_g06.tga
-cargo run -p nwnrs-cli -- inspect ashlw_066.dds
-cargo run -p nwnrs-cli -- inspect cloak_001.plt
-```
-
-## Supported Workflows
-
-The workspace supports:
-
-- inspecting ERF, KEY, GFF, 2DA, TLK, SSF, MDL, and texture files
-- parsing, decoding, writing, and RGBA-encoding NWN `tga` textures through `nwnrs-tga`
-- parsing, decoding, writing, and RGBA-encoding NWN `dds` textures through `nwnrs-dds`
-- parsing and writing typed `plt` palette textures through `nwnrs-plt`, including explicit per-pixel `value` and `layer_id` data plus known layer mappings
-- converting image inputs (`png`, `jpg`, `tga`, `dds`) into `tga`, NWN `dds`, or `webp`
-- loading static ASCII `mdl` models into Bevy `0.18.1` meshes, materials, and images through `nwnrs-bevy`
-- compiling NWScript `.nss` files to `.ncs` and optional `.ndb`
-- parsing and semantically analyzing NWScript source through the `nwnrs-nwscript` crate
-- unpacking ERF archives and KEY/BIF sets into directory form
-- opening NWSync repositories and printing manifest contents
-- building a layered `ResMan` from game roots, override directories, ERFs, and NWSync manifests
-- treating `plt` as typed file ownership only for now; final color rendering and game-accurate material mapping are still future work
-- keeping Bevy phase 1 intentionally narrow: static meshes plus NWN `dds`/`tga` textures only, with animation, skinning, and `plt` rendering deferred
-
-## Contributing
-
-### Development Tools
-
-This repository uses several development tools with custom configurations:
-
-- **Clippy**: Configured in [`clippy.toml`](clippy.toml) with strict linting rules including
-- **rustfmt**: Configured in [`rustfmt.toml`](rustfmt.toml) for consistent code formatting
-- **cargo-deny**: Configured in [`deny.toml`](deny.toml) for dependency auditing and license checking
+This repository is licensed under [`GPL-3.0-only`](./LICENSE).
