@@ -1,5 +1,6 @@
 <h1 align="center">
   <img src="assets/logo/icon.svg" width="150"/><br>
+  nwnrs
 </h1>
 <div align="center">
   <a href="https://discord.gg/VChctxJCMM">
@@ -8,8 +9,6 @@
   </a>
   <br />
 </div>
-
-# nwnrs
 
 `nwnrs` is a Rust workspace for Neverwinter Nights data.
 
