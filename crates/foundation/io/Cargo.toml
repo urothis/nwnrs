@@ -21,6 +21,7 @@ nwnrs-erf.workspace = true
 nwnrs-exo.workspace = true
 nwnrs-gff.workspace = true
 nwnrs-ssf.workspace = true
+nwnrs-test-support.workspace = true
 nwnrs-tlk.workspace = true
 nwnrs-twoda.workspace = true
 reqwest.workspace = true

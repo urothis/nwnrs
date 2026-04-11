@@ -979,21 +979,80 @@ pub mod prelude {
 #[allow(clippy::panic)]
 #[cfg(test)]
 mod tests {
-    use std::{fs, io::Cursor, path::PathBuf};
+    use std::io::Cursor;
 
     use crate::{
-        DDS_RES_TYPE, DdsFormat, DdsMipLevel, DdsTexture, NWN_DDS_HEADER_SIZE,
-        decode_dxt5_alpha_values, read_dds, read_dds_from_file, write_dds,
+        DDS_RES_TYPE, DdsFormat, DdsMipLevel, DdsTexture, NWN_DDS_HEADER_SIZE, NwnDdsHeader,
+        decode_dxt5_alpha_values, read_dds, write_dds,
     };
 
-    fn fixture_path() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../ashlw_066.dds")
+    fn fixture_texture() -> DdsTexture {
+        let block = vec![
+            0xff, 0x00, // alpha endpoints
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // alpha selectors: all 0 => opaque
+            0x00, 0xf8, 0xe0, 0x07, // red, green
+            0xe4, 0xe4, 0xe4, 0xe4, // selectors: 0,1,2,3 across each row
+        ];
+        let mut mip_levels = Vec::new();
+        let mut width = 512_u32;
+        let mut height = 512_u32;
+
+        for level in 0..10 {
+            let blocks_x = usize::try_from(width.div_ceil(4)).unwrap_or_else(|error| {
+                panic!("fixture width blocks out of range: {error}");
+            });
+            let blocks_y = usize::try_from(height.div_ceil(4)).unwrap_or_else(|error| {
+                panic!("fixture height blocks out of range: {error}");
+            });
+            let block_count = blocks_x
+                .checked_mul(blocks_y)
+                .unwrap_or_else(|| panic!("fixture block count overflow"));
+            let mut data = Vec::with_capacity(block_count * block.len());
+            for _index in 0..block_count {
+                data.extend_from_slice(&block);
+            }
+            mip_levels.push(DdsMipLevel {
+                level,
+                width,
+                height,
+                data,
+            });
+
+            if width == 1 && height == 1 {
+                break;
+            }
+            width = width.max(2) / 2;
+            height = height.max(2) / 2;
+        }
+
+        DdsTexture {
+            format: DdsFormat::Dxt5,
+            width: 512,
+            height: 512,
+            mip_levels,
+            nwn_header: NwnDdsHeader {
+                width:       512,
+                height:      512,
+                channels:    4,
+                linear_size: 262_144,
+                alpha_mean:  1.0,
+            },
+        }
+    }
+
+    fn fixture_bytes() -> Vec<u8> {
+        let mut encoded = Vec::new();
+        if let Err(error) = write_dds(&mut encoded, &fixture_texture()) {
+            panic!("write synthetic fixture dds: {error}");
+        }
+        encoded
     }
 
     #[test]
     fn parses_nwn_dds_fixture() {
-        let dds = read_dds_from_file(fixture_path()).unwrap_or_else(|error| {
-            panic!("read nwn dds fixture: {error}");
+        let mut cursor = Cursor::new(fixture_bytes());
+        let dds = read_dds(&mut cursor).unwrap_or_else(|error| {
+            panic!("read synthetic nwn dds fixture: {error}");
         });
 
         assert_eq!(dds.format, DdsFormat::Dxt5);
@@ -1015,9 +1074,7 @@ mod tests {
 
     #[test]
     fn raw_texture_can_parse_as_dds() {
-        let bytes = fs::read(fixture_path()).unwrap_or_else(|error| {
-            panic!("read fixture bytes: {error}");
-        });
+        let bytes = fixture_bytes();
         let texture = DdsTexture::read_from_texture_bytes(&bytes).unwrap_or_else(|error| {
             panic!("parse fixture bytes as dds: {error}");
         });
@@ -1088,8 +1145,9 @@ mod tests {
 
     #[test]
     fn fixture_decodes_top_level_rgba8() {
-        let dds = read_dds_from_file(fixture_path()).unwrap_or_else(|error| {
-            panic!("read fixture dds: {error}");
+        let mut cursor = Cursor::new(fixture_bytes());
+        let dds = read_dds(&mut cursor).unwrap_or_else(|error| {
+            panic!("read synthetic fixture dds: {error}");
         });
 
         let rgba = dds.decode_rgba8().unwrap_or_else(|error| {
@@ -1105,9 +1163,7 @@ mod tests {
 
     #[test]
     fn fixture_roundtrips_exact_bytes() {
-        let original_bytes = fs::read(fixture_path()).unwrap_or_else(|error| {
-            panic!("read fixture bytes: {error}");
-        });
+        let original_bytes = fixture_bytes();
         let texture =
             DdsTexture::read_from_texture_bytes(&original_bytes).unwrap_or_else(|error| {
                 panic!("parse fixture as dds: {error}");

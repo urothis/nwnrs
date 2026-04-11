@@ -34,6 +34,7 @@ nwnrs-mtr = { path = "crates/formats/mtr", version = "0.0.1" }
 nwnrs-nwscript = { path = "crates/language/nwscript", version = "0.0.1" }
 nwnrs-nwsync = { path = "crates/formats/nwsync", version = "0.0.1" }
 nwnrs-plt = { path = "crates/formats/plt", version = "0.0.1" }
+nwnrs-test-support = { path = "crates/foundation/test-support", version = "0.0.1" }
 nwnrs-resdir = { path = "crates/resources/resdir", version = "0.0.1" }
 nwnrs-resfile = { path = "crates/resources/resfile", version = "0.0.1" }
 nwnrs-resman = { path = "crates/resources/resman", version = "0.0.1" }

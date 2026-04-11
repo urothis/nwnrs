@@ -451,21 +451,26 @@ pub mod prelude {
 #[allow(clippy::panic)]
 #[cfg(test)]
 mod tests {
-    use std::{fs, io::Cursor, path::PathBuf};
+    use std::{error::Error, io::Cursor};
+
+    use nwnrs_test_support::{
+        demand_resource, read_resource_bytes, require_game_resource,
+        skip_if_game_resources_unavailable,
+    };
 
     use crate::{
         PLT_HEADER_SIZE, PLT_RES_TYPE, PLT_SIGNATURE, PltLayer, PltPixel, PltRenderSpec,
-        PltTexture, read_plt, read_plt_from_file, write_plt,
+        PltTexture, read_plt, read_plt_from_res, write_plt,
     };
 
-    fn fixture_path() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/testing/cloak_001.plt")
-    }
-
     #[test]
-    fn fixture_plt_parses_expected_header_fields() {
-        let plt = read_plt_from_file(fixture_path()).unwrap_or_else(|error| {
-            panic!("read plt fixture: {error}");
+    fn fixture_plt_parses_expected_header_fields() -> Result<(), Box<dyn Error>> {
+        let res = match require_game_resource(demand_resource("cloak_001", PLT_RES_TYPE)) {
+            Ok(res) => res,
+            Err(error) => return skip_if_game_resources_unavailable(error),
+        };
+        let plt = read_plt_from_res(&res, true).unwrap_or_else(|error| {
+            panic!("read shipped plt fixture: {error}");
         });
 
         assert_eq!(PLT_SIGNATURE, b"PLT V1  ");
@@ -490,13 +495,15 @@ mod tests {
             Some(PltLayer::Cloth2)
         );
         assert!(plt.trailing_data.is_empty());
+        Ok(())
     }
 
     #[test]
-    fn write_plt_roundtrips_fixture_bytes() {
-        let original = fs::read(fixture_path()).unwrap_or_else(|error| {
-            panic!("read fixture bytes: {error}");
-        });
+    fn write_plt_roundtrips_fixture_bytes() -> Result<(), Box<dyn Error>> {
+        let original = match require_game_resource(read_resource_bytes("cloak_001", PLT_RES_TYPE)) {
+            Ok(bytes) => bytes,
+            Err(error) => return skip_if_game_resources_unavailable(error),
+        };
         let mut cursor = Cursor::new(original.clone());
         let plt = read_plt(&mut cursor).unwrap_or_else(|error| {
             panic!("parse fixture plt: {error}");
@@ -508,6 +515,7 @@ mod tests {
         }
 
         assert_eq!(encoded, original);
+        Ok(())
     }
 
     #[test]

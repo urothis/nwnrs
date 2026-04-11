@@ -962,6 +962,7 @@ dependencies = [
  "argh",
  "image",
  "nwnrs",
+ "nwnrs-test-support",
  "reqwest",
  "serde",
  "serde_json",
@@ -1076,6 +1077,7 @@ dependencies = [
  "nwnrs-exo",
  "nwnrs-gff",
  "nwnrs-ssf",
+ "nwnrs-test-support",
  "nwnrs-tlk",
  "nwnrs-twoda",
  "reqwest",
@@ -1131,6 +1133,7 @@ dependencies = [
  "nwnrs-resmemfile",
  "nwnrs-resref",
  "nwnrs-restype",
+ "nwnrs-test-support",
  "tracing",
 ]
 
@@ -1149,10 +1152,9 @@ version = "0.0.1"
 dependencies = [
  "nwnrs-io",
  "nwnrs-restype",
- "reqwest",
+ "nwnrs-test-support",
  "serde",
  "serde_json",
- "tokio",
  "tracing",
 ]
 
@@ -1173,6 +1175,7 @@ version = "0.0.1"
 dependencies = [
  "nwnrs-resman",
  "nwnrs-restype",
+ "nwnrs-test-support",
  "tracing",
 ]
 
@@ -1286,6 +1289,17 @@ dependencies = [
 name = "nwnrs-streamext"
 version = "0.0.1"
 dependencies = [
+ "tracing",
+]
+
+[[package]]
+name = "nwnrs-test-support"
+version = "0.0.1"
+dependencies = [
+ "nwnrs-install",
+ "nwnrs-resman",
+ "nwnrs-resref",
+ "nwnrs-restype",
  "tracing",
 ]
 

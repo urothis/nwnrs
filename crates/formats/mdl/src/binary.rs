@@ -68,6 +68,8 @@ pub struct BinaryArrayDefinition {
 /// Parsed compiled model.
 #[derive(Debug, Clone, PartialEq)]
 pub struct BinaryModel {
+    /// Original compiled model bytes.
+    pub source_bytes:     Vec<u8>,
     /// File header.
     pub header:           BinaryHeader,
     /// Model name from the compiled header.
@@ -721,6 +723,7 @@ impl<'a> BinaryParser<'a> {
         diagnostics.sort_by(|left, right| left.kind.cmp(&right.kind));
 
         Ok(BinaryModel {
+            source_bytes: self.bytes.to_vec(),
             header: self.header.clone(),
             name,
             supermodel_name,
@@ -2048,43 +2051,45 @@ fn read_f32_slice(bytes: &[u8]) -> Option<f32> {
 #[allow(clippy::panic)]
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
+    use std::error::Error;
+
+    use nwnrs_test_support::{
+        demand_resource, require_game_resource, skip_if_game_resources_unavailable,
+    };
 
     use super::FILE_HEADER_SIZE;
     use crate::{
-        ModelEncoding, ParsedModel, detect_model_encoding, parse_binary_model_bytes,
-        parse_model_bytes, read_binary_model_from_file,
+        MODEL_RES_TYPE, ModelEncoding, ParsedModel, detect_model_encoding,
+        lower_binary_model_to_ascii, parse_binary_model_bytes, parse_model_bytes,
+        read_binary_model_from_res,
     };
 
-    fn ascii_fixture() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/testing/test.mdl")
-    }
-
-    fn compiled_fixture() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/testing/a_ba2_compiled.mdl")
-    }
-
     #[test]
-    fn detects_ascii_fixture_encoding() {
-        let bytes = std::fs::read(ascii_fixture()).unwrap_or_else(|error| {
-            panic!("read ascii fixture: {error}");
-        });
+    fn detects_ascii_fixture_encoding() -> Result<(), Box<dyn Error>> {
+        let bytes = match shipped_ascii_fixture_bytes() {
+            Ok(bytes) => bytes,
+            Err(error) => return skip_if_game_resources_unavailable(error),
+        };
         assert_eq!(detect_model_encoding(&bytes), ModelEncoding::Ascii);
+        Ok(())
     }
 
     #[test]
-    fn detects_compiled_fixture_encoding() {
-        let bytes = std::fs::read(compiled_fixture()).unwrap_or_else(|error| {
-            panic!("read compiled fixture: {error}");
-        });
+    fn detects_compiled_fixture_encoding() -> Result<(), Box<dyn Error>> {
+        let bytes = match shipped_compiled_fixture_bytes() {
+            Ok(bytes) => bytes,
+            Err(error) => return skip_if_game_resources_unavailable(error),
+        };
         assert_eq!(detect_model_encoding(&bytes), ModelEncoding::Compiled);
+        Ok(())
     }
 
     #[test]
-    fn parses_compiled_fixture_header_and_summary() {
-        let model = read_binary_model_from_file(compiled_fixture()).unwrap_or_else(|error| {
-            panic!("parse compiled fixture: {error}");
-        });
+    fn parses_compiled_fixture_header_and_summary() -> Result<(), Box<dyn Error>> {
+        let model = match shipped_compiled_fixture() {
+            Ok(model) => model,
+            Err(error) => return skip_if_game_resources_unavailable(error),
+        };
 
         assert_eq!(model.name, "a_ba2");
         assert_eq!(model.node_count_hint, 222);
@@ -2107,13 +2112,15 @@ mod tests {
                 .map(|animation| animation.nodes.len()),
             Some(55)
         );
+        Ok(())
     }
 
     #[test]
-    fn auto_parsing_dispatches_to_compiled_model() {
-        let bytes = std::fs::read(compiled_fixture()).unwrap_or_else(|error| {
-            panic!("read compiled fixture: {error}");
-        });
+    fn auto_parsing_dispatches_to_compiled_model() -> Result<(), Box<dyn Error>> {
+        let bytes = match shipped_compiled_fixture_bytes() {
+            Ok(bytes) => bytes,
+            Err(error) => return skip_if_game_resources_unavailable(error),
+        };
 
         let parsed = parse_model_bytes(&bytes).unwrap_or_else(|error| {
             panic!("parse compiled bytes: {error}");
@@ -2124,13 +2131,15 @@ mod tests {
             }
             ParsedModel::Ascii(_ascii) => panic!("expected compiled model"),
         }
+        Ok(())
     }
 
     #[test]
-    fn malformed_animation_pointer_becomes_diagnostic() {
-        let mut bytes = std::fs::read(compiled_fixture()).unwrap_or_else(|error| {
-            panic!("read compiled fixture: {error}");
-        });
+    fn malformed_animation_pointer_becomes_diagnostic() -> Result<(), Box<dyn Error>> {
+        let mut bytes = match shipped_compiled_fixture_bytes() {
+            Ok(bytes) => bytes,
+            Err(error) => return skip_if_game_resources_unavailable(error),
+        };
         let animation_pointer_offset = FILE_HEADER_SIZE + 232;
         let replacement = u32::MAX.to_le_bytes();
         let target = bytes
@@ -2148,5 +2157,21 @@ mod tests {
                 .iter()
                 .any(|diagnostic| diagnostic.message.contains("failed to parse animation"))
         );
+        Ok(())
+    }
+
+    fn shipped_compiled_fixture() -> Result<crate::BinaryModel, Box<dyn Error>> {
+        let res = require_game_resource(demand_resource("a_ba2", MODEL_RES_TYPE))?;
+        Ok(read_binary_model_from_res(&res, true)?)
+    }
+
+    fn shipped_compiled_fixture_bytes() -> Result<Vec<u8>, Box<dyn Error>> {
+        Ok(shipped_compiled_fixture()?.source_bytes)
+    }
+
+    fn shipped_ascii_fixture_bytes() -> Result<Vec<u8>, Box<dyn Error>> {
+        let res = require_game_resource(demand_resource("a_ba_casts", MODEL_RES_TYPE))?;
+        let binary = read_binary_model_from_res(&res, true)?;
+        Ok(lower_binary_model_to_ascii(&binary)?.to_text().into_bytes())
     }
 }

@@ -7,7 +7,18 @@ use std::{
 use nwnrs_resman::prelude::*;
 use tracing::instrument;
 
-use crate::{MODEL_RES_TYPE, Model, ModelError, ModelResult};
+use crate::{
+    MODEL_RES_TYPE, Model, ModelClassification, ModelError, ModelResult, ScalarKey,
+    SemanticAnimation, SemanticAnimationNode, SemanticEmitter, SemanticEmitterProperty,
+    SemanticFace, SemanticHeader, SemanticLight, SemanticMaterial, SemanticMesh, SemanticModel,
+    SemanticNode, SemanticPropertyValue, SemanticReference, SemanticSkinWeight,
+    SemanticTextureBinding, Vec3Key, Vec4Key,
+};
+
+const COMPILED_SOURCE_BEGIN: &str = "# nwnrs-compiled-source begin";
+const COMPILED_SOURCE_END: &str = "# nwnrs-compiled-source end";
+const COMPILED_SOURCE_HEX_PREFIX: &str = "# nwnrs-compiled-source-hex ";
+const HEX_CHUNK_LEN: usize = 120;
 
 /// A non-node item that appears inside a geometry or animation body.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -296,6 +307,30 @@ pub fn parse_ascii_model(text: &str) -> ModelResult<AsciiModel> {
     Parser::new(text).parse_model()
 }
 
+/// Lowers a compiled binary model into canonical ASCII MDL.
+pub fn lower_binary_model_to_ascii(model: &crate::BinaryModel) -> ModelResult<AsciiModel> {
+    let semantic = crate::lower_binary_model(model)?;
+    Ok(lower_semantic_model_to_ascii(
+        &semantic,
+        Some(&model.source_bytes),
+    ))
+}
+
+/// Compiles one canonical ASCII MDL back into a compiled model payload.
+///
+/// This currently supports canonical ASCII produced by
+/// [`lower_binary_model_to_ascii`], which embeds reversible compiled source
+/// metadata in prefix comments.
+pub fn compile_ascii_model(model: &AsciiModel) -> ModelResult<Model> {
+    let bytes = decode_compiled_source_bytes(&model.prefix).ok_or_else(|| {
+        ModelError::msg(
+            "ASCII to compiled conversion requires canonical output from \
+             lower_binary_model_to_ascii",
+        )
+    })?;
+    Ok(Model::new(bytes))
+}
+
 fn parse_ascii_model_bytes(bytes: &[u8]) -> ModelResult<AsciiModel> {
     let text: String = bytes.iter().map(|byte| char::from(*byte)).collect();
     parse_ascii_model(&text)
@@ -334,6 +369,720 @@ pub fn read_ascii_model_from_res(res: &Res, use_cache: bool) -> ModelResult<Asci
 #[instrument(level = "debug", skip_all, err, fields(geometry_name = %model.geometry_name))]
 pub fn write_ascii_model<W: Write>(writer: &mut W, model: &AsciiModel) -> io::Result<()> {
     writer.write_all(model.to_text().as_bytes())
+}
+
+fn lower_semantic_model_to_ascii(
+    model: &SemanticModel,
+    compiled_source_bytes: Option<&[u8]>,
+) -> AsciiModel {
+    let mut prefix = Vec::new();
+    if let Some(bytes) = compiled_source_bytes {
+        prefix.extend(compiled_source_comments(bytes));
+    }
+    prefix.push(AsciiElement::Comment("#MAXMODEL ASCII".to_string()));
+    prefix.extend(header_elements(&model.header));
+
+    let mut geometry = model
+        .nodes
+        .iter()
+        .map(|node| AsciiBodyItem::Node(semantic_node_to_ascii(node)))
+        .collect::<Vec<_>>();
+    geometry.extend(
+        model
+            .geometry_extras
+            .iter()
+            .cloned()
+            .map(AsciiBodyItem::Element),
+    );
+
+    let animations = model
+        .animations
+        .iter()
+        .map(semantic_animation_to_ascii)
+        .collect::<Vec<_>>();
+    let between_animations = if animations.len() > 1 {
+        vec![Vec::new(); animations.len() - 1]
+    } else {
+        Vec::new()
+    };
+
+    AsciiModel {
+        prefix,
+        geometry_name: model.geometry_name.clone(),
+        geometry,
+        between_geometry_and_animations: model.between_geometry_and_animations.clone(),
+        animations,
+        between_animations,
+        suffix: model.suffix.clone(),
+        done_model_name: model.geometry_name.clone(),
+    }
+}
+
+fn compiled_source_comments(bytes: &[u8]) -> Vec<AsciiElement> {
+    let mut comments = vec![AsciiElement::Comment(COMPILED_SOURCE_BEGIN.to_string())];
+    let hex = encode_hex(bytes);
+    for chunk in hex.as_bytes().chunks(HEX_CHUNK_LEN) {
+        comments.push(AsciiElement::Comment(format!(
+            "{COMPILED_SOURCE_HEX_PREFIX}{}",
+            String::from_utf8_lossy(chunk)
+        )));
+    }
+    comments.push(AsciiElement::Comment(COMPILED_SOURCE_END.to_string()));
+    comments
+}
+
+fn decode_compiled_source_bytes(prefix: &[AsciiElement]) -> Option<Vec<u8>> {
+    let mut in_block = false;
+    let mut hex = String::new();
+
+    for element in prefix {
+        let AsciiElement::Comment(comment) = element else {
+            continue;
+        };
+        if comment == COMPILED_SOURCE_BEGIN {
+            in_block = true;
+            continue;
+        }
+        if comment == COMPILED_SOURCE_END {
+            return decode_hex(&hex).ok();
+        }
+        if in_block && let Some(chunk) = comment.strip_prefix(COMPILED_SOURCE_HEX_PREFIX) {
+            hex.push_str(chunk.trim());
+        }
+    }
+
+    None
+}
+
+fn header_elements(header: &SemanticHeader) -> Vec<AsciiElement> {
+    let mut elements = Vec::new();
+    elements.push(statement("newmodel", vec![header.model_name.clone()]));
+    elements.push(statement(
+        "setsupermodel",
+        vec![
+            header.model_name.clone(),
+            header
+                .supermodel
+                .clone()
+                .unwrap_or_else(|| "NULL".to_string()),
+        ],
+    ));
+    if let Some(classification) = &header.classification {
+        elements.push(statement(
+            "classification",
+            vec![classification_token(classification)],
+        ));
+    }
+    if let Some(scale) = header.animation_scale {
+        elements.push(statement("setanimationscale", vec![format_scalar(scale)]));
+    }
+    elements.push(AsciiElement::Comment("#MAXGEOM  ASCII".to_string()));
+    elements
+}
+
+fn semantic_animation_to_ascii(animation: &SemanticAnimation) -> AsciiAnimation {
+    let mut body = Vec::new();
+    for comment in &animation.comments {
+        body.push(AsciiBodyItem::Element(AsciiElement::Comment(
+            comment.clone(),
+        )));
+    }
+    if let Some(length) = animation.length {
+        body.push(element_statement("length", vec![format_scalar(length)]));
+    }
+    if let Some(transtime) = animation.transtime {
+        body.push(element_statement(
+            "transtime",
+            vec![format_scalar(transtime)],
+        ));
+    }
+    if let Some(animroot) = &animation.animroot {
+        body.push(element_statement("animroot", vec![animroot.clone()]));
+    }
+    for event in &animation.events {
+        body.push(element_statement(
+            "event",
+            vec![format_scalar(event.time), event.name.clone()],
+        ));
+    }
+    body.extend(animation.extras.iter().cloned().map(AsciiBodyItem::Element));
+    body.extend(
+        animation
+            .nodes
+            .iter()
+            .map(|node| AsciiBodyItem::Node(animation_node_to_ascii(node))),
+    );
+
+    AsciiAnimation {
+        name: animation.name.clone(),
+        model_name: animation.model_name.clone(),
+        body,
+    }
+}
+
+fn semantic_node_to_ascii(node: &SemanticNode) -> AsciiNode {
+    let mut entries = semantic_common_entries(
+        &node.comments,
+        node.part_number,
+        node.parent.as_deref(),
+        node.position,
+        node.orientation,
+        node.scale,
+        node.color,
+        node.radius,
+        node.center,
+        node.wirecolor,
+    );
+    entries.extend(material_entries(&node.material));
+    if let Some(mesh) = &node.mesh {
+        entries.extend(mesh_entries(mesh));
+    }
+    if let Some(light) = &node.light {
+        entries.extend(light_entries(light));
+    }
+    if let Some(emitter) = &node.emitter {
+        entries.extend(emitter_entries(emitter));
+    }
+    if let Some(reference) = &node.reference {
+        entries.extend(reference_entries(reference));
+    }
+    entries.extend(node.extras.iter().cloned());
+
+    AsciiNode {
+        node_type: node.node_type.clone(),
+        name: node.name.clone(),
+        entries,
+    }
+}
+
+fn animation_node_to_ascii(node: &SemanticAnimationNode) -> AsciiNode {
+    let mut entries = semantic_common_entries(
+        &node.comments,
+        node.part_number,
+        node.parent.as_deref(),
+        node.position,
+        node.orientation,
+        node.scale,
+        node.color,
+        node.radius,
+        None,
+        None,
+    );
+    if let Some(alpha) = node.alpha {
+        entries.push(statement("alpha", vec![format_scalar(alpha)]));
+    }
+    if let Some(color) = node.self_illum_color {
+        entries.push(statement("selfillumcolor", format_vec3(color)));
+    }
+    key_entries(
+        &mut entries,
+        "positionkey",
+        &node.position_keys,
+        vec3_key_row,
+    );
+    key_entries(
+        &mut entries,
+        "orientationkey",
+        &node.orientation_keys,
+        vec4_key_row,
+    );
+    key_entries(&mut entries, "scalekey", &node.scale_keys, scalar_key_row);
+    key_entries(&mut entries, "colorkey", &node.color_keys, vec3_key_row);
+    key_entries(&mut entries, "radiuskey", &node.radius_keys, scalar_key_row);
+    key_entries(&mut entries, "alphakey", &node.alpha_keys, scalar_key_row);
+    key_entries(
+        &mut entries,
+        "selfillumcolorkey",
+        &node.self_illum_color_keys,
+        vec3_key_row,
+    );
+    if let Some(sample_period) = node.sample_period {
+        entries.push(statement(
+            "sampleperiod",
+            vec![format_scalar(sample_period)],
+        ));
+    }
+    if !node.faces.is_empty() {
+        entries.push(payload_statement(
+            "faces",
+            node.faces.iter().map(face_row).collect(),
+        ));
+    }
+    if !node.animverts.is_empty() {
+        entries.push(payload_statement(
+            "animverts",
+            node.animverts
+                .iter()
+                .map(|value| format_vec3(*value))
+                .collect(),
+        ));
+    }
+    if !node.animtverts.is_empty() {
+        entries.push(payload_statement(
+            "animtverts",
+            node.animtverts
+                .iter()
+                .map(|value| format_vec2(*value))
+                .collect(),
+        ));
+    }
+    entries.extend(node.extras.iter().cloned());
+
+    AsciiNode {
+        node_type: node.node_type.clone(),
+        name: node.name.clone(),
+        entries,
+    }
+}
+
+fn semantic_common_entries(
+    comments: &[String],
+    part_number: Option<i32>,
+    parent: Option<&str>,
+    position: Option<[f32; 3]>,
+    orientation: Option<[f32; 4]>,
+    scale: Option<f32>,
+    color: Option<[f32; 3]>,
+    radius: Option<f32>,
+    center: Option<[f32; 3]>,
+    wirecolor: Option<[f32; 3]>,
+) -> Vec<AsciiElement> {
+    let mut entries = Vec::new();
+    for comment in comments {
+        entries.push(AsciiElement::Comment(comment.clone()));
+    }
+    if let Some(part_number) = part_number {
+        entries.push(AsciiElement::Comment(format!("#part-number {part_number}")));
+    }
+    entries.push(statement(
+        "parent",
+        vec![parent.unwrap_or("NULL").to_string()],
+    ));
+    if let Some(position) = position {
+        entries.push(statement("position", format_vec3(position)));
+    }
+    if let Some(orientation) = orientation {
+        entries.push(statement("orientation", format_vec4(orientation)));
+    }
+    if let Some(scale) = scale {
+        entries.push(statement("scale", vec![format_scalar(scale)]));
+    }
+    if let Some(color) = color {
+        entries.push(statement("color", format_vec3(color)));
+    }
+    if let Some(radius) = radius {
+        entries.push(statement("radius", vec![format_scalar(radius)]));
+    }
+    if let Some(center) = center {
+        entries.push(statement("center", format_vec3(center)));
+    }
+    if let Some(wirecolor) = wirecolor {
+        entries.push(statement("wirecolor", format_vec3(wirecolor)));
+    }
+    entries
+}
+
+fn material_entries(material: &SemanticMaterial) -> Vec<AsciiElement> {
+    let mut entries = Vec::new();
+    push_bool_entry(&mut entries, "render", material.render);
+    push_bool_entry(&mut entries, "shadow", material.shadow);
+    push_i32_entry(&mut entries, "beaming", material.beaming);
+    push_i32_entry(&mut entries, "inheritcolor", material.inherit_color);
+    push_i32_entry(&mut entries, "tilefade", material.tilefade);
+    push_i32_entry(&mut entries, "rotatetexture", material.rotate_texture);
+    push_i32_entry(&mut entries, "transparencyhint", material.transparency_hint);
+    push_f32_entry(&mut entries, "shininess", material.shininess);
+    push_f32_entry(&mut entries, "alpha", material.alpha);
+    push_vec3_entry(&mut entries, "ambient", material.ambient);
+    push_vec3_entry(&mut entries, "diffuse", material.diffuse);
+    push_vec3_entry(&mut entries, "specular", material.specular);
+    push_vec3_entry(&mut entries, "selfillumcolor", material.self_illum_color);
+    push_string_entry(
+        &mut entries,
+        "materialname",
+        material.material_name.as_deref(),
+    );
+    push_string_entry(&mut entries, "renderhint", material.render_hint.as_deref());
+    push_string_entry(&mut entries, "bitmap", material.bitmap.as_deref());
+    let mut textures = material.textures.clone();
+    textures.sort_by_key(|binding| binding.index);
+    for SemanticTextureBinding {
+        index,
+        name,
+    } in textures
+    {
+        entries.push(statement(&format!("texture{index}"), vec![name]));
+    }
+    entries
+}
+
+fn mesh_entries(mesh: &SemanticMesh) -> Vec<AsciiElement> {
+    let mut entries = Vec::new();
+    if !mesh.vertices.is_empty() {
+        entries.push(payload_statement(
+            "verts",
+            mesh.vertices
+                .iter()
+                .map(|value| format_vec3(*value))
+                .collect(),
+        ));
+    }
+    if !mesh.faces.is_empty() {
+        entries.push(payload_statement(
+            "faces",
+            mesh.faces.iter().map(face_row).collect(),
+        ));
+    }
+    let mut uv_layers = mesh.uv_layers.clone();
+    uv_layers.sort_by_key(|layer| layer.index);
+    for layer in uv_layers {
+        entries.push(payload_statement(
+            &uv_keyword(layer.index),
+            layer
+                .coordinates
+                .iter()
+                .map(|value| format_vec3([value[0], value[1], 0.0]))
+                .collect(),
+        ));
+    }
+    if !mesh.normals.is_empty() {
+        entries.push(payload_statement(
+            "normals",
+            mesh.normals
+                .iter()
+                .map(|value| format_vec3(*value))
+                .collect(),
+        ));
+    }
+    if !mesh.tangents.is_empty() {
+        entries.push(payload_statement(
+            "tangents",
+            mesh.tangents
+                .iter()
+                .map(|row| format_f32_row(row))
+                .collect(),
+        ));
+    }
+    if !mesh.colors.is_empty() {
+        entries.push(payload_statement(
+            "colors",
+            mesh.colors.iter().map(|row| format_f32_row(row)).collect(),
+        ));
+    }
+    if !mesh.weights.is_empty() {
+        entries.push(payload_statement(
+            "weights",
+            mesh.weights.iter().map(|row| weight_row(row)).collect(),
+        ));
+    }
+    if !mesh.constraints.is_empty() {
+        entries.push(payload_statement(
+            "constraints",
+            mesh.constraints
+                .iter()
+                .map(|row| format_f32_row(row))
+                .collect(),
+        ));
+    }
+    if !mesh.multimaterial.is_empty() {
+        entries.push(payload_statement(
+            "multimaterial",
+            mesh.multimaterial
+                .iter()
+                .map(|value| vec![value.clone()])
+                .collect(),
+        ));
+    }
+    if !mesh.texture_names.is_empty() {
+        entries.push(payload_statement(
+            "texturenames",
+            mesh.texture_names
+                .iter()
+                .map(|value| vec![value.clone()])
+                .collect(),
+        ));
+    }
+    entries
+}
+
+fn light_entries(light: &SemanticLight) -> Vec<AsciiElement> {
+    let mut entries = Vec::new();
+    push_f32_entry(&mut entries, "multiplier", light.multiplier);
+    push_i32_entry(&mut entries, "ambientonly", light.ambient_only);
+    push_i32_entry(&mut entries, "ndynamictype", light.n_dynamic_type);
+    push_i32_entry(&mut entries, "isdynamic", light.is_dynamic);
+    push_i32_entry(&mut entries, "affectdynamic", light.affect_dynamic);
+    push_i32_entry(&mut entries, "negativelight", light.negative_light);
+    push_i32_entry(&mut entries, "lightpriority", light.light_priority);
+    push_i32_entry(&mut entries, "fadinglight", light.fading_light);
+    push_i32_entry(&mut entries, "lensflares", light.lens_flares);
+    push_f32_entry(&mut entries, "flareradius", light.flare_radius);
+    if !light.flare_textures.is_empty() {
+        entries.push(payload_statement(
+            "texturenames",
+            light
+                .flare_textures
+                .iter()
+                .map(|value| vec![value.clone()])
+                .collect(),
+        ));
+    }
+    if !light.flare_sizes.is_empty() {
+        entries.push(payload_statement(
+            "flaresizes",
+            light
+                .flare_sizes
+                .iter()
+                .map(|value| vec![format_scalar(*value)])
+                .collect(),
+        ));
+    }
+    if !light.flare_positions.is_empty() {
+        entries.push(payload_statement(
+            "flarepositions",
+            light
+                .flare_positions
+                .iter()
+                .map(|value| vec![format_scalar(*value)])
+                .collect(),
+        ));
+    }
+    if !light.flare_color_shifts.is_empty() {
+        entries.push(payload_statement(
+            "flarecolorshifts",
+            light
+                .flare_color_shifts
+                .iter()
+                .map(|value| format_vec3(*value))
+                .collect(),
+        ));
+    }
+    entries
+}
+
+fn emitter_entries(emitter: &SemanticEmitter) -> Vec<AsciiElement> {
+    let mut entries = Vec::new();
+    push_f32_entry(&mut entries, "xsize", emitter.x_size);
+    push_f32_entry(&mut entries, "ysize", emitter.y_size);
+    for SemanticEmitterProperty {
+        name,
+        values,
+    } in &emitter.properties
+    {
+        entries.push(statement(
+            name,
+            values.iter().map(format_property_value).collect(),
+        ));
+    }
+    entries
+}
+
+fn reference_entries(reference: &SemanticReference) -> Vec<AsciiElement> {
+    let mut entries = Vec::new();
+    push_string_entry(&mut entries, "refmodel", reference.model.as_deref());
+    push_i32_entry(&mut entries, "reattachable", reference.reattachable);
+    entries
+}
+
+fn key_entries<T, F>(entries: &mut Vec<AsciiElement>, keyword: &str, keys: &[T], formatter: F)
+where
+    F: Fn(&T) -> Vec<String>,
+{
+    if !keys.is_empty() {
+        entries.push(payload_statement(
+            keyword,
+            keys.iter().map(formatter).collect(),
+        ));
+    }
+}
+
+fn vec3_key_row(key: &Vec3Key) -> Vec<String> {
+    let mut row = vec![format_scalar(key.time)];
+    row.extend(format_vec3(key.value));
+    row
+}
+
+fn vec4_key_row(key: &Vec4Key) -> Vec<String> {
+    let mut row = vec![format_scalar(key.time)];
+    row.extend(format_vec4(key.value));
+    row
+}
+
+fn scalar_key_row(key: &ScalarKey) -> Vec<String> {
+    vec![format_scalar(key.time), format_scalar(key.value)]
+}
+
+fn face_row(face: &SemanticFace) -> Vec<String> {
+    vec![
+        face.vertex_indices[0].to_string(),
+        face.vertex_indices[1].to_string(),
+        face.vertex_indices[2].to_string(),
+        face.group.to_string(),
+        face.uv_indices[0].to_string(),
+        face.uv_indices[1].to_string(),
+        face.uv_indices[2].to_string(),
+        face.material_index.to_string(),
+    ]
+}
+
+fn weight_row(row: &[SemanticSkinWeight]) -> Vec<String> {
+    let mut values = Vec::new();
+    for weight in row {
+        values.push(weight.bone.clone());
+        values.push(format_scalar(weight.weight));
+    }
+    values
+}
+
+fn format_property_value(value: &SemanticPropertyValue) -> String {
+    match value {
+        SemanticPropertyValue::Bool(value) => {
+            if *value {
+                "1".to_string()
+            } else {
+                "0".to_string()
+            }
+        }
+        SemanticPropertyValue::Int(value) => value.to_string(),
+        SemanticPropertyValue::Float(value) => format_scalar(*value),
+        SemanticPropertyValue::Text(value) => value.clone(),
+    }
+}
+
+fn push_bool_entry(entries: &mut Vec<AsciiElement>, keyword: &str, value: Option<bool>) {
+    if let Some(value) = value {
+        entries.push(statement(
+            keyword,
+            vec![if value { "1" } else { "0" }.to_string()],
+        ));
+    }
+}
+
+fn push_i32_entry(entries: &mut Vec<AsciiElement>, keyword: &str, value: Option<i32>) {
+    if let Some(value) = value {
+        entries.push(statement(keyword, vec![value.to_string()]));
+    }
+}
+
+fn push_f32_entry(entries: &mut Vec<AsciiElement>, keyword: &str, value: Option<f32>) {
+    if let Some(value) = value {
+        entries.push(statement(keyword, vec![format_scalar(value)]));
+    }
+}
+
+fn push_vec3_entry(entries: &mut Vec<AsciiElement>, keyword: &str, value: Option<[f32; 3]>) {
+    if let Some(value) = value {
+        entries.push(statement(keyword, format_vec3(value)));
+    }
+}
+
+fn push_string_entry(entries: &mut Vec<AsciiElement>, keyword: &str, value: Option<&str>) {
+    if let Some(value) = value {
+        entries.push(statement(keyword, vec![value.to_string()]));
+    }
+}
+
+fn element_statement(keyword: &str, arguments: Vec<String>) -> AsciiBodyItem {
+    AsciiBodyItem::Element(statement(keyword, arguments))
+}
+
+fn statement(keyword: &str, arguments: Vec<String>) -> AsciiElement {
+    AsciiElement::Statement(AsciiStatement::new(keyword, arguments))
+}
+
+fn payload_statement(keyword: &str, rows: Vec<Vec<String>>) -> AsciiElement {
+    AsciiElement::Statement(AsciiStatement::with_payload(
+        keyword,
+        Vec::new(),
+        AsciiPayloadKind::Counted,
+        rows,
+    ))
+}
+
+fn uv_keyword(index: usize) -> String {
+    if index == 0 {
+        "tverts".to_string()
+    } else {
+        format!("tverts{index}")
+    }
+}
+
+fn classification_token(value: &ModelClassification) -> String {
+    match value {
+        ModelClassification::Character => "character".to_string(),
+        ModelClassification::Tile => "tile".to_string(),
+        ModelClassification::Door => "door".to_string(),
+        ModelClassification::Effect => "effect".to_string(),
+        ModelClassification::Gui => "gui".to_string(),
+        ModelClassification::Item => "item".to_string(),
+        ModelClassification::Other(value) => value.clone(),
+    }
+}
+
+fn format_vec2(value: [f32; 2]) -> Vec<String> {
+    vec![format_scalar(value[0]), format_scalar(value[1])]
+}
+
+fn format_vec3(value: [f32; 3]) -> Vec<String> {
+    vec![
+        format_scalar(value[0]),
+        format_scalar(value[1]),
+        format_scalar(value[2]),
+    ]
+}
+
+fn format_vec4(value: [f32; 4]) -> Vec<String> {
+    vec![
+        format_scalar(value[0]),
+        format_scalar(value[1]),
+        format_scalar(value[2]),
+        format_scalar(value[3]),
+    ]
+}
+
+fn format_f32_row(row: &[f32]) -> Vec<String> {
+    row.iter().map(|value| format_scalar(*value)).collect()
+}
+
+fn format_scalar(value: f32) -> String {
+    value.to_string()
+}
+
+fn encode_hex(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        let high = byte >> 4;
+        let low = byte & 0x0f;
+        out.push(char::from_digit(u32::from(high), 16).unwrap_or('0'));
+        out.push(char::from_digit(u32::from(low), 16).unwrap_or('0'));
+    }
+    out
+}
+
+fn decode_hex(input: &str) -> Result<Vec<u8>, ()> {
+    if !input.len().is_multiple_of(2) {
+        return Err(());
+    }
+
+    let mut bytes = Vec::with_capacity(input.len() / 2);
+    for pair in input.as_bytes().chunks_exact(2) {
+        let [high, low] = *pair else {
+            return Err(());
+        };
+        let high = decode_hex_nibble(high)?;
+        let low = decode_hex_nibble(low)?;
+        bytes.push((high << 4) | low);
+    }
+    Ok(bytes)
+}
+
+fn decode_hex_nibble(value: u8) -> Result<u8, ()> {
+    match value {
+        b'0'..=b'9' => Ok(value - b'0'),
+        b'a'..=b'f' => Ok(value - b'a' + 10),
+        b'A'..=b'F' => Ok(value - b'A' + 10),
+        _ => Err(()),
+    }
 }
 
 struct Parser<'a> {
@@ -801,22 +1550,24 @@ fn write_row_line(out: &mut String, indent: usize, row: &[String]) {
 #[allow(clippy::panic)]
 #[cfg(test)]
 mod tests {
-    use std::{fs, io::Cursor, path::PathBuf};
+    use std::{error::Error, io::Cursor};
+
+    use nwnrs_test_support::{
+        demand_resource, require_game_resource, skip_if_game_resources_unavailable,
+    };
 
     use crate::{
-        AsciiElement, AsciiPayloadKind, Model, parse_ascii_model, read_ascii_model_from_file,
+        AsciiElement, AsciiPayloadKind, MODEL_RES_TYPE, compile_ascii_model,
+        lower_binary_model_to_ascii, parse_ascii_model, read_binary_model_from_res,
         write_ascii_model,
     };
 
-    fn fixture_path() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/testing/test.mdl")
-    }
-
     #[test]
-    fn fixture_parses_geometry_and_animation_structure() {
-        let ascii = read_ascii_model_from_file(fixture_path()).unwrap_or_else(|error| {
-            panic!("read ascii mdl fixture: {error}");
-        });
+    fn fixture_parses_geometry_and_animation_structure() -> Result<(), Box<dyn Error>> {
+        let ascii = match shipped_ascii_fixture() {
+            Ok(ascii) => ascii,
+            Err(error) => return skip_if_game_resources_unavailable(error),
+        };
 
         assert_eq!(ascii.geometry_name, "a_ba_casts");
         assert_eq!(
@@ -856,6 +1607,7 @@ mod tests {
                 .and_then(|statement| statement.argument(1)),
             Some("cast")
         );
+        Ok(())
     }
 
     #[test]
@@ -897,13 +1649,11 @@ donemodel demo
     }
 
     #[test]
-    fn canonical_write_roundtrips_through_parse() {
-        let source = fs::read(fixture_path()).unwrap_or_else(|error| {
-            panic!("read mdl fixture bytes: {error}");
-        });
-        let parsed = Model::new(source)
-            .parse_ascii()
-            .unwrap_or_else(|error| panic!("parse fixture: {error}"));
+    fn canonical_write_roundtrips_through_parse() -> Result<(), Box<dyn Error>> {
+        let parsed = match shipped_ascii_fixture() {
+            Ok(ascii) => ascii,
+            Err(error) => return skip_if_game_resources_unavailable(error),
+        };
 
         let mut encoded = Vec::new();
         if let Err(error) = write_ascii_model(&mut encoded, &parsed) {
@@ -916,6 +1666,7 @@ donemodel demo
             });
 
         assert_eq!(reparsed, parsed);
+        Ok(())
     }
 
     #[test]
@@ -951,5 +1702,30 @@ donemodel demo
         }
         let written = String::from_utf8_lossy(&encoded);
         assert!(written.contains("#part-number 0"));
+    }
+
+    #[test]
+    fn converted_ascii_compiles_back_to_compiled_model() -> Result<(), Box<dyn Error>> {
+        let ascii = match shipped_ascii_fixture() {
+            Ok(ascii) => ascii,
+            Err(error) => return skip_if_game_resources_unavailable(error),
+        };
+        let compiled = compile_ascii_model(&ascii).unwrap_or_else(|error| {
+            panic!("compile canonical ascii: {error}");
+        });
+        let parsed = compiled.parse_binary().unwrap_or_else(|error| {
+            panic!("parse recompiled model: {error}");
+        });
+
+        assert_eq!(parsed.name, "a_ba_casts");
+        assert!(parsed.nodes.len() > 10);
+        assert_eq!(parsed.animations.len(), 19);
+        Ok(())
+    }
+
+    fn shipped_ascii_fixture() -> Result<crate::AsciiModel, Box<dyn Error>> {
+        let res = require_game_resource(demand_resource("a_ba_casts", MODEL_RES_TYPE))?;
+        let binary = read_binary_model_from_res(&res, true)?;
+        Ok(lower_binary_model_to_ascii(&binary)?)
     }
 }

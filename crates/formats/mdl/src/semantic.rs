@@ -2587,26 +2587,24 @@ fn parse_i32_row_array<const N: usize>(
 #[allow(clippy::panic)]
 #[cfg(test)]
 mod tests {
-    use std::{collections::BTreeMap, fs, path::PathBuf};
+    use std::{collections::BTreeMap, error::Error};
 
-    use crate::{
-        Model, ModelDiagnosticKind, NodeKind, SemanticPropertyValue, parse_semantic_model,
-        read_semantic_model_auto_from_file, read_semantic_model_from_file,
+    use nwnrs_test_support::{
+        demand_resource, require_game_resource, skip_if_game_resources_unavailable,
     };
 
-    fn fixture_path() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/testing/test.mdl")
-    }
-
-    fn compiled_fixture_path() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/testing/a_ba2_compiled.mdl")
-    }
+    use crate::{
+        MODEL_RES_TYPE, Model, ModelDiagnosticKind, NodeKind, SemanticPropertyValue,
+        lower_binary_model_to_ascii, parse_semantic_model, read_binary_model_from_res,
+        read_semantic_model_auto_from_res,
+    };
 
     #[test]
-    fn fixture_lowers_mesh_material_and_geometry() {
-        let model = read_semantic_model_from_file(fixture_path()).unwrap_or_else(|error| {
-            panic!("read mdl fixture: {error}");
-        });
+    fn fixture_lowers_mesh_material_and_geometry() -> Result<(), Box<dyn Error>> {
+        let model = match shipped_ascii_semantic_fixture() {
+            Ok(model) => model,
+            Err(error) => return skip_if_game_resources_unavailable(error),
+        };
         assert_eq!(model.header.model_name, "a_ba_casts");
         let torso = model.node("torso_g").unwrap_or_else(|| {
             panic!("missing torso_g node");
@@ -2625,13 +2623,15 @@ mod tests {
                 .map(|layer| layer.coordinates.len()),
             Some(51)
         );
+        Ok(())
     }
 
     #[test]
-    fn animated_fixture_lowers_headers_and_keyframes() {
-        let model = read_semantic_model_from_file(fixture_path()).unwrap_or_else(|error| {
-            panic!("read animated mdl fixture: {error}");
-        });
+    fn animated_fixture_lowers_headers_and_keyframes() -> Result<(), Box<dyn Error>> {
+        let model = match shipped_ascii_semantic_fixture() {
+            Ok(model) => model,
+            Err(error) => return skip_if_game_resources_unavailable(error),
+        };
 
         assert_eq!(model.animations.len(), 19);
         let conjure = model.animation("conjure1").unwrap_or_else(|| {
@@ -2654,14 +2654,15 @@ mod tests {
             castout.events.first().map(|event| event.name.as_str()),
             Some("cast")
         );
+        Ok(())
     }
 
     #[test]
-    fn compiled_fixture_lowers_headers_and_animation_structure() {
-        let model =
-            read_semantic_model_auto_from_file(compiled_fixture_path()).unwrap_or_else(|error| {
-                panic!("read compiled mdl fixture: {error}");
-            });
+    fn compiled_fixture_lowers_headers_and_animation_structure() -> Result<(), Box<dyn Error>> {
+        let model = match shipped_compiled_semantic_fixture() {
+            Ok(model) => model,
+            Err(error) => return skip_if_game_resources_unavailable(error),
+        };
 
         assert_eq!(model.header.model_name, "a_ba2");
         assert_eq!(model.header.supermodel.as_deref(), Some("a_ba"));
@@ -2702,6 +2703,7 @@ mod tests {
         assert_eq!(salute.transtime, Some(0.4));
         assert_eq!(salute.animroot.as_deref(), Some("torso_g"));
         assert!(salute.node("rootdummy").is_some());
+        Ok(())
     }
 
     #[test]
@@ -2937,14 +2939,16 @@ donemodel demo
     }
 
     #[test]
-    fn model_parse_semantic_lowers_raw_bytes() {
-        let bytes = fs::read(fixture_path()).unwrap_or_else(|error| {
-            panic!("read semantic bytes fixture: {error}");
-        });
+    fn model_parse_semantic_lowers_raw_bytes() -> Result<(), Box<dyn Error>> {
+        let bytes = match shipped_ascii_semantic_fixture_bytes() {
+            Ok(bytes) => bytes,
+            Err(error) => return skip_if_game_resources_unavailable(error),
+        };
         let model = Model::new(bytes).parse_semantic().unwrap_or_else(|error| {
             panic!("parse semantic from model bytes: {error}");
         });
         assert!(model.node("torso_g").is_some());
+        Ok(())
     }
 
     fn diagnostic_counts(model: &crate::SemanticModel) -> BTreeMap<ModelDiagnosticKind, usize> {
@@ -2954,5 +2958,24 @@ donemodel demo
             *entry += 1;
         }
         counts
+    }
+
+    fn shipped_ascii_semantic_fixture() -> Result<crate::SemanticModel, Box<dyn Error>> {
+        let res = require_game_resource(demand_resource("a_ba_casts", MODEL_RES_TYPE))?;
+        let binary = read_binary_model_from_res(&res, true)?;
+        let ascii = lower_binary_model_to_ascii(&binary)?;
+        Ok(parse_semantic_model(&ascii.to_text())?)
+    }
+
+    fn shipped_ascii_semantic_fixture_bytes() -> Result<Vec<u8>, Box<dyn Error>> {
+        let res = require_game_resource(demand_resource("a_ba_casts", MODEL_RES_TYPE))?;
+        let binary = read_binary_model_from_res(&res, true)?;
+        let ascii = lower_binary_model_to_ascii(&binary)?;
+        Ok(ascii.to_text().into_bytes())
+    }
+
+    fn shipped_compiled_semantic_fixture() -> Result<crate::SemanticModel, Box<dyn Error>> {
+        let res = require_game_resource(demand_resource("a_ba2", MODEL_RES_TYPE))?;
+        Ok(read_semantic_model_auto_from_res(&res, true)?)
     }
 }

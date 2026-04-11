@@ -6,7 +6,7 @@ use nwnrs_nwscript::prelude::*;
 
 mod support;
 
-use support::{assets_root, load_nss_bytes, skip_if_remote_assets_unavailable, test_error};
+use support::{load_nss_bytes, skip_if_game_resources_unavailable, test_error};
 
 type TestResult = Result<(), Box<dyn Error>>;
 
@@ -19,10 +19,9 @@ fn find_function<'a>(spec: &'a LangSpec, name: &str) -> Result<&'a BuiltinFuncti
 
 #[test]
 fn pinned_nwscript_langspec_matches_expected_builtin_shape() -> TestResult {
-    let assets = assets_root();
-    let source = match load_nss_bytes(&assets, "nwscript.nss") {
+    let source = match load_nss_bytes("nwscript.nss") {
         Ok(source) => source,
-        Err(error) => return skip_if_remote_assets_unavailable(error),
+        Err(error) => return skip_if_game_resources_unavailable(error),
     };
     let spec = parse_langspec_bytes("nwscript.nss", &source)?;
 

@@ -1086,26 +1086,23 @@ struct BaseMeshLayout {
 #[allow(clippy::panic)]
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
+    use std::error::Error;
 
-    use crate::{
-        NwnPropertyValue, NwnTextureSlot, parse_scene_model, read_scene_model_auto_from_file,
-        read_scene_model_from_file,
+    use nwnrs_test_support::{
+        demand_resource, require_game_resource, skip_if_game_resources_unavailable,
     };
 
-    fn fixture_path() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/testing/test.mdl")
-    }
-
-    fn compiled_fixture_path() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/testing/a_ba2_compiled.mdl")
-    }
+    use crate::{
+        MODEL_RES_TYPE, NwnPropertyValue, NwnTextureSlot, lower_binary_model_to_ascii,
+        parse_scene_model, read_binary_model_from_res, read_scene_model_auto_from_res,
+    };
 
     #[test]
-    fn fixture_lowers_to_scene_mesh_and_material() {
-        let scene = read_scene_model_from_file(fixture_path()).unwrap_or_else(|error| {
-            panic!("read scene fixture: {error}");
-        });
+    fn fixture_lowers_to_scene_mesh_and_material() -> Result<(), Box<dyn Error>> {
+        let scene = match shipped_ascii_scene_fixture() {
+            Ok(scene) => scene,
+            Err(error) => return skip_if_game_resources_unavailable(error),
+        };
 
         assert_eq!(scene.name, "a_ba_casts");
         let torso = scene.node("torso_g").unwrap_or_else(|| {
@@ -1134,13 +1131,15 @@ mod tests {
         assert!(material.textures.iter().any(
             |texture| texture.slot == NwnTextureSlot::Bitmap && texture.name == "pmh0_chest001"
         ));
+        Ok(())
     }
 
     #[test]
-    fn animated_fixture_lowers_to_scene_tracks() {
-        let scene = read_scene_model_from_file(fixture_path()).unwrap_or_else(|error| {
-            panic!("read animated scene fixture: {error}");
-        });
+    fn animated_fixture_lowers_to_scene_tracks() -> Result<(), Box<dyn Error>> {
+        let scene = match shipped_ascii_scene_fixture() {
+            Ok(scene) => scene,
+            Err(error) => return skip_if_game_resources_unavailable(error),
+        };
 
         let conjure = scene.animation("conjure1").unwrap_or_else(|| {
             panic!("missing scene animation conjure1");
@@ -1161,14 +1160,15 @@ mod tests {
         assert!(rootdummy.target_node.is_some());
         assert_eq!(rootdummy.transform.translation_keys.len(), 5);
         assert_eq!(rootdummy.transform.rotation_axis_angle_keys.len(), 2);
+        Ok(())
     }
 
     #[test]
-    fn compiled_fixture_lowers_to_scene_graph_and_tracks() {
-        let scene =
-            read_scene_model_auto_from_file(compiled_fixture_path()).unwrap_or_else(|error| {
-                panic!("read compiled scene fixture: {error}");
-            });
+    fn compiled_fixture_lowers_to_scene_graph_and_tracks() -> Result<(), Box<dyn Error>> {
+        let scene = match shipped_compiled_scene_fixture() {
+            Ok(scene) => scene,
+            Err(error) => return skip_if_game_resources_unavailable(error),
+        };
 
         assert_eq!(scene.name, "a_ba2");
         assert_eq!(scene.supermodel.as_deref(), Some("a_ba"));
@@ -1192,6 +1192,7 @@ mod tests {
         assert_eq!(salute.transition_time, 0.4);
         assert_eq!(salute.root_name.as_deref(), Some("torso_g"));
         assert!(salute.node_track("rootdummy").is_some());
+        Ok(())
     }
 
     #[test]
@@ -1476,5 +1477,17 @@ donemodel demo
             .unwrap_or_else(|| panic!("missing aabb helper material"));
         assert_eq!(material.helper_bitmap.as_deref(), Some("Stone"));
         assert!(material.textures.is_empty());
+    }
+
+    fn shipped_ascii_scene_fixture() -> Result<crate::NwnScene, Box<dyn Error>> {
+        let res = require_game_resource(demand_resource("a_ba_casts", MODEL_RES_TYPE))?;
+        let binary = read_binary_model_from_res(&res, true)?;
+        let ascii = lower_binary_model_to_ascii(&binary)?;
+        Ok(parse_scene_model(&ascii.to_text())?)
+    }
+
+    fn shipped_compiled_scene_fixture() -> Result<crate::NwnScene, Box<dyn Error>> {
+        let res = require_game_resource(demand_resource("a_ba2", MODEL_RES_TYPE))?;
+        Ok(read_scene_model_auto_from_res(&res, true)?)
     }
 }

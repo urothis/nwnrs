@@ -162,7 +162,13 @@ fn compiled_block_kinds(model: &mdl::BinaryModel) -> Vec<&'static str> {
 
 #[cfg(test)]
 mod tests {
-    use std::path::{Path, PathBuf};
+    use std::{error::Error, path::Path};
+
+    use nwnrs::prelude as nwn;
+    use nwnrs_test_support::{
+        materialize_resource_to_temp_file, require_game_resource,
+        skip_if_game_resources_unavailable,
+    };
 
     use super::{compiled_block_kinds, inspect_model, run_inspect};
 
@@ -174,25 +180,38 @@ mod tests {
     }
 
     #[test]
-    fn compiled_model_summary_reports_encoding_and_counts() {
-        let summary = inspect_model(&compiled_fixture()).expect("compiled inspect should succeed");
+    fn compiled_model_summary_reports_encoding_and_counts() -> Result<(), Box<dyn Error>> {
+        let fixture = match compiled_fixture() {
+            Ok(path) => path,
+            Err(error) => return skip_if_game_resources_unavailable(error),
+        };
+        let summary = inspect_model(&fixture).expect("compiled inspect should succeed");
         assert!(summary.contains("MDL encoding: compiled"));
         assert!(summary.contains("model: a_ba2"));
         assert!(summary.contains("node_count: 57"));
         assert!(summary.contains("animation_count: 20"));
         assert!(summary.contains("recognized_block_kinds:"));
+        Ok(())
     }
 
     #[test]
-    fn compiled_model_block_kinds_include_header_and_mesh() {
-        let model = nwnrs::prelude::mdl::read_binary_model_from_file(compiled_fixture())
-            .expect("compiled fixture should parse");
+    fn compiled_model_block_kinds_include_header_and_mesh() -> Result<(), Box<dyn Error>> {
+        let fixture = match compiled_fixture() {
+            Ok(path) => path,
+            Err(error) => return skip_if_game_resources_unavailable(error),
+        };
+        let model =
+            nwn::mdl::read_binary_model_from_file(&fixture).expect("compiled fixture should parse");
         let kinds = compiled_block_kinds(&model);
         assert!(kinds.contains(&"header"));
         assert!(kinds.contains(&"mesh"));
+        Ok(())
     }
 
-    fn compiled_fixture() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../assets/testing/a_ba2_compiled.mdl")
+    fn compiled_fixture() -> Result<std::path::PathBuf, Box<dyn Error>> {
+        require_game_resource(materialize_resource_to_temp_file(
+            "a_ba2",
+            nwn::mdl::MODEL_RES_TYPE,
+        ))
     }
 }

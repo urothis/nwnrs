@@ -725,20 +725,49 @@ pub mod prelude {
 #[allow(clippy::panic)]
 #[cfg(test)]
 mod tests {
-    use std::{fs, io::Cursor, path::PathBuf};
+    use std::io::Cursor;
 
-    use crate::{
-        TGA_HEADER_SIZE, TgaImageType, TgaTexture, read_tga, read_tga_from_file, write_tga,
-    };
+    use crate::{TGA_HEADER_SIZE, TgaImageType, TgaTexture, read_tga, write_tga};
 
-    fn fixture_path() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../amp01_g06.tga")
+    fn fixture_texture() -> TgaTexture {
+        let mut image_data = Vec::with_capacity(16 * 16 * 3);
+        for _index in 0..(16 * 16) {
+            image_data.extend_from_slice(&[0x67, 0x72, 0x7e]);
+        }
+
+        TgaTexture {
+            id_length: 0,
+            color_map_type: 0,
+            image_type: TgaImageType::TrueColor,
+            color_map_first_entry_index: 0,
+            color_map_length: 0,
+            color_map_entry_size: 0,
+            x_origin: 0,
+            y_origin: 0,
+            width: 16,
+            height: 16,
+            pixel_depth: 24,
+            image_descriptor: 0,
+            image_id: Vec::new(),
+            color_map_data: Vec::new(),
+            image_data,
+            trailing_data: Vec::new(),
+            footer: None,
+        }
+    }
+
+    fn fixture_bytes() -> Vec<u8> {
+        let mut encoded = Vec::new();
+        if let Err(error) = write_tga(&mut encoded, &fixture_texture()) {
+            panic!("write synthetic fixture tga: {error}");
+        }
+        encoded
     }
 
     #[test]
     fn fixture_tga_parses_expected_header_fields() {
-        let tga = read_tga_from_file(fixture_path()).unwrap_or_else(|error| {
-            panic!("read tga fixture: {error}");
+        let tga = read_tga(&mut Cursor::new(fixture_bytes())).unwrap_or_else(|error| {
+            panic!("read synthetic tga fixture: {error}");
         });
 
         assert_eq!(tga.image_type, TgaImageType::TrueColor);
@@ -753,8 +782,8 @@ mod tests {
 
     #[test]
     fn fixture_tga_decodes_to_rgba8_with_bottom_left_origin_fixup() {
-        let tga = read_tga_from_file(fixture_path()).unwrap_or_else(|error| {
-            panic!("read tga fixture: {error}");
+        let tga = read_tga(&mut Cursor::new(fixture_bytes())).unwrap_or_else(|error| {
+            panic!("read synthetic tga fixture: {error}");
         });
         let rgba = tga.decode_rgba8().unwrap_or_else(|error| {
             panic!("decode tga fixture: {error}");
@@ -770,9 +799,7 @@ mod tests {
 
     #[test]
     fn write_tga_roundtrips_fixture_bytes() {
-        let original = fs::read(fixture_path()).unwrap_or_else(|error| {
-            panic!("read fixture bytes: {error}");
-        });
+        let original = fixture_bytes();
         let mut cursor = Cursor::new(original.clone());
         let tga = read_tga(&mut cursor).unwrap_or_else(|error| {
             panic!("parse fixture tga: {error}");

@@ -7,6 +7,9 @@ use std::{
 use nwnrs_erf::prelude::*;
 use nwnrs_gff::prelude::*;
 use nwnrs_ssf::prelude::*;
+use nwnrs_test_support::{
+    find_shipped_archive, require_game_resource, skip_if_game_resources_unavailable,
+};
 use nwnrs_tlk::prelude::*;
 use nwnrs_twoda::prelude::*;
 
@@ -35,7 +38,7 @@ fn resolve_local_resource_path(resource: &str) -> PathBuf {
     }
 
     Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
+        .join("../../..")
         .join(path)
 }
 
@@ -203,6 +206,18 @@ async fn test_resource(resource: &str) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+async fn test_shipped_archive(extension: &str) -> Result<(), Box<dyn Error>> {
+    let path = match require_game_resource(find_shipped_archive(extension)) {
+        Ok(path) => path,
+        Err(error) => return skip_if_game_resources_unavailable(error),
+    };
+    let original = tokio::fs::read(&path).await?;
+    let filename = filename_from_resource(&path.display().to_string())?;
+    let repacked = roundtrip_bytes(&original, &filename)?;
+    assert_eq!(original, repacked, "roundtrip byte mismatch for {filename}");
+    Ok(())
+}
+
 #[test]
 fn resource_filename_supports_urls() -> Result<(), Box<dyn Error>> {
     let filename =
@@ -220,7 +235,7 @@ fn resource_filename_supports_local_paths() -> Result<(), Box<dyn Error>> {
 
 #[tokio::test]
 async fn erf_roundtrip() -> Result<(), Box<dyn Error>> {
-    test_resource("assets/testing/test.erf").await
+    test_shipped_archive("erf").await
 }
 
 #[tokio::test]
@@ -245,12 +260,12 @@ async fn itp_roundtrip() -> Result<(), Box<dyn Error>> {
 
 #[tokio::test]
 async fn mod_roundtrip() -> Result<(), Box<dyn Error>> {
-    test_resource("assets/testing/test.mod").await
+    test_shipped_archive("mod").await
 }
 
 #[tokio::test]
 async fn hak_roundtrip() -> Result<(), Box<dyn Error>> {
-    test_resource("assets/testing/test.hak").await
+    test_shipped_archive("hak").await
 }
 
 #[tokio::test]

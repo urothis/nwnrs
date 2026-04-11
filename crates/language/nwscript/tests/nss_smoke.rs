@@ -1,12 +1,12 @@
 #![allow(missing_docs)]
 
-use std::{error::Error, path::PathBuf};
+use std::error::Error;
 
 use nwnrs_nwscript::prelude::*;
 
 mod support;
 
-use support::{assets_root, load_nss_bytes, skip_if_remote_assets_unavailable, test_error};
+use support::{load_nss_bytes, skip_if_game_resources_unavailable, test_error};
 
 type TestResult = Result<(), Box<dyn Error>>;
 
@@ -32,19 +32,9 @@ const NEGATIVE_SCRIPTS: &[(&str, &str)] = &[
 ];
 
 #[derive(Debug, Clone)]
-struct RemoteScriptResolver {
-    assets: PathBuf,
-}
+struct InstallScriptResolver;
 
-impl RemoteScriptResolver {
-    fn new(assets: PathBuf) -> Self {
-        Self {
-            assets,
-        }
-    }
-}
-
-impl ScriptResolver for RemoteScriptResolver {
+impl ScriptResolver for InstallScriptResolver {
     fn resolve_script_bytes(
         &self,
         script_name: &str,
@@ -61,7 +51,7 @@ impl ScriptResolver for RemoteScriptResolver {
         };
 
         for candidate in candidates {
-            match load_nss_bytes(&self.assets, &candidate) {
+            match load_nss_bytes(&candidate) {
                 Ok(bytes) => return Ok(Some(bytes)),
                 Err(_) => continue,
             }
@@ -71,22 +61,21 @@ impl ScriptResolver for RemoteScriptResolver {
     }
 }
 
-fn load_langspec_remote() -> Result<(std::path::PathBuf, LangSpec), Box<dyn Error>> {
-    let assets = assets_root();
-    let langspec_source = load_nss_bytes(&assets, "nwscript.nss")?;
+fn load_langspec_remote() -> Result<LangSpec, Box<dyn Error>> {
+    let langspec_source = load_nss_bytes("nwscript.nss")?;
     let langspec = parse_langspec_bytes("nwscript.nss", &langspec_source)?;
-    Ok((assets, langspec))
+    Ok(langspec)
 }
 
 #[test]
 fn smoke_remote_script_parses_and_analyzes() -> TestResult {
-    let (assets, langspec) = match load_langspec_remote() {
+    let langspec = match load_langspec_remote() {
         Ok(value) => value,
-        Err(error) => return skip_if_remote_assets_unavailable(error),
+        Err(error) => return skip_if_game_resources_unavailable(error),
     };
-    let source = match load_nss_bytes(&assets, POSITIVE_SCRIPT) {
+    let source = match load_nss_bytes(POSITIVE_SCRIPT) {
         Ok(source) => source,
-        Err(error) => return skip_if_remote_assets_unavailable(error),
+        Err(error) => return skip_if_game_resources_unavailable(error),
     };
     let script = parse_bytes(SourceId::new(1), &source, Some(&langspec))?;
     analyze_script(&script, Some(&langspec))?;
@@ -95,13 +84,13 @@ fn smoke_remote_script_parses_and_analyzes() -> TestResult {
 
 #[test]
 fn smoke_remote_script_compiles_to_deterministic_ncs() -> TestResult {
-    let (assets, langspec) = match load_langspec_remote() {
+    let langspec = match load_langspec_remote() {
         Ok(value) => value,
-        Err(error) => return skip_if_remote_assets_unavailable(error),
+        Err(error) => return skip_if_game_resources_unavailable(error),
     };
-    let source = match load_nss_bytes(&assets, POSITIVE_SCRIPT) {
+    let source = match load_nss_bytes(POSITIVE_SCRIPT) {
         Ok(source) => source,
-        Err(error) => return skip_if_remote_assets_unavailable(error),
+        Err(error) => return skip_if_game_resources_unavailable(error),
     };
     let script = parse_bytes(SourceId::new(2), &source, Some(&langspec))?;
 
@@ -115,13 +104,13 @@ fn smoke_remote_script_compiles_to_deterministic_ncs() -> TestResult {
 
 #[test]
 fn smoke_remote_script_compiles_to_parseable_ndb() -> TestResult {
-    let (assets, langspec) = match load_langspec_remote() {
+    let langspec = match load_langspec_remote() {
         Ok(value) => value,
-        Err(error) => return skip_if_remote_assets_unavailable(error),
+        Err(error) => return skip_if_game_resources_unavailable(error),
     };
-    let source = match load_nss_bytes(&assets, POSITIVE_SCRIPT) {
+    let source = match load_nss_bytes(POSITIVE_SCRIPT) {
         Ok(source) => source,
-        Err(error) => return skip_if_remote_assets_unavailable(error),
+        Err(error) => return skip_if_game_resources_unavailable(error),
     };
     let (source_map, root_id) = {
         let mut source_map = SourceMap::new();
@@ -158,15 +147,15 @@ fn smoke_remote_script_compiles_to_parseable_ndb() -> TestResult {
 
 #[test]
 fn negative_remote_scripts_fail_at_the_current_frontend_boundary() -> TestResult {
-    let (assets, langspec) = match load_langspec_remote() {
+    let langspec = match load_langspec_remote() {
         Ok(value) => value,
-        Err(error) => return skip_if_remote_assets_unavailable(error),
+        Err(error) => return skip_if_game_resources_unavailable(error),
     };
 
     for (index, (path, _reason)) in NEGATIVE_SCRIPTS.iter().enumerate() {
-        let source = match load_nss_bytes(&assets, path) {
+        let source = match load_nss_bytes(path) {
             Ok(source) => source,
-            Err(error) => return skip_if_remote_assets_unavailable(error),
+            Err(error) => return skip_if_game_resources_unavailable(error),
         };
         let source_id = SourceId::new(10_000 + u32::try_from(index)?);
 
@@ -212,11 +201,11 @@ fn negative_remote_scripts_fail_at_the_current_frontend_boundary() -> TestResult
 
 #[test]
 fn include_backed_script_parses_through_remote_resolver() -> TestResult {
-    let (assets, langspec) = match load_langspec_remote() {
+    let langspec = match load_langspec_remote() {
         Ok(value) => value,
-        Err(error) => return skip_if_remote_assets_unavailable(error),
+        Err(error) => return skip_if_game_resources_unavailable(error),
     };
-    let resolver = RemoteScriptResolver::new(assets);
+    let resolver = InstallScriptResolver;
 
     parse_resolved_script(
         &resolver,
@@ -229,11 +218,11 @@ fn include_backed_script_parses_through_remote_resolver() -> TestResult {
 
 #[test]
 fn include_backed_script_semantically_analyzes_through_remote_resolver() -> TestResult {
-    let (assets, langspec) = match load_langspec_remote() {
+    let langspec = match load_langspec_remote() {
         Ok(value) => value,
-        Err(error) => return skip_if_remote_assets_unavailable(error),
+        Err(error) => return skip_if_game_resources_unavailable(error),
     };
-    let resolver = RemoteScriptResolver::new(assets);
+    let resolver = InstallScriptResolver;
     let script = parse_resolved_script(
         &resolver,
         INCLUDE_SCRIPT,
@@ -247,11 +236,11 @@ fn include_backed_script_semantically_analyzes_through_remote_resolver() -> Test
 
 #[test]
 fn include_backed_script_compiles_to_valid_ncs() -> TestResult {
-    let (assets, langspec) = match load_langspec_remote() {
+    let langspec = match load_langspec_remote() {
         Ok(value) => value,
-        Err(error) => return skip_if_remote_assets_unavailable(error),
+        Err(error) => return skip_if_game_resources_unavailable(error),
     };
-    let resolver = RemoteScriptResolver::new(assets);
+    let resolver = InstallScriptResolver;
     let script = parse_resolved_script(
         &resolver,
         INCLUDE_SCRIPT,
@@ -266,11 +255,11 @@ fn include_backed_script_compiles_to_valid_ncs() -> TestResult {
 
 #[test]
 fn include_backed_script_compiles_to_parseable_ndb() -> TestResult {
-    let (assets, langspec) = match load_langspec_remote() {
+    let langspec = match load_langspec_remote() {
         Ok(value) => value,
-        Err(error) => return skip_if_remote_assets_unavailable(error),
+        Err(error) => return skip_if_game_resources_unavailable(error),
     };
-    let resolver = RemoteScriptResolver::new(assets);
+    let resolver = InstallScriptResolver;
     let bundle = load_source_bundle(&resolver, INCLUDE_SCRIPT, SourceLoadOptions::default())?;
     let artifacts = compile_source_bundle(&bundle, Some(&langspec), CompileOptions::default())?;
     let parsed = read_ndb(&mut std::io::Cursor::new(

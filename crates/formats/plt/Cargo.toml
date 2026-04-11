@@ -15,5 +15,8 @@ nwnrs-resman.workspace = true
 nwnrs-restype.workspace = true
 tracing.workspace = true
 
+[dev-dependencies]
+nwnrs-test-support.workspace = true
+
 [lints]
 workspace = true
