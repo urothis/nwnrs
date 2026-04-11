@@ -13,6 +13,7 @@ nwnrs-dds.workspace = true
 nwnrs-erf.workspace = true
 nwnrs-exo.workspace = true
 nwnrs-gff.workspace = true
+nwnrs-git.workspace = true
 nwnrs-key.workspace = true
 nwnrs-lru.workspace = true
 nwnrs-masterlist.workspace = true
@@ -33,6 +34,7 @@ nwnrs-ssf.workspace = true
 nwnrs-streamext.workspace = true
 nwnrs-tga.workspace = true
 nwnrs-tlk.workspace = true
+nwnrs-txi.workspace = true
 nwnrs-twoda.workspace = true
 nwnrs-util.workspace = true
 

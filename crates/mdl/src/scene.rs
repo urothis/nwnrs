@@ -77,6 +77,12 @@ pub struct NwnSceneNode {
     pub local_transform: NwnTransform,
     /// Optional node center metadata.
     pub center:          Option<[f32; 3]>,
+    /// Optional static node color metadata.
+    pub color:           Option<[f32; 3]>,
+    /// Optional static node radius metadata.
+    pub radius:          Option<f32>,
+    /// Optional static node alpha metadata.
+    pub alpha:           Option<f32>,
     /// Optional wireframe color metadata.
     pub wirecolor:       Option<[f32; 3]>,
     /// Typed light payload when this scene node is a light.
@@ -204,6 +210,9 @@ pub struct NwnMaterial {
     pub material_name:     Option<String>,
     /// `renderhint`
     pub render_hint:       Option<String>,
+    /// Helper bitmap token authored on non-render helper geometry such as
+    /// `Aabb` walkmeshes/collision meshes.
+    pub helper_bitmap:     Option<String>,
     /// Texture references attached to this material.
     pub textures:          Vec<NwnTextureRef>,
 }
@@ -542,7 +551,12 @@ pub fn lower_semantic_model_to_scene(model: &SemanticModel) -> ModelResult<NwnSc
 
         let mesh_index = node.mesh.as_ref().map(|mesh| {
             let material_index = materials.len();
-            materials.push(lower_material(&node.material, node_index, &node_names));
+            materials.push(lower_material(
+                &node.material,
+                node_index,
+                &node.kind,
+                &node_names,
+            ));
             let lowered_mesh = lower_mesh(mesh, node_index, node.name.clone(), material_index);
             let mesh_index = meshes.len();
             meshes.push(lowered_mesh);
@@ -557,6 +571,9 @@ pub fn lower_semantic_model_to_scene(model: &SemanticModel) -> ModelResult<NwnSc
             part_number: node.part_number,
             local_transform: lower_transform(node.position, node.orientation, node.scale),
             center: node.center,
+            color: node.color,
+            radius: node.radius,
+            alpha: node.material.alpha,
             wirecolor: node.wirecolor,
             light: node.light.as_ref().map(lower_light),
             emitter: node.emitter.as_ref().map(lower_emitter),
@@ -608,17 +625,26 @@ fn lower_transform(
 fn lower_material(
     material: &SemanticMaterial,
     source_node: usize,
+    node_kind: &NodeKind,
     node_names: &std::collections::BTreeSet<String>,
 ) -> NwnMaterial {
     let mut textures = Vec::new();
-    if let Some(bitmap) = &material.bitmap
-        && let Some(name) = normalize_texture_name(bitmap, node_names)
-    {
-        textures.push(NwnTextureRef {
-            slot: NwnTextureSlot::Bitmap,
-            name,
-        });
-    }
+    let helper_bitmap = if matches!(node_kind, NodeKind::Aabb) {
+        material
+            .bitmap
+            .as_deref()
+            .and_then(|bitmap| normalize_texture_name(bitmap, node_names))
+    } else {
+        if let Some(bitmap) = &material.bitmap
+            && let Some(name) = normalize_texture_name(bitmap, node_names)
+        {
+            textures.push(NwnTextureRef {
+                slot: NwnTextureSlot::Bitmap,
+                name,
+            });
+        }
+        None
+    };
     for texture in &material.textures {
         if let Some(texture) = lower_texture_ref(texture, node_names) {
             textures.push(texture);
@@ -642,6 +668,7 @@ fn lower_material(
         self_illum_color: material.self_illum_color.unwrap_or([0.0, 0.0, 0.0]),
         material_name: material.material_name.clone(),
         render_hint: material.render_hint.clone(),
+        helper_bitmap,
         textures,
     }
 }
@@ -1379,6 +1406,7 @@ node light AuroraLight01
   flareradius 0
   radius 5
   multiplier 1
+  alpha 0.5
   color 1 1 1
 endnode
 endmodelgeom lantern
@@ -1394,8 +1422,54 @@ donemodel lantern
         let light_payload = light.light.as_ref().unwrap_or_else(|| {
             panic!("missing light payload");
         });
+        assert_eq!(light.color, Some([1.0, 1.0, 1.0]));
+        assert_eq!(light.radius, Some(5.0));
+        assert_eq!(light.alpha, Some(0.5));
         assert_eq!(light_payload.light_priority, 3);
         assert_eq!(light_payload.fading_light, 1);
         assert_eq!(light_payload.multiplier, 1.0);
+    }
+
+    #[test]
+    fn aabb_bitmap_lowers_to_helper_bitmap_instead_of_texture() {
+        let scene = parse_scene_model(
+            "\
+newmodel demo
+setsupermodel demo null
+classification tile
+setanimationscale 1
+beginmodelgeom demo
+node dummy demo
+  parent NULL
+endnode
+node aabb wm_demo
+  parent demo
+  render 0
+  bitmap Stone
+  verts 3
+    0 0 0
+    1 0 0
+    0 1 0
+  faces 1
+    0 1 2  0  0 1 2  0
+  tverts 3
+    0 0 0
+    1 0 0
+    0 1 0
+endnode
+endmodelgeom demo
+donemodel demo
+",
+        )
+        .unwrap_or_else(|error| {
+            panic!("parse aabb helper scene sample: {error}");
+        });
+
+        let material = scene
+            .materials
+            .first()
+            .unwrap_or_else(|| panic!("missing aabb helper material"));
+        assert_eq!(material.helper_bitmap.as_deref(), Some("Stone"));
+        assert!(material.textures.is_empty());
     }
 }

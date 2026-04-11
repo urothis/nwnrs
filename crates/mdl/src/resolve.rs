@@ -262,6 +262,12 @@ fn resolve_scene_texture_ref_internal(
     visited_models: &mut BTreeSet<String>,
 ) -> SceneTextureResolution {
     let resolution_names = scene_texture_resolution_names(scene, material, texture);
+    if resolution_names
+        .iter()
+        .any(|name| is_helper_texture_token(name))
+    {
+        return SceneTextureResolution::Ignored;
+    }
     let mut attempted = Vec::new();
 
     for candidate_name in &resolution_names {
@@ -394,7 +400,8 @@ fn should_ignore_unresolved_texture(candidate_names: &[String], resman: &mut Res
 }
 
 fn is_helper_texture_token(name: &str) -> bool {
-    name.eq_ignore_ascii_case("coat_bones")
+    let lower = name.trim().to_ascii_lowercase();
+    lower == "coat_bones" || lower.starts_with("nonwalk")
 }
 
 fn looks_like_body_part_model_name(name: &str) -> bool {
@@ -689,6 +696,7 @@ donemodel demo
             self_illum_color:  [0.0, 0.0, 0.0],
             material_name:     None,
             render_hint:       None,
+            helper_bitmap:     None,
             textures:          vec![
                 NwnTextureRef {
                     slot: NwnTextureSlot::Bitmap,
@@ -968,6 +976,36 @@ node trimesh robe
     1 0 0
     0 1 0
 endnode
+node trimesh nonwalk
+  parent demo
+  render 1
+  bitmap Nonwalk
+  verts 3
+    0 0 0
+    1 0 0
+    0 1 0
+  faces 1
+    0 1 2  0  0 1 2  0
+  tverts 3
+    0 0 0
+    1 0 0
+    0 1 0
+endnode
+node trimesh invisible
+  parent demo
+  render 1
+  bitmap placeholdermaterial
+  verts 3
+    0 0 0
+    1 0 0
+    0 1 0
+  faces 1
+    0 1 2  0  0 1 2  0
+  tverts 3
+    0 0 0
+    1 0 0
+    0 1 0
+endnode
 endmodelgeom demo
 donemodel demo
 ",
@@ -976,10 +1014,13 @@ donemodel demo
         let mut manager = build_manager(&[]);
 
         for material in &scene.materials {
-            let texture = material
+            let Some(texture) = material
                 .textures
-                .first()
-                .unwrap_or_else(|| panic!("bitmap texture"));
+                .iter()
+                .find(|texture| matches!(texture.slot, NwnTextureSlot::Bitmap))
+            else {
+                continue;
+            };
             let outcome = resolve_scene_texture_ref_with_policy(
                 &scene,
                 material,
@@ -987,7 +1028,11 @@ donemodel demo
                 &mut manager,
                 &TextureResolverOptions::default(),
             );
-            assert!(matches!(outcome, SceneTextureResolution::Ignored));
+            if texture.name.eq_ignore_ascii_case("placeholdermaterial") {
+                assert!(matches!(outcome, SceneTextureResolution::Missing(_)));
+            } else {
+                assert!(matches!(outcome, SceneTextureResolution::Ignored));
+            }
         }
     }
 }

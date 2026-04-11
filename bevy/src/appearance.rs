@@ -6,10 +6,12 @@ use nwnrs_resman::prelude::ResMan;
 use crate::NwnBevyError;
 
 /// User-selected appearance remaps for one model load.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub struct NwnAppearanceOverrides {
     /// Maps stable appearance slot ids to selected replacement model names.
-    pub slots: BTreeMap<String, String>,
+    pub slots:    BTreeMap<String, String>,
+    /// Maps PLT layer ids to selected palette-row indices.
+    pub plt_rows: BTreeMap<u8, u8>,
 }
 
 impl NwnAppearanceOverrides {
@@ -19,6 +21,11 @@ impl NwnAppearanceOverrides {
             .iter()
             .find(|(key, _value)| key.eq_ignore_ascii_case(slot_id))
             .map(|(_key, value)| value.as_str())
+    }
+
+    /// Returns the selected palette row for one PLT layer id.
+    pub fn plt_row(&self, layer_id: u8) -> Option<u8> {
+        self.plt_rows.get(&layer_id).copied()
     }
 }
 
@@ -277,7 +284,8 @@ donemodel demo
         };
 
         let overrides = NwnAppearanceOverrides {
-            slots: BTreeMap::from([("part:0".to_string(), "pmh0_robe033".to_string())]),
+            slots:    BTreeMap::from([("part:0".to_string(), "pmh0_robe033".to_string())]),
+            plt_rows: BTreeMap::new(),
         };
         let scene = apply_appearance_overrides(&scene, &overrides);
         let bitmap_name = scene

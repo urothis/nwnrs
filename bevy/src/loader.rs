@@ -11,15 +11,20 @@ use nwnrs_dds::prelude::DdsTexture;
 use nwnrs_mdl::prelude::*;
 use nwnrs_mtr::prelude::{MTR_RES_TYPE, read_mtr, read_mtr_from_res};
 use nwnrs_plt::prelude::read_plt;
+use nwnrs_resman::ResMan;
 use nwnrs_resref::prelude::{ResRef, ResolvedResRef};
 use nwnrs_tga::prelude::read_tga;
+use nwnrs_txi::prelude::read_optional_txi_from_resman;
 use serde::{Deserialize, Serialize};
 
 use crate::{
     NwnBevyError, NwnModelAsset, NwnModelNodeAsset, NwnPrimitiveAsset, NwnTextureLoadReason,
-    NwnUnresolvedTexture, image_from_dds, image_from_plt, image_from_tga,
-    install_state::shared_resman, mesh_from_primitive, standard_material_from_nwn,
-    transform_from_nwn,
+    NwnUnresolvedTexture, helper_surface_from_node, image_from_dds, image_from_plt, image_from_tga,
+    install_state::shared_resman,
+    light::build_model_light_asset,
+    material_starts_visible, mesh_from_primitive, standard_material_from_nwn,
+    tilefade_asset_from_primitive, transform_from_nwn,
+    txi::{build_model_txi_asset, derive_txi_uv_to_local_horizontal},
 };
 
 /// Loader for NWN `mdl` model assets.
@@ -88,6 +93,7 @@ impl AssetLoader for NwnMdlAssetLoader {
 struct MaterialBinding {
     material:   Handle<StandardMaterial>,
     texture:    Option<Handle<Image>>,
+    txi:        Option<crate::NwnModelTxiAsset>,
     unresolved: Vec<NwnUnresolvedTexture>,
 }
 
@@ -113,6 +119,7 @@ async fn load_materials(
         bindings.push(MaterialBinding {
             material:   material_handle,
             texture:    texture_result.texture,
+            txi:        texture_result.txi,
             unresolved: texture_result.unresolved,
         });
     }
@@ -176,6 +183,7 @@ async fn load_material_texture(
 
     Ok(MaterialTextureLoad {
         texture:    None,
+        txi:        None,
         unresolved: vec![NwnUnresolvedTexture {
             material_index,
             slot: texture
@@ -220,6 +228,7 @@ fn load_material_texture_from_resman(
             &texture_resolver_options(),
         ) {
             SceneTextureResolution::Resolved(resolved) => {
+                let txi = load_install_material_txi(material, &resolved.resolved, &mut resman)?;
                 drop(resman);
                 let image = image_from_resolved_texture(&resolved)?;
                 let handle = load_context.labeled_asset_scope(
@@ -227,7 +236,8 @@ fn load_material_texture_from_resman(
                     |_labeled| Ok::<_, NwnBevyError>(image.clone()),
                 )?;
                 return Ok(InstallTextureLoad::Loaded(MaterialTextureLoad {
-                    texture:    Some(handle),
+                    texture: Some(handle),
+                    txi,
                     unresolved: Vec::new(),
                 }));
             }
@@ -265,6 +275,7 @@ fn load_material_texture_from_resman(
         };
         match resolve_texture_ref(&texture_ref, &mut resman, &texture_resolver_options()) {
             Ok(resolved) => {
+                let txi = load_install_material_txi(material, &resolved.resolved, &mut resman)?;
                 drop(resman);
                 let image = image_from_resolved_texture(&resolved)?;
                 let handle = load_context.labeled_asset_scope(
@@ -272,7 +283,8 @@ fn load_material_texture_from_resman(
                     |_labeled| Ok::<_, NwnBevyError>(image.clone()),
                 )?;
                 return Ok(InstallTextureLoad::Loaded(MaterialTextureLoad {
-                    texture:    Some(handle),
+                    texture: Some(handle),
+                    txi,
                     unresolved: Vec::new(),
                 }));
             }
@@ -305,6 +317,7 @@ async fn load_asset_texture_candidate(
             .labeled_asset_scope(label, |_labeled| Ok::<_, NwnBevyError>(image.clone()))?;
         return Ok(Some(MaterialTextureLoad {
             texture:    Some(handle),
+            txi:        None,
             unresolved: Vec::new(),
         }));
     }
@@ -416,20 +429,21 @@ fn build_node_assets(
     scene
         .nodes
         .iter()
-        .map(|node| {
+        .enumerate()
+        .map(|(node_index, node)| {
             let primitives = node
                 .mesh
                 .and_then(|mesh_index| scene.meshes.get(mesh_index).map(|mesh| (mesh_index, mesh)))
                 .map_or_else(Vec::new, |(mesh_index, mesh)| {
+                    if !node_kind_has_visible_geometry(&node.kind) {
+                        return Vec::new();
+                    }
                     mesh.primitives
                         .iter()
                         .enumerate()
                         .filter_map(|(primitive_index, primitive)| {
                             let material_index = primitive.material?;
                             let material = scene.materials.get(material_index)?;
-                            if !material.render_enabled {
-                                return None;
-                            }
                             let mesh_handle = primitive_lookup
                                 .get(&(mesh_index, primitive_index))
                                 .cloned()?;
@@ -437,9 +451,24 @@ fn build_node_assets(
                                 .get(material_index)
                                 .map(|binding| binding.material.clone())?;
                             Some(NwnPrimitiveAsset {
-                                label:          format!("{}:{primitive_index}", mesh.name),
-                                mesh:           mesh_handle,
-                                material:       material_handle,
+                                label: format!("{}:{primitive_index}", mesh.name),
+                                scene_primitive_index: primitive_index,
+                                txi: material_bindings
+                                    .get(material_index)
+                                    .and_then(|binding| binding.txi.clone()),
+                                txi_uv_to_local_horizontal: material_bindings
+                                    .get(material_index)
+                                    .and_then(|binding| binding.txi.as_ref())
+                                    .and_then(|_| {
+                                        derive_txi_uv_to_local_horizontal(
+                                            primitive,
+                                            scene.coordinate_system,
+                                        )
+                                    }),
+                                mesh: mesh_handle,
+                                material: material_handle,
+                                tilefade: tilefade_asset_from_primitive(scene, material, primitive),
+                                initially_visible: material_starts_visible(scene, material),
                                 shadow_enabled: material.shadow_enabled,
                             })
                         })
@@ -451,10 +480,17 @@ fn build_node_assets(
                 kind: node.kind.clone(),
                 parent: node.parent,
                 transform: transform_from_nwn(&node.local_transform, scene.coordinate_system),
+                light: build_model_light_asset(scene, node_index),
+                references: Vec::new(),
+                helper_surface: helper_surface_from_node(scene, node),
                 primitives,
             }
         })
         .collect()
+}
+
+fn node_kind_has_visible_geometry(kind: &NodeKind) -> bool {
+    !matches!(kind, NodeKind::Aabb)
 }
 
 fn resolve_relative_asset_path(
@@ -494,7 +530,21 @@ fn is_explicit_plt(name: &str) -> bool {
 #[derive(Debug, Default)]
 struct MaterialTextureLoad {
     texture:    Option<Handle<Image>>,
+    txi:        Option<crate::NwnModelTxiAsset>,
     unresolved: Vec<NwnUnresolvedTexture>,
+}
+
+fn load_install_material_txi(
+    material: &NwnMaterial,
+    resolved: &ResolvedResRef,
+    resman: &mut ResMan,
+) -> Result<Option<crate::NwnModelTxiAsset>, NwnBevyError> {
+    let Some(txi) = read_optional_txi_from_resman(resman, resolved.res_ref(), true)
+        .map_err(|error| NwnBevyError::msg(format!("read {}.txi: {error}", resolved.res_ref())))?
+    else {
+        return Ok(None);
+    };
+    Ok(build_model_txi_asset(material, &txi))
 }
 
 #[derive(Debug)]
@@ -509,13 +559,16 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use nwnrs_mdl::prelude::{
-        NwnMaterial, NwnTextureRef, NwnTextureSlot, TextureResourceKind, resolve_texture_ref,
+        ModelClassification, NodeKind, NwnAnimation, NwnCoordinateSystem, NwnFace, NwnLight,
+        NwnMaterial, NwnMaterialTrack, NwnMesh, NwnNodeAnimationTrack, NwnPrimitive, NwnScene,
+        NwnSceneNode, NwnTextureRef, NwnTextureSlot, NwnTransform, NwnTransformTrack, NwnUvSet,
+        ScalarKey, TextureResourceKind, Vec3Key, resolve_texture_ref,
     };
     use nwnrs_resman::{ResContainer, ResMan};
     use nwnrs_resmemfile::prelude::read_resmemfile;
     use nwnrs_resref::ResolvedResRef;
 
-    use super::{is_explicit_plt, texture_candidates, texture_resolver_options};
+    use super::{build_node_assets, is_explicit_plt, texture_candidates, texture_resolver_options};
     use crate::install_state::{clear_shared_resman, set_shared_resman};
 
     #[test]
@@ -611,6 +664,7 @@ mod tests {
             self_illum_color:  [0.0, 0.0, 0.0],
             material_name:     Some("Stone".to_string()),
             render_hint:       None,
+            helper_bitmap:     None,
             textures:          vec![NwnTextureRef {
                 slot: NwnTextureSlot::Bitmap,
                 name: "weaponstex".to_string(),
@@ -623,6 +677,355 @@ mod tests {
                 &[String::from("weaponstex"), String::from("weaponstex")]
             ),
             vec!["Stone".to_string(), "weaponstex".to_string()]
+        );
+    }
+
+    #[test]
+    fn material_requires_bitmap_resolution_rejects_uv_less_primitives() {
+        let scene = NwnScene {
+            name:              "demo".to_string(),
+            supermodel:        None,
+            classification:    None,
+            animation_scale:   None,
+            coordinate_system: NwnCoordinateSystem::AuroraSource,
+            nodes:             vec![NwnSceneNode {
+                kind:            NodeKind::Trimesh,
+                node_type:       "trimesh".to_string(),
+                name:            "sam".to_string(),
+                parent:          None,
+                part_number:     None,
+                local_transform: NwnTransform {
+                    translation:         [0.0, 0.0, 0.0],
+                    rotation_axis_angle: [0.0, 0.0, 0.0, 0.0],
+                    scale:               [1.0, 1.0, 1.0],
+                },
+                center:          None,
+                color:           None,
+                radius:          None,
+                alpha:           None,
+                wirecolor:       None,
+                light:           None,
+                emitter:         None,
+                reference:       None,
+                mesh:            Some(0),
+            }],
+            meshes:            vec![NwnMesh {
+                name:        "sam".to_string(),
+                source_node: 0,
+                primitives:  vec![NwnPrimitive {
+                    positions:       vec![[0.0, 0.0, 0.0]; 3],
+                    faces:           vec![NwnFace {
+                        vertex_indices: [0, 1, 2],
+                        group:          0,
+                        uv_indices:     [0, 1, 2],
+                        material_index: 0,
+                    }],
+                    uv_sets:         Vec::new(),
+                    normals:         Vec::new(),
+                    tangents:        Vec::new(),
+                    color_rows:      Vec::new(),
+                    weight_rows:     Vec::new(),
+                    constraint_rows: Vec::new(),
+                    surface_labels:  Vec::new(),
+                    texture_names:   Vec::new(),
+                    material:        Some(0),
+                }],
+            }],
+            materials:         vec![NwnMaterial {
+                source_node:       0,
+                render_enabled:    true,
+                shadow_enabled:    true,
+                beaming:           0,
+                inherit_color:     0,
+                tilefade:          0,
+                rotate_texture:    0,
+                transparency_hint: 0,
+                shininess:         0.0,
+                alpha:             0.0,
+                ambient:           [1.0, 1.0, 1.0],
+                diffuse:           [1.0, 1.0, 1.0],
+                specular:          [0.0, 0.0, 0.0],
+                self_illum_color:  [0.0, 0.0, 0.0],
+                material_name:     None,
+                render_hint:       None,
+                helper_bitmap:     None,
+                textures:          vec![NwnTextureRef {
+                    slot: NwnTextureSlot::Bitmap,
+                    name: "standardmaterial".to_string(),
+                }],
+            }],
+            animations:        Vec::new(),
+            diagnostics:       Vec::new(),
+        };
+
+        assert!(!crate::material_requires_bitmap_resolution(&scene, 0));
+    }
+
+    #[test]
+    fn material_requires_bitmap_resolution_accepts_textured_primitives() {
+        let scene = NwnScene {
+            name:              "demo".to_string(),
+            supermodel:        None,
+            classification:    None,
+            animation_scale:   None,
+            coordinate_system: NwnCoordinateSystem::AuroraSource,
+            nodes:             vec![NwnSceneNode {
+                kind:            NodeKind::Trimesh,
+                node_type:       "trimesh".to_string(),
+                name:            "tile".to_string(),
+                parent:          None,
+                part_number:     None,
+                local_transform: NwnTransform {
+                    translation:         [0.0, 0.0, 0.0],
+                    rotation_axis_angle: [0.0, 0.0, 0.0, 0.0],
+                    scale:               [1.0, 1.0, 1.0],
+                },
+                center:          None,
+                color:           None,
+                radius:          None,
+                alpha:           None,
+                wirecolor:       None,
+                light:           None,
+                emitter:         None,
+                reference:       None,
+                mesh:            Some(0),
+            }],
+            meshes:            vec![NwnMesh {
+                name:        "tile".to_string(),
+                source_node: 0,
+                primitives:  vec![NwnPrimitive {
+                    positions:       vec![[0.0, 0.0, 0.0]; 3],
+                    faces:           vec![NwnFace {
+                        vertex_indices: [0, 1, 2],
+                        group:          0,
+                        uv_indices:     [0, 1, 2],
+                        material_index: 0,
+                    }],
+                    uv_sets:         vec![NwnUvSet {
+                        index:       0,
+                        coordinates: vec![[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]],
+                    }],
+                    normals:         Vec::new(),
+                    tangents:        Vec::new(),
+                    color_rows:      Vec::new(),
+                    weight_rows:     Vec::new(),
+                    constraint_rows: Vec::new(),
+                    surface_labels:  Vec::new(),
+                    texture_names:   Vec::new(),
+                    material:        Some(0),
+                }],
+            }],
+            materials:         vec![NwnMaterial {
+                source_node:       0,
+                render_enabled:    true,
+                shadow_enabled:    true,
+                beaming:           0,
+                inherit_color:     0,
+                tilefade:          0,
+                rotate_texture:    0,
+                transparency_hint: 0,
+                shininess:         0.0,
+                alpha:             1.0,
+                ambient:           [1.0, 1.0, 1.0],
+                diffuse:           [1.0, 1.0, 1.0],
+                specular:          [0.0, 0.0, 0.0],
+                self_illum_color:  [0.0, 0.0, 0.0],
+                material_name:     None,
+                render_hint:       None,
+                helper_bitmap:     None,
+                textures:          vec![NwnTextureRef {
+                    slot: NwnTextureSlot::Bitmap,
+                    name: "stone".to_string(),
+                }],
+            }],
+            animations:        Vec::new(),
+            diagnostics:       Vec::new(),
+        };
+
+        assert!(crate::material_requires_bitmap_resolution(&scene, 0));
+    }
+
+    #[test]
+    fn material_requires_bitmap_resolution_rejects_aabb_helpers() {
+        let scene = NwnScene {
+            name:              "demo".to_string(),
+            supermodel:        None,
+            classification:    None,
+            animation_scale:   None,
+            coordinate_system: NwnCoordinateSystem::AuroraSource,
+            nodes:             vec![NwnSceneNode {
+                kind:            NodeKind::Aabb,
+                node_type:       "aabb".to_string(),
+                name:            "wm_demo".to_string(),
+                parent:          None,
+                part_number:     None,
+                local_transform: NwnTransform {
+                    translation:         [0.0, 0.0, 0.0],
+                    rotation_axis_angle: [0.0, 0.0, 0.0, 0.0],
+                    scale:               [1.0, 1.0, 1.0],
+                },
+                center:          None,
+                color:           None,
+                radius:          None,
+                alpha:           None,
+                wirecolor:       None,
+                light:           None,
+                emitter:         None,
+                reference:       None,
+                mesh:            Some(0),
+            }],
+            meshes:            vec![NwnMesh {
+                name:        "wm_demo".to_string(),
+                source_node: 0,
+                primitives:  vec![NwnPrimitive {
+                    positions:       vec![[0.0, 0.0, 0.0]; 3],
+                    faces:           vec![NwnFace {
+                        vertex_indices: [0, 1, 2],
+                        group:          0,
+                        uv_indices:     [0, 1, 2],
+                        material_index: 0,
+                    }],
+                    uv_sets:         vec![NwnUvSet {
+                        index:       0,
+                        coordinates: vec![[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]],
+                    }],
+                    normals:         Vec::new(),
+                    tangents:        Vec::new(),
+                    color_rows:      Vec::new(),
+                    weight_rows:     Vec::new(),
+                    constraint_rows: Vec::new(),
+                    surface_labels:  Vec::new(),
+                    texture_names:   Vec::new(),
+                    material:        Some(0),
+                }],
+            }],
+            materials:         vec![NwnMaterial {
+                source_node:       0,
+                render_enabled:    true,
+                shadow_enabled:    true,
+                beaming:           0,
+                inherit_color:     0,
+                tilefade:          0,
+                rotate_texture:    0,
+                transparency_hint: 0,
+                shininess:         0.0,
+                alpha:             1.0,
+                ambient:           [1.0, 1.0, 1.0],
+                diffuse:           [1.0, 1.0, 1.0],
+                specular:          [0.0, 0.0, 0.0],
+                self_illum_color:  [0.0, 0.0, 0.0],
+                material_name:     None,
+                render_hint:       None,
+                helper_bitmap:     None,
+                textures:          vec![NwnTextureRef {
+                    slot: NwnTextureSlot::Bitmap,
+                    name: "Stone".to_string(),
+                }],
+            }],
+            animations:        Vec::new(),
+            diagnostics:       Vec::new(),
+        };
+
+        assert!(!crate::material_requires_bitmap_resolution(&scene, 0));
+    }
+
+    #[test]
+    fn build_node_assets_includes_light_descriptor_and_animation() {
+        let scene = NwnScene {
+            name:              "torch".to_string(),
+            supermodel:        None,
+            classification:    Some(ModelClassification::Item),
+            animation_scale:   Some(1.0),
+            coordinate_system: NwnCoordinateSystem::AuroraSource,
+            nodes:             vec![NwnSceneNode {
+                kind:            NodeKind::Light,
+                node_type:       "light".to_string(),
+                name:            "Torch".to_string(),
+                parent:          None,
+                part_number:     None,
+                local_transform: NwnTransform {
+                    translation:         [0.0, 0.0, 0.0],
+                    rotation_axis_angle: [0.0, 0.0, 0.0, 0.0],
+                    scale:               [1.0, 1.0, 1.0],
+                },
+                center:          None,
+                color:           Some([1.0, 0.6, 0.2]),
+                radius:          Some(4.0),
+                alpha:           Some(0.75),
+                wirecolor:       None,
+                light:           Some(NwnLight {
+                    multiplier:         1.5,
+                    ambient_only:       0,
+                    n_dynamic_type:     None,
+                    is_dynamic:         0,
+                    affect_dynamic:     1,
+                    negative_light:     0,
+                    light_priority:     3,
+                    fading_light:       1,
+                    lens_flares:        0,
+                    flare_radius:       0.0,
+                    flare_textures:     Vec::new(),
+                    flare_sizes:        Vec::new(),
+                    flare_positions:    Vec::new(),
+                    flare_color_shifts: Vec::new(),
+                }),
+                emitter:         None,
+                reference:       None,
+                mesh:            None,
+            }],
+            meshes:            Vec::new(),
+            materials:         Vec::new(),
+            animations:        vec![NwnAnimation {
+                name:            "default".to_string(),
+                model_name:      "torch".to_string(),
+                length:          2.0,
+                transition_time: 0.0,
+                root_name:       None,
+                root_node:       None,
+                events:          Vec::new(),
+                node_tracks:     vec![NwnNodeAnimationTrack {
+                    target_name: "Torch".to_string(),
+                    target_node: Some(0),
+                    kind:        NodeKind::Light,
+                    transform:   NwnTransformTrack {
+                        translation_keys:         Vec::new(),
+                        rotation_axis_angle_keys: Vec::new(),
+                        scale_keys:               Vec::new(),
+                    },
+                    material:    NwnMaterialTrack {
+                        color_keys:            vec![Vec3Key {
+                            time:  0.0,
+                            value: [1.0, 0.6, 0.2],
+                        }],
+                        radius_keys:           vec![ScalarKey {
+                            time:  0.0,
+                            value: 4.0,
+                        }],
+                        alpha_keys:            vec![ScalarKey {
+                            time:  0.0,
+                            value: 0.75,
+                        }],
+                        self_illum_color_keys: Vec::new(),
+                    },
+                    animmesh:    None,
+                }],
+            }],
+            diagnostics:       Vec::new(),
+        };
+
+        let nodes = build_node_assets(&scene, &[], &[]);
+        let light = nodes
+            .first()
+            .and_then(|node| node.light.as_ref())
+            .unwrap_or_else(|| panic!("missing light asset"));
+        assert_eq!(light.base_color, [1.0, 0.6, 0.2]);
+        assert_eq!(light.base_radius, 4.0);
+        assert_eq!(light.base_alpha, 0.75);
+        assert_eq!(light.multiplier, 1.5);
+        assert!(!light.shadow_enabled);
+        assert_eq!(
+            light.animation.as_ref().map(|animation| animation.length),
+            Some(2.0)
         );
     }
 

@@ -9,16 +9,20 @@
 //! - build basic `StandardMaterial` assets
 //! - expose a spawn helper for the loaded model hierarchy
 
+mod animation;
 mod appearance;
 mod assets;
 mod convert;
 mod error;
 mod install;
 mod install_state;
+mod light;
 mod loader;
 mod plugin;
 mod runtime;
 mod spawn;
+mod txi;
+mod visibility;
 
 pub use appearance::*;
 pub use assets::*;
@@ -29,3 +33,4 @@ pub use loader::*;
 pub use plugin::*;
 pub use runtime::*;
 pub use spawn::*;
+pub use visibility::*;

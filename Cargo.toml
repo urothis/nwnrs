@@ -21,6 +21,7 @@ nwnrs-erf = { path = "crates/erf" }
 nwnrs-exo = { path = "crates/exo" }
 nwnrs-game = { path = "crates/game" }
 nwnrs-gff = { path = "crates/gff" }
+nwnrs-git = { path = "crates/git" }
 nwnrs-key = { path = "crates/key" }
 nwnrs-lru = { path = "crates/lru" }
 nwnrs-masterlist = { path = "crates/masterlist" }
@@ -41,6 +42,7 @@ nwnrs-ssf = { path = "crates/ssf" }
 nwnrs-streamext = { path = "crates/streamext" }
 nwnrs-tga = { path = "crates/tga" }
 nwnrs-tlk = { path = "crates/tlk" }
+nwnrs-txi = { path = "crates/txi" }
 nwnrs-twoda = { path = "crates/twoda" }
 nwnrs-util = { path = "crates/util" }
 # external dependencies

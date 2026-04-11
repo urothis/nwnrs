@@ -4113,6 +4113,7 @@ dependencies = [
  "nwnrs-exo",
  "nwnrs-game",
  "nwnrs-gff",
+ "nwnrs-git",
  "nwnrs-key",
  "nwnrs-lru",
  "nwnrs-masterlist",
@@ -4134,6 +4135,7 @@ dependencies = [
  "nwnrs-tga",
  "nwnrs-tlk",
  "nwnrs-twoda",
+ "nwnrs-txi",
  "nwnrs-util",
 ]
 
@@ -4147,6 +4149,7 @@ dependencies = [
  "nwnrs-erf",
  "nwnrs-game",
  "nwnrs-gff",
+ "nwnrs-git",
  "nwnrs-mdl",
  "nwnrs-mtr",
  "nwnrs-plt",
@@ -4155,6 +4158,8 @@ dependencies = [
  "nwnrs-resref",
  "nwnrs-set",
  "nwnrs-tga",
+ "nwnrs-twoda",
+ "nwnrs-txi",
  "serde",
  "tracing",
 ]
@@ -4259,6 +4264,18 @@ version = "0.1.0"
 dependencies = [
  "nwnrs-core",
  "nwnrs-util",
+ "tracing",
+]
+
+[[package]]
+name = "nwnrs-git"
+version = "0.1.0"
+dependencies = [
+ "nwnrs-gff",
+ "nwnrs-resman",
+ "nwnrs-resmemfile",
+ "nwnrs-resref",
+ "nwnrs-restype",
  "tracing",
 ]
 
@@ -4486,6 +4503,17 @@ version = "0.1.0"
 dependencies = [
  "nwnrs-resman",
  "nwnrs-util",
+ "tracing",
+]
+
+[[package]]
+name = "nwnrs-txi"
+version = "0.1.0"
+dependencies = [
+ "nwnrs-resman",
+ "nwnrs-resmemfile",
+ "nwnrs-resref",
+ "nwnrs-restype",
  "tracing",
 ]
 

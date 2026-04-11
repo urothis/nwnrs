@@ -3,8 +3,8 @@ use bevy::{
     image::{Image, ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor},
     mesh::{Indices, Mesh, PrimitiveTopology},
     pbr::StandardMaterial,
-    prelude::{AlphaMode, Color},
-    render::render_resource::{Extent3d, TextureDimension, TextureFormat},
+    prelude::{AlphaMode, Color, Vec3},
+    render::render_resource::{Extent3d, Face, TextureDimension, TextureFormat},
     transform::components::Transform,
 };
 use nwnrs_dds::prelude::*;
@@ -12,7 +12,130 @@ use nwnrs_mdl::prelude::*;
 use nwnrs_plt::prelude::*;
 use nwnrs_tga::prelude::*;
 
-use crate::NwnBevyError;
+use crate::{
+    NwnBevyError, NwnModelHelperSurfaceAsset, NwnModelTileFadeAsset, tilefade_default_visibility,
+};
+
+/// Returns whether the given scene material is used by renderable geometry
+/// that can actually sample a primary bitmap texture.
+pub fn material_requires_bitmap_resolution(scene: &NwnScene, material_index: usize) -> bool {
+    scene.nodes.iter().any(|node| {
+        if matches!(node.kind, NodeKind::Aabb) {
+            return false;
+        }
+        let Some(mesh_index) = node.mesh else {
+            return false;
+        };
+        let Some(mesh) = scene.meshes.get(mesh_index) else {
+            return false;
+        };
+        mesh.primitives.iter().any(|primitive| {
+            primitive.material == Some(material_index)
+                && primitive
+                    .uv_sets
+                    .first()
+                    .is_some_and(|set| !set.coordinates.is_empty())
+        })
+    })
+}
+
+/// Returns whether a primitive using this material should start visible in
+/// Bevy even if the authored material disables rendering.
+pub fn material_starts_visible(scene: &NwnScene, material: &NwnMaterial) -> bool {
+    if matches!(scene.classification, Some(ModelClassification::Tile)) && material.tilefade > 0 {
+        tilefade_default_visibility(material.tilefade, material.render_enabled)
+    } else {
+        material.render_enabled
+    }
+}
+
+/// Computes primitive bounds in local Bevy space after NWN coordinate
+/// conversion.
+pub fn primitive_bounds_from_nwn(
+    primitive: &NwnPrimitive,
+    coordinate_system: NwnCoordinateSystem,
+) -> (Vec3, Vec3) {
+    let mut min = Vec3::splat(f32::INFINITY);
+    let mut max = Vec3::splat(f32::NEG_INFINITY);
+    for position in &primitive.positions {
+        let point = Vec3::from_array(position_from_nwn(*position, coordinate_system));
+        min = min.min(point);
+        max = max.max(point);
+    }
+
+    if !min.is_finite() || !max.is_finite() {
+        return (Vec3::ZERO, Vec3::ZERO);
+    }
+
+    ((min + max) * 0.5, (max - min) * 0.5)
+}
+
+/// Returns helper-surface metadata for one helper node, when present.
+pub fn helper_surface_from_node(
+    scene: &NwnScene,
+    node: &NwnSceneNode,
+) -> Option<NwnModelHelperSurfaceAsset> {
+    if !matches!(node.kind, NodeKind::Aabb) {
+        return None;
+    }
+
+    let mesh = scene.meshes.get(node.mesh?)?;
+    let mut bitmaps = Vec::new();
+    let mut surface_labels = Vec::new();
+    let mut texture_names = Vec::new();
+
+    for primitive in &mesh.primitives {
+        if let Some(material_index) = primitive.material
+            && let Some(bitmap) = scene
+                .materials
+                .get(material_index)
+                .and_then(|material| material.helper_bitmap.as_ref())
+            && !bitmaps.iter().any(|entry| entry == bitmap)
+        {
+            bitmaps.push(bitmap.clone());
+        }
+        for label in &primitive.surface_labels {
+            if !surface_labels.iter().any(|entry| entry == label) {
+                surface_labels.push(label.clone());
+            }
+        }
+        for name in &primitive.texture_names {
+            if !texture_names.iter().any(|entry| entry == name) {
+                texture_names.push(name.clone());
+            }
+        }
+    }
+
+    if bitmaps.is_empty() && surface_labels.is_empty() && texture_names.is_empty() {
+        None
+    } else {
+        Some(NwnModelHelperSurfaceAsset {
+            bitmaps,
+            surface_labels,
+            texture_names,
+        })
+    }
+}
+
+/// Returns tilefade metadata for one primitive when the material uses tilefade
+/// behavior on a tile model.
+pub fn tilefade_asset_from_primitive(
+    scene: &NwnScene,
+    material: &NwnMaterial,
+    primitive: &NwnPrimitive,
+) -> Option<NwnModelTileFadeAsset> {
+    if !matches!(scene.classification, Some(ModelClassification::Tile)) || material.tilefade <= 0 {
+        return None;
+    }
+    let (local_center, local_half_extents) =
+        primitive_bounds_from_nwn(primitive, scene.coordinate_system);
+    Some(NwnModelTileFadeAsset {
+        mode: material.tilefade,
+        authored_visible: material.render_enabled,
+        local_center,
+        local_half_extents,
+    })
+}
 
 /// Converts one NWN DDS payload into a Bevy `Image`.
 pub fn image_from_dds(dds: &DdsTexture) -> Result<Image, NwnBevyError> {
@@ -117,6 +240,7 @@ pub fn standard_material_from_nwn(
         (material.specular[0] + material.specular[1] + material.specular[2]) / 3.0;
     let shininess = material.shininess.clamp(0.0, 128.0);
     let roughness = (1.0 - (shininess / 128.0)).clamp(0.08, 1.0);
+    let tilefade = material.tilefade > 0;
     StandardMaterial {
         base_color: Color::srgba(
             material.diffuse[0],
@@ -139,6 +263,7 @@ pub fn standard_material_from_nwn(
         } else {
             AlphaMode::Opaque
         },
+        cull_mode: (!tilefade).then_some(Face::Back),
         ..Default::default()
     }
 }
@@ -168,7 +293,10 @@ pub fn transform_from_nwn(
     }
 }
 
-fn position_from_nwn(position: [f32; 3], coordinate_system: NwnCoordinateSystem) -> [f32; 3] {
+pub(crate) fn position_from_nwn(
+    position: [f32; 3],
+    coordinate_system: NwnCoordinateSystem,
+) -> [f32; 3] {
     match coordinate_system {
         // Aurora source-space matches Blender-style coordinates: X right,
         // Y forward, Z up. Bevy's 3D world conventions are Y up with forward
@@ -183,7 +311,7 @@ fn direction_from_nwn(direction: [f32; 3], coordinate_system: NwnCoordinateSyste
     }
 }
 
-fn image_from_rgba8(width: u32, height: u32, rgba: Vec<u8>) -> Image {
+pub(crate) fn image_from_rgba8(width: u32, height: u32, rgba: Vec<u8>) -> Image {
     let mip_chain = build_rgba8_mip_chain(width, height, rgba);
     let mut image = Image::new_uninit(
         Extent3d {
@@ -313,13 +441,13 @@ fn compute_face_normal(face: &NwnFace, positions: &[[f32; 3]]) -> [f32; 3] {
 mod tests {
     use bevy::asset::Handle;
     use nwnrs_mdl::prelude::{
-        NwnCoordinateSystem, NwnFace, NwnMaterial, NwnPrimitive, NwnTextureRef, NwnTextureSlot,
-        NwnTransform, NwnUvSet,
+        ModelClassification, NwnCoordinateSystem, NwnFace, NwnMaterial, NwnPrimitive, NwnScene,
+        NwnTextureRef, NwnTextureSlot, NwnTransform, NwnUvSet,
     };
 
     use super::{
-        image_from_rgba8, mesh_from_primitive, mip_level_count, standard_material_from_nwn,
-        transform_from_nwn,
+        image_from_rgba8, material_starts_visible, mesh_from_primitive, mip_level_count,
+        standard_material_from_nwn, transform_from_nwn,
     };
 
     #[test]
@@ -410,6 +538,7 @@ mod tests {
             self_illum_color:  [0.0, 0.0, 0.0],
             material_name:     None,
             render_hint:       None,
+            helper_bitmap:     None,
             textures:          vec![NwnTextureRef {
                 slot: NwnTextureSlot::Bitmap,
                 name: "demo".to_string(),
@@ -442,6 +571,7 @@ mod tests {
             self_illum_color:  [0.0, 0.0, 0.0],
             material_name:     None,
             render_hint:       None,
+            helper_bitmap:     None,
             textures:          Vec::new(),
         };
 
@@ -449,6 +579,112 @@ mod tests {
         assert_eq!(bevy_material.metallic, 0.0);
         assert!(bevy_material.perceptual_roughness >= 0.95);
         assert_eq!(bevy_material.reflectance, 0.0);
+    }
+
+    #[test]
+    fn tilefade_materials_are_double_sided() {
+        let material = NwnMaterial {
+            source_node:       0,
+            render_enabled:    true,
+            shadow_enabled:    true,
+            beaming:           0,
+            inherit_color:     0,
+            tilefade:          1,
+            rotate_texture:    0,
+            transparency_hint: 0,
+            shininess:         0.0,
+            alpha:             1.0,
+            ambient:           [1.0, 1.0, 1.0],
+            diffuse:           [1.0, 1.0, 1.0],
+            specular:          [0.0, 0.0, 0.0],
+            self_illum_color:  [0.0, 0.0, 0.0],
+            material_name:     None,
+            render_hint:       None,
+            helper_bitmap:     None,
+            textures:          vec![NwnTextureRef {
+                slot: NwnTextureSlot::Bitmap,
+                name: "TCN01_roof11".to_string(),
+            }],
+        };
+
+        let bevy_material = standard_material_from_nwn(&material, Some(Handle::default()));
+        assert_eq!(bevy_material.cull_mode, None);
+    }
+
+    #[test]
+    fn hidden_tilefade_materials_start_visible_for_tile_models() {
+        let scene = NwnScene {
+            name:              "tile".to_string(),
+            supermodel:        None,
+            classification:    Some(ModelClassification::Tile),
+            animation_scale:   None,
+            coordinate_system: NwnCoordinateSystem::AuroraSource,
+            nodes:             Vec::new(),
+            meshes:            Vec::new(),
+            materials:         Vec::new(),
+            animations:        Vec::new(),
+            diagnostics:       Vec::new(),
+        };
+        let material = NwnMaterial {
+            source_node:       0,
+            render_enabled:    false,
+            shadow_enabled:    true,
+            beaming:           0,
+            inherit_color:     0,
+            tilefade:          1,
+            rotate_texture:    0,
+            transparency_hint: 0,
+            shininess:         0.0,
+            alpha:             1.0,
+            ambient:           [1.0, 1.0, 1.0],
+            diffuse:           [1.0, 1.0, 1.0],
+            specular:          [0.0, 0.0, 0.0],
+            self_illum_color:  [0.0, 0.0, 0.0],
+            material_name:     None,
+            render_hint:       None,
+            helper_bitmap:     None,
+            textures:          Vec::new(),
+        };
+
+        assert!(material_starts_visible(&scene, &material));
+    }
+
+    #[test]
+    fn hidden_non_tilefade_materials_stay_hidden() {
+        let scene = NwnScene {
+            name:              "item".to_string(),
+            supermodel:        None,
+            classification:    Some(ModelClassification::Item),
+            animation_scale:   None,
+            coordinate_system: NwnCoordinateSystem::AuroraSource,
+            nodes:             Vec::new(),
+            meshes:            Vec::new(),
+            materials:         Vec::new(),
+            animations:        Vec::new(),
+            diagnostics:       Vec::new(),
+        };
+        let material = NwnMaterial {
+            source_node:       0,
+            render_enabled:    false,
+            shadow_enabled:    true,
+            beaming:           0,
+            inherit_color:     0,
+            tilefade:          1,
+            rotate_texture:    0,
+            transparency_hint: 0,
+            shininess:         0.0,
+            alpha:             1.0,
+            ambient:           [1.0, 1.0, 1.0],
+            diffuse:           [1.0, 1.0, 1.0],
+            specular:          [0.0, 0.0, 0.0],
+            self_illum_color:  [0.0, 0.0, 0.0],
+            material_name:     None,
+            render_hint:       None,
+            helper_bitmap:     None,
+            textures:          Vec::new(),
+        };
+
+        assert!(!material_starts_visible(&scene, &material));
     }
 
     #[test]

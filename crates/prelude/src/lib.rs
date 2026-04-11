@@ -40,6 +40,10 @@ pub mod prelude {
     pub mod gff {
         pub use nwnrs_gff::prelude::*;
     }
+    /// Export GIT area-instance file types and traits.
+    pub mod git {
+        pub use nwnrs_git::prelude::*;
+    }
     /// Export key file types and traits.
     pub mod key {
         pub use nwnrs_key::prelude::*;
@@ -119,6 +123,10 @@ pub mod prelude {
     /// Export TLK file types and traits.
     pub mod tlk {
         pub use nwnrs_tlk::prelude::*;
+    }
+    /// Export TXI texture-info types and traits.
+    pub mod txi {
+        pub use nwnrs_txi::prelude::*;
     }
     /// Export 2DA file types and traits.
     pub mod twoda {

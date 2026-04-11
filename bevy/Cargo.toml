@@ -13,6 +13,7 @@ nwnrs-dds.workspace = true
 nwnrs-erf.workspace = true
 nwnrs-game.workspace = true
 nwnrs-gff.workspace = true
+nwnrs-git.workspace = true
 nwnrs-mdl.workspace = true
 nwnrs-mtr.workspace = true
 nwnrs-plt.workspace = true
@@ -20,6 +21,8 @@ nwnrs-resman.workspace = true
 nwnrs-resref.workspace = true
 nwnrs-set.workspace = true
 nwnrs-tga.workspace = true
+nwnrs-twoda.workspace = true
+nwnrs-txi.workspace = true
 serde = { workspace = true, features = ["derive"] }
 tracing.workspace = true
 

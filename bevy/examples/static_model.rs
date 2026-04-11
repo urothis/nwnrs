@@ -198,7 +198,8 @@ fn reload_current_model(
         Err(error) => error.into_inner(),
     };
     let overrides = NwnAppearanceOverrides {
-        slots: appearance.overrides.clone(),
+        slots:    appearance.overrides.clone(),
+        plt_rows: Default::default(),
     };
     let model = load_nwn_model_from_resman_with_overrides(
         &mut manager,
