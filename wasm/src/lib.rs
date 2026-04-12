@@ -32,6 +32,7 @@ mod tests {
     use nwnrs::prelude::{
         compressedbuf, erf, exo, gff, localization::Language, mdl, resref, ssf, tlk, twoda,
     };
+    #[cfg(not(target_arch = "wasm32"))]
     use nwnrs_test_support::{demand_resource, require_game_resource};
     #[cfg(target_arch = "wasm32")]
     use wasm_bindgen_test::wasm_bindgen_test;
@@ -377,6 +378,7 @@ mod tests {
 
     #[cfg_attr(not(target_arch = "wasm32"), test)]
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg(not(target_arch = "wasm32"))]
     fn compiled_mdl_unchanged_write_reuses_original_bytes() {
         let result = require_game_resource(demand_resource("a_ba2", mdl::MODEL_RES_TYPE));
         let Ok(res) = result else {
@@ -393,6 +395,7 @@ mod tests {
 
     #[cfg_attr(not(target_arch = "wasm32"), test)]
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg(not(target_arch = "wasm32"))]
     fn compiled_mdl_edited_write_is_rejected() {
         let result = require_game_resource(demand_resource("a_ba2", mdl::MODEL_RES_TYPE));
         let Ok(res) = result else {

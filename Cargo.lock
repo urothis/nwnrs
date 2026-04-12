@@ -1350,6 +1350,7 @@ name = "nwnrs-wasm"
 version = "0.0.1"
 dependencies = [
  "nwnrs",
+ "nwnrs-test-support",
  "serde",
  "serde-wasm-bindgen",
  "serde_json",
