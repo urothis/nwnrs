@@ -3,7 +3,7 @@
   nwnrs
 </h1>
 <div align="center">
-  Rust tools and libraries for Neverwinter Nights files
+  Rust tools and libraries for Neverwinter Nights
 </div>
 
 ## What Is This?
