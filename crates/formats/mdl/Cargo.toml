@@ -1,0 +1,24 @@
+[package]
+name = "nwnrs-mdl"
+version.workspace = true
+edition.workspace = true
+publish = true
+license.workspace = true
+description = "Neverwinter Nights MDL parser, scene lowering, and resource resolution"
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/nwnrs-mdl"
+readme = "README.md"
+
+[dependencies]
+nwnrs-resman.workspace = true
+nwnrs-resref.workspace = true
+nwnrs-restype.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+nwnrs-resmemfile.workspace = true
+nwnrs-test-support.workspace = true
+
+[lints]
+workspace = true

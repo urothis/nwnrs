@@ -31,6 +31,15 @@ pub(crate) fn run_inspect(path: &Path) -> Result<(), String> {
                 .map_err(|error| format!("failed to parse {} as SSF: {error}", path.display()))?;
             write_stdout_line(&format!("{ssf:#?}"))
         }
+        Some(Kind::Model) => {
+            debug!("detected MDL input");
+            let summary = inspect_model(path)?;
+            write_stdout_line(&summary)
+        }
+        Some(Kind::Texture) => {
+            debug!("detected texture input");
+            inspect_texture(path)
+        }
         Some(Kind::Tlk) => {
             debug!("detected TLK input");
             let tlk = tlk::SingleTlk::from_file(path, true)
@@ -56,5 +65,153 @@ pub(crate) fn run_inspect(path: &Path) -> Result<(), String> {
             write_stdout_line(&format!("{gff:#?}"))
         }
         None => Err(format!("unsupported file type for {}", path.display())),
+    }
+}
+
+fn inspect_texture(path: &Path) -> Result<(), String> {
+    let extension = path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(str::to_ascii_lowercase)
+        .ok_or_else(|| format!("failed to infer texture format from {}", path.display()))?;
+    match extension.as_str() {
+        "tga" => {
+            let texture = tga::read_tga_from_file(path)
+                .map_err(|error| format!("failed to parse {} as TGA: {error}", path.display()))?;
+            write_stdout_line(&format!("{texture:#?}"))
+        }
+        "dds" => {
+            let texture = dds::read_dds_from_file(path)
+                .map_err(|error| format!("failed to parse {} as DDS: {error}", path.display()))?;
+            write_stdout_line(&format!("{texture:#?}"))
+        }
+        "plt" => {
+            let texture = plt::read_plt_from_file(path)
+                .map_err(|error| format!("failed to parse {} as PLT: {error}", path.display()))?;
+            write_stdout_line(&format!("{texture:#?}"))
+        }
+        _ => Err(format!("unsupported texture format for {}", path.display())),
+    }
+}
+
+fn inspect_model(path: &Path) -> Result<String, String> {
+    let parsed = mdl::read_parsed_model_from_file(path)
+        .map_err(|error| format!("failed to parse {} as MDL: {error}", path.display()))?;
+    match parsed {
+        mdl::ParsedModel::Ascii(model) => Ok(format!("MDL encoding: ascii\n{model:#?}",)),
+        mdl::ParsedModel::Compiled(model) => {
+            let block_kinds = compiled_block_kinds(&model).join(", ");
+            Ok(format!(
+                "MDL encoding: compiled\nmodel: {}\nnode_count: {}\nanimation_count: \
+                 {}\nrecognized_block_kinds: {}\ndiagnostic_count: {}",
+                model.name,
+                model.nodes.len(),
+                model.animations.len(),
+                if block_kinds.is_empty() {
+                    "none"
+                } else {
+                    &block_kinds
+                },
+                model.diagnostics.len(),
+            ))
+        }
+    }
+}
+
+fn compiled_block_kinds(model: &mdl::BinaryModel) -> Vec<&'static str> {
+    let mut kinds = std::collections::BTreeSet::new();
+    for node in model.nodes.iter().chain(
+        model
+            .animations
+            .iter()
+            .flat_map(|animation| animation.nodes.iter()),
+    ) {
+        if node.content.has_header {
+            kinds.insert("header");
+        }
+        if node.content.has_light {
+            kinds.insert("light");
+        }
+        if node.content.has_emitter {
+            kinds.insert("emitter");
+        }
+        if node.content.has_camera {
+            kinds.insert("camera");
+        }
+        if node.content.has_reference {
+            kinds.insert("reference");
+        }
+        if node.content.has_mesh {
+            kinds.insert("mesh");
+        }
+        if node.content.has_skin {
+            kinds.insert("skin");
+        }
+        if node.content.has_anim {
+            kinds.insert("animmesh");
+        }
+        if node.content.has_dangly {
+            kinds.insert("danglymesh");
+        }
+        if node.content.has_aabb {
+            kinds.insert("aabb");
+        }
+    }
+    kinds.into_iter().collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{error::Error, path::Path};
+
+    use nwnrs::prelude as nwn;
+    use nwnrs_test_support::{
+        materialize_resource_to_temp_file, require_game_resource,
+        skip_if_game_resources_unavailable,
+    };
+
+    use super::{compiled_block_kinds, inspect_model, run_inspect};
+
+    #[test]
+    fn rejects_unsupported_extensions_before_reading() {
+        let err = run_inspect(Path::new("unsupported.xyz")).expect_err("inspect should fail");
+        assert!(err.contains("unsupported file type"));
+        assert!(err.contains("unsupported.xyz"));
+    }
+
+    #[test]
+    fn compiled_model_summary_reports_encoding_and_counts() -> Result<(), Box<dyn Error>> {
+        let fixture = match compiled_fixture() {
+            Ok(path) => path,
+            Err(error) => return skip_if_game_resources_unavailable(error),
+        };
+        let summary = inspect_model(&fixture).expect("compiled inspect should succeed");
+        assert!(summary.contains("MDL encoding: compiled"));
+        assert!(summary.contains("model: a_ba2"));
+        assert!(summary.contains("node_count: 57"));
+        assert!(summary.contains("animation_count: 20"));
+        assert!(summary.contains("recognized_block_kinds:"));
+        Ok(())
+    }
+
+    #[test]
+    fn compiled_model_block_kinds_include_header_and_mesh() -> Result<(), Box<dyn Error>> {
+        let fixture = match compiled_fixture() {
+            Ok(path) => path,
+            Err(error) => return skip_if_game_resources_unavailable(error),
+        };
+        let model =
+            nwn::mdl::read_binary_model_from_file(&fixture).expect("compiled fixture should parse");
+        let kinds = compiled_block_kinds(&model);
+        assert!(kinds.contains(&"header"));
+        assert!(kinds.contains(&"mesh"));
+        Ok(())
+    }
+
+    fn compiled_fixture() -> Result<std::path::PathBuf, Box<dyn Error>> {
+        require_game_resource(materialize_resource_to_temp_file(
+            "a_ba2",
+            nwn::mdl::MODEL_RES_TYPE,
+        ))
     }
 }

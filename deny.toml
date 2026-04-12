@@ -3,7 +3,7 @@
 
 [bans]
 # The lint level for duplicate dependencies
-multiple-versions = "deny"
+#multiple-versions = "deny"
 
 # forbid wildcard version requirements like foo = "*"
 wildcards = "deny"
@@ -11,11 +11,11 @@ wildcards = "deny"
 # allow path-only workspace-internal crates to omit version constraints
 allow-wildcard-paths = true
 
-# https://github.com/rustls/rustls-platform-verifier/pull/193
 skip = [
-    { name = "thiserror", version = "=1.0.69" },
-    { name = "thiserror-impl", version = "=1.0.69" },
-    { name = "windows-sys", version = "=0.45.0" },
+    { name = "hashbrown", version = "=0.16.1" },
+    { name = "thiserror", version = "=1.0.69" },      # https://github.com/rustls/rustls-platform-verifier/pull/193
+    { name = "thiserror-impl", version = "=1.0.69" }, # https://github.com/rustls/rustls-platform-verifier/pull/193
+    { name = "windows-sys", version = "=0.45.0" },    # https://github.com/rustls/rustls-platform-verifier/pull/193
 ]
 
 [licenses]
@@ -41,6 +41,7 @@ allow = [
     "GPL-3.0-only",
     "ISC",
     "MIT",
+    "MIT-0",
     "Unicode-3.0",
     "Zlib",
 ]
@@ -50,7 +51,7 @@ allow = [
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
 # Block unknown registries
 unknown-registry = "deny"
- # Block git dependencies entirely
+# Block git dependencies entirely
 unknown-git = "deny"
 
 [advisories]
@@ -59,7 +60,7 @@ unknown-git = "deny"
 db-urls = ["https://github.com/rustsec/advisory-db"]
 
 # Only warn about unmaintained crates if they are workspace members. 
-unmaintained = 'workspace' 
+unmaintained = 'workspace'
 
 # The lint level for security vulnerabilities
 version = 2

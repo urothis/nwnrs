@@ -1,0 +1,17 @@
+[package]
+name = "nwnrs-lru"
+version.workspace = true
+edition.workspace = true
+publish = true
+license.workspace = true
+description = "Small LRU cache used by Neverwinter Nights resource loading"
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/nwnrs-lru"
+readme = "README.md"
+
+[dependencies]
+tracing.workspace = true
+
+[lints]
+workspace = true

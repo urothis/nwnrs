@@ -1,97 +1,128 @@
-# `nwn-rs`
+<h1 align="center">
+  <img src="assets/logo/icon.svg" width="150" alt="nwnrs logo"/><br>
+  nwnrs
+</h1>
+<div align="center">
+  Rust tools and libraries for Neverwinter Nights files
+</div>
 
-Rust workspace for reading, writing, inspecting, and composing Neverwinter Nights resource data.
+## What Is This?
 
-This repository is organized as a layered toolkit:
+`nwnrs` is a workspace for reading, writing, inspecting, and converting NWN data.
 
-- low-level binary and text codecs for NWN file formats such as `GFF`, `2DA`, `TLK`, `SSF`, `ERF`, `KEY/BIF`, and `NWSync`
-- resource identity, type, checksum, encoding, and stream utilities
-- container adapters that expose archives, directories, single files, in-memory buffers, and NWSync manifests through a shared resource-manager abstraction
-- a high-level game crate for installation discovery and default resource loading
-- a CLI for inspection, packing, unpacking, and selected NWSync workflows
+It includes:
 
-## What This Workspace Does
+- Rust crates for formats like `GFF`, `2DA`, `TLK`, `SSF`, `ERF`, `KEY/BIF`, `MDL`, `TGA`, `DDS`, `PLT`, and `NWSync`
+- a CLI for common workflows
+- wasm bindings for browser and JS apps
 
-The codebase is designed around one practical question: given an NWN installation or archive, how do you identify resources, open them reliably, and transform them into forms that are easier to inspect or rebuild?
+If you just want one dependency, start with [`nwnrs`](./crates/meta/prelude/README.md).
 
-At a high level:
+## Quick Start
 
-- `nwnrs-cli` exposes the current main workflows
-- `nwnrs-resref`, `nwnrs-restype`, and `nwnrs-core` define the shared identity vocabulary
-- `nwnrs-resman` defines a common `Res`/`ResContainer` model and a layered `ResMan`
-- container crates such as `nwnrs-erf`, `nwnrs-key`, `nwnrs-resdir`, `nwnrs-resfile`, `nwnrs-resmemfile`, and `nwnrs-resnwsync` project different storage backends into that shared model
-- format crates such as `nwnrs-gff`, `nwnrs-gffjson`, `nwnrs-twoda`, `nwnrs-tlk`, `nwnrs-ssf`, and `nwnrs-nwsync` provide typed parsers and writers
-- `nwnrs-game` composes those pieces into a default game-facing resource-loading stack
 
-## Usage
+### CLI
 
-Since this workspace is not published to [crates.io](https://crates.io), you can depend on individual crates using Git dependencies in your `Cargo.toml`:
+Install:
+
+```bash
+cargo install --git https://github.com/urothis/nwnrs --bin nwnrs-cli
+```
+
+Use:
+
+```bash
+# inspect a file
+nwnrs-cli inspect path/to/file.utc
+
+# compile NWScript
+nwnrs-cli compile --debug path/to/script.nss
+
+# convert textures
+nwnrs-cli convert input.png output.tga
+
+# convert MDL between compiled and canonical ascii
+nwnrs-cli convert path/to/model.mdl out/model_ascii.mdl
+nwnrs-cli convert out/model_ascii.mdl rebuilt/model.mdl
+
+# unpack and repack archives
+nwnrs-cli unpack path/to/module.mod -d out/
+nwnrs-cli pack out/ rebuilt.mod
+```
+
+More CLI details: [`cli/README.md`](./cli/README.md)
+
+### Rust
 
 ```toml
-# You more than likely only need the prelude
 [dependencies]
-nwnrs = { git = "https://github.com/urothis/nwn-rs" }
+nwnrs = { git = "https://github.com/urothis/nwnrs" }
 ```
 
 ```rust
-use nwnrs::prelude::*;
+use nwnrs::{
+    gff::{GffRoot, GffValue},
+    twoda::TwoDa,
+};
+
+let mut root = GffRoot::new("UTC ");
+root.put_value("Tag", GffValue::CExoString("nw_chicken".to_string()))?;
+
+let mut table = TwoDa::new();
+table.set_columns(vec!["Label".to_string()])?;
+
+# let _ = (root, table);
+# Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-Or depend on individual crates directly:
-
-```toml
-# Core types and utilities
-nwnrs-core = { git = "https://github.com/urothis/nwn-rs" }
-nwnrs-resref = { git = "https://github.com/urothis/nwn-rs" }
-nwnrs-restype = { git = "https://github.com/urothis/nwn-rs" }
-
-# Resource management
-nwnrs-resman = { git = "https://github.com/urothis/nwn-rs" }
-
-# Format codecs
-nwnrs-gff = { git = "https://github.com/urothis/nwn-rs" }
-nwnrs-twoda = { git = "https://github.com/urothis/nwn-rs" }
-nwnrs-tlk = { git = "https://github.com/urothis/nwn-rs" }
-
-# Container formats
-nwnrs-erf = { git = "https://github.com/urothis/nwn-rs" }
-nwnrs-key = { git = "https://github.com/urothis/nwn-rs" }
-
-# Game integration
-nwnrs-game = { git = "https://github.com/urothis/nwn-rs" }
-```
-
-### CLI Usage
-
-For command-line usage, you can install the CLI directly from the repository:
+### WebAssembly
 
 ```bash
-cargo install --git https://github.com/urothis/nwn-rs --bin nwnrs-cli
+wasm-pack build wasm --target bundler --out-dir pkg
 ```
 
-Or run it directly:
+The wasm package exposes helpers like:
+
+- `read_gff_from_bytes`
+- `write_gff_to_bytes`
+- `read_twoda_from_bytes`
+- `write_twoda_to_bytes`
+- `read_mdl_from_bytes`
+- `write_mdl_to_bytes`
+
+More wasm details: [`wasm/README.md`](./wasm/README.md)
+
+## Main Parts
+
+- [`nwnrs`](./crates/meta/prelude/README.md): the simple umbrella crate
+- [`nwnrs-resman`](./crates/resources/resman/README.md): shared resource loading
+- [`nwnrs-install`](./crates/resources/install/README.md): find and open game installs
+- [`nwnrs-nwscript`](./crates/language/nwscript/README.md): NWScript frontend and compiler
+- [`nwnrs-mdl`](./crates/formats/mdl/README.md): MDL parsing and lowering
+
+## Supported Work
+
+- inspect NWN files
+- parse and write common NWN formats
+- compile NWScript to `NCS` and `NDB`
+- convert textures between `png`, `jpg`, `tga`, `dds`, and `webp`
+- load resources from installs, directories, archives, and manifests
+- lower compiled MDL into canonical ASCII
+
+## Important Note About MDL
+
+Compiled `MDL` can be lowered to canonical ASCII today.
+
+Rebuilding compiled `MDL` currently works for canonical ASCII produced by the library and CLI. It is not a general-purpose arbitrary ASCII-to-compiled compiler yet.
+
+## Development
 
 ```bash
-cargo run --git https://github.com/urothis/nwn-rs --bin nwnrs-cli -- --help
+cargo test --workspace
+cargo clippy --workspace --all-targets -- -D warnings
+cargo fmt --check
 ```
 
-## Supported Workflows
+## License
 
-The workspace supports:
-
-- inspecting ERF, KEY, GFF, 2DA, TLK, and SSF files
-- unpacking ERF archives and KEY/BIF sets into directory form
-- converting GFF resources into JSON and packing them back into binary form
-- writing 2DA text back into binary-compatible output
-- opening NWSync repositories and printing manifest contents
-- building a layered `ResMan` from game roots, override directories, ERFs, and NWSync manifests
-
-## Contributing
-
-### Development Tools
-
-This repository uses several development tools with custom configurations:
-
-- **Clippy**: Configured in [`clippy.toml`](clippy.toml) with strict linting rules including
-- **rustfmt**: Configured in [`rustfmt.toml`](rustfmt.toml) for consistent code formatting
-- **cargo-deny**: Configured in [`deny.toml`](deny.toml) for dependency auditing and license checking
+[`GPL-3.0-only`](./LICENSE)

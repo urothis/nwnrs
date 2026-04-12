@@ -1,0 +1,21 @@
+[package]
+name = "nwnrs-nwsync"
+version.workspace = true
+edition.workspace = true
+publish = true
+license.workspace = true
+description = "Neverwinter Nights NWSync manifest and data helpers"
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/nwnrs-nwsync"
+readme = "README.md"
+
+[dependencies]
+nwnrs-checksums.workspace = true
+nwnrs-resref.workspace = true
+nwnrs-restype.workspace = true
+nwnrs-streamext.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true

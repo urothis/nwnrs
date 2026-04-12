@@ -1,0 +1,23 @@
+[package]
+name = "nwnrs-txi"
+version.workspace = true
+edition.workspace = true
+publish = true
+license.workspace = true
+description = "Typed parser for Neverwinter Nights texture info TXI resources"
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/nwnrs-txi"
+readme = "README.md"
+
+[dependencies]
+nwnrs-resman.workspace = true
+nwnrs-resref.workspace = true
+nwnrs-restype.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+nwnrs-resmemfile.workspace = true
+
+[lints]
+workspace = true

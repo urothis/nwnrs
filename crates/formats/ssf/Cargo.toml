@@ -1,0 +1,20 @@
+[package]
+name = "nwnrs-ssf"
+version.workspace = true
+edition.workspace = true
+publish = true
+license.workspace = true
+description = "Typed Neverwinter Nights SSF parser and writer"
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/nwnrs-ssf"
+readme = "README.md"
+
+[dependencies]
+nwnrs-localization.workspace = true
+serde.workspace = true
+tracing.workspace = true
+nwnrs-io.workspace = true
+
+[lints]
+workspace = true

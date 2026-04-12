@@ -50,11 +50,7 @@ jobs:
             - uses: ./.github/actions/rust-check
             - uses: ./.github/actions/rust-test
               with:
-                  verbose: true
-            - uses: ./.github/actions/rust-test
-              with:
-                  package: nwnrs-cli
-                  verbose: true
+                  workspace: true
 
     lint:
         name: Lint
@@ -67,3 +63,23 @@ jobs:
                   toolchain: nightly
                   components: rustfmt, clippy
             - uses: ./.github/actions/rust-lint
+
+    wasm-test:
+        name: Wasm Test
+        needs: [label, deny]
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v6.0.2
+            - uses: ./.github/actions/setup-rust
+              with:
+                  toolchain: stable
+                  target: wasm32-unknown-unknown
+            - uses: actions/setup-node@v4
+              with:
+                  node-version: 22
+            - name: Install wasm-pack
+              uses: jetli/wasm-pack-action@v0.4.0
+              with:
+                  version: latest
+            - name: Run wasm tests
+              run: wasm-pack test --node wasm

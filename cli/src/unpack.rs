@@ -1,19 +1,14 @@
-use std::{
-    ffi::OsStr,
-    fs::{self, File},
-    io::{BufReader, Cursor},
-    path::Path,
-};
+use std::{fs, path::Path};
 
 use nwnrs::prelude::{resman::ResContainer, *};
 use tracing::{debug, info, instrument, warn};
 
 use crate::{
     args::{KeyUnpackCmd, UnpackCmd},
-    metadata::{write_erf_pack_metadata, write_key_pack_metadata, write_resource_metadata},
+    metadata::{write_erf_pack_metadata, write_key_pack_metadata, write_resource_pack_metadata},
     util::{
-        Kind, detect_kind, ensure_output_file_ready, ensure_target_dir_ready, is_gff_extension,
-        unpacked_raw_target, write_lines,
+        Kind, detect_kind, ensure_output_file_ready, ensure_target_dir_ready, unpacked_raw_target,
+        write_lines,
     },
 };
 
@@ -44,16 +39,14 @@ pub(crate) fn run_unpack(cmd: UnpackCmd) -> Result<(), String> {
             key:         cmd.input,
             destination: cmd.directory,
         }),
-        Some(Kind::Gff) => unpack_gff_to_json(&cmd.input, &cmd.directory, cmd.force),
-        Some(Kind::TwoDa) => unpack_twoda_to_text(&cmd.input, &cmd.directory, cmd.force),
-        Some(Kind::Tlk) => Err(format!(
-            "generic unpack does not yet support TLK export: {}",
-            cmd.input.display()
-        )),
-        Some(Kind::Ssf) => Err(format!(
-            "generic unpack does not yet support SSF export: {}",
-            cmd.input.display()
-        )),
+        Some(Kind::Gff) => unpack_resource_to_dir(&cmd.input, &cmd.directory, "gff", cmd.force),
+        Some(Kind::TwoDa) => unpack_resource_to_dir(&cmd.input, &cmd.directory, "2da", cmd.force),
+        Some(Kind::Tlk) => unpack_resource_to_dir(&cmd.input, &cmd.directory, "tlk", cmd.force),
+        Some(Kind::Ssf) => unpack_resource_to_dir(&cmd.input, &cmd.directory, "ssf", cmd.force),
+        Some(Kind::Model) => unpack_resource_to_dir(&cmd.input, &cmd.directory, "mdl", cmd.force),
+        Some(Kind::Texture) => {
+            unpack_resource_to_dir(&cmd.input, &cmd.directory, "texture", cmd.force)
+        }
         None => Err(format!(
             "unsupported file type for generic unpack: {}",
             cmd.input.display()
@@ -160,6 +153,29 @@ pub(crate) fn unpack_erf_to_dir(
     Ok(())
 }
 
+fn unpack_resource_to_dir(
+    input: &Path,
+    destination: &Path,
+    source_kind: &str,
+    force: bool,
+) -> Result<(), String> {
+    let file_name = input
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| format!("invalid input filename: {}", input.display()))?;
+    let target = destination.join(file_name);
+    ensure_output_file_ready(&target, force)?;
+    fs::copy(input, &target).map_err(|error| {
+        format!(
+            "failed to copy resource {} to {}: {error}",
+            input.display(),
+            target.display()
+        )
+    })?;
+    write_resource_pack_metadata(destination, input, source_kind, file_name, force)?;
+    Ok(())
+}
+
 #[instrument(
     level = "debug",
     skip_all,
@@ -179,102 +195,80 @@ fn write_unpacked_archive_entry(
             .map_err(|error| format!("failed to write {}: {error}", target.display()));
     };
 
-    if is_gff_extension(resolved.res_ext()) {
-        match write_unpacked_gff_json(&resolved.to_file(), data, destination, force) {
-            Ok(()) => return Ok(()),
-            Err(error) => {
-                warn!(resource = %rr, error = %error, "failed to convert GFF resource to JSON; writing raw bytes");
-            }
-        }
-    }
-
     let target = unpacked_raw_target(destination, &resolved.to_file(), resolved.res_ext());
     ensure_output_file_ready(&target, force)?;
     fs::write(&target, data)
         .map_err(|error| format!("failed to write {}: {error}", target.display()))
 }
 
-#[instrument(
-    level = "debug",
-    skip_all,
-    err,
-    fields(path = %file_name, output = %destination.display(), force)
-)]
-fn write_unpacked_gff_json(
-    file_name: &str,
-    data: &[u8],
-    destination: &Path,
-    force: bool,
-) -> Result<(), String> {
-    let mut reader = Cursor::new(data);
-    let gff = gff::read_gff_root(&mut reader)
-        .map_err(|error| format!("failed to parse {file_name} as GFF: {error}"))?;
-    let json = gffjson::gff_root_to_pretty_json_string(&gff)
-        .map_err(|error| format!("failed to convert {file_name} to JSON: {error}"))?;
-    let extension = Path::new(file_name)
-        .extension()
-        .and_then(OsStr::to_str)
-        .ok_or_else(|| format!("missing file extension for {file_name}"))?;
-    let type_dir = destination.join(extension);
-    fs::create_dir_all(&type_dir)
-        .map_err(|error| format!("failed to create {}: {error}", type_dir.display()))?;
-    let target = type_dir.join(format!("{file_name}.json"));
-    ensure_output_file_ready(&target, force)?;
-    fs::write(&target, json)
-        .map_err(|error| format!("failed to write {}: {error}", target.display()))
-}
+#[cfg(test)]
+mod tests {
+    use std::{
+        fs,
+        io::Cursor,
+        path::PathBuf,
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
-#[instrument(
-    level = "info",
-    skip_all,
-    err,
-    fields(input = %input.display(), output = %destination.display(), force)
-)]
-fn unpack_gff_to_json(input: &Path, destination: &Path, force: bool) -> Result<(), String> {
-    info!(input = %input.display(), destination = %destination.display(), "unpacking standalone GFF to JSON");
-    let file = File::open(input)
-        .map_err(|error| format!("failed to open {}: {error}", input.display()))?;
-    let mut reader = BufReader::new(file);
-    let gff = gff::read_gff_root(&mut reader)
-        .map_err(|error| format!("failed to parse {} as GFF: {error}", input.display()))?;
-    let json = gffjson::gff_root_to_pretty_json_string(&gff)
-        .map_err(|error| format!("failed to convert {} to JSON: {error}", input.display()))?;
-    let file_name = input
-        .file_name()
-        .and_then(OsStr::to_str)
-        .ok_or_else(|| format!("invalid input filename: {}", input.display()))?;
-    let target = destination.join(format!("{file_name}.json"));
-    ensure_output_file_ready(&target, force)?;
-    fs::write(&target, json)
-        .map_err(|error| format!("failed to write {}: {error}", target.display()))?;
-    write_resource_metadata(destination, input, "gff", force)?;
-    Ok(())
-}
+    use super::*;
+    use crate::args::UnpackCmd;
 
-#[instrument(
-    level = "info",
-    skip_all,
-    err,
-    fields(input = %input.display(), output = %destination.display(), force)
-)]
-fn unpack_twoda_to_text(input: &Path, destination: &Path, force: bool) -> Result<(), String> {
-    info!(input = %input.display(), destination = %destination.display(), "unpacking standalone 2DA to text");
-    let file = File::open(input)
-        .map_err(|error| format!("failed to open {}: {error}", input.display()))?;
-    let mut reader = BufReader::new(file);
-    let twoda = twoda::read_twoda(&mut reader)
-        .map_err(|error| format!("failed to parse {} as 2DA: {error}", input.display()))?;
-    let file_name = input
-        .file_name()
-        .and_then(OsStr::to_str)
-        .ok_or_else(|| format!("invalid input filename: {}", input.display()))?;
-    let target = destination.join(file_name);
-    ensure_output_file_ready(&target, force)?;
-    let mut output = Vec::new();
-    twoda::write_twoda(&mut output, &twoda, false)
-        .map_err(|error| format!("failed to serialize {} as 2DA: {error}", input.display()))?;
-    fs::write(&target, output)
-        .map_err(|error| format!("failed to write {}: {error}", target.display()))?;
-    write_resource_metadata(destination, input, "2da", force)?;
-    Ok(())
+    fn unique_test_dir(prefix: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock drift before unix epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!("nwnrs-cli-{prefix}-{nanos}"))
+    }
+
+    #[test]
+    fn unpack_supports_binary_gff_resource() {
+        let directory = unique_test_dir("gff-unpack");
+        fs::create_dir_all(&directory).expect("create temp dir");
+        let input = directory.join("fixture.utc");
+        let source_dir = unique_test_dir("gff-unpack-source");
+        fs::create_dir_all(&source_dir).expect("create source dir");
+        let source = source_dir.join("fixture.utc");
+        let mut bytes = Cursor::new(Vec::new());
+        gff::write_gff_root(&mut bytes, &gff::new_gff_root("UTC ")).expect("write gff fixture");
+        fs::write(&source, bytes.into_inner()).expect("write source fixture");
+
+        run_unpack(UnpackCmd {
+            directory: directory.clone(),
+            force:     false,
+            input:     source.clone(),
+        })
+        .expect("unpack gff resource");
+
+        assert_eq!(
+            fs::read(&source).expect("read source"),
+            fs::read(&input).expect("read unpacked")
+        );
+        let _ = fs::remove_dir_all(directory);
+        let _ = fs::remove_dir_all(source_dir);
+    }
+
+    #[test]
+    fn unpack_supports_binary_twoda_resource() {
+        let directory = unique_test_dir("twoda-unpack");
+        let source_dir = unique_test_dir("twoda-unpack-source");
+        fs::create_dir_all(&source_dir).expect("create source dir");
+        let source = source_dir.join("appearance.2da");
+        fs::write(&source, b"2DA V2.0\nDEFAULT: ****\n\nLABEL\n0 value\n")
+            .expect("write source fixture");
+
+        run_unpack(UnpackCmd {
+            directory: directory.clone(),
+            force:     false,
+            input:     source.clone(),
+        })
+        .expect("unpack twoda resource");
+
+        assert_eq!(
+            fs::read(&source).expect("read source"),
+            fs::read(directory.join("appearance.2da")).expect("read unpacked")
+        );
+        let _ = fs::remove_dir_all(directory);
+        let _ = fs::remove_dir_all(source_dir);
+    }
 }
