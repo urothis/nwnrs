@@ -185,6 +185,7 @@ pub fn write_tlk_chain(targets: &mut [TlkLayerWriteTarget<'_>], tlk: &mut Tlk) -
     Ok(())
 }
 
+#[allow(clippy::mut_mut)]
 fn write_optional_layer(
     layer_index: usize,
     gender: &str,

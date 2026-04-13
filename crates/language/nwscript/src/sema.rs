@@ -1154,7 +1154,7 @@ impl<'a> Analyzer<'a> {
             } => {
                 let left = self.analyze_expr(left, scopes)?;
                 let right = self.analyze_expr(right, scopes)?;
-                let ty = self.binary_result_type(*op, &left.ty, &right.ty, expr.span)?;
+                let ty = Self::binary_result_type(*op, &left.ty, &right.ty, expr.span)?;
                 Ok(ResolvedExpr {
                     ty,
                     is_lvalue: false,
@@ -1200,67 +1200,67 @@ impl<'a> Analyzer<'a> {
                 let right_resolved = self.analyze_expr(right, scopes)?;
                 let result_type = match op {
                     AssignmentOp::Assign => right_resolved.ty.clone(),
-                    AssignmentOp::AssignMinus => self.binary_result_type(
+                    AssignmentOp::AssignMinus => Self::binary_result_type(
                         BinaryOp::Subtract,
                         &left_resolved.ty,
                         &right_resolved.ty,
                         expr.span,
                     )?,
-                    AssignmentOp::AssignPlus => self.binary_result_type(
+                    AssignmentOp::AssignPlus => Self::binary_result_type(
                         BinaryOp::Add,
                         &left_resolved.ty,
                         &right_resolved.ty,
                         expr.span,
                     )?,
-                    AssignmentOp::AssignMultiply => self.binary_result_type(
+                    AssignmentOp::AssignMultiply => Self::binary_result_type(
                         BinaryOp::Multiply,
                         &left_resolved.ty,
                         &right_resolved.ty,
                         expr.span,
                     )?,
-                    AssignmentOp::AssignDivide => self.binary_result_type(
+                    AssignmentOp::AssignDivide => Self::binary_result_type(
                         BinaryOp::Divide,
                         &left_resolved.ty,
                         &right_resolved.ty,
                         expr.span,
                     )?,
-                    AssignmentOp::AssignModulus => self.binary_result_type(
+                    AssignmentOp::AssignModulus => Self::binary_result_type(
                         BinaryOp::Modulus,
                         &left_resolved.ty,
                         &right_resolved.ty,
                         expr.span,
                     )?,
-                    AssignmentOp::AssignAnd => self.binary_result_type(
+                    AssignmentOp::AssignAnd => Self::binary_result_type(
                         BinaryOp::BooleanAnd,
                         &left_resolved.ty,
                         &right_resolved.ty,
                         expr.span,
                     )?,
-                    AssignmentOp::AssignXor => self.binary_result_type(
+                    AssignmentOp::AssignXor => Self::binary_result_type(
                         BinaryOp::ExclusiveOr,
                         &left_resolved.ty,
                         &right_resolved.ty,
                         expr.span,
                     )?,
-                    AssignmentOp::AssignOr => self.binary_result_type(
+                    AssignmentOp::AssignOr => Self::binary_result_type(
                         BinaryOp::InclusiveOr,
                         &left_resolved.ty,
                         &right_resolved.ty,
                         expr.span,
                     )?,
-                    AssignmentOp::AssignShiftLeft => self.binary_result_type(
+                    AssignmentOp::AssignShiftLeft => Self::binary_result_type(
                         BinaryOp::ShiftLeft,
                         &left_resolved.ty,
                         &right_resolved.ty,
                         expr.span,
                     )?,
-                    AssignmentOp::AssignShiftRight => self.binary_result_type(
+                    AssignmentOp::AssignShiftRight => Self::binary_result_type(
                         BinaryOp::ShiftRight,
                         &left_resolved.ty,
                         &right_resolved.ty,
                         expr.span,
                     )?,
-                    AssignmentOp::AssignUnsignedShiftRight => self.binary_result_type(
+                    AssignmentOp::AssignUnsignedShiftRight => Self::binary_result_type(
                         BinaryOp::UnsignedShiftRight,
                         &left_resolved.ty,
                         &right_resolved.ty,
@@ -1289,7 +1289,6 @@ impl<'a> Analyzer<'a> {
     }
 
     fn binary_result_type(
-        &self,
         op: BinaryOp,
         left: &SemanticType,
         right: &SemanticType,

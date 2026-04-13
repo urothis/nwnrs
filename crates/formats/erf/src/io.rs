@@ -198,6 +198,7 @@ pub fn read_erf_shared(stream: SharedReadSeek, filename: String) -> ErfResult<Er
     drop(io);
 
     // TODO: possibly dead code - value is never read
+    #[allow(clippy::no_effect_underscore_binding)]
     let _has_oversized_loc_table =
         offset_to_loc_str + loc_string_size > HEADER_SIZE && entry_count == 0;
 
