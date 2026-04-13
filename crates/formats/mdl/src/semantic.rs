@@ -1299,6 +1299,7 @@ fn binary_controller(node: &BinaryNode, controller_type: i32) -> Option<&BinaryC
         .find(|controller| controller.type_id == controller_type)
 }
 
+#[allow(clippy::many_single_char_names)]
 fn quaternion_row_to_axis_angle(
     row: &[f32],
     node_name: &str,

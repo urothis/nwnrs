@@ -268,6 +268,7 @@ impl TgaTexture {
                 .ok_or_else(|| TgaError::msg("TGA RGBA length overflow"))?
         ];
 
+        #[allow(clippy::many_single_char_names)]
         for idx in 0..pixel_count {
             let src = idx
                 .checked_mul(bytes_per_pixel)
