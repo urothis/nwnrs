@@ -336,7 +336,7 @@ pub fn parse_set(text: &str) -> SetResult<SetFile> {
 
         if line.starts_with('[') && line.ends_with(']') {
             if !current_section.is_empty() {
-                apply_section(&mut builder, &current_section, &current_entries)?;
+                apply_section(&mut builder, &current_section, &current_entries);
                 current_entries.clear();
             }
             current_section = line[1..line.len() - 1].trim().to_string();
@@ -350,7 +350,7 @@ pub fn parse_set(text: &str) -> SetResult<SetFile> {
     }
 
     if !current_section.is_empty() {
-        apply_section(&mut builder, &current_section, &current_entries)?;
+        apply_section(&mut builder, &current_section, &current_entries);
     }
 
     if builder.tiles.is_empty() {
@@ -436,7 +436,7 @@ fn apply_section(
     set_file: &mut SetFile,
     section_name: &str,
     entries: &BTreeMap<String, String>,
-) -> SetResult<()> {
+) {
     let section_upper = section_name.to_ascii_uppercase();
 
     match section_upper.as_str() {
@@ -470,7 +470,6 @@ fn apply_section(
         }
     }
 
-    Ok(())
 }
 
 fn parse_general(entries: &BTreeMap<String, String>) -> SetGeneral {

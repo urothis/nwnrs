@@ -1471,7 +1471,7 @@ impl<'a> Analyzer<'a> {
                 name:        parameter.name.clone(),
                 ty:          parameter_type,
                 is_optional: default.is_some(),
-                default:     default.as_ref().and_then(literal_from_constant_value),
+                default:     default.as_ref().map(literal_from_constant_value),
             });
         }
 
@@ -1747,7 +1747,7 @@ fn constant_from_builtin_value(value: &BuiltinValue) -> Option<ConstantValue> {
 }
 
 fn literal_from_builtin_value(value: &BuiltinValue) -> Option<Literal> {
-    constant_from_builtin_value(value).and_then(|value| literal_from_constant_value(&value))
+    constant_from_builtin_value(value).map(|value| literal_from_constant_value(&value))
 }
 
 fn constant_from_literal(literal: &Literal) -> Option<ConstantValue> {
@@ -1770,17 +1770,17 @@ fn constant_from_literal(literal: &Literal) -> Option<ConstantValue> {
     }
 }
 
-fn literal_from_constant_value(value: &ConstantValue) -> Option<Literal> {
+fn literal_from_constant_value(value: &ConstantValue) -> Literal {
     match value {
-        ConstantValue::Int(value) => Some(Literal::Integer(*value)),
-        ConstantValue::Float(value) => Some(Literal::Float(*value)),
-        ConstantValue::String(value) => Some(Literal::String(value.clone())),
-        ConstantValue::ObjectId(value) => Some(Literal::Integer(*value)),
-        ConstantValue::ObjectSelf => Some(Literal::ObjectSelf),
-        ConstantValue::ObjectInvalid => Some(Literal::ObjectInvalid),
-        ConstantValue::LocationInvalid => Some(Literal::LocationInvalid),
-        ConstantValue::Json(value) => Some(Literal::Json(value.clone())),
-        ConstantValue::Vector(value) => Some(Literal::Vector(*value)),
+        ConstantValue::Int(value) => Literal::Integer(*value),
+        ConstantValue::Float(value) => Literal::Float(*value),
+        ConstantValue::String(value) => Literal::String(value.clone()),
+        ConstantValue::ObjectId(value) => Literal::Integer(*value),
+        ConstantValue::ObjectSelf => Literal::ObjectSelf,
+        ConstantValue::ObjectInvalid => Literal::ObjectInvalid,
+        ConstantValue::LocationInvalid => Literal::LocationInvalid,
+        ConstantValue::Json(value) => Literal::Json(value.clone()),
+        ConstantValue::Vector(value) => Literal::Vector(*value),
     }
 }
 
