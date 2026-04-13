@@ -59,12 +59,16 @@ pub fn read_erf_shared(stream: SharedReadSeek, filename: String) -> ErfResult<Er
 
     let loc_str_count = usize::try_from(read_i32(io.as_mut())?)
         .map_err(|_| ErfError::msg("ERF loc string count is negative"))?;
-    let loc_string_size = read_i32(io.as_mut())? as u64;
+    let loc_string_size = u64::try_from(read_i32(io.as_mut())?)
+        .map_err(|_| ErfError::msg("ERF loc string size is negative"))?;
     let entry_count = usize::try_from(read_i32(io.as_mut())?)
         .map_err(|_| ErfError::msg("ERF entry count is negative"))?;
-    let offset_to_loc_str = read_i32(io.as_mut())? as u64;
-    let offset_to_key_list = read_i32(io.as_mut())? as u64;
-    let offset_to_resource_list = read_i32(io.as_mut())? as u64;
+    let offset_to_loc_str = u64::try_from(read_i32(io.as_mut())?)
+        .map_err(|_| ErfError::msg("ERF loc string offset is negative"))?;
+    let offset_to_key_list = u64::try_from(read_i32(io.as_mut())?)
+        .map_err(|_| ErfError::msg("ERF key list offset is negative"))?;
+    let offset_to_resource_list = u64::try_from(read_i32(io.as_mut())?)
+        .map_err(|_| ErfError::msg("ERF resource list offset is negative"))?;
     let build_year = read_i32(io.as_mut())?;
     let build_day = read_i32(io.as_mut())?;
     let str_ref = read_i32(io.as_mut())?;
