@@ -421,7 +421,7 @@ impl<'a> Lexer<'a> {
                 b'"' => {
                     self.position += 1;
                     let lowered =
-                        format!("0x{:x}", nwscript_string_hash_bytes(&cooked_bytes) as u32);
+                        format!("0x{:x}", nwscript_string_hash_bytes(&cooked_bytes).cast_unsigned());
                     return self.finish_token(TokenKind::HexInteger, start, self.position, lowered);
                 }
                 b'\\' => {
