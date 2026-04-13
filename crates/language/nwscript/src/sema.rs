@@ -502,7 +502,9 @@ impl<'a> Analyzer<'a> {
                     .zip(&signature.parameters)
                 {
                     if existing_parameter.default.is_none() && new_parameter.default.is_some() {
-                        existing_parameter.default.clone_from(&new_parameter.default);
+                        existing_parameter
+                            .default
+                            .clone_from(&new_parameter.default);
                         existing_parameter.is_optional = true;
                     }
                 }

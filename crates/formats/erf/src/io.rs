@@ -178,7 +178,11 @@ pub fn read_erf_shared(stream: SharedReadSeek, filename: String) -> ErfResult<Er
         };
 
         if let Some(existing) = entries.get(&rr) {
-            if existing.io_offset() == meta.offset && existing.io_size() == meta.disk_size.cast_signed() {
+            if existing.io_offset() == meta.offset
+                && existing.io_size()
+                    == i64::try_from(meta.disk_size)
+                        .map_err(|_| ErfError::msg("ERF resource size exceeds i64 range"))?
+            {
                 continue;
             }
             rr = ResRef::new(
@@ -192,7 +196,8 @@ pub fn read_erf_shared(stream: SharedReadSeek, filename: String) -> ErfResult<Er
             rr.clone(),
             SystemTime::UNIX_EPOCH,
             stream.clone(),
-            meta.disk_size.cast_signed(),
+            i64::try_from(meta.disk_size)
+                .map_err(|_| ErfError::msg("ERF resource size exceeds i64 range"))?,
             meta.offset,
             meta.compression,
             read_compressed_buf_algorithm(io.as_mut(), meta)?,

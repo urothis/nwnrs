@@ -432,11 +432,7 @@ pub fn write_set<W: Write>(writer: &mut W, set_file: &SetFile) -> SetResult<()> 
     Ok(())
 }
 
-fn apply_section(
-    set_file: &mut SetFile,
-    section_name: &str,
-    entries: &BTreeMap<String, String>,
-) {
+fn apply_section(set_file: &mut SetFile, section_name: &str, entries: &BTreeMap<String, String>) {
     let section_upper = section_name.to_ascii_uppercase();
 
     match section_upper.as_str() {
@@ -469,7 +465,6 @@ fn apply_section(
             }
         }
     }
-
 }
 
 fn parse_general(entries: &BTreeMap<String, String>) -> SetGeneral {
