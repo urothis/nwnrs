@@ -1543,14 +1543,6 @@ impl<'a> Analyzer<'a> {
                 ConstantValue::Int(value) => Some(ConstantValue::Int(!value)),
                 _ => None,
             },
-            ExprKind::Unary {
-                op:
-                    UnaryOp::PreIncrement
-                    | UnaryOp::PreDecrement
-                    | UnaryOp::PostIncrement
-                    | UnaryOp::PostDecrement,
-                ..
-            } => None,
             ExprKind::Binary {
                 op,
                 left,
@@ -1776,10 +1768,9 @@ fn constant_from_literal(literal: &Literal) -> Option<ConstantValue> {
 
 fn literal_from_constant_value(value: &ConstantValue) -> Literal {
     match value {
-        ConstantValue::Int(value) => Literal::Integer(*value),
+        ConstantValue::Int(value) | ConstantValue::ObjectId(value) => Literal::Integer(*value),
         ConstantValue::Float(value) => Literal::Float(*value),
         ConstantValue::String(value) => Literal::String(value.clone()),
-        ConstantValue::ObjectId(value) => Literal::Integer(*value),
         ConstantValue::ObjectSelf => Literal::ObjectSelf,
         ConstantValue::ObjectInvalid => Literal::ObjectInvalid,
         ConstantValue::LocationInvalid => Literal::LocationInvalid,
@@ -1790,17 +1781,16 @@ fn literal_from_constant_value(value: &ConstantValue) -> Literal {
 
 fn semantic_type_from_literal(literal: &Literal) -> SemanticType {
     match literal {
-        Literal::Integer(_) => SemanticType::Int,
+        Literal::Integer(_) | Literal::Magic(MagicLiteral::Line) => SemanticType::Int,
         Literal::Float(_) => SemanticType::Float,
-        Literal::String(_) => SemanticType::String,
+        Literal::String(_)
+        | Literal::Magic(
+            MagicLiteral::Function | MagicLiteral::File | MagicLiteral::Date | MagicLiteral::Time,
+        ) => SemanticType::String,
         Literal::ObjectSelf | Literal::ObjectInvalid => SemanticType::Object,
         Literal::LocationInvalid => SemanticType::EngineStructure("location".to_string()),
         Literal::Json(_) => SemanticType::EngineStructure("json".to_string()),
         Literal::Vector(_) => SemanticType::Vector,
-        Literal::Magic(MagicLiteral::Line) => SemanticType::Int,
-        Literal::Magic(
-            MagicLiteral::Function | MagicLiteral::File | MagicLiteral::Date | MagicLiteral::Time,
-        ) => SemanticType::String,
     }
 }
 
@@ -1828,7 +1818,9 @@ fn evaluate_int_constant_binary(op: BinaryOp, left: i32, right: i32) -> Option<i
         BinaryOp::LessEqual => Some(i32::from(left <= right)),
         BinaryOp::ShiftLeft => Some(left.wrapping_shl(right.cast_unsigned())),
         BinaryOp::ShiftRight => Some(left.wrapping_shr(right.cast_unsigned())),
-        BinaryOp::UnsignedShiftRight => Some(((left.cast_unsigned()).wrapping_shr(right.cast_unsigned())).cast_signed()),
+        BinaryOp::UnsignedShiftRight => {
+            Some(((left.cast_unsigned()).wrapping_shr(right.cast_unsigned())).cast_signed())
+        }
         BinaryOp::Add => Some(left.wrapping_add(right)),
         BinaryOp::Subtract => Some(left.wrapping_sub(right)),
         BinaryOp::Multiply => Some(left.wrapping_mul(right)),

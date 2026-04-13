@@ -672,7 +672,11 @@ fn extra_string_for_instruction(
             read_i32_part(extra, 0, offset, instruction)?,
             read_i32_part(extra, 4, offset, instruction)?,
         )),
-        NcsOpcode::ModifyStackPointer => Ok(read_i32(extra, offset, instruction)?.to_string()),
+        NcsOpcode::ModifyStackPointer
+        | NcsOpcode::Increment
+        | NcsOpcode::Decrement
+        | NcsOpcode::IncrementBase
+        | NcsOpcode::DecrementBase => Ok(read_i32(extra, offset, instruction)?.to_string()),
         NcsOpcode::ExecuteCommand => {
             let builtin_id = read_u16_part(extra, 0, offset, instruction)?;
             let argc = read_u8_part(extra, 2, offset, instruction)?;
@@ -689,10 +693,6 @@ fn extra_string_for_instruction(
             read_i32_part(extra, 0, offset, instruction)?,
             read_u16_part(extra, 4, offset, instruction)?,
         )),
-        NcsOpcode::Increment
-        | NcsOpcode::Decrement
-        | NcsOpcode::IncrementBase
-        | NcsOpcode::DecrementBase => Ok(read_i32(extra, offset, instruction)?.to_string()),
         NcsOpcode::DeStruct => Ok(format!(
             "{}, {}, {}",
             read_u16_part(extra, 0, offset, instruction)?,

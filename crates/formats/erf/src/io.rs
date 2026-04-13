@@ -180,8 +180,9 @@ pub fn read_erf_shared(stream: SharedReadSeek, filename: String) -> ErfResult<Er
         if let Some(existing) = entries.get(&rr) {
             if existing.io_offset() == meta.offset
                 && existing.io_size()
-                    == i64::try_from(meta.disk_size)
-                        .map_err(|e| ErfError::msg(format!("ERF resource size exceeds i64 range: {e}")))?
+                    == i64::try_from(meta.disk_size).map_err(|e| {
+                        ErfError::msg(format!("ERF resource size exceeds i64 range: {e}"))
+                    })?
             {
                 continue;
             }

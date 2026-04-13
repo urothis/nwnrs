@@ -357,8 +357,9 @@ impl ResContainer for ResNWSyncManifest {
             rr.clone(),
             self.mtime,
             shared_stream(Cursor::new(data.clone())),
-            i64::try_from(data.len())
-                .map_err(|e| ResManError::Message(format!("NWSync resource size exceeds i64 range: {e}")))?,
+            i64::try_from(data.len()).map_err(|e| {
+                ResManError::Message(format!("NWSync resource size exceeds i64 range: {e}"))
+            })?,
             0,
             ExoResFileCompressionType::None,
             None,

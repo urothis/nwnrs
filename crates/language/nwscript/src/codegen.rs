@@ -2201,10 +2201,9 @@ fn emit_push_literal(
 
 fn literal_from_builtin_value(value: &BuiltinValue) -> Option<Literal> {
     match value {
-        BuiltinValue::Int(value) => Some(Literal::Integer(*value)),
+        BuiltinValue::Int(value) | BuiltinValue::ObjectId(value) => Some(Literal::Integer(*value)),
         BuiltinValue::Float(value) => Some(Literal::Float(*value)),
         BuiltinValue::String(value) => Some(Literal::String(value.clone())),
-        BuiltinValue::ObjectId(value) => Some(Literal::Integer(*value)),
         BuiltinValue::ObjectSelf => Some(Literal::ObjectSelf),
         BuiltinValue::ObjectInvalid => Some(Literal::ObjectInvalid),
         BuiltinValue::LocationInvalid => Some(Literal::LocationInvalid),
@@ -2562,7 +2561,6 @@ fn format_magic_date(timestamp: SystemTime) -> String {
     let days = i64::try_from(seconds / 86_400).ok().unwrap_or(i64::MAX);
     let (year, month, day) = civil_from_days(days);
     let month_name = match month {
-        1 => "Jan",
         2 => "Feb",
         3 => "Mar",
         4 => "Apr",
@@ -2818,8 +2816,7 @@ fn debug_type_for_semantic(
                 })?;
             NdbType::Struct(index)
         }
-        SemanticType::Vector => NdbType::Unknown,
-        SemanticType::Action => NdbType::Unknown,
+        SemanticType::Vector | SemanticType::Action => NdbType::Unknown,
     })
 }
 

@@ -254,14 +254,7 @@ impl<'a> LangSpecParser<'a> {
             .ok_or_else(|| LangSpecError::parse("unexpected EOF after #define"))?;
         let define_line = self.line_number_for_token(&token);
         let index = match &token.kind {
-            TokenKind::Identifier => {
-                let Some(index) = parse_engine_structure_define_index(&token.text) else {
-                    self.skip_line(define_line);
-                    return Ok(());
-                };
-                index
-            }
-            TokenKind::Keyword(Keyword::EngineStructureDefinition) => {
+            TokenKind::Identifier | TokenKind::Keyword(Keyword::EngineStructureDefinition) => {
                 let Some(index) = parse_engine_structure_define_index(&token.text) else {
                     self.skip_line(define_line);
                     return Ok(());
@@ -650,8 +643,9 @@ impl<'a> LangSpecParser<'a> {
             .advance()
             .ok_or_else(|| LangSpecError::parse("unexpected EOF while parsing identifier"))?;
         match token.kind {
-            TokenKind::Identifier => Ok(token.text),
-            TokenKind::Keyword(Keyword::EngineStructureDefinition) => Ok(token.text),
+            TokenKind::Identifier | TokenKind::Keyword(Keyword::EngineStructureDefinition) => {
+                Ok(token.text)
+            }
             _ => Err(LangSpecError::parse(format!(
                 "expected identifier, found {:?}",
                 token.kind

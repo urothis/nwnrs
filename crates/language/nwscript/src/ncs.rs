@@ -594,16 +594,21 @@ fn instruction_extra_size(opcode: NcsOpcode, auxcode: NcsAuxCode, bytes: &[u8]) 
             }
             _ => 0,
         },
-        NcsOpcode::Jmp | NcsOpcode::Jsr | NcsOpcode::Jz | NcsOpcode::Jnz => 4,
-        NcsOpcode::StoreState => 8,
-        NcsOpcode::ModifyStackPointer => 4,
-        NcsOpcode::ExecuteCommand => 3,
-        NcsOpcode::RunstackCopy | NcsOpcode::RunstackCopyBase => 6,
-        NcsOpcode::Assignment | NcsOpcode::AssignmentBase => 6,
-        NcsOpcode::Decrement
+        NcsOpcode::Jmp
+        | NcsOpcode::Jsr
+        | NcsOpcode::Jz
+        | NcsOpcode::Jnz
+        | NcsOpcode::ModifyStackPointer
+        | NcsOpcode::Decrement
         | NcsOpcode::Increment
         | NcsOpcode::DecrementBase
         | NcsOpcode::IncrementBase => 4,
+        NcsOpcode::StoreState => 8,
+        NcsOpcode::ExecuteCommand => 3,
+        NcsOpcode::RunstackCopy
+        | NcsOpcode::RunstackCopyBase
+        | NcsOpcode::Assignment
+        | NcsOpcode::AssignmentBase => 6,
         NcsOpcode::Equal | NcsOpcode::NotEqual if auxcode == NcsAuxCode::TypeTypeStructStruct => 2,
         NcsOpcode::DeStruct => 6,
         _ => 0,

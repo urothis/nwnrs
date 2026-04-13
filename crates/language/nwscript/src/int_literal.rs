@@ -51,7 +51,9 @@ pub(crate) fn parse_wrapping_prefixed_i32(
         let Some(digit) = ch.to_digit(radix) else {
             return Err(IntegerLiteralError);
         };
-        value = value.wrapping_mul(radix.cast_signed()).wrapping_add(digit.cast_signed());
+        value = value
+            .wrapping_mul(radix.cast_signed())
+            .wrapping_add(digit.cast_signed());
     }
 
     Ok(value)

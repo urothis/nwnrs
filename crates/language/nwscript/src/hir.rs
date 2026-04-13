@@ -874,20 +874,19 @@ fn lower_decl_type(ty: &TypeSpec, semantic: &SemanticModel) -> Result<SemanticTy
 
 fn semantic_type_from_literal(literal: &Literal) -> SemanticType {
     match literal {
-        Literal::Integer(_) => SemanticType::Int,
+        Literal::Integer(_) | Literal::Magic(crate::MagicLiteral::Line) => SemanticType::Int,
         Literal::Float(_) => SemanticType::Float,
-        Literal::String(_) => SemanticType::String,
-        Literal::ObjectSelf | Literal::ObjectInvalid => SemanticType::Object,
-        Literal::LocationInvalid => SemanticType::EngineStructure("location".to_string()),
-        Literal::Json(_) => SemanticType::EngineStructure("json".to_string()),
-        Literal::Vector(_) => SemanticType::Vector,
-        Literal::Magic(crate::MagicLiteral::Line) => SemanticType::Int,
-        Literal::Magic(
+        Literal::String(_)
+        | Literal::Magic(
             crate::MagicLiteral::Function
             | crate::MagicLiteral::File
             | crate::MagicLiteral::Date
             | crate::MagicLiteral::Time,
         ) => SemanticType::String,
+        Literal::ObjectSelf | Literal::ObjectInvalid => SemanticType::Object,
+        Literal::LocationInvalid => SemanticType::EngineStructure("location".to_string()),
+        Literal::Json(_) => SemanticType::EngineStructure("json".to_string()),
+        Literal::Vector(_) => SemanticType::Vector,
     }
 }
 

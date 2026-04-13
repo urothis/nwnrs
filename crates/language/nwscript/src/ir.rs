@@ -1224,10 +1224,9 @@ fn evaluate_case_value(
 
 fn literal_from_builtin_value(value: &BuiltinValue) -> Option<Literal> {
     match value {
-        BuiltinValue::Int(value) => Some(Literal::Integer(*value)),
+        BuiltinValue::Int(value) | BuiltinValue::ObjectId(value) => Some(Literal::Integer(*value)),
         BuiltinValue::Float(value) => Some(Literal::Float(*value)),
         BuiltinValue::String(value) => Some(Literal::String(value.clone())),
-        BuiltinValue::ObjectId(value) => Some(Literal::Integer(*value)),
         BuiltinValue::ObjectSelf => Some(Literal::ObjectSelf),
         BuiltinValue::ObjectInvalid => Some(Literal::ObjectInvalid),
         BuiltinValue::LocationInvalid => Some(Literal::LocationInvalid),

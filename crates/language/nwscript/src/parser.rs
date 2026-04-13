@@ -1621,6 +1621,7 @@ impl<'a> Parser<'a> {
 }
 
 impl Stmt {
+    #[allow(clippy::match_same_arms)]
     fn span(&self) -> Span {
         match self {
             Self::Block(stmt) => stmt.span,
