@@ -1,0 +1,19 @@
+[package]
+name = "nwnrs-test-support"
+version.workspace = true
+edition.workspace = true
+publish = false
+license.workspace = true
+description = "Shared install-backed test helpers for nwnrs workspace crates"
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+nwnrs-install.workspace = true
+nwnrs-resman.workspace = true
+nwnrs-resref.workspace = true
+nwnrs-restype.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true

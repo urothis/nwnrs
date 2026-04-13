@@ -1,0 +1,22 @@
+[package]
+name = "nwnrs-tlk"
+version.workspace = true
+edition.workspace = true
+publish = true
+license.workspace = true
+description = "Typed Neverwinter Nights TLK parser and runtime access helpers"
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/nwnrs-tlk"
+readme = "README.md"
+
+[dependencies]
+nwnrs-localization.workspace = true
+nwnrs-encoding.workspace = true
+nwnrs-lru.workspace = true
+nwnrs-resman.workspace = true
+tracing.workspace = true
+nwnrs-io.workspace = true
+
+[lints]
+workspace = true

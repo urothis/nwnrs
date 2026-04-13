@@ -1,0 +1,24 @@
+[package]
+name = "nwnrs-resman"
+version.workspace = true
+edition.workspace = true
+publish = true
+license.workspace = true
+description = "Neverwinter Nights resource manager and container abstraction"
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/nwnrs-resman"
+readme = "README.md"
+
+[dependencies]
+nwnrs-checksums.workspace = true
+nwnrs-compressedbuf.workspace = true
+nwnrs-exo.workspace = true
+nwnrs-lru.workspace = true
+nwnrs-resref.workspace = true
+nwnrs-restype.workspace = true
+nwnrs-io.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true

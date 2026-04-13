@@ -1,6 +1,6 @@
 use std::io::Cursor;
 
-use nwnrs::prelude::{core::Language, tlk};
+use nwnrs::prelude::{localization::Language, tlk};
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::JsValue;
 

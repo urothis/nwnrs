@@ -10,47 +10,55 @@ cli:
 # Individual crate changes
 checksums:
   - changed-files:
-      - any-glob-to-any-file: ["crates/checksums/**/*"]
+      - any-glob-to-any-file: ["crates/foundation/checksums/**/*"]
 
 compressedbuf:
   - changed-files:
-      - any-glob-to-any-file: ["crates/compressedbuf/**/*"]
+      - any-glob-to-any-file: ["crates/formats/compressedbuf/**/*"]
 
-core:
+localization:
   - changed-files:
-      - any-glob-to-any-file: ["crates/core/**/*"]
+      - any-glob-to-any-file: ["crates/foundation/localization/**/*"]
 
 erf:
   - changed-files:
-      - any-glob-to-any-file: ["crates/erf/**/*"]
+      - any-glob-to-any-file: ["crates/formats/erf/**/*"]
 
 exo:
   - changed-files:
-      - any-glob-to-any-file: ["crates/exo/**/*"]
+      - any-glob-to-any-file: ["crates/formats/exo/**/*"]
 
-game:
+install:
   - changed-files:
-      - any-glob-to-any-file: ["crates/game/**/*"]
+      - any-glob-to-any-file: ["crates/resources/install/**/*"]
+
+encoding:
+  - changed-files:
+      - any-glob-to-any-file: ["crates/foundation/encoding/**/*"]
 
 gff:
   - changed-files:
-      - any-glob-to-any-file: ["crates/gff/**/*"]
+      - any-glob-to-any-file: ["crates/formats/gff/**/*"]
 
 gffjson:
   - changed-files:
-      - any-glob-to-any-file: ["crates/gffjson/**/*"]
+      - any-glob-to-any-file: ["crates/formats/gffjson/**/*"]
 
 key:
   - changed-files:
-      - any-glob-to-any-file: ["crates/key/**/*"]
+      - any-glob-to-any-file: ["crates/formats/key/**/*"]
 
 lru:
   - changed-files:
-      - any-glob-to-any-file: ["crates/lru/**/*"]
+      - any-glob-to-any-file: ["crates/foundation/lru/**/*"]
 
 masterlist:
   - changed-files:
-      - any-glob-to-any-file: ["crates/masterlist/**/*"]
+      - any-glob-to-any-file: ["crates/meta/masterlist/**/*"]
+
+nwscript:
+  - changed-files:
+      - any-glob-to-any-file: ["crates/language/nwscript/**/*"]
 
 nwscript:
   - changed-files:
@@ -58,55 +66,55 @@ nwscript:
 
 nwsync:
   - changed-files:
-      - any-glob-to-any-file: ["crates/nwsync/**/*"]
+      - any-glob-to-any-file: ["crates/formats/nwsync/**/*"]
 
 resdir:
   - changed-files:
-      - any-glob-to-any-file: ["crates/resdir/**/*"]
+      - any-glob-to-any-file: ["crates/resources/resdir/**/*"]
 
 resfile:
   - changed-files:
-      - any-glob-to-any-file: ["crates/resfile/**/*"]
+      - any-glob-to-any-file: ["crates/resources/resfile/**/*"]
 
 resman:
   - changed-files:
-      - any-glob-to-any-file: ["crates/resman/**/*"]
+      - any-glob-to-any-file: ["crates/resources/resman/**/*"]
 
 resmemfile:
   - changed-files:
-      - any-glob-to-any-file: ["crates/resmemfile/**/*"]
+      - any-glob-to-any-file: ["crates/resources/resmemfile/**/*"]
 
 resnwsync:
   - changed-files:
-      - any-glob-to-any-file: ["crates/resnwsync/**/*"]
+      - any-glob-to-any-file: ["crates/resources/resnwsync/**/*"]
 
 resref:
   - changed-files:
-      - any-glob-to-any-file: ["crates/resref/**/*"]
+      - any-glob-to-any-file: ["crates/resources/resref/**/*"]
 
 restype:
   - changed-files:
-      - any-glob-to-any-file: ["crates/restype/**/*"]
+      - any-glob-to-any-file: ["crates/resources/restype/**/*"]
 
 ssf:
   - changed-files:
-      - any-glob-to-any-file: ["crates/ssf/**/*"]
+      - any-glob-to-any-file: ["crates/formats/ssf/**/*"]
 
 streamext:
   - changed-files:
-      - any-glob-to-any-file: ["crates/streamext/**/*"]
+      - any-glob-to-any-file: ["crates/foundation/streamext/**/*"]
 
 tlk:
   - changed-files:
-      - any-glob-to-any-file: ["crates/tlk/**/*"]
+      - any-glob-to-any-file: ["crates/formats/tlk/**/*"]
 
 twoda:
   - changed-files:
-      - any-glob-to-any-file: ["crates/twoda/**/*"]
+      - any-glob-to-any-file: ["crates/formats/twoda/**/*"]
 
-util:
+io:
   - changed-files:
-      - any-glob-to-any-file: ["crates/util/**/*"]
+      - any-glob-to-any-file: ["crates/foundation/io/**/*"]
 
 # Documentation
 documentation:
@@ -114,7 +122,6 @@ documentation:
       - any-glob-to-any-file:
           [
             "README.md",
-            "crates/README.md",
             "cli/README.md",
             "docs/**/*",
             "**/*.md",
@@ -135,7 +142,7 @@ ci/cd:
 dependencies:
   - changed-files:
       - any-glob-to-any-file:
-          ["Cargo.toml", "cli/Cargo.toml", "crates/*/Cargo.toml"]
+          ["Cargo.toml", "cli/Cargo.toml", "crates/*/*/Cargo.toml"]
 
 # Tests
 tests:

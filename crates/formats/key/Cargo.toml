@@ -1,0 +1,25 @@
+[package]
+name = "nwnrs-key"
+version.workspace = true
+edition.workspace = true
+publish = true
+license.workspace = true
+description = "Neverwinter Nights KEY index reader and writer"
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/nwnrs-key"
+readme = "README.md"
+
+[dependencies]
+indexmap.workspace = true
+nwnrs-checksums.workspace = true
+nwnrs-compressedbuf.workspace = true
+nwnrs-exo.workspace = true
+nwnrs-resman.workspace = true
+nwnrs-resref.workspace = true
+nwnrs-restype.workspace = true
+nwnrs-io.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true

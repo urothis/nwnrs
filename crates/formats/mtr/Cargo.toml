@@ -1,0 +1,19 @@
+[package]
+name = "nwnrs-mtr"
+version.workspace = true
+edition.workspace = true
+publish = true
+license.workspace = true
+description = "Typed Neverwinter Nights MTR parser and writer for material-texture resolution"
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/nwnrs-mtr"
+readme = "README.md"
+
+[dependencies]
+nwnrs-resman.workspace = true
+nwnrs-restype.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true

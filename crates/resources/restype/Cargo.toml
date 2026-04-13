@@ -1,0 +1,19 @@
+[package]
+name = "nwnrs-restype"
+version.workspace = true
+edition.workspace = true
+publish = true
+license.workspace = true
+description = "Neverwinter Nights resource type identifiers and helpers"
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/nwnrs-restype"
+readme = "README.md"
+
+[dependencies]
+nwnrs-io.workspace = true
+serde.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true

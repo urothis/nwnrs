@@ -13,9 +13,14 @@ struct DecodedImage {
 }
 
 pub(crate) fn run_convert(cmd: ConvertCmd) -> Result<(), String> {
-    info!("converting image");
+    info!("converting file");
     ensure_output_file_ready(&cmd.output, cmd.force)?;
 
+    if is_model_conversion(&cmd.input, &cmd.output)? {
+        return run_convert_model(&cmd);
+    }
+
+    info!("treating conversion as texture/image conversion");
     let decoded = read_input_image(&cmd.input)?;
     let output_ext = output_extension(&cmd.output)?;
     match output_ext.as_str() {
@@ -28,6 +33,52 @@ pub(crate) fn run_convert(cmd: ConvertCmd) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+fn is_model_conversion(input: &Path, output: &Path) -> Result<bool, String> {
+    let input_ext = output_extension(input)?;
+    let output_ext = output_extension(output)?;
+    Ok(input_ext == "mdl" || output_ext == "mdl")
+}
+
+fn run_convert_model(cmd: &ConvertCmd) -> Result<(), String> {
+    let input_ext = output_extension(&cmd.input)?;
+    let output_ext = output_extension(&cmd.output)?;
+    if input_ext != "mdl" || output_ext != "mdl" {
+        return Err(format!(
+            "mdl conversion requires both input and output to end in .mdl: {} -> {}",
+            cmd.input.display(),
+            cmd.output.display()
+        ));
+    }
+
+    let parsed = mdl::read_parsed_model_from_file(&cmd.input)
+        .map_err(|error| format!("failed to parse {} as MDL: {error}", cmd.input.display()))?;
+    let mut output = File::create(&cmd.output)
+        .map_err(|error| format!("failed to create {}: {error}", cmd.output.display()))?;
+
+    match parsed {
+        mdl::ParsedModel::Ascii(model) => {
+            let compiled = mdl::compile_ascii_model(&model).map_err(|error| {
+                format!(
+                    "failed to rebuild compiled MDL from {}: {error}",
+                    cmd.input.display()
+                )
+            })?;
+            mdl::write_model(&mut output, &compiled)
+                .map_err(|error| format!("failed to write {}: {error}", cmd.output.display()))
+        }
+        mdl::ParsedModel::Compiled(model) => {
+            let ascii = mdl::lower_binary_model_to_ascii(&model).map_err(|error| {
+                format!(
+                    "failed to lower compiled MDL {} to ascii: {error}",
+                    cmd.input.display()
+                )
+            })?;
+            mdl::write_ascii_model(&mut output, &ascii)
+                .map_err(|error| format!("failed to write {}: {error}", cmd.output.display()))
+        }
+    }
 }
 
 fn read_input_image(path: &Path) -> Result<DecodedImage, String> {
@@ -134,13 +185,18 @@ fn output_extension(path: &Path) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use std::{
+        error::Error,
         fs,
         path::{Path, PathBuf},
         time::{SystemTime, UNIX_EPOCH},
     };
 
     use image::{DynamicImage, ImageFormat, RgbImage, RgbaImage};
-    use nwnrs::prelude::{dds, tga};
+    use nwnrs::prelude::{dds, mdl, tga};
+    use nwnrs_test_support::{
+        demand_resource, materialize_bytes_to_temp_file, materialize_resource_to_temp_file,
+        require_game_resource, skip_if_game_resources_unavailable,
+    };
 
     use super::run_convert;
     use crate::args::ConvertCmd;
@@ -316,5 +372,66 @@ mod tests {
         let image = image::open(&output).expect("read converted webp");
         assert_eq!(image.width(), 2);
         assert_eq!(image.height(), 2);
+    }
+
+    #[test]
+    fn convert_supports_compiled_mdl_to_ascii() -> Result<(), Box<dyn Error>> {
+        let input = match compiled_mdl_fixture_path() {
+            Ok(path) => path,
+            Err(error) => return skip_if_game_resources_unavailable(error),
+        };
+        let output = unique_test_dir("convert-compiled-mdl-to-ascii").join("a_ba2_ascii.mdl");
+
+        run_convert(ConvertCmd {
+            force: true,
+            dds_format: String::from("dxt5"),
+            input,
+            output: output.clone(),
+        })
+        .expect("convert compiled mdl to ascii");
+
+        let ascii = mdl::read_ascii_model_from_file(&output).expect("read canonical ascii mdl");
+        assert_eq!(ascii.geometry_name, "a_ba2");
+        assert!(ascii.to_text().contains("# nwnrs-compiled-source begin"));
+        Ok(())
+    }
+
+    #[test]
+    fn convert_supports_ascii_mdl_to_compiled() -> Result<(), Box<dyn Error>> {
+        let input = match canonical_ascii_mdl_fixture_path() {
+            Ok(path) => path,
+            Err(error) => return skip_if_game_resources_unavailable(error),
+        };
+        let output = unique_test_dir("convert-ascii-mdl-to-compiled").join("a_ba2_compiled.mdl");
+
+        run_convert(ConvertCmd {
+            force: true,
+            dds_format: String::from("dxt5"),
+            input,
+            output: output.clone(),
+        })
+        .expect("convert ascii mdl to compiled");
+
+        let compiled = mdl::read_binary_model_from_file(&output).expect("read compiled mdl");
+        assert_eq!(compiled.name, "a_ba2");
+        assert_eq!(compiled.animations.len(), 20);
+        Ok(())
+    }
+
+    fn compiled_mdl_fixture_path() -> Result<PathBuf, Box<dyn Error>> {
+        require_game_resource(materialize_resource_to_temp_file(
+            "a_ba2",
+            mdl::MODEL_RES_TYPE,
+        ))
+    }
+
+    fn canonical_ascii_mdl_fixture_path() -> Result<PathBuf, Box<dyn Error>> {
+        let res = require_game_resource(demand_resource("a_ba2", mdl::MODEL_RES_TYPE))?;
+        let binary = mdl::read_binary_model_from_res(&res, true)?;
+        let ascii = mdl::lower_binary_model_to_ascii(&binary)?;
+        Ok(materialize_bytes_to_temp_file(
+            &ascii.to_text().into_bytes(),
+            "a_ba2_ascii.mdl",
+        )?)
     }
 }
