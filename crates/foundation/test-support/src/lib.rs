@@ -57,8 +57,9 @@ impl TestResourceError {
 impl fmt::Display for TestResourceError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InstallUnavailable(message) => f.write_str(message),
-            Self::ResourceUnavailable(message) => f.write_str(message),
+            Self::InstallUnavailable(message) | Self::ResourceUnavailable(message) => {
+                f.write_str(message)
+            }
             Self::Io(error) => error.fmt(f),
             Self::Install(error) => error.fmt(f),
             Self::ResMan(error) => error.fmt(f),
