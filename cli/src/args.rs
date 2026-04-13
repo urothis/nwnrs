@@ -81,6 +81,10 @@ pub(crate) struct ConvertCmd {
 #[derive(FromArgs)]
 #[argh(subcommand, name = "inspect")]
 /// inspect a single NWN resource file by extension
+// This struct has 8 bool fields, exceeding clippy::pedantic's threshold of 3.
+// They cannot be collapsed into enums or a state machine because argh requires
+// bool fields for `#[argh(switch)]`, and each flag is an independent CLI option
+// with no mutual exclusivity
 #[allow(clippy::struct_excessive_bools)]
 pub(crate) struct InspectCmd {
     #[argh(switch)]
