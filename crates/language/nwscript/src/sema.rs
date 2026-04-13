@@ -1826,7 +1826,7 @@ fn evaluate_int_constant_binary(op: BinaryOp, left: i32, right: i32) -> Option<i
         BinaryOp::LessEqual => Some(i32::from(left <= right)),
         BinaryOp::ShiftLeft => Some(left.wrapping_shl(right as u32)),
         BinaryOp::ShiftRight => Some(left.wrapping_shr(right as u32)),
-        BinaryOp::UnsignedShiftRight => Some(((left as u32).wrapping_shr(right as u32)) as i32),
+        BinaryOp::UnsignedShiftRight => Some(((left as u32).wrapping_shr(right as u32)).cast_signed()),
         BinaryOp::Add => Some(left.wrapping_add(right)),
         BinaryOp::Subtract => Some(left.wrapping_sub(right)),
         BinaryOp::Multiply => Some(left.wrapping_mul(right)),

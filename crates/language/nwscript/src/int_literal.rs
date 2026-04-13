@@ -23,7 +23,7 @@ pub(crate) fn parse_wrapping_decimal_i32(input: &str) -> Result<i32, IntegerLite
             return Err(IntegerLiteralError);
         };
         saw_digit = true;
-        value = value.wrapping_mul(10).wrapping_add(digit as i32);
+        value = value.wrapping_mul(10).wrapping_add(digit.cast_signed());
     }
 
     if !saw_digit {
@@ -51,7 +51,7 @@ pub(crate) fn parse_wrapping_prefixed_i32(
         let Some(digit) = ch.to_digit(radix) else {
             return Err(IntegerLiteralError);
         };
-        value = value.wrapping_mul(radix as i32).wrapping_add(digit as i32);
+        value = value.wrapping_mul(radix.cast_signed()).wrapping_add(digit.cast_signed());
     }
 
     Ok(value)

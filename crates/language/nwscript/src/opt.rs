@@ -499,7 +499,7 @@ fn evaluate_int_binary(op: BinaryOp, left: i32, right: i32) -> Option<i32> {
         BinaryOp::Subtract => Some(left.wrapping_sub(right)),
         BinaryOp::ShiftLeft => Some(left.wrapping_shl(right as u32)),
         BinaryOp::ShiftRight => Some(left.wrapping_shr(right as u32)),
-        BinaryOp::UnsignedShiftRight => Some(((left as u32).wrapping_shr(right as u32)) as i32),
+        BinaryOp::UnsignedShiftRight => Some(((left as u32).wrapping_shr(right as u32)).cast_signed()),
         BinaryOp::GreaterEqual => Some(i32::from(left >= right)),
         BinaryOp::GreaterThan => Some(i32::from(left > right)),
         BinaryOp::LessThan => Some(i32::from(left < right)),
