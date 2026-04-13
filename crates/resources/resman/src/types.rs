@@ -380,7 +380,7 @@ impl Res {
         if cache_policy.uses_cache() && data.len() < MEMORY_CACHE_THRESHOLD {
             let mut state = self.lock_state()?;
             state.cached = true;
-            state.cache = data.clone();
+            state.cache.clone_from(&data);
         }
 
         Ok(data)

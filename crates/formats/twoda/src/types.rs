@@ -192,7 +192,7 @@ impl TwoDa {
             && let Some(value) = row_data.get(column_id)
             && value.is_some()
         {
-            result = value.clone();
+            result.clone_from(value);
         }
         result
     }
