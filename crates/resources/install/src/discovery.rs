@@ -296,11 +296,9 @@ fn collect_steam_install_candidates<H>(
 ) where
     H: Fn() -> Option<PathBuf>,
 {
-    push_candidate(
-        candidates,
-        steamapps_dir(platform, home_dir).join("Neverwinter Nights"),
-        "steam",
-    );
+    for steam_root in steam_root_candidates(platform, home_dir) {
+        collect_steam_root_candidates(candidates, &steam_root);
+    }
 }
 
 fn collect_beamdog_install_candidates<H>(
@@ -337,27 +335,123 @@ where
     Ok(folders.into_iter().map(PathBuf::from).collect())
 }
 
-pub(crate) fn steamapps_dir<H>(platform: Platform, home_dir: &H) -> PathBuf
+fn steam_root_candidates<H>(platform: Platform, home_dir: &H) -> Vec<PathBuf>
 where
     H: Fn() -> Option<PathBuf>,
 {
+    let Some(home) = home_dir() else {
+        return Vec::new();
+    };
+
     match platform {
-        Platform::MacOs => home_dir()
-            .unwrap_or_default()
-            .join("Library")
-            .join("Application Support")
-            .join("Steam")
-            .join("steamapps")
-            .join("common"),
-        Platform::Linux => home_dir()
-            .unwrap_or_default()
-            .join(".local")
-            .join("share")
-            .join("Steam")
-            .join("steamapps")
-            .join("common"),
-        Platform::Windows => PathBuf::from(r"c:\program files (x86)\steam\steamapps\common"),
+        Platform::MacOs => vec![
+            home.join("Library")
+                .join("Application Support")
+                .join("Steam"),
+        ],
+        Platform::Linux => vec![
+            home.join(".local").join("share").join("Steam"),
+            home.join(".steam").join("steam"),
+            home.join(".var")
+                .join("app")
+                .join("com.valvesoftware.Steam")
+                .join(".local")
+                .join("share")
+                .join("Steam"),
+        ],
+        Platform::Windows => vec![
+            PathBuf::from(r"c:\program files (x86)\steam"),
+            home.join("AppData").join("Local").join("Steam"),
+        ],
     }
+}
+
+fn collect_steam_root_candidates(candidates: &mut Vec<CandidatePath>, steam_root: &Path) {
+    let library_roots = steam_library_roots(steam_root);
+    for library_root in library_roots {
+        let steamapps = library_root.join("steamapps");
+        if let Some(install_dir) = steam_app_install_dir(&steamapps) {
+            push_candidate(
+                candidates,
+                steamapps.join("common").join(install_dir),
+                "steam",
+            );
+        }
+
+        push_candidate(
+            candidates,
+            steamapps.join("common").join("Neverwinter Nights"),
+            "steam",
+        );
+    }
+}
+
+fn steam_library_roots(steam_root: &Path) -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    push_unique_path(&mut roots, steam_root.to_path_buf());
+
+    for path in [
+        steam_root.join("steamapps").join("libraryfolders.vdf"),
+        steam_root.join("config").join("libraryfolders.vdf"),
+    ] {
+        let Ok(data) = fs::read_to_string(&path) else {
+            continue;
+        };
+
+        for root in parse_steam_libraryfolders(&data) {
+            push_unique_path(&mut roots, root);
+        }
+    }
+
+    roots
+}
+
+fn steam_app_install_dir(steamapps: &Path) -> Option<String> {
+    let manifest = steamapps.join("appmanifest_704450.acf");
+    let data = fs::read_to_string(manifest).ok()?;
+    parse_steam_appmanifest_installdir(&data)
+}
+
+fn parse_steam_libraryfolders(data: &str) -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    for line in data.lines() {
+        let Some((key, value)) = parse_vdf_key_value(line) else {
+            continue;
+        };
+        if key == "path" {
+            push_unique_path(&mut roots, steam_vdf_path_value(&value));
+        }
+    }
+    roots
+}
+
+fn parse_steam_appmanifest_installdir(data: &str) -> Option<String> {
+    data.lines().find_map(|line| {
+        let (key, value) = parse_vdf_key_value(line)?;
+        (key == "installdir").then_some(value)
+    })
+}
+
+fn parse_vdf_key_value(line: &str) -> Option<(String, String)> {
+    let mut parts = line.split('"').skip(1);
+    let key = parts.next()?.trim().to_string();
+    let value = parts.nth(1)?.trim().to_string();
+    Some((key, value))
+}
+
+fn steam_vdf_path_value(value: &str) -> PathBuf {
+    #[cfg(target_os = "windows")]
+    let value = value.replace("\\\\", "\\");
+    #[cfg(not(target_os = "windows"))]
+    let value = value.to_string();
+    PathBuf::from(value)
+}
+
+fn push_unique_path(paths: &mut Vec<PathBuf>, path: PathBuf) {
+    if paths.iter().any(|candidate| candidate == &path) {
+        return;
+    }
+    paths.push(path);
 }
 
 pub(crate) fn beamdog_settings_path<H>(platform: Platform, home_dir: &H) -> PathBuf
@@ -550,6 +644,114 @@ mod tests {
             match find_nwnrs_root_impl("", |_key| None, || Some(home.clone()), Platform::Linux) {
                 Ok(value) => value,
                 Err(error) => panic!("resolve game root: {error}"),
+        };
+        assert_eq!(resolved, install);
+    }
+
+    #[test]
+    fn game_root_detects_steam_install_from_custom_libraryfolders() {
+        let root = unique_test_dir("steam-libraryfolders");
+        let home = root.join("home");
+        let steam_root = home.join(".local").join("share").join("Steam");
+        let library_root = root.join("steam-library");
+        let install = library_root.join("steamapps").join("common").join("NWN EE");
+        let libraryfolders = steam_root.join("steamapps").join("libraryfolders.vdf");
+        let manifest = library_root.join("steamapps").join("appmanifest_704450.acf");
+
+        if let Err(error) = fs::create_dir_all(install.join("data")) {
+            panic!("create steam data dir: {error}");
+        }
+        if let Err(error) = fs::create_dir_all(install.join("lang")) {
+            panic!("create steam lang dir: {error}");
+        }
+        if let Err(error) = fs::create_dir_all(libraryfolders.parent().unwrap_or(&steam_root)) {
+            panic!("create steamapps dir: {error}");
+        }
+        if let Err(error) = fs::create_dir_all(manifest.parent().unwrap_or(&library_root)) {
+            panic!("create manifest dir: {error}");
+        }
+        if let Err(error) = fs::write(
+            &libraryfolders,
+            format!(
+                concat!(
+                    "\"libraryfolders\"\n",
+                    "{{\n",
+                    "\t\"0\"\n",
+                    "\t{{\n",
+                    "\t\t\"path\"\t\t\"{}\"\n",
+                    "\t}}\n",
+                    "\t\"1\"\n",
+                    "\t{{\n",
+                    "\t\t\"path\"\t\t\"{}\"\n",
+                    "\t\t\"apps\"\n",
+                    "\t\t{{\n",
+                    "\t\t\t\"704450\"\t\t\"1\"\n",
+                    "\t\t}}\n",
+                    "\t}}\n",
+                    "}}\n"
+                ),
+                steam_root.display(),
+                library_root.display(),
+            ),
+        ) {
+            panic!("write libraryfolders.vdf: {error}");
+        }
+        if let Err(error) = fs::write(
+            &manifest,
+            "\"AppState\"\n{\n\t\"appid\"\t\t\"704450\"\n\t\"installdir\"\t\t\"NWN EE\"\n}\n",
+        ) {
+            panic!("write appmanifest: {error}");
+        }
+        if let Err(error) = fs::write(install.join("steam_appid.txt"), "704450\n") {
+            panic!("write steam_appid.txt: {error}");
+        }
+        if let Err(error) = fs::write(install.join("databuild.txt"), "build") {
+            panic!("write databuild.txt: {error}");
+        }
+
+        let resolved =
+            match find_nwnrs_root_impl("", |_key| None, || Some(home.clone()), Platform::Linux) {
+                Ok(value) => value,
+                Err(error) => panic!("resolve steam install root: {error}"),
+            };
+        assert_eq!(resolved, install);
+    }
+
+    #[test]
+    fn game_root_uses_manifest_installdir_for_default_steam_library() {
+        let root = unique_test_dir("steam-default-manifest");
+        let home = root.join("home");
+        let steam_root = home.join(".local").join("share").join("Steam");
+        let steamapps = steam_root.join("steamapps");
+        let install = steamapps.join("common").join("NWN Alt");
+        let manifest = steamapps.join("appmanifest_704450.acf");
+
+        if let Err(error) = fs::create_dir_all(install.join("data")) {
+            panic!("create default steam data dir: {error}");
+        }
+        if let Err(error) = fs::create_dir_all(install.join("lang")) {
+            panic!("create default steam lang dir: {error}");
+        }
+        if let Err(error) = fs::create_dir_all(&steamapps) {
+            panic!("create default steamapps dir: {error}");
+        }
+        if let Err(error) = fs::write(
+            &manifest,
+            "\"AppState\"\n{\n\t\"appid\"\t\t\"704450\"\n\t\"installdir\"\t\t\"NWN Alt\"\n}\n",
+        ) {
+            panic!("write default appmanifest: {error}");
+        }
+        if let Err(error) = fs::write(install.join("steam_appid.txt"), "704450\n") {
+            panic!("write default steam_appid.txt: {error}");
+        }
+        if let Err(error) = fs::write(install.join("databuild.txt"), "build") {
+            panic!("write default databuild.txt: {error}");
+        }
+
+        let resolved =
+            match find_nwnrs_root_impl("", |_key| None, || Some(home.clone()), Platform::Linux) {
+                Ok(value) => value,
+                Err(error) => panic!("resolve default steam install root: {error}"),
             };
         assert_eq!(resolved, install);
     }
