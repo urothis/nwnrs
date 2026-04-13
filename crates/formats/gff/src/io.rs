@@ -552,6 +552,7 @@ fn parse_field<R: Read + Seek>(
     ))
 }
 
+#[allow(clippy::too_many_lines)]
 fn collect_struct(structure: &GffStruct, state: &mut WriteState) -> GffResult<i32> {
     let struct_idx = to_i32_len(state.structs.len(), "GFF struct index")?;
     state.structs.push(WriteStructEntry {

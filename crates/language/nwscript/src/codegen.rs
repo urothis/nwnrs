@@ -1094,6 +1094,7 @@ impl FunctionEmitter<'_, '_> {
         Ok(())
     }
 
+    #[allow(clippy::too_many_lines)]
     fn emit_stmt(&mut self, statement: &HirStmt) -> Result<(), CodegenError> {
         match statement {
             HirStmt::Block(block) => self.emit_block(block),
@@ -1651,6 +1652,7 @@ impl FunctionEmitter<'_, '_> {
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn emit_expr_common(
     compiler: &mut O0Compiler<'_>,
     temp_bytes: &mut usize,

@@ -705,6 +705,7 @@ impl<'a> Analyzer<'a> {
         Ok(())
     }
 
+    #[allow(clippy::too_many_lines)]
     fn analyze_stmt(
         &self,
         statement: &Stmt,
@@ -933,6 +934,7 @@ impl<'a> Analyzer<'a> {
         }
     }
 
+    #[allow(clippy::too_many_lines)]
     fn analyze_expr(
         &self,
         expr: &Expr,

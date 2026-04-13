@@ -770,6 +770,7 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
         Ok(Some(end_block))
     }
 
+    #[allow(clippy::too_many_lines)]
     fn lower_expr(
         &mut self,
         expr: &HirExpr,
