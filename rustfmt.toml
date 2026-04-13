@@ -2,6 +2,7 @@
 # See https://rust-lang.github.io/rustfmt/ for more options
 
 # Basic formatting
+unstable_features = true
 edition = "2021"
 max_width = 100
 
