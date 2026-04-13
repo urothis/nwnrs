@@ -742,7 +742,7 @@ fn lower_binary_node(
             ),
             ambient_only:       i32::try_from(light.ambient_only).ok(),
             n_dynamic_type:     i32::try_from(light.dynamic_type).ok(),
-            is_dynamic:         Some(if light.dynamic_type == 0 { 0 } else { 1 }),
+            is_dynamic:         Some(i32::from(light.dynamic_type != 0)),
             affect_dynamic:     i32::try_from(light.affect_dynamic).ok(),
             negative_light:     None,
             light_priority:     i32::try_from(light.light_priority).ok(),

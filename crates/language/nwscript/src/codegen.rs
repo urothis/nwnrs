@@ -2599,7 +2599,7 @@ fn civil_from_days(days_since_epoch: i64) -> (i32, u32, u32) {
     let mp = (5 * doy + 2) / 153;
     let d = doy - (153 * mp + 2) / 5 + 1;
     let m = mp + if mp < 10 { 3 } else { -9 };
-    let year = y + if m <= 2 { 1 } else { 0 };
+    let year = y + i64::from(m <= 2);
     (
         i32::try_from(year).ok().unwrap_or(i32::MAX),
         u32::try_from(m).ok().unwrap_or(1),
