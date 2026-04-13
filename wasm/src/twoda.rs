@@ -28,8 +28,13 @@ pub struct TwoDaDto {
 pub(crate) fn unchanged_twoda_bytes(value: &TwoDaDto) -> Result<Option<Vec<u8>>, JsValue> {
     let mut semantic = value.clone();
     semantic.lossless = None;
-    unchanged_lossless_bytes(&semantic, &value.lossless, "failed to fingerprint 2DA DTO")
-        .map_err(|error| js_error_message(&error))
+    unchanged_lossless_bytes(
+        &semantic,
+        &value.lossless,
+        |dto| &mut dto.lossless,
+        "failed to fingerprint 2DA DTO",
+    )
+    .map_err(|error| js_error_message(&error))
 }
 
 fn twoda_to_dto(value: &twoda::TwoDa) -> TwoDaDto {

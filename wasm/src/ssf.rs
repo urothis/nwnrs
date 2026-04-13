@@ -81,9 +81,13 @@ pub(crate) fn read_ssf_dto(bytes: &[u8]) -> Result<SsfRootDto, JsValue> {
 }
 
 pub(crate) fn write_ssf_dto(value: &SsfRootDto) -> Result<Vec<u8>, JsValue> {
-    if let Some(bytes) =
-        unchanged_lossless_bytes(value, &value.lossless, "failed to fingerprint SSF DTO")
-            .map_err(|error| js_error_message(&error))?
+    if let Some(bytes) = unchanged_lossless_bytes(
+        value,
+        &value.lossless,
+        |dto| &mut dto.lossless,
+        "failed to fingerprint SSF DTO",
+    )
+    .map_err(|error| js_error_message(&error))?
     {
         Ok(bytes)
     } else {
