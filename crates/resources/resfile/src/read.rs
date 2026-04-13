@@ -40,7 +40,7 @@ pub fn read_resfile_as(path: impl AsRef<Path>, resref: ResRef) -> ResFileResult<
 
     let label = path.display().to_string();
     let mtime = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
-    let io_size = metadata.len() as i64;
+    let io_size = metadata.len().cast_signed();
     let path_for_io = path.to_path_buf();
     let origin_label = label.clone();
     let spawner = Arc::new(

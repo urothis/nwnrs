@@ -43,7 +43,7 @@ pub fn read_resdir(path: impl AsRef<Path>) -> ResDirResult<ResDir> {
         let path = root.join(&relative);
         let file_metadata = fs::metadata(&path)?;
         let mtime = file_metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
-        let io_size = file_metadata.len() as i64;
+        let io_size = file_metadata.len().cast_signed();
         let label_for_origin = path.display().to_string();
         let path_for_io = path.clone();
         let spawner = Arc::new(
