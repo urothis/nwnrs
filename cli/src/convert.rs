@@ -12,7 +12,7 @@ struct DecodedImage {
     rgba:   Vec<u8>,
 }
 
-pub(crate) fn run_convert(cmd: ConvertCmd) -> Result<(), String> {
+pub(crate) fn run_convert(cmd: &ConvertCmd) -> Result<(), String> {
     info!("converting file");
     ensure_output_file_ready(&cmd.output, cmd.force)?;
 
@@ -262,7 +262,7 @@ mod tests {
         let output = temp_dir.join("amp01_g06.dds");
         write_tga_fixture(&input);
 
-        run_convert(ConvertCmd {
+        run_convert(&ConvertCmd {
             force: true,
             dds_format: String::from("dxt5"),
             input,
@@ -282,7 +282,7 @@ mod tests {
         let output = temp_dir.join("ashlw_066.webp");
         write_dds_fixture(&input);
 
-        run_convert(ConvertCmd {
+        run_convert(&ConvertCmd {
             force: true,
             dds_format: String::from("dxt5"),
             input,
@@ -302,7 +302,7 @@ mod tests {
         let output = temp_dir.join("output.tga");
         write_png_fixture(&input);
 
-        run_convert(ConvertCmd {
+        run_convert(&ConvertCmd {
             force: true,
             dds_format: String::from("dxt5"),
             input,
@@ -323,7 +323,7 @@ mod tests {
         let output = temp_dir.join("amp01_g06.webp");
         write_tga_fixture(&input);
 
-        run_convert(ConvertCmd {
+        run_convert(&ConvertCmd {
             force: true,
             dds_format: String::from("dxt5"),
             input,
@@ -343,7 +343,7 @@ mod tests {
         let output = temp_dir.join("output.dds");
         write_jpeg_fixture(&input);
 
-        run_convert(ConvertCmd {
+        run_convert(&ConvertCmd {
             force: true,
             dds_format: String::from("dxt1"),
             input,
@@ -364,7 +364,7 @@ mod tests {
         let output = temp_dir.join("output.webp");
         write_jpeg_fixture(&input);
 
-        run_convert(ConvertCmd {
+        run_convert(&ConvertCmd {
             force: true,
             dds_format: String::from("dxt5"),
             input,
@@ -385,7 +385,7 @@ mod tests {
         };
         let output = unique_test_dir("convert-compiled-mdl-to-ascii").join("a_ba2_ascii.mdl");
 
-        run_convert(ConvertCmd {
+        run_convert(&ConvertCmd {
             force: true,
             dds_format: String::from("dxt5"),
             input,
@@ -407,7 +407,7 @@ mod tests {
         };
         let output = unique_test_dir("convert-ascii-mdl-to-compiled").join("a_ba2_compiled.mdl");
 
-        run_convert(ConvertCmd {
+        run_convert(&ConvertCmd {
             force: true,
             dds_format: String::from("dxt5"),
             input,
