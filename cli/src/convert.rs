@@ -52,7 +52,7 @@ fn run_convert_model(cmd: &ConvertCmd) -> Result<(), String> {
         ));
     }
 
-    let parsed = mdl::read_parsed_model_from_file(&cmd.input)
+    let parsed = mdl::ParsedModel::from_file(&cmd.input)
         .map_err(|error| format!("failed to parse {} as MDL: {error}", cmd.input.display()))?;
     let mut output = File::create(&cmd.output)
         .map_err(|error| format!("failed to create {}: {error}", cmd.output.display()))?;
@@ -85,7 +85,7 @@ fn read_input_image(path: &Path) -> Result<DecodedImage, String> {
     let extension = output_extension(path)?;
     match extension.as_str() {
         "dds" => {
-            let dds = dds::read_dds_from_file(path)
+            let dds = dds::DdsTexture::from_file(path)
                 .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
             let rgba = dds
                 .decode_rgba8()
@@ -97,7 +97,7 @@ fn read_input_image(path: &Path) -> Result<DecodedImage, String> {
             })
         }
         "tga" => {
-            let tga = tga::read_tga_from_file(path)
+            let tga = tga::TgaTexture::from_file(path)
                 .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
             let rgba = tga
                 .decode_rgba8()
@@ -192,7 +192,10 @@ mod tests {
     };
 
     use image::{DynamicImage, ImageFormat, RgbImage, RgbaImage};
-    use nwnrs::prelude::{dds, mdl, tga};
+    use nwnrs::{
+        prelude::{dds, mdl, tga},
+        resman::CachePolicy,
+    };
     use nwnrs_test_support::{
         demand_resource, materialize_bytes_to_temp_file, materialize_resource_to_temp_file,
         require_game_resource, skip_if_game_resources_unavailable,
@@ -267,7 +270,7 @@ mod tests {
         })
         .expect("convert tga to dds");
 
-        let dds = dds::read_dds_from_file(&output).expect("read converted dds");
+        let dds = dds::DdsTexture::from_file(&output).expect("read converted dds");
         assert_eq!(dds.width, 16);
         assert_eq!(dds.height, 16);
     }
@@ -307,7 +310,7 @@ mod tests {
         })
         .expect("convert png to tga");
 
-        let tga = tga::read_tga_from_file(&output).expect("read converted tga");
+        let tga = tga::TgaTexture::from_file(&output).expect("read converted tga");
         assert_eq!(tga.width, 2);
         assert_eq!(tga.height, 2);
         assert_eq!(tga.pixel_depth, 32);
@@ -348,7 +351,7 @@ mod tests {
         })
         .expect("convert jpeg to dds");
 
-        let dds = dds::read_dds_from_file(&output).expect("read converted dds");
+        let dds = dds::DdsTexture::from_file(&output).expect("read converted dds");
         assert_eq!(dds.width, 2);
         assert_eq!(dds.height, 2);
         assert_eq!(dds.format, dds::DdsFormat::Dxt1);
@@ -390,7 +393,7 @@ mod tests {
         })
         .expect("convert compiled mdl to ascii");
 
-        let ascii = mdl::read_ascii_model_from_file(&output).expect("read canonical ascii mdl");
+        let ascii = mdl::AsciiModel::from_file(&output).expect("read canonical ascii mdl");
         assert_eq!(ascii.geometry_name, "a_ba2");
         assert!(ascii.to_text().contains("# nwnrs-compiled-source begin"));
         Ok(())
@@ -412,7 +415,7 @@ mod tests {
         })
         .expect("convert ascii mdl to compiled");
 
-        let compiled = mdl::read_binary_model_from_file(&output).expect("read compiled mdl");
+        let compiled = mdl::BinaryModel::from_file(&output).expect("read compiled mdl");
         assert_eq!(compiled.name, "a_ba2");
         assert_eq!(compiled.animations.len(), 20);
         Ok(())
@@ -427,7 +430,7 @@ mod tests {
 
     fn canonical_ascii_mdl_fixture_path() -> Result<PathBuf, Box<dyn Error>> {
         let res = require_game_resource(demand_resource("a_ba2", mdl::MODEL_RES_TYPE))?;
-        let binary = mdl::read_binary_model_from_res(&res, true)?;
+        let binary = mdl::BinaryModel::from_res(&res, CachePolicy::Use)?;
         let ascii = mdl::lower_binary_model_to_ascii(&binary)?;
         Ok(materialize_bytes_to_temp_file(
             &ascii.to_text().into_bytes(),

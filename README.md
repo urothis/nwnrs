@@ -12,14 +12,11 @@
 
 It includes:
 
-- Rust crates for formats like `GFF`, `2DA`, `TLK`, `SSF`, `ERF`, `KEY/BIF`, `MDL`, `TGA`, `DDS`, `PLT`, and `NWSync`
 - a CLI for common workflows
+- Rust crates for formats like `GFF`, `2DA`, `TLK`, `SSF`, `ERF`, `KEY/BIF`, `MDL`, `TGA`, `DDS`, `PLT`, and `NWSync`
 - wasm bindings for browser and JS apps
 
-If you just want one dependency, start with [`nwnrs`](./crates/meta/prelude/README.md).
-
 ## Quick Start
-
 
 ### CLI
 
@@ -108,12 +105,6 @@ More wasm details: [`wasm/README.md`](./wasm/README.md)
 - convert textures between `png`, `jpg`, `tga`, `dds`, and `webp`
 - load resources from installs, directories, archives, and manifests
 - lower compiled MDL into canonical ASCII
-
-## Important Note About MDL
-
-Compiled `MDL` can be lowered to canonical ASCII today.
-
-Rebuilding compiled `MDL` currently works for canonical ASCII produced by the library and CLI. It is not a general-purpose arbitrary ASCII-to-compiled compiler yet.
 
 ## Development
 

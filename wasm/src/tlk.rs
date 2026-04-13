@@ -124,8 +124,11 @@ fn tlk_to_dto(value: &mut tlk::SingleTlk) -> Result<SingleTlkDto, JsValue> {
 }
 
 pub(crate) fn read_tlk_dto(bytes: &[u8]) -> Result<SingleTlkDto, JsValue> {
-    let mut value = tlk::read_single_tlk(Cursor::new(bytes.to_vec()), false)
-        .map_err(|error| js_error("failed to read TLK", error))?;
+    let mut value = tlk::read_single_tlk(
+        Cursor::new(bytes.to_vec()),
+        nwnrs::resman::CachePolicy::Bypass,
+    )
+    .map_err(|error| js_error("failed to read TLK", error))?;
     with_lossless_metadata(
         tlk_to_dto(&mut value)?,
         bytes.to_vec(),

@@ -462,7 +462,10 @@ fn const_from_builtin_value(value: &BuiltinValue) -> Option<ConstValue> {
         BuiltinValue::ObjectId(value) => Some(ConstValue::Int(*value)),
         BuiltinValue::ObjectSelf => Some(ConstValue::Int(0)),
         BuiltinValue::ObjectInvalid => Some(ConstValue::Int(1)),
-        BuiltinValue::LocationInvalid | BuiltinValue::Json(_) | BuiltinValue::Vector(_) => None,
+        BuiltinValue::LocationInvalid
+        | BuiltinValue::Json(_)
+        | BuiltinValue::Vector(_)
+        | BuiltinValue::Raw(_) => None,
     }
 }
 

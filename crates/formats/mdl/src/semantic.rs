@@ -1,4 +1,9 @@
-use std::{collections::BTreeSet, fs::File, io::Read, path::Path};
+use std::{
+    collections::BTreeSet,
+    fs::File,
+    io::{Read, Write},
+    path::Path,
+};
 
 use nwnrs_resman::prelude::*;
 use tracing::instrument;
@@ -51,6 +56,46 @@ impl SemanticModel {
         self.animations
             .iter()
             .find(|animation| animation.name.eq_ignore_ascii_case(name))
+    }
+
+    /// Reads and lowers a semantic model from disk.
+    pub fn from_file(path: impl AsRef<Path>) -> ModelResult<Self> {
+        let mut file = File::open(path.as_ref())?;
+        read_semantic_model(&mut file)
+    }
+
+    /// Reads and lowers a semantic model from disk using automatic
+    /// ASCII/compiled dispatch.
+    pub fn from_auto_file(path: impl AsRef<Path>) -> ModelResult<Self> {
+        let mut file = File::open(path.as_ref())?;
+        read_semantic_model_auto(&mut file)
+    }
+
+    /// Reads and lowers a semantic model from a [`Res`].
+    pub fn from_res(res: &Res, cache_policy: CachePolicy) -> ModelResult<Self> {
+        if res.resref().res_type() != MODEL_RES_TYPE {
+            return Err(ModelError::msg(format!(
+                "expected mdl resource, got {}",
+                res.resref()
+            )));
+        }
+
+        let ascii = crate::AsciiModel::from_res(res, cache_policy)?;
+        lower_ascii_model(&ascii)
+    }
+
+    /// Reads and lowers a semantic model from a [`Res`] using automatic
+    /// ASCII/compiled dispatch.
+    pub fn from_auto_res(res: &Res, cache_policy: CachePolicy) -> ModelResult<Self> {
+        if res.resref().res_type() != MODEL_RES_TYPE {
+            return Err(ModelError::msg(format!(
+                "expected mdl resource, got {}",
+                res.resref()
+            )));
+        }
+
+        let model = crate::Model::from_res(res, cache_policy)?;
+        model.parse_semantic_auto()
     }
 }
 
@@ -534,48 +579,11 @@ pub fn read_semantic_model_auto<R: Read>(reader: &mut R) -> ModelResult<Semantic
     }
 }
 
-/// Reads and lowers a semantic model from disk.
-#[instrument(level = "debug", skip_all, err, fields(path = %path.as_ref().display()))]
-pub fn read_semantic_model_from_file(path: impl AsRef<Path>) -> ModelResult<SemanticModel> {
-    let mut file = File::open(path.as_ref())?;
-    read_semantic_model(&mut file)
-}
-
-/// Reads and lowers a semantic model from disk using automatic ASCII/compiled
-/// dispatch.
-#[instrument(level = "debug", skip_all, err, fields(path = %path.as_ref().display()))]
-pub fn read_semantic_model_auto_from_file(path: impl AsRef<Path>) -> ModelResult<SemanticModel> {
-    let mut file = File::open(path.as_ref())?;
-    read_semantic_model_auto(&mut file)
-}
-
-/// Reads and lowers a semantic model from a [`Res`].
-#[instrument(level = "debug", skip_all, err, fields(resref = %res.resref(), use_cache))]
-pub fn read_semantic_model_from_res(res: &Res, use_cache: bool) -> ModelResult<SemanticModel> {
-    if res.resref().res_type() != MODEL_RES_TYPE {
-        return Err(ModelError::msg(format!(
-            "expected mdl resource, got {}",
-            res.resref()
-        )));
-    }
-
-    let ascii = crate::read_ascii_model_from_res(res, use_cache)?;
-    lower_ascii_model(&ascii)
-}
-
-/// Reads and lowers a semantic model from a [`Res`] using automatic
-/// ASCII/compiled dispatch.
-#[instrument(level = "debug", skip_all, err, fields(resref = %res.resref(), use_cache))]
-pub fn read_semantic_model_auto_from_res(res: &Res, use_cache: bool) -> ModelResult<SemanticModel> {
-    if res.resref().res_type() != MODEL_RES_TYPE {
-        return Err(ModelError::msg(format!(
-            "expected mdl resource, got {}",
-            res.resref()
-        )));
-    }
-
-    let model = crate::read_model_from_res(res, use_cache)?;
-    model.parse_semantic_auto()
+/// Writes a semantic MDL model as canonical ASCII.
+#[instrument(level = "debug", skip_all, err, fields(model_name = %model.geometry_name))]
+pub fn write_semantic_model<W: Write>(writer: &mut W, model: &SemanticModel) -> ModelResult<()> {
+    let ascii = crate::ascii::lower_semantic_model_to_ascii(model, None);
+    crate::write_ascii_model(writer, &ascii)
 }
 
 /// Lowers a source-faithful ASCII MDL model into typed semantic data.
@@ -2587,16 +2595,17 @@ fn parse_i32_row_array<const N: usize>(
 #[allow(clippy::panic)]
 #[cfg(test)]
 mod tests {
-    use std::{collections::BTreeMap, error::Error};
+    use std::{collections::BTreeMap, error::Error, io::Cursor};
 
+    use nwnrs_resman::CachePolicy;
     use nwnrs_test_support::{
         demand_resource, require_game_resource, skip_if_game_resources_unavailable,
     };
 
     use crate::{
-        MODEL_RES_TYPE, Model, ModelDiagnosticKind, NodeKind, SemanticPropertyValue,
-        lower_binary_model_to_ascii, parse_semantic_model, read_binary_model_from_res,
-        read_semantic_model_auto_from_res,
+        BinaryModel, MODEL_RES_TYPE, Model, ModelDiagnosticKind, NodeKind, SemanticModel,
+        SemanticPropertyValue, lower_binary_model_to_ascii, parse_semantic_model,
+        read_semantic_model, write_semantic_model,
     };
 
     #[test]
@@ -2951,6 +2960,29 @@ donemodel demo
         Ok(())
     }
 
+    #[test]
+    fn semantic_writer_roundtrips_canonical_model() -> Result<(), Box<dyn Error>> {
+        let model = match shipped_ascii_semantic_fixture() {
+            Ok(model) => model,
+            Err(error) => return skip_if_game_resources_unavailable(error),
+        };
+
+        let mut encoded = Vec::new();
+        if let Err(error) = write_semantic_model(&mut encoded, &model) {
+            panic!("write semantic model: {error}");
+        }
+
+        let mut cursor = Cursor::new(encoded);
+        let reparsed = read_semantic_model(&mut cursor).unwrap_or_else(|error| {
+            panic!("read rewritten semantic model: {error}");
+        });
+        assert_eq!(
+            normalize_semantic_model(reparsed),
+            normalize_semantic_model(model)
+        );
+        Ok(())
+    }
+
     fn diagnostic_counts(model: &crate::SemanticModel) -> BTreeMap<ModelDiagnosticKind, usize> {
         let mut counts = BTreeMap::new();
         for diagnostic in &model.diagnostics {
@@ -2960,22 +2992,27 @@ donemodel demo
         counts
     }
 
+    fn normalize_semantic_model(mut model: SemanticModel) -> SemanticModel {
+        model.diagnostics.clear();
+        model
+    }
+
     fn shipped_ascii_semantic_fixture() -> Result<crate::SemanticModel, Box<dyn Error>> {
         let res = require_game_resource(demand_resource("a_ba_casts", MODEL_RES_TYPE))?;
-        let binary = read_binary_model_from_res(&res, true)?;
+        let binary = BinaryModel::from_res(&res, CachePolicy::Use)?;
         let ascii = lower_binary_model_to_ascii(&binary)?;
         Ok(parse_semantic_model(&ascii.to_text())?)
     }
 
     fn shipped_ascii_semantic_fixture_bytes() -> Result<Vec<u8>, Box<dyn Error>> {
         let res = require_game_resource(demand_resource("a_ba_casts", MODEL_RES_TYPE))?;
-        let binary = read_binary_model_from_res(&res, true)?;
+        let binary = BinaryModel::from_res(&res, CachePolicy::Use)?;
         let ascii = lower_binary_model_to_ascii(&binary)?;
         Ok(ascii.to_text().into_bytes())
     }
 
     fn shipped_compiled_semantic_fixture() -> Result<crate::SemanticModel, Box<dyn Error>> {
         let res = require_game_resource(demand_resource("a_ba2", MODEL_RES_TYPE))?;
-        Ok(read_semantic_model_auto_from_res(&res, true)?)
+        Ok(SemanticModel::from_auto_res(&res, CachePolicy::Use)?)
     }
 }

@@ -142,7 +142,7 @@ pub fn new_resnwsync_manifest(
         let restype = u16::try_from(restype_value).map_err(|error| {
             ResNWSyncError::msg(format!("invalid restype {restype_value}: {error}"))
         })?;
-        let rr = new_res_ref(resref_name, ResType(restype))?;
+        let rr = ResRef::new(resref_name, ResType(restype))?;
         contents.insert(rr.clone());
         sha1map.insert(rr, parse_secure_hash(&resref_sha1)?);
     }
@@ -204,7 +204,7 @@ mod tests {
 
     use nwnrs_checksums::secure_hash;
     use nwnrs_nwsync::{Manifest, ManifestEntry};
-    use nwnrs_resref::new_res_ref;
+    use nwnrs_resref::ResRef;
     use nwnrs_restype::ResType;
 
     use super::open_or_create_nwsync;
@@ -229,11 +229,11 @@ mod tests {
             Err(error) => panic!("open repo: {error}"),
         };
 
-        let alpha = match new_res_ref("alpha", ResType(2017)) {
+        let alpha = match ResRef::new("alpha", ResType(2017)) {
             Ok(value) => value,
             Err(error) => panic!("alpha resref: {error}"),
         };
-        let beta = match new_res_ref("beta", ResType(2017)) {
+        let beta = match ResRef::new("beta", ResType(2017)) {
             Ok(value) => value,
             Err(error) => panic!("beta resref: {error}"),
         };

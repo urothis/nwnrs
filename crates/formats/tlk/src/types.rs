@@ -237,8 +237,8 @@ pub struct SingleTlk {
     pub(crate) io_entries_offset: u64,
     pub(crate) source_bytes: Option<Vec<u8>>,
     pub(crate) source_language: Option<Language>,
-    /// Whether lazy reads should populate the internal entry cache.
-    pub use_cache: bool,
+    /// Cache behavior for resource reads and lazy entry lookups.
+    pub cache_policy: CachePolicy,
     pub(crate) io_cache: Option<WeightedLru<StrRef, TlkEntry>>,
 }
 
@@ -252,7 +252,7 @@ impl fmt::Debug for SingleTlk {
             .field("io_start_pos", &self.io_start_pos)
             .field("io_entry_count", &self.io_entry_count)
             .field("io_entries_offset", &self.io_entries_offset)
-            .field("use_cache", &self.use_cache)
+            .field("cache_policy", &self.cache_policy)
             .field(
                 "io_cache_entries",
                 &self.io_cache.as_ref().map(WeightedLru::len).unwrap_or(0),
@@ -296,21 +296,21 @@ impl SingleTlk {
             io_entries_offset:      0,
             source_bytes:           None,
             source_language:        None,
-            use_cache:              true,
+            cache_policy:           CachePolicy::Use,
             io_cache:               None,
         }
     }
 
     /// Opens a TLK file from disk.
-    pub fn from_file(path: impl AsRef<Path>, use_cache: bool) -> TlkResult<Self> {
+    pub fn from_file(path: impl AsRef<Path>, cache_policy: CachePolicy) -> TlkResult<Self> {
         let file = File::open(path.as_ref())?;
-        crate::io::read_single_tlk(file, use_cache)
+        crate::io::read_single_tlk(file, cache_policy)
     }
 
     /// Reads a TLK payload from a [`Res`].
-    pub fn from_res(res: &Res, use_cache: bool) -> TlkResult<Self> {
-        let bytes = res.read_all(false)?;
-        crate::io::read_single_tlk(Cursor::new(bytes), use_cache)
+    pub fn from_res(res: &Res, cache_policy: CachePolicy) -> TlkResult<Self> {
+        let bytes = res.read_all(cache_policy)?;
+        crate::io::read_single_tlk(Cursor::new(bytes), cache_policy)
     }
 
     /// Returns the highest string reference known to this table.
@@ -329,7 +329,7 @@ impl SingleTlk {
             return Ok(None);
         }
 
-        if self.use_cache
+        if self.cache_policy.uses_cache()
             && let Some(entry) = self
                 .io_cache
                 .as_mut()
@@ -338,7 +338,7 @@ impl SingleTlk {
             return Ok(Some(entry));
         }
 
-        if self.use_cache {
+        if self.cache_policy.uses_cache() {
             let (weight, entry) = self.get_from_io(str_ref)?;
             if let Some(cache) = self.io_cache.as_mut() {
                 cache.insert_weighted(str_ref, weight, entry.clone());
@@ -397,18 +397,18 @@ impl Tlk {
     /// Builds a TLK chain from resource pairs.
     pub fn from_res_pairs(
         chain: &[(Option<Res>, Option<Res>)],
-        use_cache: bool,
+        cache_policy: CachePolicy,
     ) -> TlkResult<Self> {
         let mut pairs = Vec::with_capacity(chain.len());
         for (male, female) in chain {
             pairs.push(TlkPair {
                 male:   male
                     .as_ref()
-                    .map(|res| SingleTlk::from_res(res, use_cache))
+                    .map(|res| SingleTlk::from_res(res, cache_policy))
                     .transpose()?,
                 female: female
                     .as_ref()
-                    .map(|res| SingleTlk::from_res(res, use_cache))
+                    .map(|res| SingleTlk::from_res(res, cache_policy))
                     .transpose()?,
             });
         }

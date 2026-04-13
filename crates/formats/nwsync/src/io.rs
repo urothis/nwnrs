@@ -244,7 +244,7 @@ fn read_resref<R: Read>(reader: &mut R) -> ManifestResult<(ResRef, [u8; 16])> {
     let end = raw.iter().position(|byte| *byte == 0).unwrap_or(raw.len());
     let res_ref = String::from_utf8_lossy(raw.get(..end).unwrap_or(&raw)).to_ascii_lowercase();
     let res_type = ResType(read_u16(reader)?);
-    Ok((new_res_ref(res_ref, res_type)?, raw))
+    Ok((ResRef::new(res_ref, res_type)?, raw))
 }
 
 fn write_resref<W: Write>(writer: &mut W, entry: &ManifestEntry) -> ManifestResult<()> {
@@ -307,18 +307,18 @@ fn check(condition: bool, message: impl Into<String>) -> ManifestResult<()> {
 #[cfg(test)]
 mod tests {
     use nwnrs_checksums::secure_hash;
-    use nwnrs_resref::new_res_ref;
+    use nwnrs_resref::ResRef;
     use nwnrs_restype::ResType;
 
     use crate::{Manifest, ManifestEntry, ManifestEntrySource, read_manifest, write_manifest};
 
     #[test]
     fn manifest_edit_rewrites_canonical_primary_and_mapping_structure() {
-        let primary_rr = match new_res_ref("hello", ResType(2017)) {
+        let primary_rr = match ResRef::new("hello", ResType(2017)) {
             Ok(resref) => resref,
             Err(error) => panic!("resref: {error}"),
         };
-        let mapping_rr = match new_res_ref("world", ResType(2017)) {
+        let mapping_rr = match ResRef::new("world", ResType(2017)) {
             Ok(resref) => resref,
             Err(error) => panic!("resref: {error}"),
         };
@@ -393,13 +393,13 @@ mod tests {
 
     #[test]
     fn manifest_write_canonicalizes_order_and_hash_mappings() {
-        let alpha = new_res_ref("alpha", ResType(2017)).unwrap_or_else(|error| {
+        let alpha = ResRef::new("alpha", ResType(2017)).unwrap_or_else(|error| {
             panic!("alpha resref: {error}");
         });
-        let beta = new_res_ref("beta", ResType(2017)).unwrap_or_else(|error| {
+        let beta = ResRef::new("beta", ResType(2017)).unwrap_or_else(|error| {
             panic!("beta resref: {error}");
         });
-        let gamma = new_res_ref("gamma", ResType(2017)).unwrap_or_else(|error| {
+        let gamma = ResRef::new("gamma", ResType(2017)).unwrap_or_else(|error| {
             panic!("gamma resref: {error}");
         });
 

@@ -4,10 +4,7 @@ use nwnrs_resman::prelude::*;
 use nwnrs_resref::prelude::*;
 use nwnrs_restype::prelude::*;
 
-use crate::{
-    MODEL_RES_TYPE, NwnMaterial, NwnScene, NwnTextureRef, NwnTextureSlot,
-    read_scene_model_auto_from_res,
-};
+use crate::{MODEL_RES_TYPE, NwnMaterial, NwnScene, NwnTextureRef, NwnTextureSlot};
 
 /// NWN texture resource kinds the model resolver can search for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -339,7 +336,7 @@ fn resolve_model_backed_texture_candidate(
         return SceneTextureResolution::Ignored;
     }
 
-    let nested_scene = match read_scene_model_auto_from_res(&model_res, true) {
+    let nested_scene = match NwnScene::from_auto_res(&model_res, CachePolicy::Use) {
         Ok(scene) => scene,
         Err(_) => {
             visited_models.remove(&trimmed.to_ascii_lowercase());

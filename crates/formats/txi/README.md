@@ -12,7 +12,7 @@ Typed parser for Neverwinter Nights texture info (`TXI`) resources.
 - support optional sidecar lookup by texture name through `ResMan`
 
 The primary entry points are [`read_txi`], [`build_txi_text`], [`write_txi`],
-[`read_optional_txi_from_resman`], and [`TxiFile`].
+[`TxiFile::optional_from_resman`], and [`TxiFile`].
 
 ## Invariants
 

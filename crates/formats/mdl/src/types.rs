@@ -46,6 +46,24 @@ impl Model {
     pub fn into_bytes(self) -> Vec<u8> {
         self.bytes
     }
+
+    /// Reads an `MDL` payload from disk.
+    pub fn from_file(path: impl AsRef<std::path::Path>) -> ModelResult<Self> {
+        let mut file = std::fs::File::open(path.as_ref())?;
+        crate::read_model(&mut file)
+    }
+
+    /// Reads an `MDL` payload from a [`Res`].
+    pub fn from_res(res: &Res, cache_policy: CachePolicy) -> ModelResult<Self> {
+        if res.resref().res_type() != MODEL_RES_TYPE {
+            return Err(ModelError::msg(format!(
+                "expected mdl resource, got {}",
+                res.resref()
+            )));
+        }
+
+        Ok(Self::new(res.read_all(cache_policy)?))
+    }
 }
 
 impl fmt::Debug for Model {

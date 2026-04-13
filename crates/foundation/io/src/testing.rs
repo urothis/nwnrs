@@ -59,7 +59,7 @@ fn roundtrip_erf_like(bytes: &[u8], filename: &str) -> Result<Vec<u8>, Box<dyn E
 }
 
 fn roundtrip_tlk(bytes: &[u8]) -> Result<Vec<u8>, Box<dyn Error>> {
-    let mut tlk = read_single_tlk(Cursor::new(bytes.to_vec()), false)?;
+    let mut tlk = read_single_tlk(Cursor::new(bytes.to_vec()), CachePolicy::Bypass)?;
     let mut writer = Cursor::new(Vec::new());
     write_single_tlk(&mut writer, &mut tlk)?;
     Ok(writer.into_inner())
@@ -120,7 +120,7 @@ async fn load_resource(resource: &str) -> Result<Vec<u8>, Box<dyn Error>> {
 }
 
 fn generated_gff_bytes(file_type: &str) -> Result<Vec<u8>, Box<dyn Error>> {
-    let mut root = new_gff_root(file_type);
+    let mut root = GffRoot::new(file_type);
     root.root.put_value(
         "Comment".to_string(),
         GffValue::CExoString("fixture".to_string()),
@@ -149,7 +149,7 @@ fn generated_tlk_bytes() -> Result<Vec<u8>, Box<dyn Error>> {
 }
 
 fn generated_ssf_bytes() -> Result<Vec<u8>, Box<dyn Error>> {
-    let mut ssf = new_ssf();
+    let mut ssf = SsfRoot::new();
     ssf.entries.push(SsfEntry::new("hello", 7));
     let mut writer = Vec::new();
     write_ssf(&mut writer, &ssf)?;

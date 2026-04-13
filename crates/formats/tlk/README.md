@@ -9,15 +9,17 @@
 - preserve entry metadata such as sound references, flags, and stored text
   bytes when possible
 - support lazy stream-backed reads with optional caching
+- support explicit male/female chain writes through [`write_tlk_chain`]
 
 The principal entry points are [`read_single_tlk`], [`write_single_tlk`],
-[`SingleTlk`], and [`Tlk`].
+[`write_tlk_chain`], [`SingleTlk`], and [`Tlk`].
 
 ## Example
 
 ```rust
 use std::io::Cursor;
 
+use nwnrs_resman::CachePolicy;
 use nwnrs_tlk::{SingleTlk, TlkEntry, read_single_tlk, write_single_tlk};
 
 let mut tlk = SingleTlk::new();
@@ -27,7 +29,7 @@ let mut bytes = Cursor::new(Vec::new());
 write_single_tlk(&mut bytes, &mut tlk)?;
 bytes.set_position(0);
 
-let mut decoded = read_single_tlk(bytes, true)?;
+let mut decoded = read_single_tlk(bytes, CachePolicy::Use)?;
 let entry = decoded.get(0)?.expect("entry 0 should exist");
 assert_eq!(entry.text, "Hello there");
 # Ok::<(), Box<dyn std::error::Error>>(())

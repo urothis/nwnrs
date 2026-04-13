@@ -8,5 +8,5 @@ pub use types::*;
 
 /// Common imports for consumers of this crate.
 pub mod prelude {
-    pub use crate::{SsfEntry, SsfRoot, new_ssf, read_ssf, write_ssf};
+    pub use crate::{SsfEntry, SsfError, SsfResult, SsfRoot, read_ssf, write_ssf};
 }

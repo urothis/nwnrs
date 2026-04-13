@@ -1,4 +1,9 @@
-use std::{collections::BTreeMap, error::Error, fmt};
+use std::{
+    collections::BTreeMap,
+    error::Error,
+    fmt,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 
 use serde::{Deserialize, Serialize};
 
@@ -395,29 +400,30 @@ impl Assembler {
 }
 
 struct O0Compiler<'a> {
-    hir:                  &'a HirModule,
-    builtin_functions:    BTreeMap<String, (u16, &'a BuiltinFunction)>,
-    builtin_constants:    BTreeMap<String, BuiltinValue>,
-    constant_env:         BTreeMap<String, ConstValue>,
-    structs:              BTreeMap<String, &'a crate::HirStruct>,
-    functions:            BTreeMap<String, &'a HirFunction>,
-    entry_function:       Option<&'a HirFunction>,
-    global_layout:        BTreeMap<String, ValueLayout>,
-    global_size:          usize,
-    function_labels:      BTreeMap<String, LabelId>,
-    function_exit_labels: BTreeMap<String, LabelId>,
-    function_end_labels:  BTreeMap<String, LabelId>,
-    globals_label:        Option<LabelId>,
-    globals_end_label:    Option<LabelId>,
-    variable_debug:       Vec<VariableDebugInfo>,
-    line_debug:           LineDebugTracker,
-    source_map:           Option<&'a SourceMap>,
-    assembler:            Assembler,
+    hir:                   &'a HirModule,
+    builtin_functions:     BTreeMap<String, (u16, &'a BuiltinFunction)>,
+    builtin_constants:     BTreeMap<String, BuiltinValue>,
+    constant_env:          BTreeMap<String, ConstValue>,
+    structs:               BTreeMap<String, &'a crate::HirStruct>,
+    functions:             BTreeMap<String, &'a HirFunction>,
+    entry_function:        Option<&'a HirFunction>,
+    global_layout:         BTreeMap<String, ValueLayout>,
+    global_size:           usize,
+    function_labels:       BTreeMap<String, LabelId>,
+    function_exit_labels:  BTreeMap<String, LabelId>,
+    function_end_labels:   BTreeMap<String, LabelId>,
+    globals_label:         Option<LabelId>,
+    globals_end_label:     Option<LabelId>,
+    variable_debug:        Vec<VariableDebugInfo>,
+    line_debug:            LineDebugTracker,
+    source_map:            Option<&'a SourceMap>,
+    current_function_name: Option<&'a str>,
+    compile_time:          SystemTime,
+    assembler:             Assembler,
 }
 
 #[derive(Clone)]
 struct ValueLayout {
-    ty:     SemanticType,
     offset: usize,
     size:   usize,
 }
@@ -489,7 +495,6 @@ impl<'a> O0Compiler<'a> {
             global_layout.insert(
                 global.name.clone(),
                 ValueLayout {
-                    ty: global.ty.clone(),
                     offset: global_size,
                     size,
                 },
@@ -534,6 +539,8 @@ impl<'a> O0Compiler<'a> {
             variable_debug: Vec::new(),
             line_debug: LineDebugTracker::default(),
             source_map,
+            current_function_name: None,
+            compile_time: SystemTime::now(),
             assembler,
         })
     }
@@ -714,104 +721,109 @@ impl<'a> O0Compiler<'a> {
     }
 
     fn emit_function(&mut self, function: &'a HirFunction) -> Result<(), CodegenError> {
-        let layout = self.function_layout(function)?;
-        let start = self
-            .function_labels
-            .get(&function.name)
-            .copied()
-            .ok_or_else(|| {
-                CodegenError::new(
-                    Some(function.span),
-                    format!("missing function label for {:?}", function.name),
-                )
-            })?;
-        let exit = self
-            .function_exit_labels
-            .get(&function.name)
-            .copied()
-            .ok_or_else(|| {
-                CodegenError::new(
-                    Some(function.span),
-                    format!("missing function exit label for {:?}", function.name),
-                )
-            })?;
-        let end = self
-            .function_end_labels
-            .get(&function.name)
-            .copied()
-            .ok_or_else(|| {
-                CodegenError::new(
-                    Some(function.span),
-                    format!("missing function end label for {:?}", function.name),
-                )
-            })?;
-        if let Some(retval) = &layout.return_layout {
-            self.variable_debug.push(VariableDebugInfo {
-                name: "#retval".to_string(),
-                ty: function.return_type.clone(),
-                start,
-                end: Some(end),
-                stack_loc: usize_to_u32(retval.offset, "return stack location")?,
-            });
-        }
-        for parameter in &function.parameters {
-            let slot = layout.locals.get(&parameter.local).ok_or_else(|| {
-                CodegenError::new(
-                    Some(function.span),
-                    format!("unknown local slot {:?}", parameter.local),
-                )
-            })?;
-            self.variable_debug.push(VariableDebugInfo {
-                name: parameter.name.clone(),
-                ty: parameter.ty.clone(),
-                start,
-                end: Some(end),
-                stack_loc: usize_to_u32(slot.offset, "parameter stack location")?,
-            });
-        }
-        let mut emitter = FunctionEmitter {
-            compiler: self,
-            function,
-            layout,
-            temp_bytes: 0,
-            break_targets: Vec::new(),
-            continue_targets: Vec::new(),
-            scope_stack: Vec::new(),
-        };
-        emitter.emit_prologue()?;
-        if let Some(body) = &function.body {
-            emitter.emit_block(body)?;
-            emitter.compiler.assembler.place_label(exit);
-            let final_line_start = emitter.compiler.assembler.new_label();
-            emitter.compiler.assembler.place_label(final_line_start);
-            emitter
-                .compiler
-                .start_line_end_at(body.span, final_line_start);
-            if function.return_type == SemanticType::Void {
-                emitter.emit_function_epilogue();
+        let previous_function_name = self.current_function_name.replace(function.name.as_str());
+        let result = (|| {
+            let layout = self.function_layout(function)?;
+            let start = self
+                .function_labels
+                .get(&function.name)
+                .copied()
+                .ok_or_else(|| {
+                    CodegenError::new(
+                        Some(function.span),
+                        format!("missing function label for {:?}", function.name),
+                    )
+                })?;
+            let exit = self
+                .function_exit_labels
+                .get(&function.name)
+                .copied()
+                .ok_or_else(|| {
+                    CodegenError::new(
+                        Some(function.span),
+                        format!("missing function exit label for {:?}", function.name),
+                    )
+                })?;
+            let end = self
+                .function_end_labels
+                .get(&function.name)
+                .copied()
+                .ok_or_else(|| {
+                    CodegenError::new(
+                        Some(function.span),
+                        format!("missing function end label for {:?}", function.name),
+                    )
+                })?;
+            if let Some(retval) = &layout.return_layout {
+                self.variable_debug.push(VariableDebugInfo {
+                    name: "#retval".to_string(),
+                    ty: function.return_type.clone(),
+                    start,
+                    end: Some(end),
+                    stack_loc: usize_to_u32(retval.offset, "return stack location")?,
+                });
             }
-            emitter
-                .compiler
-                .assembler
-                .push(simple_instruction(NcsOpcode::Ret));
-            let final_line_end = emitter.compiler.assembler.new_label();
-            emitter.compiler.assembler.place_label(final_line_end);
-            emitter.compiler.end_line_end_at(body.span, final_line_end);
-        } else if function.return_type == SemanticType::Void {
-            emitter.compiler.assembler.place_label(exit);
-            emitter.emit_function_epilogue();
-            emitter
-                .compiler
-                .assembler
-                .push(simple_instruction(NcsOpcode::Ret));
-        } else {
-            emitter.compiler.assembler.place_label(exit);
-            emitter
-                .compiler
-                .assembler
-                .push(simple_instruction(NcsOpcode::Ret));
-        }
-        Ok(())
+            for parameter in &function.parameters {
+                let slot = layout.locals.get(&parameter.local).ok_or_else(|| {
+                    CodegenError::new(
+                        Some(function.span),
+                        format!("unknown local slot {:?}", parameter.local),
+                    )
+                })?;
+                self.variable_debug.push(VariableDebugInfo {
+                    name: parameter.name.clone(),
+                    ty: parameter.ty.clone(),
+                    start,
+                    end: Some(end),
+                    stack_loc: usize_to_u32(slot.offset, "parameter stack location")?,
+                });
+            }
+            let mut emitter = FunctionEmitter {
+                compiler: self,
+                function,
+                layout,
+                temp_bytes: 0,
+                break_targets: Vec::new(),
+                continue_targets: Vec::new(),
+                scope_stack: Vec::new(),
+            };
+            emitter.emit_prologue()?;
+            if let Some(body) = &function.body {
+                emitter.emit_block(body)?;
+                emitter.compiler.assembler.place_label(exit);
+                let final_line_start = emitter.compiler.assembler.new_label();
+                emitter.compiler.assembler.place_label(final_line_start);
+                emitter
+                    .compiler
+                    .start_line_end_at(body.span, final_line_start);
+                if function.return_type == SemanticType::Void {
+                    emitter.emit_function_epilogue();
+                }
+                emitter
+                    .compiler
+                    .assembler
+                    .push(simple_instruction(NcsOpcode::Ret));
+                let final_line_end = emitter.compiler.assembler.new_label();
+                emitter.compiler.assembler.place_label(final_line_end);
+                emitter.compiler.end_line_end_at(body.span, final_line_end);
+            } else if function.return_type == SemanticType::Void {
+                emitter.compiler.assembler.place_label(exit);
+                emitter.emit_function_epilogue();
+                emitter
+                    .compiler
+                    .assembler
+                    .push(simple_instruction(NcsOpcode::Ret));
+            } else {
+                emitter.compiler.assembler.place_label(exit);
+                emitter
+                    .compiler
+                    .assembler
+                    .push(simple_instruction(NcsOpcode::Ret));
+            }
+            Ok(())
+        })();
+        self.current_function_name = previous_function_name;
+        result
     }
 
     fn function_layout(&self, function: &HirFunction) -> Result<FunctionLayout, CodegenError> {
@@ -819,7 +831,6 @@ impl<'a> O0Compiler<'a> {
         let return_layout = if function.return_type != SemanticType::Void {
             let size = size_of_type(&function.return_type, &self.structs)?;
             let layout = ValueLayout {
-                ty: function.return_type.clone(),
                 offset,
                 size,
             };
@@ -835,7 +846,6 @@ impl<'a> O0Compiler<'a> {
             locals.insert(
                 parameter.local,
                 ValueLayout {
-                    ty: parameter.ty.clone(),
                     offset,
                     size,
                 },
@@ -852,7 +862,6 @@ impl<'a> O0Compiler<'a> {
             locals.insert(
                 local.id,
                 ValueLayout {
-                    ty: local.ty.clone(),
                     offset,
                     size,
                 },
@@ -993,6 +1002,34 @@ impl<'a> O0Compiler<'a> {
         };
         let location = file.location(position)?;
         Some((span.source_id, location.line))
+    }
+
+    fn magic_literal_value(
+        &self,
+        literal: &crate::MagicLiteral,
+        span: Option<crate::Span>,
+    ) -> Literal {
+        match literal {
+            crate::MagicLiteral::Function => {
+                Literal::String(self.current_function_name.unwrap_or_default().to_string())
+            }
+            crate::MagicLiteral::File => {
+                let value = span
+                    .and_then(|span| self.source_map?.get(span.source_id))
+                    .map(|file| file.name.clone())
+                    .unwrap_or_default();
+                Literal::String(value)
+            }
+            crate::MagicLiteral::Line => {
+                let value = span
+                    .and_then(|span| self.line_location(span))
+                    .map(|(_source_id, line)| i32::try_from(line).ok().unwrap_or(i32::MAX))
+                    .unwrap_or(0);
+                Literal::Integer(value)
+            }
+            crate::MagicLiteral::Date => Literal::String(format_magic_date(self.compile_time)),
+            crate::MagicLiteral::Time => Literal::String(format_magic_time(self.compile_time)),
+        }
     }
 }
 
@@ -1785,11 +1822,33 @@ fn emit_expr_common(
             Ok(())
         }
         HirExprKind::Conditional {
-            ..
-        } => Err(CodegenError::new(
-            Some(expr.span),
-            "conditional expression code generation is not implemented yet",
-        )),
+            condition,
+            when_true,
+            when_false,
+        } => {
+            let base_temp_bytes = *temp_bytes;
+            emit_expr_common(compiler, temp_bytes, layout, condition)?;
+            if *temp_bytes < base_temp_bytes + 4 {
+                return Err(CodegenError::new(
+                    Some(condition.span),
+                    "conditional expression requires an integer condition",
+                ));
+            }
+
+            let false_label = compiler.assembler.new_label();
+            let end_label = compiler.assembler.new_label();
+            *temp_bytes -= 4;
+            compiler.assembler.push_jump(NcsOpcode::Jz, false_label);
+
+            emit_expr_common(compiler, temp_bytes, layout, when_true)?;
+            compiler.assembler.push_jump(NcsOpcode::Jmp, end_label);
+
+            compiler.assembler.place_label(false_label);
+            *temp_bytes = base_temp_bytes;
+            emit_expr_common(compiler, temp_bytes, layout, when_false)?;
+            compiler.assembler.place_label(end_label);
+            Ok(())
+        }
         HirExprKind::Assignment {
             op,
             left,
@@ -1972,15 +2031,16 @@ fn emit_store_target(
     target: &HirExpr,
     span: crate::Span,
 ) -> Result<(), CodegenError> {
-    match &target.kind {
-        HirExprKind::Value(crate::HirValueRef::Local(local)) => {
+    let resolved = resolve_assignment_target(target, &compiler.structs, Some(span))?;
+    match resolved.root {
+        AssignmentTargetRoot::Local(local) => {
             let layout = layout.ok_or_else(|| {
                 CodegenError::new(Some(span), "local assignment used outside a function")
             })?;
-            let slot = layout.locals.get(local).ok_or_else(|| {
+            let slot = layout.locals.get(&local).ok_or_else(|| {
                 CodegenError::new(Some(span), format!("unknown local slot {:?}", local))
             })?;
-            let offset = usize_to_i32(slot.offset, "local assignment offset")?
+            let offset = usize_to_i32(slot.offset + resolved.offset, "local assignment offset")?
                 - usize_to_i32(
                     function_frame_bytes(layout) + *temp_bytes,
                     "local assignment frame size",
@@ -1988,76 +2048,23 @@ fn emit_store_target(
             compiler.assembler.push(NcsInstruction {
                 opcode:  NcsOpcode::Assignment,
                 auxcode: NcsAuxCode::TypeVoid,
-                extra:   assignment_extra(offset, slot.size),
+                extra:   assignment_extra(offset, resolved.size),
             });
             Ok(())
         }
-        HirExprKind::Value(crate::HirValueRef::Global(name))
-        | HirExprKind::Value(crate::HirValueRef::ConstGlobal(name)) => {
+        AssignmentTargetRoot::Global(name) => {
             let slot = compiler.global_layout.get(name).ok_or_else(|| {
                 CodegenError::new(Some(span), format!("unknown global {:?}", name))
             })?;
-            let offset = usize_to_i32(slot.offset, "global assignment offset")?
+            let offset = usize_to_i32(slot.offset + resolved.offset, "global assignment offset")?
                 - usize_to_i32(compiler.global_size, "global size")?;
             compiler.assembler.push(NcsInstruction {
                 opcode:  NcsOpcode::AssignmentBase,
                 auxcode: NcsAuxCode::TypeVoid,
-                extra:   assignment_extra(offset, slot.size),
+                extra:   assignment_extra(offset, resolved.size),
             });
             Ok(())
         }
-        HirExprKind::FieldAccess {
-            base,
-            field,
-        } => match &base.kind {
-            HirExprKind::Value(crate::HirValueRef::Local(local)) => {
-                let layout = layout.ok_or_else(|| {
-                    CodegenError::new(Some(span), "local field assignment used outside a function")
-                })?;
-                let slot = layout.locals.get(local).ok_or_else(|| {
-                    CodegenError::new(Some(span), format!("unknown local slot {:?}", local))
-                })?;
-                let field_layout = field_layout(&slot.ty, field, &compiler.structs, Some(span))?;
-                let offset = usize_to_i32(
-                    slot.offset + field_layout.offset,
-                    "local field assignment offset",
-                )? - usize_to_i32(
-                    function_frame_bytes(layout) + *temp_bytes,
-                    "local field assignment frame size",
-                )?;
-                compiler.assembler.push(NcsInstruction {
-                    opcode:  NcsOpcode::Assignment,
-                    auxcode: NcsAuxCode::TypeVoid,
-                    extra:   assignment_extra(offset, field_layout.size),
-                });
-                Ok(())
-            }
-            HirExprKind::Value(crate::HirValueRef::Global(name))
-            | HirExprKind::Value(crate::HirValueRef::ConstGlobal(name)) => {
-                let slot = compiler.global_layout.get(name).ok_or_else(|| {
-                    CodegenError::new(Some(span), format!("unknown global {:?}", name))
-                })?;
-                let field_layout = field_layout(&slot.ty, field, &compiler.structs, Some(span))?;
-                let offset = usize_to_i32(
-                    slot.offset + field_layout.offset,
-                    "global field assignment offset",
-                )? - usize_to_i32(compiler.global_size, "global size")?;
-                compiler.assembler.push(NcsInstruction {
-                    opcode:  NcsOpcode::AssignmentBase,
-                    auxcode: NcsAuxCode::TypeVoid,
-                    extra:   assignment_extra(offset, field_layout.size),
-                });
-                Ok(())
-            }
-            _ => Err(CodegenError::new(
-                Some(span),
-                "field assignment code generation requires a direct local or global base",
-            )),
-        },
-        _ => Err(CodegenError::new(
-            Some(span),
-            "assignment target code generation is not implemented yet",
-        )),
     }
 }
 
@@ -2113,11 +2120,9 @@ fn emit_push_literal(
                 });
             }
         }
-        Literal::Magic(_) => {
-            return Err(CodegenError::new(
-                span,
-                "magic literal code generation is not implemented yet",
-            ));
+        Literal::Magic(magic) => {
+            let resolved = compiler.magic_literal_value(magic, span);
+            return emit_push_literal(compiler, temp_bytes, &resolved, ty, span);
         }
     }
 
@@ -2136,6 +2141,7 @@ fn literal_from_builtin_value(value: &BuiltinValue) -> Option<Literal> {
         BuiltinValue::LocationInvalid => Some(Literal::LocationInvalid),
         BuiltinValue::Json(value) => Some(Literal::Json(value.clone())),
         BuiltinValue::Vector(value) => Some(Literal::Vector(*value)),
+        BuiltinValue::Raw(_) => None,
     }
 }
 
@@ -2430,6 +2436,51 @@ fn field_layout(
     }
 }
 
+enum AssignmentTargetRoot<'a> {
+    Local(HirLocalId),
+    Global(&'a str),
+}
+
+struct AssignmentTarget<'a> {
+    root:   AssignmentTargetRoot<'a>,
+    offset: usize,
+    size:   usize,
+}
+
+fn resolve_assignment_target<'a>(
+    target: &'a HirExpr,
+    structs: &BTreeMap<String, &'a crate::HirStruct>,
+    span: Option<crate::Span>,
+) -> Result<AssignmentTarget<'a>, CodegenError> {
+    match &target.kind {
+        HirExprKind::Value(crate::HirValueRef::Local(local)) => Ok(AssignmentTarget {
+            root:   AssignmentTargetRoot::Local(*local),
+            offset: 0,
+            size:   size_of_type(&target.ty, structs)?,
+        }),
+        HirExprKind::Value(crate::HirValueRef::Global(name))
+        | HirExprKind::Value(crate::HirValueRef::ConstGlobal(name)) => Ok(AssignmentTarget {
+            root:   AssignmentTargetRoot::Global(name),
+            offset: 0,
+            size:   size_of_type(&target.ty, structs)?,
+        }),
+        HirExprKind::FieldAccess {
+            base,
+            field,
+        } => {
+            let mut resolved = resolve_assignment_target(base, structs, span)?;
+            let field_layout = field_layout(&base.ty, field, structs, span)?;
+            resolved.offset += field_layout.offset;
+            resolved.size = field_layout.size;
+            Ok(resolved)
+        }
+        _ => Err(CodegenError::new(
+            span,
+            "assignment target code generation is not implemented yet",
+        )),
+    }
+}
+
 fn string_extra(value: &str) -> Result<Vec<u8>, CodegenError> {
     let length = u16::try_from(value.len()).map_err(|_error| {
         CodegenError::new(None, "string constant exceeds NCS 16-bit length limit")
@@ -2438,6 +2489,61 @@ fn string_extra(value: &str) -> Result<Vec<u8>, CodegenError> {
     bytes.extend_from_slice(&length.to_be_bytes());
     bytes.extend_from_slice(value.as_bytes());
     Ok(bytes)
+}
+
+fn format_magic_date(timestamp: SystemTime) -> String {
+    let seconds = timestamp
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or(Duration::ZERO)
+        .as_secs();
+    let days = i64::try_from(seconds / 86_400).ok().unwrap_or(i64::MAX);
+    let (year, month, day) = civil_from_days(days);
+    let month_name = match month {
+        1 => "Jan",
+        2 => "Feb",
+        3 => "Mar",
+        4 => "Apr",
+        5 => "May",
+        6 => "Jun",
+        7 => "Jul",
+        8 => "Aug",
+        9 => "Sep",
+        10 => "Oct",
+        11 => "Nov",
+        12 => "Dec",
+        _ => "Jan",
+    };
+    format!("{month_name} {day:02} {year:04}")
+}
+
+fn format_magic_time(timestamp: SystemTime) -> String {
+    let seconds = timestamp
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or(Duration::ZERO)
+        .as_secs();
+    let seconds_of_day = seconds % 86_400;
+    let hour = seconds_of_day / 3_600;
+    let minute = (seconds_of_day % 3_600) / 60;
+    let second = seconds_of_day % 60;
+    format!("{hour:02}:{minute:02}:{second:02}")
+}
+
+fn civil_from_days(days_since_epoch: i64) -> (i32, u32, u32) {
+    let z = days_since_epoch + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = mp + if mp < 10 { 3 } else { -9 };
+    let year = y + if m <= 2 { 1 } else { 0 };
+    (
+        i32::try_from(year).ok().unwrap_or(i32::MAX),
+        u32::try_from(m).ok().unwrap_or(1),
+        u32::try_from(d).ok().unwrap_or(1),
+    )
 }
 
 fn assignment_extra(offset: i32, size: usize) -> Vec<u8> {
@@ -2711,6 +2817,28 @@ mod tests {
         SourceId, SourceMap, compile_script, compile_script_with_source_map,
         decode_ncs_instructions, parse_text, read_ndb,
     };
+
+    fn decode_string_constant(extra: &[u8]) -> String {
+        let length_bytes: [u8; 2] = extra
+            .get(..2)
+            .expect("string constant should include a 16-bit length prefix")
+            .try_into()
+            .expect("string constant length prefix should be two bytes");
+        let length = u16::from_be_bytes(length_bytes) as usize;
+        let payload = extra
+            .get(2..2 + length)
+            .expect("string constant payload should match its encoded length");
+        String::from_utf8(payload.to_vec()).expect("string constant should be utf-8")
+    }
+
+    fn decode_integer_constant(extra: &[u8]) -> i32 {
+        let bytes: [u8; 4] = extra
+            .get(..4)
+            .expect("integer constant should encode four bytes")
+            .try_into()
+            .expect("integer constant prefix should be four bytes");
+        i32::from_be_bytes(bytes)
+    }
 
     fn test_langspec() -> crate::LangSpec {
         crate::LangSpec {
@@ -3198,6 +3326,206 @@ mod tests {
                 .iter()
                 .any(|instruction| instruction.opcode == NcsOpcode::Jmp),
             "switch codegen should branch into case bodies",
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn compiles_magic_literals_with_source_context() -> Result<(), Box<dyn std::error::Error>> {
+        let source = br#"void main() {
+    string sFunction = __FUNCTION__;
+    string sFile = __FILE__;
+    int nLine = __LINE__;
+}
+"#;
+        let mut source_map = SourceMap::new();
+        let root_id = source_map.add_file("magic_literals.nss".to_string(), source.to_vec());
+        let script = parse_text(
+            root_id,
+            std::str::from_utf8(source).expect("utf-8"),
+            Some(&test_langspec()),
+        )?;
+
+        let artifacts = compile_script_with_source_map(
+            &script,
+            &source_map,
+            root_id,
+            Some(&test_langspec()),
+            CompileOptions::default(),
+        )?;
+        let instructions = decode_ncs_instructions(&artifacts.ncs)?;
+
+        let string_constants = instructions
+            .iter()
+            .filter(|instruction| {
+                instruction.opcode == NcsOpcode::Constant
+                    && instruction.auxcode == crate::NcsAuxCode::TypeString
+            })
+            .map(|instruction| decode_string_constant(&instruction.extra))
+            .collect::<Vec<_>>();
+        let integer_constants = instructions
+            .iter()
+            .filter(|instruction| {
+                instruction.opcode == NcsOpcode::Constant
+                    && instruction.auxcode == crate::NcsAuxCode::TypeInteger
+            })
+            .map(|instruction| decode_integer_constant(&instruction.extra))
+            .collect::<Vec<_>>();
+
+        assert!(string_constants.iter().any(|value| value == "main"));
+        assert!(
+            string_constants
+                .iter()
+                .any(|value| value == "magic_literals.nss")
+        );
+        assert!(integer_constants.contains(&4));
+        Ok(())
+    }
+
+    #[test]
+    fn compiles_magic_literals_without_source_map() -> Result<(), Box<dyn std::error::Error>> {
+        let script = parse_text(
+            SourceId::new(86),
+            r#"
+                void main() {
+                    string sFunction = __FUNCTION__;
+                    string sFile = __FILE__;
+                    int nLine = __LINE__;
+                }
+            "#,
+            Some(&test_langspec()),
+        )?;
+
+        let artifacts = compile_script(&script, Some(&test_langspec()), CompileOptions::default())?;
+        let instructions = decode_ncs_instructions(&artifacts.ncs)?;
+
+        let string_constants = instructions
+            .iter()
+            .filter(|instruction| {
+                instruction.opcode == NcsOpcode::Constant
+                    && instruction.auxcode == crate::NcsAuxCode::TypeString
+            })
+            .map(|instruction| decode_string_constant(&instruction.extra))
+            .collect::<Vec<_>>();
+        let integer_constants = instructions
+            .iter()
+            .filter(|instruction| {
+                instruction.opcode == NcsOpcode::Constant
+                    && instruction.auxcode == crate::NcsAuxCode::TypeInteger
+            })
+            .map(|instruction| decode_integer_constant(&instruction.extra))
+            .collect::<Vec<_>>();
+
+        assert!(string_constants.iter().any(|value| value == "main"));
+        assert!(string_constants.iter().any(|value| value.is_empty()));
+        assert!(integer_constants.contains(&0));
+        Ok(())
+    }
+
+    #[test]
+    fn compiles_date_and_time_magic_literals() -> Result<(), Box<dyn std::error::Error>> {
+        let script = parse_text(
+            SourceId::new(87),
+            r#"
+                void main() {
+                    string sDate = __DATE__;
+                    string sTime = __TIME__;
+                }
+            "#,
+            Some(&test_langspec()),
+        )?;
+
+        let artifacts = compile_script(&script, Some(&test_langspec()), CompileOptions::default())?;
+        let instructions = decode_ncs_instructions(&artifacts.ncs)?;
+        let string_constants = instructions
+            .iter()
+            .filter(|instruction| {
+                instruction.opcode == NcsOpcode::Constant
+                    && instruction.auxcode == crate::NcsAuxCode::TypeString
+            })
+            .map(|instruction| decode_string_constant(&instruction.extra))
+            .collect::<Vec<_>>();
+
+        assert!(
+            string_constants.iter().any(|value| {
+                let bytes = value.as_bytes();
+                value.len() == 11
+                    && bytes.get(3) == Some(&b' ')
+                    && bytes.get(6) == Some(&b' ')
+                    && value.chars().skip(7).all(|ch| ch.is_ascii_digit())
+            }),
+            "__DATE__ should compile into a macro-style date string",
+        );
+        assert!(
+            string_constants.iter().any(|value| {
+                let bytes = value.as_bytes();
+                value.len() == 8
+                    && bytes.get(2) == Some(&b':')
+                    && bytes.get(5) == Some(&b':')
+                    && value
+                        .chars()
+                        .enumerate()
+                        .all(|(index, ch)| matches!(index, 2 | 5) || ch.is_ascii_digit())
+            }),
+            "__TIME__ should compile into a macro-style time string",
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn compiles_conditional_expressions() -> Result<(), Box<dyn std::error::Error>> {
+        let script = parse_text(
+            SourceId::new(88),
+            r#"
+                int StartingConditional() {
+                    int nCurHP = GetCurrentHitPoints();
+                    return nCurHP > 0 ? TRUE : FALSE;
+                }
+            "#,
+            Some(&test_langspec()),
+        )?;
+
+        let artifacts = compile_script(&script, Some(&test_langspec()), CompileOptions::default())?;
+        let instructions = decode_ncs_instructions(&artifacts.ncs)?;
+
+        assert!(
+            instructions
+                .iter()
+                .any(|instruction| instruction.opcode == NcsOpcode::Jz),
+            "conditional expression should branch on the computed condition",
+        );
+        assert!(
+            instructions
+                .iter()
+                .any(|instruction| instruction.opcode == NcsOpcode::Jmp),
+            "conditional expression should merge control flow after one arm executes",
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn compiles_nested_field_assignments() -> Result<(), Box<dyn std::error::Error>> {
+        let script = parse_text(
+            SourceId::new(89),
+            r#"
+                struct Inner { int value; };
+                struct Outer { struct Inner inner; };
+                void main() {
+                    struct Outer outer;
+                    outer.inner.value = 1;
+                }
+            "#,
+            Some(&test_langspec()),
+        )?;
+
+        let artifacts = compile_script(&script, Some(&test_langspec()), CompileOptions::default())?;
+        let instructions = decode_ncs_instructions(&artifacts.ncs)?;
+
+        assert!(
+            instructions
+                .iter()
+                .any(|instruction| instruction.opcode == NcsOpcode::Assignment),
+            "nested field assignment should lower to an assignment opcode",
         );
         Ok(())
     }

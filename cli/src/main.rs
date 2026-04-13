@@ -34,7 +34,7 @@ fn run(cli: Cli) -> Result<(), String> {
     match cli.command {
         Command::Compile(cmd) => compile::run_compile(cmd),
         Command::Convert(cmd) => convert::run_convert(cmd),
-        Command::Inspect(cmd) => inspect::run_inspect(&cmd.path),
+        Command::Inspect(cmd) => inspect::run_inspect(&cmd),
         Command::Pack(cmd) => pack::run_pack(cmd),
         Command::Unpack(cmd) => unpack::run_unpack(cmd),
         Command::Nwsync(cmd) => match cmd.command {
@@ -56,7 +56,17 @@ mod tests {
     fn run_propagates_subcommand_errors() {
         let cli = Cli {
             command: Command::Inspect(InspectCmd {
-                path: PathBuf::from("unsupported.xyz"),
+                internal_names:    false,
+                max_string_length: 15,
+                require_ndb:       false,
+                no_ndb:            false,
+                no_source_weave:   false,
+                no_local_offsets:  false,
+                no_labels:         false,
+                no_offsets:        false,
+                no_langspec:       false,
+                langspec:          None,
+                path:              PathBuf::from("unsupported.xyz"),
             }),
         };
 

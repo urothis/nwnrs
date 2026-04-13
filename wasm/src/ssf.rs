@@ -22,7 +22,7 @@ pub struct SsfEntryDto {
 }
 
 fn dto_to_ssf(value: &SsfRootDto) -> Result<ssf::SsfRoot, JsValue> {
-    let mut ssf_value = ssf::new_ssf();
+    let mut ssf_value = ssf::SsfRoot::new();
     ssf_value.entries = value
         .entries
         .iter()

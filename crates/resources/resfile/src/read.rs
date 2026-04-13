@@ -78,8 +78,8 @@ mod tests {
         time::{SystemTime, UNIX_EPOCH},
     };
 
-    use nwnrs_resman::ResContainer;
-    use nwnrs_resref::{ResolvedResRef, new_res_ref};
+    use nwnrs_resman::{CachePolicy, ResContainer};
+    use nwnrs_resref::{ResRef, ResolvedResRef};
     use nwnrs_restype::ResType;
 
     use crate::{read_resfile, read_resfile_as};
@@ -116,7 +116,7 @@ mod tests {
             Err(error) => panic!("resolve rr: {error}"),
         };
         assert!(resfile.contains(rr.base()));
-        let bytes = match resfile.res().read_all(false) {
+        let bytes = match resfile.res().read_all(CachePolicy::Bypass) {
             Ok(value) => value,
             Err(error) => panic!("read payload: {error}"),
         };
@@ -133,7 +133,7 @@ mod tests {
         if let Err(error) = fs::write(&path, b"payload") {
             panic!("write file: {error}");
         }
-        let rr = match new_res_ref("custom", ResType(2027)) {
+        let rr = match ResRef::new("custom", ResType(2027)) {
             Ok(value) => value,
             Err(error) => panic!("custom rr: {error}"),
         };

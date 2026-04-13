@@ -35,6 +35,7 @@ pub(crate) fn run_pack(cmd: PackCmd) -> Result<(), String> {
     match detect_kind(&cmd.output) {
         Some(Kind::Key) => run_pack_key(cmd),
         Some(Kind::Erf) => run_pack_erf(cmd),
+        Some(Kind::Ncs) => run_pack_resource(cmd, Kind::Ncs),
         Some(Kind::Gff) => run_pack_resource(cmd, Kind::Gff),
         Some(Kind::TwoDa) => run_pack_resource(cmd, Kind::TwoDa),
         Some(Kind::Tlk) => run_pack_resource(cmd, Kind::Tlk),
@@ -212,6 +213,7 @@ fn run_pack_resource(cmd: PackCmd, kind: Kind) -> Result<(), String> {
         Kind::Ssf => pack_ssf_resource(&source, &cmd.output, cmd.force),
         Kind::Model => pack_model_resource(&source, &cmd.output, cmd.force),
         Kind::Texture => pack_texture_resource(&source, &cmd.output, cmd.force),
+        Kind::Ncs => pack_ncs_resource(&source, &cmd.output, cmd.force),
         Kind::Erf | Kind::Key => Err(format!(
             "unsupported standalone resource pack kind for {}",
             cmd.output.display()
@@ -225,7 +227,7 @@ fn resolve_resource_pack_source(
     metadata: Option<ResourcePackMetadata>,
 ) -> Result<PathBuf, String> {
     if input.is_file() {
-        if detect_kind(input) != Some(expected_kind) {
+        if !path_matches_pack_kind(input, expected_kind) {
             return Err(format!(
                 "input file type does not match output resource kind: {}",
                 input.display()
@@ -240,7 +242,7 @@ fn resolve_resource_pack_source(
     if let Some(metadata) = metadata {
         let candidate = input.join(&metadata.file_name);
         if candidate.is_file() {
-            if detect_kind(&candidate) != Some(expected_kind) {
+            if !path_matches_pack_kind(&candidate, expected_kind) {
                 return Err(format!(
                     "resource metadata file type does not match output resource kind: {}",
                     candidate.display()
@@ -262,13 +264,18 @@ fn resolve_resource_pack_source(
         ));
     }
     let source = files.remove(0).path;
-    if detect_kind(&source) != Some(expected_kind) {
+    if !path_matches_pack_kind(&source, expected_kind) {
         return Err(format!(
             "resource directory file type does not match output resource kind: {}",
             source.display()
         ));
     }
     Ok(source)
+}
+
+fn path_matches_pack_kind(path: &Path, expected_kind: Kind) -> bool {
+    detect_kind(path) == Some(expected_kind)
+        || (expected_kind == Kind::Ncs && is_ncs_asm_file(path))
 }
 
 fn pack_gff_resource(input: &Path, output: &Path, force: bool) -> Result<(), String> {
@@ -299,10 +306,24 @@ fn pack_twoda_resource(input: &Path, output: &Path, force: bool) -> Result<(), S
         .map_err(|error| format!("failed to write {}: {error}", output.display()))
 }
 
+fn pack_ncs_resource(input: &Path, output: &Path, force: bool) -> Result<(), String> {
+    let bytes = if is_ncs_asm_file(input) {
+        let text = fs::read_to_string(input)
+            .map_err(|error| format!("failed to read {}: {error}", input.display()))?;
+        nwscript::assemble_ncs_bytes(&text, None)
+            .map_err(|error| format!("failed to assemble {}: {error}", input.display()))?
+    } else {
+        fs::read(input).map_err(|error| format!("failed to read {}: {error}", input.display()))?
+    };
+    ensure_output_file_ready(output, force)?;
+    fs::write(output, bytes)
+        .map_err(|error| format!("failed to write {}: {error}", output.display()))
+}
+
 fn pack_tlk_resource(input: &Path, output: &Path, force: bool) -> Result<(), String> {
     let file = fs::File::open(input)
         .map_err(|error| format!("failed to open {}: {error}", input.display()))?;
-    let mut value = tlk::read_single_tlk(BufReader::new(file), false)
+    let mut value = tlk::read_single_tlk(BufReader::new(file), nwnrs::resman::CachePolicy::Bypass)
         .map_err(|error| format!("failed to parse {} as TLK: {error}", input.display()))?;
     ensure_output_file_ready(output, force)?;
     let mut bytes = Cursor::new(Vec::new());
@@ -327,7 +348,7 @@ fn pack_ssf_resource(input: &Path, output: &Path, force: bool) -> Result<(), Str
 }
 
 fn pack_model_resource(input: &Path, output: &Path, force: bool) -> Result<(), String> {
-    let value = mdl::read_model_from_file(input)
+    let value = mdl::Model::from_file(input)
         .map_err(|error| format!("failed to parse {} as MDL: {error}", input.display()))?;
     ensure_output_file_ready(output, force)?;
     let mut bytes = Cursor::new(Vec::new());
@@ -347,19 +368,19 @@ fn pack_texture_resource(input: &Path, output: &Path, force: bool) -> Result<(),
     let mut bytes = Cursor::new(Vec::new());
     match extension.as_str() {
         "tga" => {
-            let value = tga::read_tga_from_file(input)
+            let value = tga::TgaTexture::from_file(input)
                 .map_err(|error| format!("failed to parse {} as TGA: {error}", input.display()))?;
             tga::write_tga(&mut bytes, &value)
                 .map_err(|error| format!("failed to write {} as TGA: {error}", output.display()))?;
         }
         "dds" => {
-            let value = dds::read_dds_from_file(input)
+            let value = dds::DdsTexture::from_file(input)
                 .map_err(|error| format!("failed to parse {} as DDS: {error}", input.display()))?;
             dds::write_dds(&mut bytes, &value)
                 .map_err(|error| format!("failed to write {} as DDS: {error}", output.display()))?;
         }
         "plt" => {
-            let value = plt::read_plt_from_file(input)
+            let value = plt::PltTexture::from_file(input)
                 .map_err(|error| format!("failed to parse {} as PLT: {error}", input.display()))?;
             plt::write_plt(&mut bytes, &value)
                 .map_err(|error| format!("failed to write {} as PLT: {error}", output.display()))?;
@@ -519,6 +540,7 @@ fn run_key_pack(cmd: KeyPackCmd) -> Result<(), String> {
 pub(crate) enum PackSourceKind {
     File(PathBuf),
     CompiledScript { path: PathBuf, bytes: Vec<u8> },
+    AssembledNcs { path: PathBuf, bytes: Vec<u8> },
 }
 
 #[derive(Clone)]
@@ -534,6 +556,9 @@ impl PackSourceEntry {
             PackSourceKind::CompiledScript {
                 path, ..
             } => path.display().to_string(),
+            PackSourceKind::AssembledNcs {
+                path, ..
+            } => path.display().to_string(),
         }
     }
 
@@ -544,12 +569,17 @@ impl PackSourceEntry {
             PackSourceKind::CompiledScript {
                 bytes, ..
             } => Ok(bytes.clone()),
+            PackSourceKind::AssembledNcs {
+                bytes, ..
+            } => Ok(bytes.clone()),
         }
     }
 
     fn prefers_over(&self, other: &Self) -> bool {
-        matches!(self.source, PackSourceKind::CompiledScript { .. })
-            && matches!(other.source, PackSourceKind::File(_))
+        matches!(
+            self.source,
+            PackSourceKind::CompiledScript { .. } | PackSourceKind::AssembledNcs { .. }
+        ) && matches!(other.source, PackSourceKind::File(_))
     }
 }
 
@@ -669,7 +699,7 @@ fn pack_source_for_file(path: &Path, pack_root: &Path) -> Result<PackSourceEntry
             .and_then(OsStr::to_str)
             .filter(|value| !value.is_empty())
             .ok_or_else(|| format!("invalid script source filename: {}", path.display()))?;
-        let resolved = resref::new_resolved_res_ref_from_filename(&format!("{stem}.ncs"))
+        let resolved = resref::ResolvedResRef::from_filename(&format!("{stem}.ncs"))
             .map_err(|error| format!("{} is not a valid script source: {error}", path.display()))?;
         let include_dirs = pack_script_search_roots(path, pack_root);
         let artifacts = compile_script_file(
@@ -691,8 +721,22 @@ fn pack_source_for_file(path: &Path, pack_root: &Path) -> Result<PackSourceEntry
         });
     }
 
+    if let Some(resolved) = resolved_ncs_asm_resref(path) {
+        let text = fs::read_to_string(path)
+            .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
+        let bytes = nwscript::assemble_ncs_bytes(&text, None)
+            .map_err(|error| format!("failed to assemble {}: {error}", path.display()))?;
+        return Ok(PackSourceEntry {
+            rr:     resolved.into(),
+            source: PackSourceKind::AssembledNcs {
+                path: path.to_path_buf(),
+                bytes,
+            },
+        });
+    }
+
     let file_name = path.file_name().and_then(OsStr::to_str).unwrap_or("");
-    let resolved = resref::new_resolved_res_ref_from_filename(file_name)
+    let resolved = resref::ResolvedResRef::from_filename(file_name)
         .map_err(|error| format!("{} is not a valid resref source: {error}", path.display()))?;
     Ok(PackSourceEntry {
         rr:     resolved.into(),
@@ -702,6 +746,20 @@ fn pack_source_for_file(path: &Path, pack_root: &Path) -> Result<PackSourceEntry
 
 fn is_pack_metadata_file(path: &Path) -> bool {
     path.file_name().and_then(OsStr::to_str) == Some(RESOURCE_METADATA_FILENAME)
+}
+
+fn is_ncs_asm_file(path: &Path) -> bool {
+    resolved_ncs_asm_resref(path).is_some()
+}
+
+fn resolved_ncs_asm_resref(path: &Path) -> Option<resref::ResolvedResRef> {
+    let file_name = path.file_name()?.to_str()?;
+    let suffix = ".ncs.asm";
+    if file_name.len() <= suffix.len() || !file_name.to_ascii_lowercase().ends_with(suffix) {
+        return None;
+    }
+    let base = &file_name[..file_name.len() - ".asm".len()];
+    resref::ResolvedResRef::from_filename(base).ok()
 }
 
 fn is_nwscript_langspec_file(path: &Path) -> bool {
@@ -773,7 +831,7 @@ mod tests {
         time::{SystemTime, UNIX_EPOCH},
     };
 
-    use nwnrs::prelude::resman::ResContainer;
+    use nwnrs::{prelude::resman::ResContainer, resman::CachePolicy};
 
     use super::*;
     use crate::args::PackCmd;
@@ -788,7 +846,7 @@ mod tests {
 
     #[test]
     fn pack_supports_binary_gff_resource() {
-        let root = gff::new_gff_root("UTC ");
+        let root = gff::GffRoot::new("UTC ");
         let temp_dir = unique_test_dir("gff-pack");
         fs::create_dir_all(&temp_dir).expect("create temp dir");
         let input = temp_dir.join("fixture.utc");
@@ -887,10 +945,10 @@ int FALSE = 0;
 
         let archive = erf::read_erf_from_file(&output).expect("read packed archive");
         let compiled_res = archive
-            .demand(&resref::new_res_ref("test", restype::ResType(2010)).expect("build ncs rr"))
+            .demand(&resref::ResRef::new("test", restype::ResType(2010)).expect("build ncs rr"))
             .expect("read compiled script resource");
         let compiled = compiled_res
-            .read_all(false)
+            .read_all(CachePolicy::Bypass)
             .expect("read compiled script bytes");
         assert_ne!(compiled, b"stale".to_vec());
         assert!(
@@ -900,7 +958,7 @@ int FALSE = 0;
         assert!(
             archive
                 .demand(
-                    &resref::new_res_ref("helper", restype::ResType(2010))
+                    &resref::ResRef::new("helper", restype::ResType(2010))
                         .expect("build helper ncs rr"),
                 )
                 .is_err(),
@@ -939,15 +997,69 @@ int FALSE = 0;
 
         let key = key::read_key_table_from_file(&output).expect("read packed key");
         let compiled_res = key
-            .demand(&resref::new_res_ref("hello", restype::ResType(2010)).expect("build ncs rr"))
+            .demand(&resref::ResRef::new("hello", restype::ResType(2010)).expect("build ncs rr"))
             .expect("read compiled script resource");
         let compiled = compiled_res
-            .read_all(false)
+            .read_all(CachePolicy::Bypass)
             .expect("read compiled script bytes");
         assert!(
             nwscript::decode_ncs_instructions(&compiled).is_ok(),
             "compiled bytes should decode as NCS"
         );
+
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn pack_assembles_ncs_asm_entries_into_archives() {
+        let temp_dir = unique_test_dir("erf-pack-ncs-asm");
+        let input = temp_dir.join("src");
+        let output = temp_dir.join("test.mod");
+        let ncs_dir = input.join("ncs");
+        fs::create_dir_all(&ncs_dir).expect("create ncs dir");
+        let original = nwscript::encode_ncs_instructions(&[
+            nwscript::NcsInstruction {
+                opcode:  nwscript::NcsOpcode::Constant,
+                auxcode: nwscript::NcsAuxCode::TypeInteger,
+                extra:   7_i32.to_be_bytes().to_vec(),
+            },
+            nwscript::NcsInstruction {
+                opcode:  nwscript::NcsOpcode::Ret,
+                auxcode: nwscript::NcsAuxCode::None,
+                extra:   Vec::new(),
+            },
+        ]);
+        let asm = nwscript::render_ncs_disassembly(
+            &original,
+            None,
+            nwscript::NcsDisassemblyOptions {
+                max_string_length: usize::MAX,
+                ..nwscript::NcsDisassemblyOptions::default()
+            },
+        )
+        .expect("render ncs asm");
+        fs::write(ncs_dir.join("hello.ncs.asm"), asm).expect("write ncs asm");
+
+        run_pack(PackCmd {
+            force:            true,
+            data_version:     "V1".to_string(),
+            data_compression: "none".to_string(),
+            no_squash:        false,
+            no_symlinks:      false,
+            recurse:          2,
+            erf_type:         None,
+            input:            input.clone(),
+            output:           output.clone(),
+        })
+        .expect("pack mod with ncs asm");
+
+        let archive = erf::read_erf_from_file(&output).expect("read packed archive");
+        let compiled = archive
+            .demand(&resref::ResRef::new("hello", restype::ResType(2010)).expect("build ncs rr"))
+            .expect("read assembled ncs resource")
+            .read_all(CachePolicy::Bypass)
+            .expect("read assembled ncs bytes");
+        assert_eq!(compiled, original);
 
         let _ = fs::remove_dir_all(temp_dir);
     }

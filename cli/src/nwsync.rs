@@ -191,7 +191,7 @@ fn collect_files_recursively(
         } else if path.is_file() {
             // Try to parse as resref
             if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
-                match resref::new_resolved_res_ref_from_filename(filename) {
+                match resref::ResolvedResRef::from_filename(filename) {
                     Ok(resolved) => {
                         entries.push((path, resolved.base().clone()));
                     }

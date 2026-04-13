@@ -29,8 +29,11 @@ pub use twoda::{TwoDaDto, read_twoda_from_bytes, write_twoda_to_bytes};
 mod tests {
     use std::io::Cursor;
 
-    use nwnrs::prelude::{
-        compressedbuf, erf, exo, gff, localization::Language, mdl, resref, ssf, tlk, twoda,
+    use nwnrs::{
+        prelude::{
+            compressedbuf, erf, exo, gff, localization::Language, mdl, resref, ssf, tlk, twoda,
+        },
+        resman::CachePolicy,
     };
     #[cfg(not(target_arch = "wasm32"))]
     use nwnrs_test_support::{demand_resource, require_game_resource};
@@ -205,7 +208,7 @@ mod tests {
 
         let rewritten = write_tlk_dto(&edited).expect("write TLK");
         let mut reparsed =
-            tlk::read_single_tlk(Cursor::new(rewritten), false).expect("reparse TLK");
+            tlk::read_single_tlk(Cursor::new(rewritten), CachePolicy::Bypass).expect("reparse TLK");
         let entry = reparsed.get(0).expect("get entry").expect("present");
         assert_eq!(entry.text, "after");
         assert_eq!(entry.flags, 7);
@@ -216,7 +219,7 @@ mod tests {
     #[cfg_attr(not(target_arch = "wasm32"), test)]
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
     fn ssf_edited_write_preserves_raw_slot_bytes() {
-        let mut source = ssf::new_ssf();
+        let mut source = ssf::SsfRoot::new();
         let mut entry = ssf::SsfEntry::new("snd", 10);
         entry.raw_resref = [
             b's', b'n', b'd', 0, b'X', b'Y', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -252,7 +255,7 @@ mod tests {
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
     fn erf_edited_write_preserves_resource_list_padding() {
         let entries = vec![
-            resref::new_resolved_res_ref_from_filename("test.utc")
+            resref::ResolvedResRef::from_filename("test.utc")
                 .expect("resref")
                 .into(),
         ];
@@ -298,7 +301,7 @@ mod tests {
                 .values()
                 .next()
                 .expect("entry")
-                .read_all(false)
+                .read_all(CachePolicy::Bypass)
                 .expect("bytes"),
             b"after".to_vec()
         );
@@ -384,7 +387,9 @@ mod tests {
         let Ok(res) = result else {
             return;
         };
-        let bytes = res.read_all(false).expect("read shipped mdl bytes");
+        let bytes = res
+            .read_all(CachePolicy::Bypass)
+            .expect("read shipped mdl bytes");
 
         let value: MdlDto = read_mdl_dto(&bytes).expect("read wasm compiled mdl");
         assert_eq!(value.encoding, MdlEncodingDto::Compiled);
@@ -401,7 +406,9 @@ mod tests {
         let Ok(res) = result else {
             return;
         };
-        let bytes = res.read_all(false).expect("read shipped mdl bytes");
+        let bytes = res
+            .read_all(CachePolicy::Bypass)
+            .expect("read shipped mdl bytes");
 
         let mut value: MdlDto = read_mdl_dto(&bytes).expect("read wasm compiled mdl");
         value.text.push_str("\n# edited\n");

@@ -3,8 +3,8 @@ use std::{collections::HashMap, error::Error, fmt};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    CompilerErrorCode, Keyword, LexerError, ScriptResolver, SourceError, SourceLoadOptions,
-    SourceMap, Token, TokenKind,
+    CompilerErrorCode, Keyword, LexerError, ScriptResolver, SourceError, SourceFile,
+    SourceLoadOptions, SourceMap, Span, Token, TokenKind,
     int_literal::{parse_wrapping_decimal_i32, parse_wrapping_prefixed_i32},
     lex_source, load_source_bundle,
 };
@@ -55,6 +55,9 @@ pub enum BuiltinValue {
     Json(String),
     /// Vector literal.
     Vector([f32; 3]),
+    /// One builtin value preserved as raw source text when this parser does not
+    /// yet understand its exact typed form.
+    Raw(String),
 }
 
 /// One builtin constant declaration.
@@ -191,10 +194,11 @@ pub fn parse_langspec_from_source_map(
         .get(root_id)
         .ok_or_else(|| LangSpecError::parse("missing root source file for langspec parse"))?;
     let tokens = lex_source(source)?;
-    LangSpecParser::new(tokens).parse()
+    LangSpecParser::new(source, tokens).parse()
 }
 
-struct LangSpecParser {
+struct LangSpecParser<'a> {
+    source:                &'a SourceFile,
     tokens:                Vec<Token>,
     position:              usize,
     engine_num_structures: usize,
@@ -204,9 +208,10 @@ struct LangSpecParser {
     constant_values:       HashMap<String, BuiltinValue>,
 }
 
-impl LangSpecParser {
-    fn new(tokens: Vec<Token>) -> Self {
+impl<'a> LangSpecParser<'a> {
+    fn new(source: &'a SourceFile, tokens: Vec<Token>) -> Self {
         Self {
+            source,
             tokens,
             position: 0,
             engine_num_structures: 0,
@@ -247,25 +252,25 @@ impl LangSpecParser {
         let token = self
             .advance()
             .ok_or_else(|| LangSpecError::parse("unexpected EOF after #define"))?;
+        let define_line = self.line_number_for_token(&token);
         let index = match &token.kind {
             TokenKind::Identifier => {
-                parse_engine_structure_define_index(&token.text).ok_or_else(|| {
-                    LangSpecError::parse(format!("unsupported #define target {:?}", token.text))
-                })?
+                let Some(index) = parse_engine_structure_define_index(&token.text) else {
+                    self.skip_line(define_line);
+                    return Ok(());
+                };
+                index
             }
             TokenKind::Keyword(Keyword::EngineStructureDefinition) => {
-                parse_engine_structure_define_index(&token.text).ok_or_else(|| {
-                    LangSpecError::parse(format!(
-                        "unsupported engine structure define {:?}",
-                        token.text
-                    ))
-                })?
+                let Some(index) = parse_engine_structure_define_index(&token.text) else {
+                    self.skip_line(define_line);
+                    return Ok(());
+                };
+                index
             }
             _ => {
-                return Err(LangSpecError::parse(format!(
-                    "unsupported token {:?} after #define",
-                    token.kind
-                )));
+                self.skip_line(define_line);
+                return Ok(());
             }
         };
 
@@ -285,7 +290,7 @@ impl LangSpecParser {
 
         if self.matches_kind(&TokenKind::Assign) {
             self.advance();
-            let value = self.parse_value_for_type(&ty)?;
+            let value = self.parse_value_for_type_or_raw(&ty, &[TokenKind::Semicolon])?;
             self.expect_kind(TokenKind::Semicolon)?;
             self.constant_values.insert(name.clone(), value.clone());
             self.constants.push(BuiltinConstant {
@@ -313,12 +318,16 @@ impl LangSpecParser {
         while !self.matches_kind(&TokenKind::RightParen) {
             let ty = self.parse_type()?;
             let name = self.expect_identifier_like_name()?;
-            let default = if self.matches_kind(&TokenKind::Assign) {
-                self.advance();
-                Some(self.parse_value_for_type(&ty)?)
-            } else {
-                None
-            };
+            let default =
+                if self.matches_kind(&TokenKind::Assign) {
+                    self.advance();
+                    Some(self.parse_value_for_type_or_raw(
+                        &ty,
+                        &[TokenKind::Comma, TokenKind::RightParen],
+                    )?)
+                } else {
+                    None
+                };
             parameters.push(BuiltinParameter {
                 name,
                 ty,
@@ -346,12 +355,7 @@ impl LangSpecParser {
             TokenKind::Keyword(Keyword::Void) => Some(BuiltinType::Void),
             TokenKind::Keyword(Keyword::Action) => Some(BuiltinType::Action),
             TokenKind::Keyword(Keyword::Vector) => Some(BuiltinType::Vector),
-            TokenKind::Identifier => self
-                .engine_structures
-                .iter()
-                .find(|name| name.eq_ignore_ascii_case(&token.text))
-                .cloned()
-                .map(BuiltinType::EngineStructure),
+            TokenKind::Identifier => Some(BuiltinType::EngineStructure(token.text.clone())),
             _ => None,
         };
         if let Some(parsed) = parsed {
@@ -383,6 +387,78 @@ impl LangSpecParser {
                 ty
             ))),
         }
+    }
+
+    fn parse_value_for_type_or_raw(
+        &mut self,
+        ty: &BuiltinType,
+        terminators: &[TokenKind],
+    ) -> Result<BuiltinValue, LangSpecError> {
+        let checkpoint = self.position;
+        match self.parse_value_for_type(ty) {
+            Ok(value) => Ok(value),
+            Err(_error) => {
+                self.position = checkpoint;
+                self.parse_raw_value_until(terminators)
+                    .map(BuiltinValue::Raw)
+            }
+        }
+    }
+
+    fn parse_raw_value_until(
+        &mut self,
+        terminators: &[TokenKind],
+    ) -> Result<String, LangSpecError> {
+        let first = self
+            .peek()
+            .ok_or_else(|| LangSpecError::parse("unexpected EOF while parsing builtin value"))?;
+        let start = first.span.start;
+        let mut end = first.span.end;
+        let mut paren_depth = 0usize;
+        let mut bracket_depth = 0usize;
+        let mut brace_depth = 0usize;
+        let mut consumed = false;
+
+        while let Some(token) = self.peek() {
+            if paren_depth == 0
+                && bracket_depth == 0
+                && brace_depth == 0
+                && terminators.iter().any(|kind| kind == &token.kind)
+            {
+                break;
+            }
+
+            consumed = true;
+            end = token.span.end;
+            match token.kind {
+                TokenKind::LeftParen => paren_depth += 1,
+                TokenKind::RightParen => paren_depth = paren_depth.saturating_sub(1),
+                TokenKind::LeftSquareBracket => bracket_depth += 1,
+                TokenKind::RightSquareBracket => bracket_depth = bracket_depth.saturating_sub(1),
+                TokenKind::LeftBrace => brace_depth += 1,
+                TokenKind::RightBrace => brace_depth = brace_depth.saturating_sub(1),
+                _ => {}
+            }
+            self.advance();
+        }
+
+        if !consumed {
+            return Err(LangSpecError::parse("missing builtin value"));
+        }
+
+        let span = Span::new(self.source.id, start, end);
+        let raw = self
+            .source
+            .span_text(span)
+            .ok_or_else(|| LangSpecError::parse("invalid raw builtin value span"))?
+            .trim()
+            .to_string();
+
+        if raw.is_empty() {
+            return Err(LangSpecError::parse("missing builtin value"));
+        }
+
+        Ok(raw)
     }
 
     fn parse_int_like_value(&mut self) -> Result<i32, LangSpecError> {
@@ -633,6 +709,28 @@ impl LangSpecParser {
         self.position += 1;
         Some(token)
     }
+
+    fn line_number_for_token(&self, token: &Token) -> Option<usize> {
+        self.source
+            .location(token.span.start)
+            .map(|location| location.line)
+    }
+
+    fn skip_line(&mut self, line: Option<usize>) {
+        let Some(line) = line else {
+            return;
+        };
+
+        while let Some(token) = self.peek() {
+            if token.kind == TokenKind::Eof {
+                break;
+            }
+            if self.line_number_for_token(token) != Some(line) {
+                break;
+            }
+            self.position += 1;
+        }
+    }
 }
 
 fn parse_engine_structure_define_index(input: &str) -> Option<usize> {
@@ -759,5 +857,103 @@ effect EffectFoo(int bValue = TRUE);
         );
 
         assert_eq!(spec.ok().map(|spec| spec.functions.len()), Some(1));
+    }
+
+    #[test]
+    fn ignores_unknown_define_lines() {
+        let spec = parse_langspec(
+            "nwscript.nss",
+            r#"
+#define ENGINE_NUM_STRUCTURES 1
+#define ENGINE_STRUCTURE_0 effect
+#define FUTURE_FEATURE (1 << 5)
+#define YET_ANOTHER_FEATURE SOME_IDENTIFIER
+
+effect EffectDamage(int nAmount);
+"#,
+        )
+        .expect("langspec should parse");
+
+        assert_eq!(spec.engine_structures, vec!["effect".to_string()]);
+        assert_eq!(spec.functions.len(), 1);
+        assert_eq!(
+            spec.functions
+                .first()
+                .expect("EffectDamage should be present")
+                .return_type,
+            BuiltinType::EngineStructure("effect".to_string())
+        );
+    }
+
+    #[test]
+    fn accepts_identifier_typed_builtins_before_structure_defines() {
+        let spec = parse_langspec(
+            "nwscript.nss",
+            r#"
+#define ENGINE_NUM_STRUCTURES 1
+
+json JsonObject();
+
+#define ENGINE_STRUCTURE_0 json
+"#,
+        )
+        .expect("langspec should parse");
+
+        assert_eq!(spec.functions.len(), 1);
+        assert_eq!(
+            spec.functions
+                .first()
+                .expect("JsonObject should be present")
+                .return_type,
+            BuiltinType::EngineStructure("json".to_string())
+        );
+        assert_eq!(spec.engine_structures, vec!["json".to_string()]);
+    }
+
+    #[test]
+    fn preserves_unknown_builtin_values_as_raw_text() {
+        let spec = parse_langspec(
+            "nwscript.nss",
+            r#"
+#define ENGINE_NUM_STRUCTURES 2
+#define ENGINE_STRUCTURE_0 effect
+#define ENGINE_STRUCTURE_1 json
+
+json JSON_DYNAMIC = JsonParse("{\"enabled\":true}");
+void TestDefaults(
+    json jData = JsonParse("{}"),
+    effect eDamage = EffectDamage(5)
+);
+"#,
+        )
+        .expect("langspec should parse");
+
+        assert_eq!(
+            spec.constants
+                .iter()
+                .find(|constant| constant.name == "JSON_DYNAMIC")
+                .map(|constant| constant.value.clone()),
+            Some(BuiltinValue::Raw(
+                "JsonParse(\"{\\\"enabled\\\":true}\")".to_string()
+            ))
+        );
+
+        let defaults = spec
+            .functions
+            .iter()
+            .find(|function| function.name == "TestDefaults")
+            .expect("TestDefaults should exist")
+            .parameters
+            .iter()
+            .map(|parameter| parameter.default.clone())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            defaults,
+            vec![
+                Some(BuiltinValue::Raw("JsonParse(\"{}\")".to_string())),
+                Some(BuiltinValue::Raw("EffectDamage(5)".to_string())),
+            ]
+        );
     }
 }

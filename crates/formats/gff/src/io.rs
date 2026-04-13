@@ -930,7 +930,7 @@ mod tests {
     use std::io::Cursor;
 
     use super::{read_gff_root, write_gff_root};
-    use crate::{GffRoot, GffValue, new_gff_struct};
+    use crate::{GffRoot, GffStruct, GffValue};
 
     #[test]
     fn edited_source_backed_gff_preserves_value_edit() {
@@ -994,7 +994,7 @@ mod tests {
             Err(error) => panic!("parse gff: {error}"),
         };
         parsed.root.remove("First");
-        if let Err(error) = parsed.put_value("Third", GffValue::Struct(new_gff_struct(7))) {
+        if let Err(error) = parsed.put_value("Third", GffValue::Struct(GffStruct::new(7))) {
             panic!("insert third: {error}");
         }
 
@@ -1023,7 +1023,7 @@ mod tests {
         let mut original = GffRoot::new("UTC ");
         if let Err(error) = original.put_value(
             "Items",
-            GffValue::List(vec![new_gff_struct(1), new_gff_struct(2)]),
+            GffValue::List(vec![GffStruct::new(1), GffStruct::new(2)]),
         ) {
             panic!("seed list: {error}");
         }
@@ -1036,7 +1036,7 @@ mod tests {
             Ok(root) => root,
             Err(error) => panic!("parse gff: {error}"),
         };
-        if let Err(error) = parsed.put_value("Items", GffValue::List(vec![new_gff_struct(1)])) {
+        if let Err(error) = parsed.put_value("Items", GffValue::List(vec![GffStruct::new(1)])) {
             panic!("shrink list: {error}");
         }
 
@@ -1058,7 +1058,7 @@ mod tests {
     #[test]
     fn malformed_gff_index_offsets_are_rejected() {
         let mut original = GffRoot::new("UTC ");
-        if let Err(error) = original.put_value("Items", GffValue::List(vec![new_gff_struct(1)])) {
+        if let Err(error) = original.put_value("Items", GffValue::List(vec![GffStruct::new(1)])) {
             panic!("seed list: {error}");
         }
         let mut encoded = Cursor::new(Vec::new());

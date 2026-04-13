@@ -41,10 +41,11 @@ impl ResMan {
 
     /// Returns whether any container can resolve `rr`.
     ///
-    /// When `use_cache` is `true`, the manager cache is checked first.
-    #[instrument(level = "debug", skip_all, fields(resref = %rr, use_cache))]
-    pub fn contains(&mut self, rr: &ResRef, use_cache: bool) -> bool {
-        if use_cache
+    /// When [`CachePolicy::Use`] is selected, the manager cache is checked
+    /// first.
+    #[instrument(level = "debug", skip_all, fields(resref = %rr, cache_policy = ?cache_policy))]
+    pub fn contains(&mut self, rr: &ResRef, cache_policy: CachePolicy) -> bool {
+        if cache_policy.uses_cache()
             && self
                 .cache
                 .as_mut()
@@ -60,11 +61,11 @@ impl ResMan {
 
     /// Resolves `rr` to the highest-precedence matching resource.
     ///
-    /// When `use_cache` is `true`, successful lookups are memoized in the
-    /// manager cache.
-    #[instrument(level = "debug", skip_all, err, fields(resref = %rr, use_cache))]
-    pub fn demand(&mut self, rr: &ResRef, use_cache: bool) -> ResManResult<Res> {
-        if use_cache
+    /// When [`CachePolicy::Use`] is selected, successful lookups are memoized
+    /// in the manager cache.
+    #[instrument(level = "debug", skip_all, err, fields(resref = %rr, cache_policy = ?cache_policy))]
+    pub fn demand(&mut self, rr: &ResRef, cache_policy: CachePolicy) -> ResManResult<Res> {
+        if cache_policy.uses_cache()
             && let Some(cached) = self.cache.as_mut().and_then(|cache| cache.get(rr).cloned())
         {
             return Ok(cached);
@@ -73,7 +74,9 @@ impl ResMan {
         for container in &self.containers {
             if container.contains(rr) {
                 let result = container.demand(rr)?;
-                if use_cache && let Some(cache) = self.cache.as_mut() {
+                if cache_policy.uses_cache()
+                    && let Some(cache) = self.cache.as_mut()
+                {
                     let weight = usize::try_from(result.io_size().max(1)).unwrap_or(usize::MAX);
                     cache.insert_weighted(rr.clone(), weight, result.clone());
                 }
@@ -98,16 +101,16 @@ impl ResMan {
     #[instrument(level = "debug", skip_all, fields(resref = %rr))]
     pub fn get_resolved(&mut self, rr: &ResolvedResRef) -> Option<Res> {
         let base = rr.base().clone();
-        self.contains(&base, true)
-            .then(|| self.demand(&base, true).ok())
+        self.contains(&base, CachePolicy::Use)
+            .then(|| self.demand(&base, CachePolicy::Use).ok())
             .flatten()
     }
 
     /// Resolves `rr`, returning `None` instead of an error when absent.
     #[instrument(level = "debug", skip_all, fields(resref = %rr))]
     pub fn get(&mut self, rr: &ResRef) -> Option<Res> {
-        self.contains(rr, true)
-            .then(|| self.demand(rr, true).ok())
+        self.contains(rr, CachePolicy::Use)
+            .then(|| self.demand(rr, CachePolicy::Use).ok())
             .flatten()
     }
 
@@ -158,11 +161,12 @@ mod tests {
 
     use nwnrs_checksums::EMPTY_SECURE_HASH;
     use nwnrs_exo::ExoResFileCompressionType;
-    use nwnrs_resref::{ResolvedResRef, new_res_ref};
+    use nwnrs_resref::{ResRef, ResolvedResRef};
     use nwnrs_restype::ResType;
 
     use crate::{
-        Res, ResContainer, ResMan, ResManError, ResManResult, new_res_origin, shared_stream,
+        CachePolicy, Res, ResContainer, ResMan, ResManError, ResManResult, new_res_origin,
+        shared_stream,
     };
 
     #[derive(Clone)]
@@ -199,7 +203,7 @@ mod tests {
     }
 
     fn make_res(name: &str, ty: u16, bytes: &[u8], label: &str) -> Res {
-        let rr = new_res_ref(name, ResType(ty)).unwrap_or_else(|error| {
+        let rr = ResRef::new(name, ResType(ty)).unwrap_or_else(|error| {
             panic!("make rr: {error}");
         });
         Res::new_with_stream(
@@ -218,7 +222,7 @@ mod tests {
 
     #[test]
     fn resolves_latest_container_first_and_unions_contents() {
-        let shared = new_res_ref("shared", ResType(2027)).unwrap_or_else(|error| {
+        let shared = ResRef::new("shared", ResType(2027)).unwrap_or_else(|error| {
             panic!("shared rr: {error}");
         });
         let older = TestContainer {
@@ -226,7 +230,7 @@ mod tests {
             entries: HashMap::from([
                 (shared.clone(), make_res("shared", 2027, b"older", "older")),
                 (
-                    new_res_ref("only_old", ResType(2027)).unwrap_or_else(|error| {
+                    ResRef::new("only_old", ResType(2027)).unwrap_or_else(|error| {
                         panic!("only_old rr: {error}");
                     }),
                     make_res("only_old", 2027, b"old", "older"),
@@ -242,11 +246,11 @@ mod tests {
         manager.add(Arc::new(older));
         manager.add(Arc::new(newer));
 
-        let res = match manager.demand(&shared, false) {
+        let res = match manager.demand(&shared, CachePolicy::Bypass) {
             Ok(value) => value,
             Err(error) => panic!("demand shared: {error}"),
         };
-        let bytes = match res.read_all(false) {
+        let bytes = match res.read_all(CachePolicy::Bypass) {
             Ok(value) => value,
             Err(error) => panic!("read shared bytes: {error}"),
         };
@@ -256,7 +260,7 @@ mod tests {
 
     #[test]
     fn resolves_fully_specified_references() {
-        let rr = new_res_ref("alpha", ResType(2027)).unwrap_or_else(|error| {
+        let rr = ResRef::new("alpha", ResType(2027)).unwrap_or_else(|error| {
             panic!("alpha rr: {error}");
         });
         let container = TestContainer {

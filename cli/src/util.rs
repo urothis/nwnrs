@@ -13,6 +13,7 @@ pub(crate) const RESOURCE_METADATA_FILENAME: &str = "resource.json";
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Kind {
     Gff,
+    Ncs,
     Ssf,
     Tlk,
     TwoDa,
@@ -32,6 +33,7 @@ pub(crate) fn detect_kind(path: &Path) -> Option<Kind> {
     Some(match extension.as_str() {
         "gff" | "are" | "bic" | "dlg" | "git" | "ifo" | "itp" | "jrl" | "utc" | "utd" | "ute"
         | "uti" | "utm" | "utp" | "uts" | "utt" | "utw" => Kind::Gff,
+        "ncs" => Kind::Ncs,
         "mdl" => Kind::Model,
         "dds" | "plt" | "tga" => Kind::Texture,
         "ssf" => Kind::Ssf,

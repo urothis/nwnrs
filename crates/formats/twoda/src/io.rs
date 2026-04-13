@@ -257,7 +257,7 @@ pub fn write_twoda<W: Write>(writer: &mut W, twoda: &TwoDa, minify: bool) -> Two
 /// Reads a `2DA V2.0` table from a [`Res`].
 #[instrument(level = "debug", skip_all, err)]
 pub fn as_2da(res: &Res) -> TwoDaResult<TwoDa> {
-    read_twoda(std::io::Cursor::new(res.read_all(false)?))
+    read_twoda(std::io::Cursor::new(res.read_all(CachePolicy::Bypass)?))
 }
 
 /// Formats a cell for textual 2DA output.

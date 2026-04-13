@@ -25,6 +25,22 @@ pub type SharedReadSeek = Arc<Mutex<Box<dyn ReadSeek + Send>>>;
 pub type ResIoSpawner =
     Arc<dyn Fn() -> io::Result<Box<dyn ReadSeek + Send>> + Send + Sync + 'static>;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// Cache behavior for resource reads and cache-aware loaders.
+pub enum CachePolicy {
+    /// Use and populate any cache involved in the operation.
+    Use,
+    /// Bypass and do not populate any cache involved in the operation.
+    Bypass,
+}
+
+impl CachePolicy {
+    /// Returns `true` when caches should be consulted and populated.
+    pub const fn uses_cache(self) -> bool {
+        matches!(self, Self::Use)
+    }
+}
+
 #[derive(Debug)]
 /// Errors returned by resource-container and resource-manager operations.
 pub enum ResManError {
@@ -329,11 +345,11 @@ impl Res {
 
     /// Reads the full payload, decompressing it when required.
     ///
-    /// When `use_cache` is `true`, small decoded payloads are retained in
-    /// memory.
-    #[instrument(level = "debug", skip_all, err, fields(resref = %self.inner.resref, use_cache))]
-    pub fn read_all(&self, use_cache: bool) -> ResManResult<Vec<u8>> {
-        if use_cache {
+    /// When [`CachePolicy::Use`] is selected, small decoded payloads are
+    /// retained in memory.
+    #[instrument(level = "debug", skip_all, err, fields(resref = %self.inner.resref, cache_policy = ?cache_policy))]
+    pub fn read_all(&self, cache_policy: CachePolicy) -> ResManResult<Vec<u8>> {
+        if cache_policy.uses_cache() {
             let state = self.lock_state()?;
             if state.cached {
                 return Ok(state.cache.clone());
@@ -348,7 +364,7 @@ impl Res {
             }
         };
 
-        if use_cache && data.len() < MEMORY_CACHE_THRESHOLD {
+        if cache_policy.uses_cache() && data.len() < MEMORY_CACHE_THRESHOLD {
             let mut state = self.lock_state()?;
             state.cached = true;
             state.cache = data.clone();
@@ -370,7 +386,7 @@ impl Res {
             }
         }
 
-        let digest = secure_hash(self.read_all(true)?);
+        let digest = secure_hash(self.read_all(CachePolicy::Use)?);
         let mut state = self.lock_state()?;
         state.sha1 = digest;
         Ok(digest)

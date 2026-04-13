@@ -82,6 +82,48 @@ pub(crate) struct ConvertCmd {
 #[argh(subcommand, name = "inspect")]
 /// inspect a single NWN resource file by extension
 pub(crate) struct InspectCmd {
+    #[argh(switch)]
+    /// for .ncs input, render internal opcode/aux names instead of canonical
+    /// mnemonics
+    pub(crate) internal_names: bool,
+
+    #[argh(option, default = "15")]
+    /// for .ncs input, maximum rendered string length before truncation
+    pub(crate) max_string_length: usize,
+
+    #[argh(switch)]
+    /// for .ncs input, require a sibling .ndb file
+    pub(crate) require_ndb: bool,
+
+    #[argh(switch)]
+    /// for .ncs input, ignore a sibling .ndb file
+    pub(crate) no_ndb: bool,
+
+    #[argh(switch)]
+    /// for .ncs input, suppress source weaving even when .ndb and source files
+    /// are available
+    pub(crate) no_source_weave: bool,
+
+    #[argh(switch)]
+    /// for .ncs input, suppress per-function local offsets
+    pub(crate) no_local_offsets: bool,
+
+    #[argh(switch)]
+    /// for .ncs input, skip synthetic jump labels
+    pub(crate) no_labels: bool,
+
+    #[argh(switch)]
+    /// for .ncs input, suppress global offsets
+    pub(crate) no_offsets: bool,
+
+    #[argh(switch)]
+    /// for .ncs input, skip loading nwscript.nss for builtin action names
+    pub(crate) no_langspec: bool,
+
+    #[argh(option)]
+    /// for .ncs input, explicit nwscript.nss path instead of sibling lookup
+    pub(crate) langspec: Option<PathBuf>,
+
     #[argh(positional)]
     /// path to the file to inspect
     pub(crate) path: PathBuf,
@@ -242,7 +284,7 @@ mod tests {
 
     use argh::FromArgs;
 
-    use super::{Cli, Command, NwsyncCommand};
+    use super::{Cli, Command, InspectCmd, NwsyncCommand};
 
     #[test]
     fn parses_compile_command_with_repeated_include_dirs() {
@@ -317,5 +359,57 @@ mod tests {
         assert!(cmd.force);
         assert_eq!(cmd.input, PathBuf::from("models/input.mdl"));
         assert_eq!(cmd.output, PathBuf::from("models/output.mdl"));
+    }
+
+    #[test]
+    fn parses_inspect_command_with_ncs_disassembly_options() {
+        let cli = Cli::from_args(
+            &["nwnrs"],
+            &[
+                "inspect",
+                "--internal-names",
+                "--max-string-length",
+                "42",
+                "--require-ndb",
+                "--no-source-weave",
+                "--no-local-offsets",
+                "--no-labels",
+                "--no-offsets",
+                "--no-langspec",
+                "--langspec",
+                "specs/custom.nss",
+                "scripts/test.ncs",
+            ],
+        )
+        .unwrap_or_else(|error| panic!("parse inspect args: {error:?}"));
+
+        let Command::Inspect(InspectCmd {
+            internal_names,
+            max_string_length,
+            require_ndb,
+            no_ndb,
+            no_source_weave,
+            no_local_offsets,
+            no_labels,
+            no_offsets,
+            no_langspec,
+            langspec,
+            path,
+        }) = cli.command
+        else {
+            panic!("expected inspect command");
+        };
+
+        assert!(internal_names);
+        assert_eq!(max_string_length, 42);
+        assert!(require_ndb);
+        assert!(!no_ndb);
+        assert!(no_source_weave);
+        assert!(no_local_offsets);
+        assert!(no_labels);
+        assert!(no_offsets);
+        assert!(no_langspec);
+        assert_eq!(langspec, Some(PathBuf::from("specs/custom.nss")));
+        assert_eq!(path, PathBuf::from("scripts/test.ncs"));
     }
 }

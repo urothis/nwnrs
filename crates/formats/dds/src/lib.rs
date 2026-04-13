@@ -233,6 +233,25 @@ impl DdsTexture {
             .ok_or_else(|| DdsError::msg(format!("DDS mip level {level} is out of range")))?
             .decode_rgba8(self.format)
     }
+
+    /// Reads a typed DDS texture from disk.
+    pub fn from_file(path: impl AsRef<Path>) -> DdsResult<Self> {
+        let mut file = File::open(path.as_ref())?;
+        read_dds(&mut file)
+    }
+
+    /// Reads a typed DDS texture from a [`Res`].
+    pub fn from_res(res: &Res, cache_policy: CachePolicy) -> DdsResult<Self> {
+        if res.resref().res_type() != DDS_RES_TYPE {
+            return Err(DdsError::msg(format!(
+                "expected dds resource, got {}",
+                res.resref()
+            )));
+        }
+
+        let bytes = res.read_all(cache_policy)?;
+        parse_dds_bytes(&bytes)
+    }
 }
 
 /// Reads a typed DDS texture from `reader`.
@@ -240,27 +259,6 @@ impl DdsTexture {
 pub fn read_dds<R: Read>(reader: &mut R) -> DdsResult<DdsTexture> {
     let mut bytes = Vec::new();
     reader.read_to_end(&mut bytes)?;
-    parse_dds_bytes(&bytes)
-}
-
-/// Reads a typed DDS texture from disk.
-#[instrument(level = "debug", skip_all, err, fields(path = %path.as_ref().display()))]
-pub fn read_dds_from_file(path: impl AsRef<Path>) -> DdsResult<DdsTexture> {
-    let mut file = File::open(path.as_ref())?;
-    read_dds(&mut file)
-}
-
-/// Reads a typed DDS texture from a [`Res`].
-#[instrument(level = "debug", skip_all, err, fields(resref = %res.resref(), use_cache))]
-pub fn read_dds_from_res(res: &Res, use_cache: bool) -> DdsResult<DdsTexture> {
-    if res.resref().res_type() != DDS_RES_TYPE {
-        return Err(DdsError::msg(format!(
-            "expected dds resource, got {}",
-            res.resref()
-        )));
-    }
-
-    let bytes = res.read_all(use_cache)?;
     parse_dds_bytes(&bytes)
 }
 
@@ -972,7 +970,7 @@ fn narrow_u32_to_u8(value: u32) -> u8 {
 pub mod prelude {
     pub use crate::{
         DDS_RES_TYPE, DdsError, DdsFormat, DdsMipLevel, DdsResult, DdsTexture, NWN_DDS_HEADER_SIZE,
-        NwnDdsHeader, read_dds, read_dds_from_file, read_dds_from_res, write_dds,
+        NwnDdsHeader, read_dds, write_dds,
     };
 }
 

@@ -55,15 +55,15 @@ pub fn read_resmemfile_arc(
 mod tests {
     use std::sync::Arc;
 
-    use nwnrs_resman::ResContainer;
-    use nwnrs_resref::new_res_ref;
+    use nwnrs_resman::{CachePolicy, ResContainer};
+    use nwnrs_resref::ResRef;
     use nwnrs_restype::ResType;
 
     use crate::{read_resmemfile, read_resmemfile_arc};
 
     #[test]
     fn wraps_owned_bytes_as_resource_container() {
-        let rr = match new_res_ref("alpha", ResType(2027)) {
+        let rr = match ResRef::new("alpha", ResType(2027)) {
             Ok(value) => value,
             Err(error) => panic!("alpha rr: {error}"),
         };
@@ -74,7 +74,7 @@ mod tests {
         assert_eq!(resmem.len(), 7);
         assert!(!resmem.is_empty());
         assert!(resmem.contains(&rr));
-        let bytes = match resmem.res().read_all(false) {
+        let bytes = match resmem.res().read_all(CachePolicy::Bypass) {
             Ok(value) => value,
             Err(error) => panic!("read payload: {error}"),
         };
@@ -83,7 +83,7 @@ mod tests {
 
     #[test]
     fn wraps_shared_bytes_without_changing_contents() {
-        let rr = match new_res_ref("beta", ResType(2027)) {
+        let rr = match ResRef::new("beta", ResType(2027)) {
             Ok(value) => value,
             Err(error) => panic!("beta rr: {error}"),
         };
@@ -91,7 +91,7 @@ mod tests {
             Ok(value) => value,
             Err(error) => panic!("read resmemfile arc: {error}"),
         };
-        let bytes = match resmem.res().read_all(false) {
+        let bytes = match resmem.res().read_all(CachePolicy::Bypass) {
             Ok(value) => value,
             Err(error) => panic!("read shared payload: {error}"),
         };

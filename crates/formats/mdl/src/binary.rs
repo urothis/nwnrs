@@ -1,4 +1,9 @@
-use std::{collections::BTreeSet, fs::File, io::Read, path::Path};
+use std::{
+    collections::BTreeSet,
+    fs::File,
+    io::{Read, Write},
+    path::Path,
+};
 
 use nwnrs_resman::prelude::*;
 use tracing::instrument;
@@ -39,6 +44,25 @@ pub enum ParsedModel {
     Ascii(crate::AsciiModel),
     /// Parsed compiled MDL.
     Compiled(BinaryModel),
+}
+
+impl ParsedModel {
+    /// Reads a parsed MDL payload from disk.
+    pub fn from_file(path: impl AsRef<Path>) -> ModelResult<Self> {
+        let mut file = File::open(path.as_ref())?;
+        read_parsed_model(&mut file)
+    }
+
+    /// Reads a parsed MDL payload from a [`Res`].
+    pub fn from_res(res: &Res, cache_policy: CachePolicy) -> ModelResult<Self> {
+        if res.resref().res_type() != MODEL_RES_TYPE {
+            return Err(ModelError::msg(format!(
+                "expected mdl resource, got {}",
+                res.resref()
+            )));
+        }
+        parse_model_bytes(&res.read_all(cache_policy)?)
+    }
 }
 
 /// Top-level compiled MDL header.
@@ -104,6 +128,25 @@ pub struct BinaryModel {
     pub unknown_blocks:   Vec<UnknownBinaryBlock>,
     /// Non-fatal binary parsing diagnostics.
     pub diagnostics:      Vec<ModelDiagnostic>,
+}
+
+impl BinaryModel {
+    /// Reads a compiled binary MDL from disk.
+    pub fn from_file(path: impl AsRef<Path>) -> ModelResult<Self> {
+        let mut file = File::open(path.as_ref())?;
+        read_binary_model(&mut file)
+    }
+
+    /// Reads a compiled binary MDL from a [`Res`].
+    pub fn from_res(res: &Res, cache_policy: CachePolicy) -> ModelResult<Self> {
+        if res.resref().res_type() != MODEL_RES_TYPE {
+            return Err(ModelError::msg(format!(
+                "expected mdl resource, got {}",
+                res.resref()
+            )));
+        }
+        parse_binary_model_bytes(&res.read_all(cache_policy)?)
+    }
 }
 
 impl BinaryModel {
@@ -569,23 +612,13 @@ pub fn read_parsed_model<R: Read>(reader: &mut R) -> ModelResult<ParsedModel> {
     parse_model_bytes(&bytes)
 }
 
-/// Reads a parsed MDL payload from disk.
-#[instrument(level = "debug", skip_all, err, fields(path = %path.as_ref().display()))]
-pub fn read_parsed_model_from_file(path: impl AsRef<Path>) -> ModelResult<ParsedModel> {
-    let mut file = File::open(path.as_ref())?;
-    read_parsed_model(&mut file)
-}
-
-/// Reads a parsed MDL payload from a [`Res`].
-#[instrument(level = "debug", skip_all, err, fields(resref = %res.resref(), use_cache))]
-pub fn read_parsed_model_from_res(res: &Res, use_cache: bool) -> ModelResult<ParsedModel> {
-    if res.resref().res_type() != MODEL_RES_TYPE {
-        return Err(ModelError::msg(format!(
-            "expected mdl resource, got {}",
-            res.resref()
-        )));
+/// Writes a parsed MDL payload.
+#[instrument(level = "debug", skip_all, err)]
+pub fn write_parsed_model<W: Write>(writer: &mut W, model: &ParsedModel) -> ModelResult<()> {
+    match model {
+        ParsedModel::Ascii(model) => crate::write_ascii_model(writer, model),
+        ParsedModel::Compiled(model) => write_binary_model(writer, model),
     }
-    parse_model_bytes(&res.read_all(use_cache)?)
 }
 
 /// Parses a compiled binary MDL payload from raw bytes.
@@ -603,23 +636,11 @@ pub fn read_binary_model<R: Read>(reader: &mut R) -> ModelResult<BinaryModel> {
     parse_binary_model_bytes(&bytes)
 }
 
-/// Reads a compiled binary MDL from disk.
-#[instrument(level = "debug", skip_all, err, fields(path = %path.as_ref().display()))]
-pub fn read_binary_model_from_file(path: impl AsRef<Path>) -> ModelResult<BinaryModel> {
-    let mut file = File::open(path.as_ref())?;
-    read_binary_model(&mut file)
-}
-
-/// Reads a compiled binary MDL from a [`Res`].
-#[instrument(level = "debug", skip_all, err, fields(resref = %res.resref(), use_cache))]
-pub fn read_binary_model_from_res(res: &Res, use_cache: bool) -> ModelResult<BinaryModel> {
-    if res.resref().res_type() != MODEL_RES_TYPE {
-        return Err(ModelError::msg(format!(
-            "expected mdl resource, got {}",
-            res.resref()
-        )));
-    }
-    parse_binary_model_bytes(&res.read_all(use_cache)?)
+/// Writes a compiled binary MDL back to its original bytes.
+#[instrument(level = "debug", skip_all, err, fields(model_name = %model.name))]
+pub fn write_binary_model<W: Write>(writer: &mut W, model: &BinaryModel) -> ModelResult<()> {
+    writer.write_all(&model.source_bytes)?;
+    Ok(())
 }
 
 fn parse_binary_header(bytes: &[u8]) -> ModelResult<BinaryHeader> {
@@ -2051,17 +2072,18 @@ fn read_f32_slice(bytes: &[u8]) -> Option<f32> {
 #[allow(clippy::panic)]
 #[cfg(test)]
 mod tests {
-    use std::error::Error;
+    use std::{error::Error, io::Cursor};
 
+    use nwnrs_resman::CachePolicy;
     use nwnrs_test_support::{
         demand_resource, require_game_resource, skip_if_game_resources_unavailable,
     };
 
     use super::FILE_HEADER_SIZE;
     use crate::{
-        MODEL_RES_TYPE, ModelEncoding, ParsedModel, detect_model_encoding,
+        BinaryModel, MODEL_RES_TYPE, ModelEncoding, ParsedModel, detect_model_encoding,
         lower_binary_model_to_ascii, parse_binary_model_bytes, parse_model_bytes,
-        read_binary_model_from_res,
+        read_parsed_model, write_binary_model, write_parsed_model,
     };
 
     #[test]
@@ -2160,9 +2182,70 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn binary_writer_roundtrips_exact_bytes() -> Result<(), Box<dyn Error>> {
+        let bytes = match shipped_compiled_fixture_bytes() {
+            Ok(bytes) => bytes,
+            Err(error) => return skip_if_game_resources_unavailable(error),
+        };
+        let model = parse_binary_model_bytes(&bytes).unwrap_or_else(|error| {
+            panic!("parse compiled bytes: {error}");
+        });
+
+        let mut encoded = Vec::new();
+        if let Err(error) = write_binary_model(&mut encoded, &model) {
+            panic!("write compiled model: {error}");
+        }
+
+        assert_eq!(encoded, bytes);
+        Ok(())
+    }
+
+    #[test]
+    fn parsed_compiled_writer_roundtrips_exact_bytes() -> Result<(), Box<dyn Error>> {
+        let bytes = match shipped_compiled_fixture_bytes() {
+            Ok(bytes) => bytes,
+            Err(error) => return skip_if_game_resources_unavailable(error),
+        };
+        let parsed = parse_model_bytes(&bytes).unwrap_or_else(|error| {
+            panic!("parse compiled model bytes: {error}");
+        });
+
+        let mut encoded = Vec::new();
+        if let Err(error) = write_parsed_model(&mut encoded, &parsed) {
+            panic!("write parsed compiled model: {error}");
+        }
+
+        assert_eq!(encoded, bytes);
+        Ok(())
+    }
+
+    #[test]
+    fn parsed_ascii_writer_roundtrips_canonically() -> Result<(), Box<dyn Error>> {
+        let bytes = match shipped_ascii_fixture_bytes() {
+            Ok(bytes) => bytes,
+            Err(error) => return skip_if_game_resources_unavailable(error),
+        };
+        let mut reader = Cursor::new(bytes);
+        let parsed = read_parsed_model(&mut reader).unwrap_or_else(|error| {
+            panic!("read parsed ascii model: {error}");
+        });
+
+        let mut encoded = Vec::new();
+        if let Err(error) = write_parsed_model(&mut encoded, &parsed) {
+            panic!("write parsed ascii model: {error}");
+        }
+
+        let reparsed = parse_model_bytes(&encoded).unwrap_or_else(|error| {
+            panic!("reparse encoded ascii model: {error}");
+        });
+        assert_eq!(reparsed, parsed);
+        Ok(())
+    }
+
     fn shipped_compiled_fixture() -> Result<crate::BinaryModel, Box<dyn Error>> {
         let res = require_game_resource(demand_resource("a_ba2", MODEL_RES_TYPE))?;
-        Ok(read_binary_model_from_res(&res, true)?)
+        Ok(BinaryModel::from_res(&res, CachePolicy::Use)?)
     }
 
     fn shipped_compiled_fixture_bytes() -> Result<Vec<u8>, Box<dyn Error>> {
@@ -2171,7 +2254,7 @@ mod tests {
 
     fn shipped_ascii_fixture_bytes() -> Result<Vec<u8>, Box<dyn Error>> {
         let res = require_game_resource(demand_resource("a_ba_casts", MODEL_RES_TYPE))?;
-        let binary = read_binary_model_from_res(&res, true)?;
+        let binary = BinaryModel::from_res(&res, CachePolicy::Use)?;
         Ok(lower_binary_model_to_ascii(&binary)?.to_text().into_bytes())
     }
 }

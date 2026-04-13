@@ -1,6 +1,9 @@
 use std::{fs, path::Path};
 
-use nwnrs::prelude::{resman::ResContainer, *};
+use nwnrs::{
+    prelude::{resman::ResContainer, *},
+    resman::CachePolicy,
+};
 use tracing::{debug, info, instrument, warn};
 
 use crate::{
@@ -39,6 +42,7 @@ pub(crate) fn run_unpack(cmd: UnpackCmd) -> Result<(), String> {
             key:         cmd.input,
             destination: cmd.directory,
         }),
+        Some(Kind::Ncs) => unpack_ncs_to_dir(&cmd.input, &cmd.directory, cmd.force),
         Some(Kind::Gff) => unpack_resource_to_dir(&cmd.input, &cmd.directory, "gff", cmd.force),
         Some(Kind::TwoDa) => unpack_resource_to_dir(&cmd.input, &cmd.directory, "2da", cmd.force),
         Some(Kind::Tlk) => unpack_resource_to_dir(&cmd.input, &cmd.directory, "tlk", cmd.force),
@@ -101,7 +105,7 @@ pub(crate) fn run_key_unpack(cmd: KeyUnpackCmd) -> Result<(), String> {
         for rr in resources {
             let data = key
                 .demand(&rr)
-                .and_then(|res| res.read_all(false))
+                .and_then(|res| res.read_all(CachePolicy::Bypass))
                 .map_err(|error| {
                     format!("failed to extract {rr} from {}: {error}", cmd.key.display())
                 })?;
@@ -114,6 +118,36 @@ pub(crate) fn run_key_unpack(cmd: KeyUnpackCmd) -> Result<(), String> {
     }
 
     write_key_pack_metadata(&cmd.destination, &cmd.key, &key, cmd.force)?;
+    Ok(())
+}
+
+fn unpack_ncs_to_dir(input: &Path, destination: &Path, force: bool) -> Result<(), String> {
+    let file_name = input
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| format!("invalid input filename: {}", input.display()))?;
+    let target = destination.join(format!("{file_name}.asm"));
+    ensure_output_file_ready(&target, force)?;
+    let bytes =
+        fs::read(input).map_err(|error| format!("failed to read {}: {error}", input.display()))?;
+    let rendered = nwscript::render_ncs_disassembly(
+        &bytes,
+        None,
+        nwscript::NcsDisassemblyOptions {
+            max_string_length: usize::MAX,
+            ..nwscript::NcsDisassemblyOptions::default()
+        },
+    )
+    .map_err(|error| format!("failed to disassemble {}: {error}", input.display()))?;
+    fs::write(&target, rendered)
+        .map_err(|error| format!("failed to write {}: {error}", target.display()))?;
+    write_resource_pack_metadata(
+        destination,
+        input,
+        "ncs",
+        &format!("{file_name}.asm"),
+        force,
+    )?;
     Ok(())
 }
 
@@ -132,7 +166,10 @@ pub(crate) fn unpack_erf_to_dir(
         .map_err(|error| format!("failed to parse {} as ERF/MOD: {error}", input.display()))?;
     let mut extracted = 0_usize;
     for rr in erf.contents() {
-        let data = match erf.demand(&rr).and_then(|res| res.read_all(false)) {
+        let data = match erf
+            .demand(&rr)
+            .and_then(|res| res.read_all(CachePolicy::Bypass))
+        {
             Ok(data) => data,
             Err(error) => {
                 warn!(resource = %rr, archive = %input.display(), error = %error, "failed to extract archive entry");
@@ -195,6 +232,26 @@ fn write_unpacked_archive_entry(
             .map_err(|error| format!("failed to write {}: {error}", target.display()));
     };
 
+    if resolved.res_ext().eq_ignore_ascii_case("ncs") {
+        let target = unpacked_raw_target(
+            destination,
+            &format!("{}.asm", resolved.to_file()),
+            resolved.res_ext(),
+        );
+        ensure_output_file_ready(&target, force)?;
+        let rendered = nwscript::render_ncs_disassembly(
+            data,
+            None,
+            nwscript::NcsDisassemblyOptions {
+                max_string_length: usize::MAX,
+                ..nwscript::NcsDisassemblyOptions::default()
+            },
+        )
+        .map_err(|error| format!("failed to disassemble archive entry {rr}: {error}"))?;
+        return fs::write(&target, rendered)
+            .map_err(|error| format!("failed to write {}: {error}", target.display()));
+    }
+
     let target = unpacked_raw_target(destination, &resolved.to_file(), resolved.res_ext());
     ensure_output_file_ready(&target, force)?;
     fs::write(&target, data)
@@ -211,7 +268,10 @@ mod tests {
     };
 
     use super::*;
-    use crate::args::UnpackCmd;
+    use crate::{
+        args::{PackCmd, UnpackCmd},
+        pack::run_pack,
+    };
 
     fn unique_test_dir(prefix: &str) -> PathBuf {
         let nanos = SystemTime::now()
@@ -230,7 +290,7 @@ mod tests {
         fs::create_dir_all(&source_dir).expect("create source dir");
         let source = source_dir.join("fixture.utc");
         let mut bytes = Cursor::new(Vec::new());
-        gff::write_gff_root(&mut bytes, &gff::new_gff_root("UTC ")).expect("write gff fixture");
+        gff::write_gff_root(&mut bytes, &gff::GffRoot::new("UTC ")).expect("write gff fixture");
         fs::write(&source, bytes.into_inner()).expect("write source fixture");
 
         run_unpack(UnpackCmd {
@@ -270,5 +330,46 @@ mod tests {
         );
         let _ = fs::remove_dir_all(directory);
         let _ = fs::remove_dir_all(source_dir);
+    }
+
+    #[test]
+    fn unpack_and_pack_roundtrip_raw_ncs_as_asm() {
+        let directory = unique_test_dir("ncs-unpack");
+        fs::create_dir_all(&directory).expect("create temp dir");
+        let input = directory.join("fixture.ncs");
+        let repacked = directory.join("roundtrip.ncs");
+        let bytes = nwscript::encode_ncs_instructions(&[nwscript::NcsInstruction {
+            opcode:  nwscript::NcsOpcode::Ret,
+            auxcode: nwscript::NcsAuxCode::None,
+            extra:   Vec::new(),
+        }]);
+        fs::write(&input, &bytes).expect("write ncs fixture");
+
+        run_unpack(UnpackCmd {
+            directory: directory.clone(),
+            force:     true,
+            input:     input.clone(),
+        })
+        .expect("unpack ncs resource");
+
+        let asm = directory.join("fixture.ncs.asm");
+        let text = fs::read_to_string(&asm).expect("read unpacked asm");
+        assert!(text.contains("RET"));
+
+        run_pack(PackCmd {
+            force:            true,
+            data_version:     "V1".to_string(),
+            data_compression: "none".to_string(),
+            no_squash:        false,
+            no_symlinks:      false,
+            recurse:          2,
+            erf_type:         None,
+            input:            directory.clone(),
+            output:           repacked.clone(),
+        })
+        .expect("pack asm back into ncs");
+
+        assert_eq!(fs::read(&repacked).expect("read repacked ncs"), bytes);
+        let _ = fs::remove_dir_all(directory);
     }
 }

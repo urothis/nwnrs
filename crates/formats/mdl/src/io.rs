@@ -1,46 +1,22 @@
-use std::{
-    fs::File,
-    io::{self, Read, Write},
-    path::Path,
-};
+use std::io::{Read, Write};
 
-use nwnrs_resman::prelude::*;
 use tracing::instrument;
 
-use crate::{MODEL_RES_TYPE, Model, ModelError, ModelResult};
+use crate::{Model, ModelResult};
 
 /// Reads an `MDL` payload from `reader`.
 #[instrument(level = "debug", skip_all, err)]
-pub fn read_model<R: Read>(reader: &mut R) -> io::Result<Model> {
+pub fn read_model<R: Read>(reader: &mut R) -> ModelResult<Model> {
     let mut bytes = Vec::new();
     reader.read_to_end(&mut bytes)?;
     Ok(Model::new(bytes))
 }
 
-/// Reads an `MDL` payload from disk.
-#[instrument(level = "debug", skip_all, err, fields(path = %path.as_ref().display()))]
-pub fn read_model_from_file(path: impl AsRef<Path>) -> io::Result<Model> {
-    let mut file = File::open(path.as_ref())?;
-    read_model(&mut file)
-}
-
-/// Reads an `MDL` payload from a [`Res`].
-#[instrument(level = "debug", skip_all, err, fields(resref = %res.resref(), use_cache))]
-pub fn read_model_from_res(res: &Res, use_cache: bool) -> ModelResult<Model> {
-    if res.resref().res_type() != MODEL_RES_TYPE {
-        return Err(ModelError::msg(format!(
-            "expected mdl resource, got {}",
-            res.resref()
-        )));
-    }
-
-    Ok(Model::new(res.read_all(use_cache)?))
-}
-
 /// Writes an `MDL` payload to `writer`.
 #[instrument(level = "debug", skip_all, err, fields(byte_len = model.byte_len()))]
-pub fn write_model<W: Write>(writer: &mut W, model: &Model) -> io::Result<()> {
-    writer.write_all(model.bytes())
+pub fn write_model<W: Write>(writer: &mut W, model: &Model) -> ModelResult<()> {
+    writer.write_all(model.bytes())?;
+    Ok(())
 }
 
 #[allow(clippy::panic)]

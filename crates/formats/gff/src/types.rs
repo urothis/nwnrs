@@ -405,21 +405,6 @@ pub(crate) fn ensure_label(label: &str) -> GffResult<()> {
     Ok(())
 }
 
-/// Creates an empty GFF structure with the given structure id.
-pub fn new_gff_struct(id: i32) -> GffStruct {
-    GffStruct::new(id)
-}
-
-/// Creates a new root document with the given four-byte file type tag.
-pub fn new_gff_root(file_type: &str) -> GffRoot {
-    GffRoot::new(file_type)
-}
-
-/// Creates an empty localized string with [`BAD_STRREF`] and no inline entries.
-pub fn new_c_exo_loc_string() -> GffCExoLocString {
-    GffCExoLocString::default()
-}
-
 impl PartialEq for GffRoot {
     fn eq(&self, other: &Self) -> bool {
         self.file_type == other.file_type

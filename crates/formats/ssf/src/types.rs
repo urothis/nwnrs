@@ -1,4 +1,4 @@
-use std::io;
+use std::{fmt, io};
 
 use nwnrs_localization::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -7,6 +7,35 @@ pub(crate) const HEADER_MAGIC: &str = "SSF ";
 pub(crate) const HEADER_VERSION: &str = "V1.0";
 pub(crate) const TABLE_OFFSET: u32 = 40;
 pub(crate) const ENTRY_DATA_SIZE: usize = 20;
+
+#[derive(Debug)]
+/// Errors returned while reading or writing SSF data.
+pub enum SsfError {
+    /// An underlying IO operation failed.
+    Io(io::Error),
+    /// The SSF contents were otherwise invalid.
+    Message(String),
+}
+
+impl fmt::Display for SsfError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Io(error) => error.fmt(f),
+            Self::Message(message) => f.write_str(message),
+        }
+    }
+}
+
+impl std::error::Error for SsfError {}
+
+impl From<io::Error> for SsfError {
+    fn from(value: io::Error) -> Self {
+        Self::Io(value)
+    }
+}
+
+/// Result type for SSF operations.
+pub type SsfResult<T> = Result<T, SsfError>;
 
 /// A single soundset slot.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -64,9 +93,11 @@ pub struct SsfRoot {
     pub entries: Vec<SsfEntry>,
 }
 
-/// Creates an empty `SSF` document.
-pub fn new_ssf() -> SsfRoot {
-    SsfRoot::default()
+impl SsfRoot {
+    /// Creates an empty `SSF` document.
+    pub fn new() -> Self {
+        Self::default()
+    }
 }
 
 pub(crate) fn decode_resref(raw: &[u8]) -> String {
