@@ -185,7 +185,7 @@ impl FilesystemScriptResolver {
         }
     }
 
-    fn read_candidate(&self, path: &Path) -> Result<Option<Vec<u8>>, nwscript::SourceError> {
+    fn read_candidate(path: &Path) -> Result<Option<Vec<u8>>, nwscript::SourceError> {
         let Some(resolved) = resolve_case_insensitive(path) else {
             return Ok(None);
         };
@@ -223,7 +223,7 @@ impl nwscript::ScriptResolver for FilesystemScriptResolver {
         }
 
         for candidate in candidates {
-            if let Some(bytes) = self.read_candidate(&candidate)? {
+            if let Some(bytes) = Self::read_candidate(&candidate)? {
                 return Ok(Some(bytes));
             }
         }
