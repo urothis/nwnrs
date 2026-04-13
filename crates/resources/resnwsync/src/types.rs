@@ -357,7 +357,7 @@ impl ResContainer for ResNWSyncManifest {
             rr.clone(),
             self.mtime,
             shared_stream(Cursor::new(data.clone())),
-            data.len() as i64,
+            data.len().cast_signed(),
             0,
             ExoResFileCompressionType::None,
             None,

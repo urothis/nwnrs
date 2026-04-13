@@ -274,7 +274,7 @@ impl ResContainer for KeyTable {
             rr.clone(),
             SystemTime::UNIX_EPOCH,
             loaded.stream.clone(),
-            variable.io_size as i64,
+            variable.io_size.cast_signed(),
             variable.io_offset,
             variable.compression_type,
             None,

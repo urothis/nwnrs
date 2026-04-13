@@ -28,7 +28,7 @@ pub fn read_resmemfile(
             resref,
             SystemTime::UNIX_EPOCH,
             stream,
-            len as i64,
+            len.cast_signed(),
             0,
             ExoResFileCompressionType::None,
             None,
