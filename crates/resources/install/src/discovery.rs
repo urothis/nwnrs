@@ -21,8 +21,8 @@ struct CandidatePath {
 
 /// Locates the NWN user directory.
 ///
-/// Resolution order is: explicit override, `nwnrs_HOME`,
-/// `nwnrs_USER_DIRECTORY`, then the platform-specific default location.
+/// Resolution order is: explicit override, `NWN_HOME`, then the
+/// platform-specific default location.
 ///
 /// The function returns the first existing directory when possible. If no
 /// candidate exists, it returns an error describing the accepted overrides.
@@ -38,7 +38,7 @@ pub fn find_user_root(override_dir: &str) -> InstallResult<PathBuf> {
 
 /// Locates the NWN installation root.
 ///
-/// Resolution order is: explicit override, `nwnrs_ROOT`, Steam install
+/// Resolution order is: explicit override, `NWN_ROOT`, Steam install
 /// heuristics, then Beamdog client settings heuristics.
 ///
 /// The returned path is required to exist as a directory. A missing
@@ -99,12 +99,9 @@ where
     H: Fn() -> Option<PathBuf>,
 {
     debug!("resolving user root");
-    if let Some(preferred) = first_nonempty_path(
-        override_dir,
-        env_get("nwnrs_HOME").as_deref(),
-        env_get("nwnrs_USER_DIRECTORY").as_deref(),
-        None,
-    ) {
+    if let Some(preferred) =
+        first_nonempty_path(override_dir, env_get("NWN_HOME").as_deref(), None, None)
+    {
         return preferred
             .is_dir()
             .then_some(preferred.clone())
@@ -124,8 +121,7 @@ where
 
     resolve_existing_dir(
         candidates,
-        "Could not locate NWN user directory; try --userdirectory or set nwnrs_HOME \
-         (nwnrs_USER_DIRECTORY also works, but is considered alternate)",
+        "Could not locate NWN user directory; try --userdirectory or set NWN_HOME",
         |candidate| candidate.path.is_dir(),
     )
 }
@@ -168,7 +164,7 @@ where
 {
     debug!("resolving install root");
     if let Some(preferred) =
-        first_nonempty_path(override_dir, env_get("nwnrs_ROOT").as_deref(), None, None)
+        first_nonempty_path(override_dir, env_get("NWN_ROOT").as_deref(), None, None)
     {
         if !preferred.is_dir() {
             return Err(InstallError::msg(format!(
@@ -557,7 +553,7 @@ mod tests {
         let resolved = match find_user_root_impl(
             "",
             |key| match key {
-                "nwnrs_HOME" => Some(env_dir.display().to_string()),
+                "NWN_HOME" => Some(env_dir.display().to_string()),
                 _ => None,
             },
             || Some(home.clone()),
