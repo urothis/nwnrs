@@ -40,14 +40,14 @@ where
     Ok(value)
 }
 
-pub(crate) fn unchanged_lossless_bytes<T: Serialize>(
+pub(crate) fn unchanged_lossless_bytes<T>(
     value: &T,
     lossless: &Option<LosslessDtoMetadata>,
     metadata_slot: fn(&mut T) -> &mut Option<LosslessDtoMetadata>,
     context: &str,
 ) -> Result<Option<Vec<u8>>, String>
 where
-    T: Clone,
+    T: Clone + Serialize,
 {
     let Some(lossless) = lossless else {
         return Ok(None);
