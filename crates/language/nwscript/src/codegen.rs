@@ -827,7 +827,9 @@ impl<'a> O0Compiler<'a> {
 
     fn function_layout(&self, function: &HirFunction) -> Result<FunctionLayout, CodegenError> {
         let mut offset = 0usize;
-        let return_layout = if function.return_type != SemanticType::Void {
+        let return_layout = if function.return_type == SemanticType::Void {
+            None
+        } else {
             let size = size_of_type(&function.return_type, &self.structs)?;
             let layout = ValueLayout {
                 offset,
@@ -835,8 +837,6 @@ impl<'a> O0Compiler<'a> {
             };
             offset += size;
             Some(layout)
-        } else {
-            None
         };
 
         let mut locals = BTreeMap::new();

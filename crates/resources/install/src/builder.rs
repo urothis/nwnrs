@@ -47,10 +47,10 @@ pub fn new_default_resman(
     let resolved_language_root = crate::resolve_language_root(root, language)?;
 
     let autodetect_keys = keys.is_empty() || matches!(keys, [single] if single == "autodetect");
-    let actual_keys = if !autodetect_keys {
-        keys.join(",")
-    } else {
+    let actual_keys = if autodetect_keys {
         DEFAULT_KEYFILES.join(",")
+    } else {
+        keys.join(",")
     };
     let keys = actual_keys
         .split(',')
