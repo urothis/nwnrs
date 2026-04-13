@@ -9,10 +9,10 @@ use crate::{
     lex_source, load_source_bundle,
 };
 
-/// Default logical script name for the builtin NWScript language definition.
+/// Default logical script name for the builtin `NWScript` language definition.
 pub const DEFAULT_LANGSPEC_SCRIPT_NAME: &str = "nwscript";
 
-/// One builtin NWScript type defined by `nwscript.nss`.
+/// One builtin `NWScript` type defined by `nwscript.nss`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum BuiltinType {
     /// `int`
@@ -383,8 +383,7 @@ impl<'a> LangSpecParser<'a> {
                 self.parse_json_default()
             }
             _ => Err(LangSpecError::parse(format!(
-                "unsupported builtin default value for type {:?}",
-                ty
+                "unsupported builtin default value for type {ty:?}"
             ))),
         }
     }

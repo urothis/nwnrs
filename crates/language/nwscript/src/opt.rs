@@ -393,8 +393,8 @@ pub(crate) fn evaluate_const_expr(
 ) -> Option<ConstValue> {
     match &expr.kind {
         HirExprKind::Literal(literal) => const_from_literal(literal),
-        HirExprKind::Value(crate::HirValueRef::ConstGlobal(name))
-        | HirExprKind::Value(crate::HirValueRef::BuiltinConstant(name)) => {
+        HirExprKind::Value(crate::HirValueRef::ConstGlobal(name) |
+crate::HirValueRef::BuiltinConstant(name)) => {
             constants.get(name).cloned()
         }
         HirExprKind::Value(_) => None,

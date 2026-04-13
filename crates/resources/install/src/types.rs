@@ -34,7 +34,7 @@ pub enum InstallError {
     Erf(ErfError),
     /// Directory-backed resource loading failed.
     ResDir(ResDirError),
-    /// NWSync repository access failed.
+    /// `NWSync` repository access failed.
     ResNWSync(ResNWSyncError),
     /// The requested installation layout or input set was invalid.
     Message(String),

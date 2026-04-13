@@ -1,4 +1,4 @@
-//! Integer literal parsing aligned with the native NWScript compiler.
+//! Integer literal parsing aligned with the native `NWScript` compiler.
 //!
 //! The upstream parser accumulates integer digits directly into an `int32_t`
 //! without range checks. That means oversized decimal, hex, binary, and octal

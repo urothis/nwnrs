@@ -628,7 +628,7 @@ fn collect_struct(structure: &GffStruct, state: &mut WriteState) -> GffResult<i3
                     offset
                 } else {
                     let offset = to_i32_len(state.field_data.len(), "GFF field data offset")?;
-                    expect(value.len() <= u8::MAX as usize, "ResRef too long for GFF")?;
+                    expect(u8::try_from(value.len()).is_ok(), "ResRef too long for GFF")?;
                     state.field_data.push(
                         u8::try_from(value.len())
                             .map_err(|_error| GffError::msg("ResRef too long for GFF"))?,
@@ -771,16 +771,14 @@ fn get_or_insert_label(
         idx
     } else {
         let bytes = provenance
-            .filter(|provenance| trim_trailing_nuls(&provenance.label_bytes) == label)
-            .map(|provenance| provenance.label_bytes)
-            .unwrap_or_else(|| {
+            .filter(|provenance| trim_trailing_nuls(&provenance.label_bytes) == label).map_or_else(|| {
                 let mut padded = [0_u8; 16];
                 let label_bytes = label.as_bytes();
                 if let Some(prefix) = padded.get_mut(..label_bytes.len()) {
                     prefix.copy_from_slice(label_bytes);
                 }
                 padded
-            });
+            }, |provenance| provenance.label_bytes);
         labels.push(RawLabelEntry {
             text: label.to_string(),
             bytes,

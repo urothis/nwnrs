@@ -387,7 +387,7 @@ pub fn parse_git_root(root: &GffRoot) -> GitResult<GitFile> {
             .map(parse_encounter)
             .collect(),
         legacy_list:     gff_list(&root.root, "List")
-            .map_or_else(Vec::new, |entries| entries.to_vec()),
+            .map_or_else(Vec::new, <[nwnrs_gff::GffStruct]>::to_vec),
         sounds:          gff_list(&root.root, "SoundList")
             .into_iter()
             .flatten()

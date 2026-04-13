@@ -1,6 +1,6 @@
 # nwnrs-nwscript
 
-`nwnrs-nwscript` is the home of the workspace's pure Rust NWScript frontend and
+`nwnrs-nwscript` is the home of the workspace's pure Rust `NWScript` frontend and
 compiler toolchain.
 
 ## Scope

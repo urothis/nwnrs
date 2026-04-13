@@ -822,8 +822,7 @@ impl<'a> Analyzer<'a> {
                             CompilerErrorCode::ReturnTypeAndFunctionTypeMismatched,
                             value.span,
                             format!(
-                                "return expression has type {:?}, expected {:?}",
-                                actual, expected
+                                "return expression has type {actual:?}, expected {expected:?}"
                             ),
                         ));
                     }
@@ -901,8 +900,7 @@ impl<'a> Analyzer<'a> {
                         CompilerErrorCode::MultipleCaseConstantStatementsWithinSwitch,
                         statement.span,
                         format!(
-                            "case value {:?} was used more than once in this switch",
-                            value
+                            "case value {value:?} was used more than once in this switch"
                         ),
                     ));
                 }
@@ -953,7 +951,7 @@ impl<'a> Analyzer<'a> {
                     SemanticError::new(
                         CompilerErrorCode::UndefinedIdentifier,
                         expr.span,
-                        format!("undefined identifier {:?}", name),
+                        format!("undefined identifier {name:?}"),
                     )
                 })?;
                 Ok(ResolvedExpr {
@@ -978,7 +976,7 @@ impl<'a> Analyzer<'a> {
                     SemanticError::new(
                         CompilerErrorCode::UndefinedIdentifier,
                         callee.span,
-                        format!("undefined function {:?}", name),
+                        format!("undefined function {name:?}"),
                     )
                 })?;
 
@@ -1055,7 +1053,7 @@ impl<'a> Analyzer<'a> {
                         _ => Err(SemanticError::new(
                             CompilerErrorCode::UndefinedFieldInStructure,
                             expr.span,
-                            format!("field {:?} does not exist on vector", field),
+                            format!("field {field:?} does not exist on vector"),
                         )),
                     },
                     SemanticType::Struct(name) => self
@@ -1072,7 +1070,7 @@ impl<'a> Analyzer<'a> {
                             SemanticError::new(
                                 CompilerErrorCode::UndefinedFieldInStructure,
                                 expr.span,
-                                format!("field {:?} does not exist on structure {:?}", field, name),
+                                format!("field {field:?} does not exist on structure {name:?}"),
                             )
                         }),
                     _ => Err(SemanticError::new(
@@ -1314,8 +1312,7 @@ impl<'a> Analyzer<'a> {
                         CompilerErrorCode::LogicalOperationHasInvalidOperands,
                         span,
                         format!(
-                            "logical operation requires int operands, got {:?} and {:?}",
-                            left, right
+                            "logical operation requires int operands, got {left:?} and {right:?}"
                         ),
                     ))
                 }
@@ -1339,8 +1336,7 @@ impl<'a> Analyzer<'a> {
                         CompilerErrorCode::EqualityTestHasInvalidOperands,
                         span,
                         format!(
-                            "equality test requires matching operand types, got {:?} and {:?}",
-                            left, right
+                            "equality test requires matching operand types, got {left:?} and {right:?}"
                         ),
                     ))
                 }
@@ -1355,8 +1351,7 @@ impl<'a> Analyzer<'a> {
                     CompilerErrorCode::ComparisonTestHasInvalidOperands,
                     span,
                     format!(
-                        "comparison requires int/int or float/float operands, got {:?} and {:?}",
-                        left, right
+                        "comparison requires int/int or float/float operands, got {left:?} and {right:?}"
                     ),
                 )),
             },
@@ -1368,8 +1363,7 @@ impl<'a> Analyzer<'a> {
                         CompilerErrorCode::ShiftOperationHasInvalidOperands,
                         span,
                         format!(
-                            "shift operation requires int operands, got {:?} and {:?}",
-                            left, right
+                            "shift operation requires int operands, got {left:?} and {right:?}"
                         ),
                     ))
                 }
@@ -1377,9 +1371,8 @@ impl<'a> Analyzer<'a> {
             BinaryOp::Add | BinaryOp::Subtract | BinaryOp::Multiply | BinaryOp::Divide => {
                 match (left, right) {
                     (SemanticType::Int, SemanticType::Int) => Ok(SemanticType::Int),
-                    (SemanticType::Float, SemanticType::Int)
-                    | (SemanticType::Int, SemanticType::Float)
-                    | (SemanticType::Float, SemanticType::Float) => Ok(SemanticType::Float),
+                    (SemanticType::Float, SemanticType::Int | SemanticType::Float) |
+(SemanticType::Int, SemanticType::Float) => Ok(SemanticType::Float),
                     (SemanticType::String, SemanticType::String) if op == BinaryOp::Add => {
                         Ok(SemanticType::String)
                     }
@@ -1400,8 +1393,7 @@ impl<'a> Analyzer<'a> {
                         CompilerErrorCode::ArithmeticOperationHasInvalidOperands,
                         span,
                         format!(
-                            "arithmetic operation {:?} is invalid for {:?} and {:?}",
-                            op, left, right
+                            "arithmetic operation {op:?} is invalid for {left:?} and {right:?}"
                         ),
                     )),
                 }
@@ -1414,8 +1406,7 @@ impl<'a> Analyzer<'a> {
                         CompilerErrorCode::ArithmeticOperationHasInvalidOperands,
                         span,
                         format!(
-                            "modulus requires int operands, got {:?} and {:?}",
-                            left, right
+                            "modulus requires int operands, got {left:?} and {right:?}"
                         ),
                     ))
                 }
@@ -1451,8 +1442,7 @@ impl<'a> Analyzer<'a> {
                         CompilerErrorCode::TypeDoesNotHaveAnOptionalParameter,
                         default.span,
                         format!(
-                            "type {:?} does not support optional parameters",
-                            parameter_type
+                            "type {parameter_type:?} does not support optional parameters"
                         ),
                     ));
                 }
@@ -1514,7 +1504,7 @@ impl<'a> Analyzer<'a> {
                     return Err(SemanticError::new(
                         CompilerErrorCode::UndefinedStructure,
                         ty.span,
-                        format!("undefined structure {:?}", name),
+                        format!("undefined structure {name:?}"),
                     ));
                 }
                 if name == "vector" {
@@ -1777,11 +1767,8 @@ fn constant_from_literal(literal: &Literal) -> Option<ConstantValue> {
         Literal::LocationInvalid => Some(ConstantValue::LocationInvalid),
         Literal::Json(value) => Some(ConstantValue::Json(value.clone())),
         Literal::Vector(value) => Some(ConstantValue::Vector(*value)),
-        Literal::Magic(MagicLiteral::Function)
-        | Literal::Magic(MagicLiteral::File)
-        | Literal::Magic(MagicLiteral::Line)
-        | Literal::Magic(MagicLiteral::Date)
-        | Literal::Magic(MagicLiteral::Time) => None,
+        Literal::Magic(MagicLiteral::Function | MagicLiteral::File |
+MagicLiteral::Line | MagicLiteral::Date | MagicLiteral::Time) => None,
     }
 }
 
@@ -1809,10 +1796,8 @@ fn semantic_type_from_literal(literal: &Literal) -> SemanticType {
         Literal::Json(_) => SemanticType::EngineStructure("json".to_string()),
         Literal::Vector(_) => SemanticType::Vector,
         Literal::Magic(MagicLiteral::Line) => SemanticType::Int,
-        Literal::Magic(MagicLiteral::Function)
-        | Literal::Magic(MagicLiteral::File)
-        | Literal::Magic(MagicLiteral::Date)
-        | Literal::Magic(MagicLiteral::Time) => SemanticType::String,
+        Literal::Magic(MagicLiteral::Function | MagicLiteral::File |
+MagicLiteral::Date | MagicLiteral::Time) => SemanticType::String,
     }
 }
 
@@ -1915,7 +1900,7 @@ fn insert_scope_binding(
         return Err(SemanticError::new(
             CompilerErrorCode::VariableAlreadyUsedWithinScope,
             span,
-            format!("variable {:?} was already declared in this scope", name),
+            format!("variable {name:?} was already declared in this scope"),
         ));
     }
 

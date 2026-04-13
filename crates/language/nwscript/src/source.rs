@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::CompilerErrorCode;
 
-/// The built-in NWN resource type used for NWScript source files.
+/// The built-in NWN resource type used for `NWScript` source files.
 pub const NW_SCRIPT_SOURCE_RES_TYPE: ResType = ResType(2009);
 
 /// The upstream default include-depth limit.
@@ -31,6 +31,7 @@ pub enum SourceError {
 impl SourceError {
     /// Returns the upstream compiler error code when this is a compiler
     /// failure.
+    #[must_use] 
     pub fn code(&self) -> Option<CompilerErrorCode> {
         match self {
             Self::Resolver(_) => None,
@@ -115,17 +116,19 @@ impl Default for SourceLoadOptions {
     }
 }
 
-/// Identifies one loaded NWScript source file within a compilation session.
+/// Identifies one loaded `NWScript` source file within a compilation session.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct SourceId(u32);
 
 impl SourceId {
     /// Creates a new source identifier from its stable numeric value.
+    #[must_use] 
     pub const fn new(value: u32) -> Self {
         Self(value)
     }
 
     /// Returns the stable numeric value for this source identifier.
+    #[must_use] 
     pub const fn get(self) -> u32 {
         self.0
     }
@@ -150,6 +153,7 @@ pub struct Span {
 
 impl Span {
     /// Creates a new span.
+    #[must_use] 
     pub const fn new(source_id: SourceId, start: usize, end: usize) -> Self {
         Self {
             source_id,
@@ -159,11 +163,13 @@ impl Span {
     }
 
     /// Returns the byte length of this span.
+    #[must_use] 
     pub const fn len(self) -> usize {
         self.end.saturating_sub(self.start)
     }
 
     /// Returns `true` when this span is empty.
+    #[must_use] 
     pub const fn is_empty(self) -> bool {
         self.start == self.end
     }
@@ -206,26 +212,31 @@ impl SourceFile {
     }
 
     /// Returns the byte length of the source contents.
+    #[must_use] 
     pub fn len(&self) -> usize {
         self.contents.len()
     }
 
     /// Returns `true` when the source file is empty.
+    #[must_use] 
     pub fn is_empty(&self) -> bool {
         self.contents.is_empty()
     }
 
     /// Returns the raw source bytes.
+    #[must_use] 
     pub fn bytes(&self) -> &[u8] {
         &self.contents
     }
 
     /// Returns the source contents as UTF-8 when the file is valid UTF-8.
+    #[must_use] 
     pub fn text(&self) -> Option<&str> {
         std::str::from_utf8(&self.contents).ok()
     }
 
     /// Returns the raw bytes covered by `span` when it belongs to this file.
+    #[must_use] 
     pub fn span_bytes(&self, span: Span) -> Option<&[u8]> {
         if span.source_id != self.id || span.start > span.end || span.end > self.contents.len() {
             return None;
@@ -234,12 +245,14 @@ impl SourceFile {
     }
 
     /// Returns the text covered by `span` when it belongs to this file.
+    #[must_use] 
     pub fn span_text(&self, span: Span) -> Option<&str> {
         let bytes = self.span_bytes(span)?;
         std::str::from_utf8(bytes).ok()
     }
 
     /// Resolves a byte offset to a one-based line and column.
+    #[must_use] 
     pub fn location(&self, offset: usize) -> Option<SourceLocation> {
         if offset > self.contents.len() {
             return None;
@@ -267,11 +280,13 @@ pub struct SourceMap {
 
 impl SourceMap {
     /// Creates an empty source map.
+    #[must_use] 
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Returns the next identifier that would be assigned to a new file.
+    #[must_use] 
     pub fn next_id(&self) -> SourceId {
         let id = u32::try_from(self.files.len()).ok().unwrap_or(u32::MAX);
         SourceId::new(id)
@@ -293,27 +308,32 @@ impl SourceMap {
     }
 
     /// Returns the file for `id`.
+    #[must_use] 
     pub fn get(&self, id: SourceId) -> Option<&SourceFile> {
         self.files.get(id.get() as usize)
     }
 
     /// Returns the file for `name`, using case-insensitive matching.
+    #[must_use] 
     pub fn get_by_name(&self, name: &str) -> Option<&SourceFile> {
         let id = self.names.get(&normalize_script_name(name))?;
         self.get(*id)
     }
 
     /// Returns `true` when a file with `name` has already been loaded.
+    #[must_use] 
     pub fn contains_name(&self, name: &str) -> bool {
         self.names.contains_key(&normalize_script_name(name))
     }
 
     /// Returns the number of loaded source files.
+    #[must_use] 
     pub fn len(&self) -> usize {
         self.files.len()
     }
 
     /// Returns `true` when there are no files.
+    #[must_use] 
     pub fn is_empty(&self) -> bool {
         self.files.is_empty()
     }
@@ -358,6 +378,7 @@ pub struct InMemoryScriptResolver {
 
 impl InMemoryScriptResolver {
     /// Creates an empty in-memory resolver.
+    #[must_use] 
     pub fn new() -> Self {
         Self::default()
     }

@@ -151,6 +151,7 @@ impl BinaryModel {
 
 impl BinaryModel {
     /// Returns the first geometry node named `name`, case-insensitively.
+    #[must_use] 
     pub fn node(&self, name: &str) -> Option<&BinaryNode> {
         self.nodes
             .iter()
@@ -158,6 +159,7 @@ impl BinaryModel {
     }
 
     /// Returns the first animation named `name`, case-insensitively.
+    #[must_use] 
     pub fn animation(&self, name: &str) -> Option<&BinaryAnimation> {
         self.animations
             .iter()
@@ -563,6 +565,7 @@ pub struct UnknownBinaryBlock {
 
 impl Model {
     /// Detects the raw payload encoding.
+    #[must_use] 
     pub fn encoding(&self) -> ModelEncoding {
         detect_model_encoding(self.bytes())
     }
@@ -1076,7 +1079,7 @@ impl<'a> BinaryParser<'a> {
 
     fn parse_skin(&mut self, offset: u32, mesh: Option<&BinaryMesh>) -> ModelResult<BinarySkin> {
         self.mark_model_range(offset, SKIN_HEADER_SIZE);
-        let vertex_count = mesh.map(|mesh| usize::from(mesh.vertex_count)).unwrap_or(0);
+        let vertex_count = mesh.map_or(0, |mesh| usize::from(mesh.vertex_count));
         let bone_mapping_ptr = self.read_model_i32(offset + 20)?;
         let bone_mapping_count = self.read_model_i32(offset + 24)?;
         let p_weight_vertex = self.read_model_i32(offset + 12)?;
@@ -1118,7 +1121,7 @@ impl<'a> BinaryParser<'a> {
         mesh: Option<&BinaryMesh>,
     ) -> ModelResult<BinaryAnimMesh> {
         self.mark_model_range(offset, ANIM_HEADER_SIZE);
-        let vertex_count = mesh.map(|mesh| usize::from(mesh.vertex_count)).unwrap_or(0);
+        let vertex_count = mesh.map_or(0, |mesh| usize::from(mesh.vertex_count));
         let p_animation_vertex = self.read_model_u32(offset + 40)?;
         let p_animation_texcoord = self.read_model_u32(offset + 44)?;
         let vertex_set_count = self.read_model_u32(offset + 48)?;
@@ -1275,7 +1278,7 @@ impl<'a> BinaryParser<'a> {
             );
             let values = flat_values
                 .chunks(value_columns.max(1))
-                .map(|chunk| chunk.to_vec())
+                .map(<[f32]>::to_vec)
                 .collect::<Vec<_>>();
             controllers.push(BinaryController {
                 type_id,
@@ -2002,18 +2005,14 @@ fn slice_with_diagnostic<'a>(
     diagnostics: &mut Vec<ModelDiagnostic>,
     message: String,
 ) -> &'a [f32] {
-    match start
+    if let Some(slice) = start
         .checked_add(len)
-        .and_then(|end| values.get(start..end))
-    {
-        Some(slice) => slice,
-        None => {
-            diagnostics.push(ModelDiagnostic {
-                kind: ModelDiagnosticKind::MalformedValue,
-                message,
-            });
-            &[]
-        }
+        .and_then(|end| values.get(start..end)) { slice } else {
+        diagnostics.push(ModelDiagnostic {
+            kind: ModelDiagnosticKind::MalformedValue,
+            message,
+        });
+        &[]
     }
 }
 

@@ -145,6 +145,7 @@ impl TwoDa {
     ///
     /// Columns, rows, row labels, and the table-wide default value may then be
     /// populated incrementally.
+    #[must_use] 
     pub fn new() -> Self {
         Self {
             default_value:      None,
@@ -159,6 +160,7 @@ impl TwoDa {
     }
 
     /// Returns a cloned row by index.
+    #[must_use] 
     pub fn row(&self, row: usize) -> Option<Row> {
         self.rows.get(row).cloned()
     }
@@ -179,6 +181,7 @@ impl TwoDa {
 
     /// Returns the cell at `row` and `column`, falling back to the table
     /// default.
+    #[must_use] 
     pub fn cell(&self, row: usize, column: &str) -> Cell {
         let mut result = self.default_value.clone();
         if let Some(row_data) = self.rows.get(row)
@@ -196,6 +199,7 @@ impl TwoDa {
 
     /// Returns the cell at `row` and `column`, substituting `default` when it
     /// is missing.
+    #[must_use] 
     pub fn cell_or(&self, row: usize, column: &str, default: &str) -> String {
         self.cell(row, column)
             .unwrap_or_else(|| default.to_string())
@@ -230,26 +234,31 @@ impl TwoDa {
     }
 
     /// Returns the lowest valid row index, which is always `0`.
+    #[must_use] 
     pub fn low(&self) -> usize {
         0
     }
 
     /// Returns the highest valid row index, if any rows exist.
+    #[must_use] 
     pub fn high(&self) -> Option<usize> {
         self.rows.len().checked_sub(1)
     }
 
     /// Returns the number of rows in the table.
+    #[must_use] 
     pub fn len(&self) -> usize {
         self.rows.len()
     }
 
     /// Returns whether the table has no rows.
+    #[must_use] 
     pub fn is_empty(&self) -> bool {
         self.rows.is_empty()
     }
 
     /// Returns the table-wide default cell value.
+    #[must_use] 
     pub fn default(&self) -> Cell {
         self.default_value.clone()
     }
@@ -285,6 +294,7 @@ impl TwoDa {
     }
 
     /// Returns the ordered column names.
+    #[must_use] 
     pub fn columns(&self) -> &[String] {
         &self.headers
     }
@@ -296,8 +306,7 @@ impl TwoDa {
         for column in &columns {
             if column.trim().is_empty() {
                 return Err(TwoDaError::msg(format!(
-                    "invalid column value: {:?}",
-                    column
+                    "invalid column value: {column:?}"
                 )));
             }
         }

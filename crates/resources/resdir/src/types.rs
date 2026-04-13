@@ -67,16 +67,19 @@ pub struct ResDir {
 
 impl ResDir {
     /// Returns the scanned root directory.
+    #[must_use] 
     pub fn root(&self) -> &Path {
         &self.root
     }
 
     /// Returns the display label used for this container.
+    #[must_use] 
     pub fn label(&self) -> &str {
         &self.label
     }
 
     /// Returns the indexed resource entries.
+    #[must_use] 
     pub fn entries(&self) -> &IndexMap<ResRef, Res> {
         &self.entries
     }

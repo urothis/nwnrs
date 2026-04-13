@@ -82,8 +82,7 @@ where
         "E1  " => KeyBifVersion::E1,
         _ => {
             return Err(KeyError::msg(format!(
-                "unsupported key version {}",
-                file_version
+                "unsupported key version {file_version}"
             )));
         }
     };
@@ -142,8 +141,7 @@ where
         let bif_idx = (res_id >> 20) as usize;
         if bif_idx >= bifs.len() {
             return Err(KeyError::msg(format!(
-                "while reading res {}={}.{}, bifidx not indiced by keyfile: {}",
-                res_id, res_ref_raw, res_type, bif_idx
+                "while reading res {res_id}={res_ref_raw}.{res_type}, bifidx not indiced by keyfile: {bif_idx}"
             )));
         }
 
@@ -188,13 +186,13 @@ pub(crate) fn read_bif(
 
     let file_type = read_fixed_string(reader.as_mut(), 4)?;
     if file_type != "BIFF" {
-        return Err(KeyError::msg(format!("invalid bif magic in {}", filename)));
+        return Err(KeyError::msg(format!("invalid bif magic in {filename}")));
     }
 
     let version = match read_fixed_string(reader.as_mut(), 4)?.as_str() {
         "V1  " => KeyBifVersion::V1,
         "E1  " => KeyBifVersion::E1,
-        other => return Err(KeyError::msg(format!("unsupported bif version {}", other))),
+        other => return Err(KeyError::msg(format!("unsupported bif version {other}"))),
     };
 
     if version != expected_version {

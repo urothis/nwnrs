@@ -74,6 +74,7 @@ pub enum DdsFormat {
 
 impl DdsFormat {
     /// Returns the number of bytes per encoded 4x4 block.
+    #[must_use] 
     pub fn bytes_per_block(self) -> usize {
         match self {
             Self::Dxt1 => 8,
@@ -82,6 +83,7 @@ impl DdsFormat {
     }
 
     /// Returns the effective bits per pixel for the packed format.
+    #[must_use] 
     pub fn bits_per_pixel(self) -> usize {
         match self {
             Self::Dxt1 => 4,
@@ -154,6 +156,7 @@ pub struct DdsTexture {
 
 impl DdsTexture {
     /// Returns the number of mip levels.
+    #[must_use] 
     pub fn mip_count(&self) -> usize {
         self.mip_levels.len()
     }
@@ -837,9 +840,9 @@ fn decode_dxt_colors(color0: u16, color1: u16, allow_transparency: bool) -> [[u8
             c0,
             c1,
             [
-                narrow_u16_to_u8((u16::from(c0[0]) + u16::from(c1[0])) / 2),
-                narrow_u16_to_u8((u16::from(c0[1]) + u16::from(c1[1])) / 2),
-                narrow_u16_to_u8((u16::from(c0[2]) + u16::from(c1[2])) / 2),
+                narrow_u16_to_u8(u16::midpoint(u16::from(c0[0]), u16::from(c1[0]))),
+                narrow_u16_to_u8(u16::midpoint(u16::from(c0[1]), u16::from(c1[1]))),
+                narrow_u16_to_u8(u16::midpoint(u16::from(c0[2]), u16::from(c1[2]))),
                 255,
             ],
             [0, 0, 0, 0],
@@ -849,9 +852,9 @@ fn decode_dxt_colors(color0: u16, color1: u16, allow_transparency: bool) -> [[u8
             c0,
             c1,
             [
-                narrow_u16_to_u8((u16::from(c0[0]) + u16::from(c1[0])) / 2),
-                narrow_u16_to_u8((u16::from(c0[1]) + u16::from(c1[1])) / 2),
-                narrow_u16_to_u8((u16::from(c0[2]) + u16::from(c1[2])) / 2),
+                narrow_u16_to_u8(u16::midpoint(u16::from(c0[0]), u16::from(c1[0]))),
+                narrow_u16_to_u8(u16::midpoint(u16::from(c0[1]), u16::from(c1[1]))),
+                narrow_u16_to_u8(u16::midpoint(u16::from(c0[2]), u16::from(c1[2]))),
                 255,
             ],
             [0, 0, 0, 255],
@@ -904,13 +907,11 @@ fn dxt5_selector(selectors: &[u8], selector_index: u32) -> u8 {
     let low = selectors
         .get(byte_index)
         .copied()
-        .map(u16::from)
-        .unwrap_or(0);
+        .map_or(0, u16::from);
     let high = selectors
         .get(byte_index + 1)
         .copied()
-        .map(u16::from)
-        .unwrap_or(0);
+        .map_or(0, u16::from);
     narrow_u16_to_u8((low | (high << 8)) >> bit_offset) & 0x07
 }
 

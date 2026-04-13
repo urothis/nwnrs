@@ -50,6 +50,7 @@ pub struct NwnScene {
 
 impl NwnScene {
     /// Returns the first scene node named `name`, case-insensitively.
+    #[must_use] 
     pub fn node(&self, name: &str) -> Option<&NwnSceneNode> {
         self.nodes
             .iter()
@@ -57,6 +58,7 @@ impl NwnScene {
     }
 
     /// Returns the first animation named `name`, case-insensitively.
+    #[must_use] 
     pub fn animation(&self, name: &str) -> Option<&NwnAnimation> {
         self.animations
             .iter()
@@ -309,6 +311,7 @@ pub struct NwnAnimation {
 
 impl NwnAnimation {
     /// Returns the first node track named `name`, case-insensitively.
+    #[must_use] 
     pub fn node_track(&self, name: &str) -> Option<&NwnNodeAnimationTrack> {
         self.node_tracks
             .iter()
@@ -650,8 +653,7 @@ fn validate_scene_for_write(scene: &NwnScene) -> ModelResult<SceneWriteOwnership
                 .get(owner_index)
                 .map_or("<invalid>", |node| node.name.as_str());
             return Err(ModelError::msg(format!(
-                "scene material {} is referenced by both {} and {}",
-                material_index, previous_name, owner_name
+                "scene material {material_index} is referenced by both {previous_name} and {owner_name}"
             )));
         }
     }
@@ -663,8 +665,7 @@ fn validate_scene_for_write(scene: &NwnScene) -> ModelResult<SceneWriteOwnership
             .flatten()
             .ok_or_else(|| {
                 ModelError::msg(format!(
-                    "scene material {} is not referenced by any mesh",
-                    material_index
+                    "scene material {material_index} is not referenced by any mesh"
                 ))
             })?;
         if material.source_node >= node_count {
@@ -722,8 +723,7 @@ fn raise_scene_node(
             .flatten()
             .ok_or_else(|| {
                 ModelError::msg(format!(
-                    "scene material {} is missing an owning node",
-                    material_index
+                    "scene material {material_index} is missing an owning node"
                 ))
             })?;
         if owner != node_index {
@@ -1148,12 +1148,11 @@ fn find_unique_node_index(scene: &NwnScene, name: &str, context: &str) -> ModelR
         .enumerate()
         .filter_map(|(index, node)| node.name.eq_ignore_ascii_case(name).then_some(index));
     let first = matches.next().ok_or_else(|| {
-        ModelError::msg(format!("{context} {} does not exist in the scene", name))
+        ModelError::msg(format!("{context} {name} does not exist in the scene"))
     })?;
     if matches.next().is_some() {
         return Err(ModelError::msg(format!(
-            "{context} {} is ambiguous because multiple scene nodes share that name",
-            name
+            "{context} {name} is ambiguous because multiple scene nodes share that name"
         )));
     }
     Ok(first)

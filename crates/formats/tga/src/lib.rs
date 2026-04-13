@@ -101,6 +101,7 @@ impl TgaImageType {
     }
 
     /// Returns `true` when the TGA image data uses RLE packets.
+    #[must_use] 
     pub fn is_rle(self) -> bool {
         matches!(
             self,
@@ -109,6 +110,7 @@ impl TgaImageType {
     }
 
     /// Returns `true` when the TGA image data references a color map.
+    #[must_use] 
     pub fn uses_color_map(self) -> bool {
         matches!(self, Self::ColorMapped | Self::RleColorMapped)
     }
@@ -209,16 +211,19 @@ impl TgaTexture {
     }
 
     /// Returns `true` when the origin bit marks rows as top-to-bottom.
+    #[must_use] 
     pub fn top_to_bottom(&self) -> bool {
         self.image_descriptor & 0x20 != 0
     }
 
     /// Returns `true` when the origin bit marks pixels as right-to-left.
+    #[must_use] 
     pub fn right_to_left(&self) -> bool {
         self.image_descriptor & 0x10 != 0
     }
 
     /// Returns the number of attribute bits declared in the descriptor.
+    #[must_use] 
     pub fn attribute_bits(&self) -> u8 {
         self.image_descriptor & 0x0f
     }
@@ -427,8 +432,7 @@ fn parse_tga_bytes(bytes: &[u8]) -> TgaResult<TgaTexture> {
     let footer = parse_tga_footer(bytes);
     let payload_end = footer
         .as_ref()
-        .map(|_| bytes.len().saturating_sub(TGA_FOOTER_SIZE))
-        .unwrap_or(bytes.len());
+        .map_or(bytes.len(), |_| bytes.len().saturating_sub(TGA_FOOTER_SIZE));
     if payload_end < cursor {
         return Err(TgaError::msg("TGA payload ended before image data"));
     }

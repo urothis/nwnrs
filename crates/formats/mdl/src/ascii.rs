@@ -31,6 +31,7 @@ pub enum AsciiBodyItem {
 
 impl AsciiBodyItem {
     /// Returns the item as an [`AsciiElement`] when it is not a node.
+    #[must_use] 
     pub fn as_element(&self) -> Option<&AsciiElement> {
         match self {
             Self::Element(element) => Some(element),
@@ -39,6 +40,7 @@ impl AsciiBodyItem {
     }
 
     /// Returns the item as an [`AsciiNode`] when it is a node.
+    #[must_use] 
     pub fn as_node(&self) -> Option<&AsciiNode> {
         match self {
             Self::Element(_element) => None,
@@ -58,6 +60,7 @@ pub enum AsciiElement {
 
 impl AsciiElement {
     /// Returns the element as a parsed statement when applicable.
+    #[must_use] 
     pub fn as_statement(&self) -> Option<&AsciiStatement> {
         match self {
             Self::Comment(_comment) => None,
@@ -114,11 +117,13 @@ impl AsciiStatement {
     }
 
     /// Returns `true` when this statement has a multiline payload.
+    #[must_use] 
     pub fn has_payload(&self) -> bool {
         self.payload_kind.is_some()
     }
 
     /// Returns `true` when the keyword matches `other`, case-insensitively.
+    #[must_use] 
     pub fn keyword_is(&self, other: &str) -> bool {
         self.keyword.eq_ignore_ascii_case(other)
     }
@@ -231,6 +236,7 @@ impl AsciiModel {
     }
 
     /// Returns the first animation named `name`, case-insensitively.
+    #[must_use] 
     pub fn animation(&self, name: &str) -> Option<&AsciiAnimation> {
         self.animations
             .iter()
@@ -238,6 +244,7 @@ impl AsciiModel {
     }
 
     /// Serializes the parsed ASCII model using canonical indentation.
+    #[must_use] 
     pub fn to_text(&self) -> String {
         let mut out = String::new();
         for element in &self.prefix {

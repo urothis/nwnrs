@@ -70,8 +70,7 @@ pub fn read_manifest<R: Read>(reader: &mut R) -> ManifestResult<Manifest> {
         check(
             resref.resolve().is_some(),
             format!(
-                "Entry at position {} does not resolve to a valid resref: {:?}",
-                index, resref
+                "Entry at position {index} does not resolve to a valid resref: {resref:?}"
             ),
         )?;
 

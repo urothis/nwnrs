@@ -14,7 +14,7 @@ use crate::prelude::*;
 /// installation.
 ///
 /// The resulting manager may include, in precedence order, additional
-/// directories, override directories, NWSync manifests, additional ERFs, and
+/// directories, override directories, `NWSync` manifests, additional ERFs, and
 /// the selected KEY/BIF sets.
 #[instrument(
     level = "info",

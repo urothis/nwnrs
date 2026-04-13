@@ -122,6 +122,7 @@ impl From<NcsReadError> for NcsAsmError {
 
 impl NcsOpcode {
     /// Returns the upstream internal opcode constant name used by `nwasm`.
+    #[must_use] 
     pub fn internal_name(self) -> &'static str {
         match self {
             Self::Assignment => "ASSIGNMENT",
@@ -175,6 +176,7 @@ impl NcsOpcode {
 
 impl NcsAuxCode {
     /// Returns the upstream internal auxcode constant name used by `nwasm`.
+    #[must_use] 
     pub fn internal_name(self) -> &'static str {
         match self {
             Self::None => "NONE",
@@ -222,6 +224,7 @@ impl NcsAuxCode {
 
 impl NcsInstruction {
     /// Returns the upstream `nwasm` instruction name.
+    #[must_use] 
     pub fn canonical_name(&self, internal: bool) -> String {
         let mut name = if internal {
             self.opcode.internal_name().to_string()
@@ -408,7 +411,7 @@ pub fn assemble_ncs_text(
                     .get(index)
                     .copied()
                     .ok_or_else(|| NcsAsmError::Parse {
-                        line:    parsed.get(index).map(|entry| entry.line).unwrap_or(1),
+                        line:    parsed.get(index).map_or(1, |entry| entry.line),
                         message: format!("label {label:?} resolved past end of instruction stream"),
                     })?;
             Ok((label, offset))
@@ -431,6 +434,7 @@ pub fn assemble_ncs_bytes(text: &str, langspec: Option<&LangSpec>) -> Result<Vec
 }
 
 /// Renders already-decoded disassembly lines into plain text.
+#[must_use] 
 pub fn render_disassembly_lines(lines: &[NcsAsmLine], options: NcsDisassemblyOptions) -> String {
     let mut rendered = Vec::new();
 
@@ -703,15 +707,14 @@ fn extra_string_for_instruction(
             offset,
             opcode: instruction.opcode,
             auxcode: instruction.auxcode,
-            message: format!("unsupported extra payload {:?}", extra),
+            message: format!("unsupported extra payload {extra:?}"),
         }),
     }
 }
 
 fn strip_asm_line(line: &str) -> &str {
     line.split_once(" | ")
-        .map(|(head, _tail)| head)
-        .unwrap_or(line)
+        .map_or(line, |(head, _tail)| head)
         .trim()
 }
 
@@ -749,8 +752,7 @@ fn split_instruction_line(line: &str) -> Option<(&str, &str)> {
 fn parse_instruction_name(name: &str, line: usize) -> Result<(NcsOpcode, NcsAuxCode), NcsAsmError> {
     let (opcode_name, aux_name) = name
         .split_once('.')
-        .map(|(opcode, aux)| (opcode, Some(aux)))
-        .unwrap_or((name, None));
+        .map_or((name, None), |(opcode, aux)| (opcode, Some(aux)));
     let opcode = parse_opcode_name(opcode_name).ok_or_else(|| NcsAsmError::Parse {
         line,
         message: format!("unknown instruction mnemonic {opcode_name:?}"),
@@ -903,7 +905,7 @@ fn parse_instruction_operand(
         _ if extra.is_empty() => Ok(ParsedAsmOperand::None),
         _ => Err(NcsAsmError::Parse {
             line,
-            message: format!("instruction {} does not accept operands {extra:?}", opcode),
+            message: format!("instruction {opcode} does not accept operands {extra:?}"),
         }),
     }
 }
@@ -964,7 +966,7 @@ fn parse_constant_operand(
         _ if extra.is_empty() => Ok(ParsedAsmOperand::None),
         _ => Err(NcsAsmError::Parse {
             line,
-            message: format!("unsupported CONST operand for auxcode {:?}", auxcode),
+            message: format!("unsupported CONST operand for auxcode {auxcode:?}"),
         }),
     }
 }
@@ -1396,9 +1398,7 @@ fn render_function_header(function: &NdbFunction, ndb: &Ndb) -> String {
         .join(", ");
     let start = function.binary_start.saturating_sub(13);
     let end = function.binary_end.saturating_sub(13);
-    let location = source_location_for_function(function, ndb)
-        .map(|(file, line)| format!(" {file}.nss:{} ", line.saturating_sub(1)))
-        .unwrap_or_else(|| " ".to_string());
+    let location = source_location_for_function(function, ndb).map_or_else(|| " ".to_string(), |(file, line)| format!(" {file}.nss:{} ", line.saturating_sub(1)));
 
     format!(
         "{} {}({}):{}[{}:{}]",

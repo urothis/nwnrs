@@ -84,12 +84,12 @@ pub mod mtr {
     pub use nwnrs_mtr::prelude::*;
 }
 
-/// NWScript compiler and format types and helpers.
+/// `NWScript` compiler and format types and helpers.
 pub mod nwscript {
     pub use nwnrs_nwscript::prelude::*;
 }
 
-/// NWSync manifest types and helpers.
+/// `NWSync` manifest types and helpers.
 pub mod nwsync {
     pub use nwnrs_nwsync::prelude::*;
 }

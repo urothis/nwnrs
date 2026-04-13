@@ -8,7 +8,7 @@ workspace.
 - locate a Neverwinter Nights installation and user directory
 - resolve the conventional language-root and KEY/BIF layout
 - build a ready-to-query [`nwnrs_resman::ResMan`] from the discovered install
-- add optional override directories, ERFs, and NWSync manifests to that layered
+- add optional override directories, ERFs, and `NWSync` manifests to that layered
   resource view
 
 Discovery is ordered and deterministic: explicit overrides win, then built-in
