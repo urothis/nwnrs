@@ -257,7 +257,7 @@ fn collect_user_calls_stmt(
             }
         }
         HirStmt::Expr(expr) | HirStmt::Case(expr) => {
-            collect_user_calls_expr(expr, ordered, visited, function_map)
+            collect_user_calls_expr(expr, ordered, visited, function_map);
         }
         HirStmt::If(statement) => {
             collect_user_calls_expr(&statement.condition, ordered, visited, function_map);
