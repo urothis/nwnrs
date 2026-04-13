@@ -310,7 +310,7 @@ impl Res {
     /// Returns whether the decoded payload is currently cached in memory.
     #[must_use]
     pub fn cached(&self) -> bool {
-        self.lock_state().map(|state| state.cached).unwrap_or(false)
+        self.lock_state().is_ok_and(|state| state.cached)
     }
 
     /// Returns the expected size after decompression.
