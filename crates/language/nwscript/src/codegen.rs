@@ -1005,7 +1005,7 @@ impl<'a> O0Compiler<'a> {
 
     fn magic_literal_value(
         &self,
-        literal: &crate::MagicLiteral,
+        literal: crate::MagicLiteral,
         span: Option<crate::Span>,
     ) -> Literal {
         match literal {
@@ -2188,7 +2188,7 @@ fn emit_push_literal(
             }
         }
         Literal::Magic(magic) => {
-            let resolved = compiler.magic_literal_value(magic, span);
+            let resolved = compiler.magic_literal_value(*magic, span);
             return emit_push_literal(compiler, temp_bytes, &resolved, ty, span);
         }
     }

@@ -1443,7 +1443,7 @@ fn lower_header(model: &AsciiModel, diagnostics: &mut Vec<ModelDiagnostic>) -> S
                 animation_scale =
                     parse_f32_statement(statement, 0, "setanimationscale", diagnostics);
             }
-            _ => extras.push(element.clone()),
+            AsciiElement::Statement(_) => extras.push(element.clone()),
         }
     }
 

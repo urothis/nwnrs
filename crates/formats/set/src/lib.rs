@@ -678,7 +678,7 @@ fn write_section_header(text: &mut String, name: &str) {
     text.push_str("]\n");
 }
 
-fn write_string_value(text: &mut String, key: &str, value: &Option<String>) {
+fn write_string_value(text: &mut String, key: &str, value: Option<&String>) {
     if let Some(value) = value {
         text.push_str(key);
         text.push('=');
@@ -732,25 +732,25 @@ fn write_count_section(text: &mut String, name: &str, count: usize) {
 
 fn write_general(text: &mut String, general: &SetGeneral) {
     write_section_header(text, "GENERAL");
-    write_string_value(text, "Name", &general.name);
-    write_string_value(text, "Type", &general.file_type);
-    write_string_value(text, "Version", &general.version);
+    write_string_value(text, "Name", general.name.as_ref());
+    write_string_value(text, "Type", general.file_type.as_ref());
+    write_string_value(text, "Version", general.version.as_ref());
     write_bool_value(text, "Interior", general.interior);
     write_bool_value(text, "HasHeightTransition", general.has_height_transition);
-    write_string_value(text, "EnvMap", &general.env_map);
+    write_string_value(text, "EnvMap", general.env_map.as_ref());
     write_i32_value(text, "Transition", general.transition);
     write_i32_value(text, "SelectorHeight", general.selector_height);
     write_i32_value(text, "DisplayName", general.display_name);
-    write_string_value(text, "UnlocalizedName", &general.unlocalized_name);
-    write_string_value(text, "Border", &general.border);
-    write_string_value(text, "Default", &general.default_terrain);
-    write_string_value(text, "Floor", &general.floor);
+    write_string_value(text, "UnlocalizedName", general.unlocalized_name.as_ref());
+    write_string_value(text, "Border", general.border.as_ref());
+    write_string_value(text, "Default", general.default_terrain.as_ref());
+    write_string_value(text, "Floor", general.floor.as_ref());
 }
 
 fn write_grass(text: &mut String, grass: &SetGrass) {
     write_section_header(text, "GRASS");
     write_bool_value(text, "Grass", grass.grass);
-    write_string_value(text, "GrassTextureName", &grass.texture_name);
+    write_string_value(text, "GrassTextureName", grass.texture_name.as_ref());
     write_f32_value(text, "Density", grass.density);
     write_f32_value(text, "Height", grass.height);
     if let Some([red, green, blue]) = grass.ambient {
@@ -767,7 +767,7 @@ fn write_grass(text: &mut String, grass: &SetGrass) {
 
 fn write_named_type_section(text: &mut String, section_name: &str, named_type: &SetNamedType) {
     write_section_header(text, section_name);
-    write_string_value(text, "Name", &named_type.name);
+    write_string_value(text, "Name", named_type.name.as_ref());
     write_i32_value(text, "StrRef", named_type.str_ref);
 }
 
@@ -777,30 +777,30 @@ fn write_primary_rule_section(
     primary_rule: &SetPrimaryRule,
 ) {
     write_section_header(text, section_name);
-    write_string_value(text, "Placed", &primary_rule.placed);
+    write_string_value(text, "Placed", primary_rule.placed.as_ref());
     write_i32_value(text, "PlacedHeight", primary_rule.placed_height);
-    write_string_value(text, "Adjacent", &primary_rule.adjacent);
+    write_string_value(text, "Adjacent", primary_rule.adjacent.as_ref());
     write_i32_value(text, "AdjacentHeight", primary_rule.adjacent_height);
-    write_string_value(text, "Changed", &primary_rule.changed);
+    write_string_value(text, "Changed", primary_rule.changed.as_ref());
     write_i32_value(text, "ChangedHeight", primary_rule.changed_height);
 }
 
 fn write_tile_section(text: &mut String, section_name: &str, tile: &SetTile) {
     write_section_header(text, section_name);
-    write_string_value(text, "Model", &tile.model);
-    write_string_value(text, "WalkMesh", &tile.walkmesh);
-    write_string_value(text, "TopLeft", &tile.top_left.terrain);
+    write_string_value(text, "Model", tile.model.as_ref());
+    write_string_value(text, "WalkMesh", tile.walkmesh.as_ref());
+    write_string_value(text, "TopLeft", tile.top_left.terrain.as_ref());
     write_i32_value(text, "TopLeftHeight", tile.top_left.height);
-    write_string_value(text, "TopRight", &tile.top_right.terrain);
+    write_string_value(text, "TopRight", tile.top_right.terrain.as_ref());
     write_i32_value(text, "TopRightHeight", tile.top_right.height);
-    write_string_value(text, "BottomLeft", &tile.bottom_left.terrain);
+    write_string_value(text, "BottomLeft", tile.bottom_left.terrain.as_ref());
     write_i32_value(text, "BottomLeftHeight", tile.bottom_left.height);
-    write_string_value(text, "BottomRight", &tile.bottom_right.terrain);
+    write_string_value(text, "BottomRight", tile.bottom_right.terrain.as_ref());
     write_i32_value(text, "BottomRightHeight", tile.bottom_right.height);
-    write_string_value(text, "Top", &tile.edge_crossers.top);
-    write_string_value(text, "Right", &tile.edge_crossers.right);
-    write_string_value(text, "Bottom", &tile.edge_crossers.bottom);
-    write_string_value(text, "Left", &tile.edge_crossers.left);
+    write_string_value(text, "Top", tile.edge_crossers.top.as_ref());
+    write_string_value(text, "Right", tile.edge_crossers.right.as_ref());
+    write_string_value(text, "Bottom", tile.edge_crossers.bottom.as_ref());
+    write_string_value(text, "Left", tile.edge_crossers.left.as_ref());
     write_bool_value(text, "MainLight1", tile.main_light_1);
     write_bool_value(text, "MainLight2", tile.main_light_2);
     write_bool_value(text, "SourceLight1", tile.source_light_1);
@@ -810,17 +810,21 @@ fn write_tile_section(text: &mut String, section_name: &str, tile: &SetTile) {
     write_bool_value(text, "AnimLoop3", tile.anim_loop_3);
     write_u32_value(text, "Doors", tile.doors);
     write_u32_value(text, "Sounds", tile.sounds);
-    write_string_value(text, "PathNode", &tile.path_node);
+    write_string_value(text, "PathNode", tile.path_node.as_ref());
     write_i32_value(text, "Orientation", tile.orientation);
-    write_string_value(text, "VisibilityNode", &tile.visibility_node);
+    write_string_value(text, "VisibilityNode", tile.visibility_node.as_ref());
     write_i32_value(text, "VisibilityOrientation", tile.visibility_orientation);
-    write_string_value(text, "DoorVisibilityNode", &tile.door_visibility_node);
+    write_string_value(
+        text,
+        "DoorVisibilityNode",
+        tile.door_visibility_node.as_ref(),
+    );
     write_i32_value(
         text,
         "DoorVisibilityOrientation",
         tile.door_visibility_orientation,
     );
-    write_string_value(text, "ImageMap2D", &tile.image_map_2d);
+    write_string_value(text, "ImageMap2D", tile.image_map_2d.as_ref());
 }
 
 fn write_tile_door_section(text: &mut String, section_name: &str, tile_door: &SetTileDoor) {
@@ -834,7 +838,7 @@ fn write_tile_door_section(text: &mut String, section_name: &str, tile_door: &Se
 
 fn write_group_section(text: &mut String, section_name: &str, group: &SetGroup) {
     write_section_header(text, section_name);
-    write_string_value(text, "Name", &group.name);
+    write_string_value(text, "Name", group.name.as_ref());
     write_i32_value(text, "StrRef", group.str_ref);
     write_u32_value(text, "Rows", group.rows);
     write_u32_value(text, "Columns", group.columns);

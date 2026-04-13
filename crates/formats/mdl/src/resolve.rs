@@ -339,9 +339,7 @@ fn resolve_model_backed_texture_candidate(
         return SceneTextureResolution::Ignored;
     }
 
-    let nested_scene = if let Ok(scene) = NwnScene::from_auto_res(&model_res, CachePolicy::Use) {
-        scene
-    } else {
+    let Ok(nested_scene) = NwnScene::from_auto_res(&model_res, CachePolicy::Use) else {
         visited_models.remove(&trimmed.to_ascii_lowercase());
         return SceneTextureResolution::Ignored;
     };
