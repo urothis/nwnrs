@@ -9,6 +9,7 @@ mod logging;
 mod metadata;
 mod nwsync;
 mod pack;
+mod package;
 mod unpack;
 mod util;
 

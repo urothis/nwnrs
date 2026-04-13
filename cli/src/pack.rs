@@ -16,6 +16,7 @@ use crate::{
         read_key_pack_metadata, read_resource_pack_metadata, should_copy_original_erf,
         should_copy_original_key, should_copy_original_resource,
     },
+    package::{PackageOptions, run_package},
     util::{
         Kind, RESOURCE_METADATA_FILENAME, current_build_date, detect_kind,
         ensure_output_file_ready, ensure_target_dir_ready, entry_is_dir, entry_is_file,
@@ -28,11 +29,16 @@ use crate::{
     level = "info",
     skip_all,
     err,
-    fields(input = %cmd.input.display(), output = %cmd.output.display(), force = cmd.force)
+    fields(path_count = cmd.paths.len(), force = cmd.force)
 )]
 pub(crate) fn run_pack(cmd: PackCmd) -> Result<(), String> {
     info!("packing input");
-    match detect_kind(&cmd.output) {
+    if package_mode_args(&cmd)?.is_some() {
+        return run_pack_install_package(cmd);
+    }
+
+    let (_input, output) = explicit_pack_paths(&cmd)?;
+    match detect_kind(output) {
         Some(Kind::Key) => run_pack_key(cmd),
         Some(Kind::Erf) => run_pack_erf(cmd),
         Some(Kind::Ncs) => run_pack_resource(cmd, Kind::Ncs),
@@ -44,33 +50,112 @@ pub(crate) fn run_pack(cmd: PackCmd) -> Result<(), String> {
         Some(Kind::Texture) => run_pack_resource(cmd, Kind::Texture),
         None => Err(format!(
             "unsupported output file type for generic pack: {}",
-            cmd.output.display()
+            output.display()
         )),
     }
+}
+
+fn pack_usage_error(cmd: &PackCmd) -> String {
+    if cmd.paths.is_empty() {
+        "pack requires INPUT and OUTPUT for explicit packing, or KEY_NAME OUTPUT_DIR for \
+         install-backed packaging"
+            .to_string()
+    } else {
+        "pack requires INPUT OUTPUT for explicit packing, or KEY_NAME OUTPUT_DIR for \
+         install-backed packaging"
+            .to_string()
+    }
+}
+
+fn explicit_pack_paths(cmd: &PackCmd) -> Result<(&PathBuf, &PathBuf), String> {
+    match cmd.paths.as_slice() {
+        [input, output] => Ok((input, output)),
+        _ => Err(pack_usage_error(cmd)),
+    }
+}
+
+fn package_mode_args(cmd: &PackCmd) -> Result<Option<(String, PathBuf)>, String> {
+    let package_flags = cmd.root.is_some() || cmd.language.is_some();
+
+    match cmd.paths.as_slice() {
+        [key_path, output_dir] => {
+            let key_name = key_path
+                .file_name()
+                .and_then(OsStr::to_str)
+                .filter(|name| name.to_ascii_lowercase().ends_with(".key"))
+                .map(str::to_string);
+            let output_kind = detect_kind(output_dir);
+
+            if let Some(key_name) = key_name {
+                if output_kind.is_none() {
+                    return Ok(Some((key_name, output_dir.clone())));
+                }
+                if package_flags {
+                    return Err(
+                        "install-backed packaging requires KEY_NAME OUTPUT_DIR, where KEY_NAME \
+                         ends in .key and OUTPUT_DIR is a directory path"
+                            .to_string(),
+                    );
+                }
+            }
+
+            if package_flags {
+                Err(
+                    "install-backed packaging requires KEY_NAME OUTPUT_DIR, where KEY_NAME ends \
+                     in .key and OUTPUT_DIR is a directory path"
+                        .to_string(),
+                )
+            } else {
+                Ok(None)
+            }
+        }
+        _ if package_flags => Err(
+            "install-backed packaging requires KEY_NAME OUTPUT_DIR, where KEY_NAME ends in .key \
+             and OUTPUT_DIR is a directory path"
+                .to_string(),
+        ),
+        _ => Ok(None),
+    }
+}
+
+fn run_pack_install_package(cmd: PackCmd) -> Result<(), String> {
+    let (key_name, output_dir) = package_mode_args(&cmd)?.ok_or_else(|| pack_usage_error(&cmd))?;
+
+    run_package(PackageOptions {
+        directory:        output_dir,
+        key:              key_name,
+        root:             cmd.root,
+        userdirectory:    None,
+        language:         cmd.language.unwrap_or_else(|| "english".to_string()),
+        data_version:     cmd.data_version,
+        data_compression: cmd.data_compression,
+        force:            cmd.force,
+    })
 }
 
 #[instrument(
     level = "info",
     skip_all,
     err,
-    fields(output = %cmd.output.display(), force = cmd.force)
+    fields(force = cmd.force)
 )]
 fn run_pack_key(cmd: PackCmd) -> Result<(), String> {
-    if let Some(metadata) = read_key_pack_metadata(&cmd.input)?
-        && should_copy_original_key(&metadata, &cmd.input)?
+    let (input, output) = explicit_pack_paths(&cmd)?;
+    let input = input.clone();
+    let output = output.clone();
+    if let Some(metadata) = read_key_pack_metadata(&input)?
+        && should_copy_original_key(&metadata, &input)?
     {
-        copy_original_key_set(&metadata, &cmd.output, cmd.force)?;
+        copy_original_key_set(&metadata, &output, cmd.force)?;
         return Ok(());
     }
-    let key_name = cmd
-        .output
+    let key_name = output
         .file_stem()
         .and_then(OsStr::to_str)
         .filter(|value| !value.is_empty())
-        .ok_or_else(|| format!("invalid key output name: {}", cmd.output.display()))?
+        .ok_or_else(|| format!("invalid key output name: {}", output.display()))?
         .to_string();
-    let destination = cmd
-        .output
+    let destination = output
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
         .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
@@ -81,7 +166,7 @@ fn run_pack_key(cmd: PackCmd) -> Result<(), String> {
         no_symlinks: cmd.no_symlinks,
         force: cmd.force,
         key: key_name,
-        source: cmd.input,
+        source: input,
         destination,
     })
 }
@@ -90,19 +175,22 @@ fn run_pack_key(cmd: PackCmd) -> Result<(), String> {
     level = "info",
     skip_all,
     err,
-    fields(output = %cmd.output.display(), force = cmd.force)
+    fields(force = cmd.force)
 )]
 fn run_pack_erf(cmd: PackCmd) -> Result<(), String> {
-    let metadata = read_erf_pack_metadata(&cmd.input)?;
+    let (input, output) = explicit_pack_paths(&cmd)?;
+    let input = input.clone();
+    let output = output.clone();
+    let metadata = read_erf_pack_metadata(&input)?;
     if let Some(metadata) = metadata.as_ref()
-        && should_copy_original_erf(metadata, &cmd.input)?
+        && should_copy_original_erf(metadata, &input)?
     {
-        ensure_output_file_ready(&cmd.output, cmd.force)?;
-        fs::copy(&metadata.source, &cmd.output).map_err(|error| {
+        ensure_output_file_ready(&output, cmd.force)?;
+        fs::copy(&metadata.source, &output).map_err(|error| {
             format!(
                 "failed to copy original archive {} to {}: {error}",
                 metadata.source.display(),
-                cmd.output.display()
+                output.display()
             )
         })?;
         return Ok(());
@@ -115,10 +203,10 @@ fn run_pack_erf(cmd: PackCmd) -> Result<(), String> {
     let compalg = parse_algorithm(&cmd.data_compression)?;
     let exocomp = exo_compression_from_algorithm(compalg);
     let file_type = metadata.as_ref().map_or_else(
-        || infer_erf_type(cmd.output.as_path(), cmd.erf_type.as_deref()),
+        || infer_erf_type(output.as_path(), cmd.erf_type.as_deref()),
         |meta| meta.file_type.clone(),
     );
-    let sources = collect_generic_pack_sources(&cmd.input, true, 1, cmd.recurse, cmd.no_symlinks)?;
+    let sources = collect_generic_pack_sources(&input, true, 1, cmd.recurse, cmd.no_symlinks)?;
     let sources = apply_erf_entry_order(metadata.as_ref(), sources);
     let sources = normalize_pack_sources(sources)?;
     debug!(entry_count = sources.len(), "resolved archive pack sources");
@@ -173,11 +261,11 @@ fn run_pack_erf(cmd: PackCmd) -> Result<(), String> {
         },
         |rr| entry_algorithms.get(rr).copied().unwrap_or(compalg),
     )
-    .map_err(|error| format!("failed to pack {}: {error}", cmd.output.display()))?;
+    .map_err(|error| format!("failed to pack {}: {error}", output.display()))?;
 
-    ensure_output_file_ready(&cmd.output, cmd.force)?;
-    fs::write(&cmd.output, out.into_inner())
-        .map_err(|error| format!("failed to write {}: {error}", cmd.output.display()))?;
+    ensure_output_file_ready(&output, cmd.force)?;
+    fs::write(&output, out.into_inner())
+        .map_err(|error| format!("failed to write {}: {error}", output.display()))?;
     Ok(())
 }
 
@@ -185,36 +273,38 @@ fn run_pack_erf(cmd: PackCmd) -> Result<(), String> {
     level = "info",
     skip_all,
     err,
-    fields(input = %cmd.input.display(), output = %cmd.output.display(), force = cmd.force)
+    fields(force = cmd.force)
 )]
 fn run_pack_resource(cmd: PackCmd, kind: Kind) -> Result<(), String> {
-    if let Some(metadata) = read_resource_pack_metadata(&cmd.input)?
-        && should_copy_original_resource(&metadata, &cmd.input)?
+    let (input, output) = explicit_pack_paths(&cmd)?;
+    let input = input.clone();
+    let output = output.clone();
+    if let Some(metadata) = read_resource_pack_metadata(&input)?
+        && should_copy_original_resource(&metadata, &input)?
     {
-        ensure_output_file_ready(&cmd.output, cmd.force)?;
-        fs::copy(&metadata.source, &cmd.output).map_err(|error| {
+        ensure_output_file_ready(&output, cmd.force)?;
+        fs::copy(&metadata.source, &output).map_err(|error| {
             format!(
                 "failed to copy original resource {} to {}: {error}",
                 metadata.source.display(),
-                cmd.output.display()
+                output.display()
             )
         })?;
         return Ok(());
     }
 
-    let source =
-        resolve_resource_pack_source(&cmd.input, kind, read_resource_pack_metadata(&cmd.input)?)?;
+    let source = resolve_resource_pack_source(&input, kind, read_resource_pack_metadata(&input)?)?;
     match kind {
-        Kind::Gff => pack_gff_resource(&source, &cmd.output, cmd.force),
-        Kind::TwoDa => pack_twoda_resource(&source, &cmd.output, cmd.force),
-        Kind::Tlk => pack_tlk_resource(&source, &cmd.output, cmd.force),
-        Kind::Ssf => pack_ssf_resource(&source, &cmd.output, cmd.force),
-        Kind::Model => pack_model_resource(&source, &cmd.output, cmd.force),
-        Kind::Texture => pack_texture_resource(&source, &cmd.output, cmd.force),
-        Kind::Ncs => pack_ncs_resource(&source, &cmd.output, cmd.force),
+        Kind::Gff => pack_gff_resource(&source, &output, cmd.force),
+        Kind::TwoDa => pack_twoda_resource(&source, &output, cmd.force),
+        Kind::Tlk => pack_tlk_resource(&source, &output, cmd.force),
+        Kind::Ssf => pack_ssf_resource(&source, &output, cmd.force),
+        Kind::Model => pack_model_resource(&source, &output, cmd.force),
+        Kind::Texture => pack_texture_resource(&source, &output, cmd.force),
+        Kind::Ncs => pack_ncs_resource(&source, &output, cmd.force),
         Kind::Erf | Kind::Key => Err(format!(
             "unsupported standalone resource pack kind for {}",
-            cmd.output.display()
+            output.display()
         )),
     }
 }
@@ -421,6 +511,71 @@ pub(crate) fn apply_erf_entry_order(
     sources
 }
 
+pub(crate) struct KeyPackageBif {
+    pub(crate) directory: String,
+    pub(crate) name:      String,
+    pub(crate) entries:   Vec<resref::ResRef>,
+}
+
+pub(crate) fn write_key_package<F>(
+    destination: &Path,
+    force: bool,
+    key_name: &str,
+    bif_prefix: &str,
+    bifs: &[KeyPackageBif],
+    data_version: &str,
+    data_compression: &str,
+    mut resolve_bytes: F,
+) -> Result<(), String>
+where
+    F: FnMut(&resref::ResRef) -> Result<Vec<u8>, String>,
+{
+    ensure_target_dir_ready(destination, force)?;
+
+    let version = parse_key_version(data_version)?;
+    let compalg = parse_algorithm(data_compression)?;
+    let exocomp = exo_compression_from_algorithm(compalg);
+    let key_name = Path::new(key_name)
+        .file_stem()
+        .and_then(OsStr::to_str)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| format!("invalid key name: {key_name}"))?
+        .to_string();
+    let (build_year, build_day) = current_build_date();
+    let key_bifs = bifs
+        .iter()
+        .map(|bif| key::KeyBifEntry {
+            directory:         bif.directory.clone(),
+            name:              bif.name.clone(),
+            recorded_filename: None,
+            drives:            0,
+            bif_oid:           None,
+            entries:           bif.entries.clone(),
+        })
+        .collect::<Vec<_>>();
+
+    key::write_key_and_bif(
+        version,
+        exocomp,
+        compalg,
+        destination,
+        &key_name,
+        bif_prefix,
+        &key_bifs,
+        build_year,
+        build_day,
+        None,
+        |rr, io| {
+            let data = resolve_bytes(rr).map_err(io::Error::other)?;
+            io.write_all(&data)?;
+            Ok((data.len(), checksums::secure_hash(&data)))
+        },
+    )
+    .map_err(|error| format!("failed to pack key data: {error}"))?;
+
+    Ok(())
+}
+
 #[instrument(
     level = "info",
     skip_all,
@@ -440,18 +595,6 @@ fn run_key_pack(cmd: KeyPackCmd) -> Result<(), String> {
             cmd.source.display()
         ));
     }
-
-    ensure_target_dir_ready(&cmd.destination, cmd.force)?;
-
-    let version = parse_key_version(&cmd.data_version)?;
-    let compalg = parse_algorithm(&cmd.data_compression)?;
-    let exocomp = exo_compression_from_algorithm(compalg);
-    let key_name = Path::new(&cmd.key)
-        .file_stem()
-        .and_then(OsStr::to_str)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| format!("invalid key name: {}", cmd.key))?
-        .to_string();
     let bif_prefix = "data";
 
     let mut bifs = Vec::new();
@@ -494,44 +637,32 @@ fn run_key_pack(cmd: KeyPackCmd) -> Result<(), String> {
         for entry in entries {
             source_entries.insert(entry.rr.clone(), entry);
         }
-        bifs.push(key::KeyBifEntry {
+        bifs.push(KeyPackageBif {
             directory: if cmd.no_squash {
                 bif_prefix.to_string()
             } else {
                 String::new()
             },
             name,
-            recorded_filename: None,
-            drives: 0,
-            bif_oid: None,
             entries: refs,
         });
     }
 
-    let (build_year, build_day) = current_build_date();
-    key::write_key_and_bif(
-        version,
-        exocomp,
-        compalg,
+    write_key_package(
         &cmd.destination,
-        &key_name,
+        cmd.force,
+        &cmd.key,
         bif_prefix,
         &bifs,
-        build_year,
-        build_day,
-        None,
-        |rr, io| {
+        &cmd.data_version,
+        &cmd.data_compression,
+        |rr| {
             let entry = source_entries
                 .get(rr)
-                .ok_or_else(|| io::Error::other(format!("no source mapping for {rr}")))?;
-            let data = entry.read_bytes().map_err(io::Error::other)?;
-            io.write_all(&data)?;
-            Ok((data.len(), checksums::secure_hash(&data)))
+                .ok_or_else(|| format!("no source mapping for {rr}"))?;
+            entry.read_bytes()
         },
     )
-    .map_err(|error| format!("failed to pack key data: {error}"))?;
-
-    Ok(())
 }
 
 #[derive(Clone)]
@@ -861,8 +992,9 @@ mod tests {
             no_symlinks:      false,
             recurse:          2,
             erf_type:         None,
-            input:            input.clone(),
-            output:           output.clone(),
+            root:             None,
+            language:         None,
+            paths:            vec![input.clone(), output.clone()],
         })
         .expect("pack gff resource");
 
@@ -890,8 +1022,9 @@ mod tests {
             no_symlinks:      false,
             recurse:          2,
             erf_type:         None,
-            input:            input.clone(),
-            output:           output.clone(),
+            root:             None,
+            language:         None,
+            paths:            vec![input.clone(), output.clone()],
         })
         .expect("pack twoda resource");
 
@@ -936,8 +1069,9 @@ int FALSE = 0;
             no_symlinks:      false,
             recurse:          2,
             erf_type:         None,
-            input:            input.clone(),
-            output:           output.clone(),
+            root:             None,
+            language:         None,
+            paths:            vec![input.clone(), output.clone()],
         })
         .expect("pack mod with scripts");
 
@@ -988,8 +1122,9 @@ int FALSE = 0;
             no_symlinks:      false,
             recurse:          2,
             erf_type:         None,
-            input:            input.clone(),
-            output:           output.clone(),
+            root:             None,
+            language:         None,
+            paths:            vec![input.clone(), output.clone()],
         })
         .expect("pack key with scripts");
 
@@ -1046,8 +1181,9 @@ int FALSE = 0;
             no_symlinks:      false,
             recurse:          2,
             erf_type:         None,
-            input:            input.clone(),
-            output:           output.clone(),
+            root:             None,
+            language:         None,
+            paths:            vec![input.clone(), output.clone()],
         })
         .expect("pack mod with ncs asm");
 

@@ -364,8 +364,9 @@ mod tests {
             no_symlinks:      false,
             recurse:          2,
             erf_type:         None,
-            input:            directory.clone(),
-            output:           repacked.clone(),
+            root:             None,
+            language:         None,
+            paths:            vec![directory.clone(), repacked.clone()],
         })
         .expect("pack asm back into ncs");
 
