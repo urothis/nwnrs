@@ -72,7 +72,8 @@ fn run_pack_key(cmd: PackCmd) -> Result<(), String> {
     let destination = cmd
         .output
         .parent()
-        .filter(|parent| !parent.as_os_str().is_empty()).map_or_else(|| PathBuf::from("."), Path::to_path_buf);
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
     run_key_pack(KeyPackCmd {
         data_version: cmd.data_version,
         data_compression: cmd.data_compression,
@@ -108,7 +109,9 @@ fn run_pack_erf(cmd: PackCmd) -> Result<(), String> {
     }
     let version = metadata
         .as_ref()
-        .map_or(parse_erf_version(&cmd.data_version)?, |meta| meta.file_version);
+        .map_or(parse_erf_version(&cmd.data_version)?, |meta| {
+            meta.file_version
+        });
     let compalg = parse_algorithm(&cmd.data_compression)?;
     let exocomp = exo_compression_from_algorithm(compalg);
     let file_type = metadata
@@ -127,8 +130,9 @@ fn run_pack_erf(cmd: PackCmd) -> Result<(), String> {
         .iter()
         .map(|entry| entry.rr.clone())
         .collect::<Vec<_>>();
-    let (build_year, build_day) = metadata
-        .as_ref().map_or_else(current_build_date, |meta| (meta.build_year as u32, meta.build_day as u32));
+    let (build_year, build_day) = metadata.as_ref().map_or_else(current_build_date, |meta| {
+        (meta.build_year as u32, meta.build_day as u32)
+    });
     let loc_strings = metadata
         .as_ref()
         .map(|meta| meta.loc_strings.clone())
