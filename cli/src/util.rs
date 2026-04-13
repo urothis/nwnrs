@@ -175,14 +175,14 @@ pub(crate) fn entry_is_file(path: &Path, no_symlinks: bool) -> Result<bool, Stri
     Ok(meta.is_file())
 }
 
-pub(crate) fn infer_erf_type(path: &Path, explicit: Option<&str>) -> Result<String, String> {
+pub(crate) fn infer_erf_type(path: &Path, explicit: Option<&str>) -> String {
     if let Some(value) = explicit {
         let mut type_name = value.to_ascii_uppercase();
         type_name.truncate(4);
         while type_name.len() < 4 {
             type_name.push(' ');
         }
-        return Ok(type_name);
+        return type_name;
     }
 
     let ext = path
@@ -200,7 +200,7 @@ pub(crate) fn infer_erf_type(path: &Path, explicit: Option<&str>) -> Result<Stri
     while padded.len() < 4 {
         padded.push(' ');
     }
-    Ok(padded)
+    padded
 }
 
 pub(crate) fn write_lines<I>(path: &Path, lines: I) -> Result<(), String>

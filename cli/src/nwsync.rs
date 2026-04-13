@@ -323,7 +323,7 @@ async fn fetch_manifest_repository(url: &str, output: &Path) -> Result<FetchSumm
 
     let manifest_bytes = fetch_bytes(&client, &manifest_url).await?;
     let manifest_sha1 = checksums::secure_hash(&manifest_bytes);
-    if let Some(url_sha1) = manifest_sha1_from_url(&manifest_url)?
+    if let Some(url_sha1) = manifest_sha1_from_url(&manifest_url)
         && url_sha1 != manifest_sha1
     {
         return Err(format!(
@@ -431,18 +431,12 @@ fn manifest_repository_base_url(manifest_url: &Url) -> Result<Url, String> {
     Ok(base)
 }
 
-fn manifest_sha1_from_url(url: &Url) -> Result<Option<checksums::SecureHash>, String> {
-    let Some(last) = url
+fn manifest_sha1_from_url(url: &Url) -> Option<checksums::SecureHash> {
+    let last = url
         .path_segments()
-        .and_then(|mut segments| segments.rfind(|segment| !segment.is_empty()))
-    else {
-        return Ok(None);
-    };
+        .and_then(|mut segments| segments.rfind(|segment| !segment.is_empty()))?;
 
-    match last.parse() {
-        Ok(value) => Ok(Some(value)),
-        Err(_error) => Ok(None),
-    }
+    last.parse().ok()
 }
 
 fn manifest_entry_data_url(
