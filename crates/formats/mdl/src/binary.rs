@@ -741,7 +741,7 @@ impl<'a> BinaryParser<'a> {
         unknown_blocks.sort_by_key(|block| block.offset);
 
         let mut diagnostics = std::mem::take(&mut self.diagnostics);
-        diagnostics.sort_by(|left, right| left.kind.cmp(&right.kind));
+        diagnostics.sort_by_key(|left| left.kind);
 
         Ok(BinaryModel {
             source_bytes: self.bytes.to_vec(),
