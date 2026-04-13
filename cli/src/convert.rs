@@ -17,7 +17,7 @@ pub(crate) fn run_convert(cmd: &ConvertCmd) -> Result<(), String> {
     ensure_output_file_ready(&cmd.output, cmd.force)?;
 
     if is_model_conversion(&cmd.input, &cmd.output)? {
-        return run_convert_model(&cmd);
+        return run_convert_model(cmd);
     }
 
     info!("treating conversion as texture/image conversion");
