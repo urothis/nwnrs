@@ -903,7 +903,7 @@ fn to_u32_len(value: usize, what: &str) -> GffResult<u32> {
 fn read_i8<R: Read>(reader: &mut R) -> io::Result<i8> {
     let mut bytes = [0_u8; 1];
     reader.read_exact(&mut bytes)?;
-    Ok(bytes[0] as i8)
+    Ok(i8::from_ne_bytes([bytes[0]]))
 }
 
 fn read_u32<R: Read>(reader: &mut R) -> io::Result<u32> {

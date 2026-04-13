@@ -151,7 +151,7 @@ pub fn new_resnwsync_manifest(
     let result = ResNWSyncManifest {
         nwsync: nwsync.clone(),
         manifest_sha1,
-        mtime: UNIX_EPOCH + Duration::from_secs(created_at.max(0) as u64),
+        mtime: UNIX_EPOCH + Duration::from_secs(created_at.max(0).unsigned_abs()),
         contents,
         sha1map,
     };
