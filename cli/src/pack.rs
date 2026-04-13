@@ -550,11 +550,11 @@ pub(crate) struct PackSourceEntry {
 impl PackSourceEntry {
     fn source_label(&self) -> String {
         match &self.source {
-            PackSourceKind::File(path) => path.display().to_string(),
-            PackSourceKind::CompiledScript {
+            PackSourceKind::File(path)
+            | PackSourceKind::CompiledScript {
                 path, ..
-            } => path.display().to_string(),
-            PackSourceKind::AssembledNcs {
+            }
+            | PackSourceKind::AssembledNcs {
                 path, ..
             } => path.display().to_string(),
         }
@@ -566,8 +566,8 @@ impl PackSourceEntry {
                 .map_err(|error| format!("failed to read {}: {error}", path.display())),
             PackSourceKind::CompiledScript {
                 bytes, ..
-            } => Ok(bytes.clone()),
-            PackSourceKind::AssembledNcs {
+            }
+            | PackSourceKind::AssembledNcs {
                 bytes, ..
             } => Ok(bytes.clone()),
         }
