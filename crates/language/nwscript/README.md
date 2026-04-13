@@ -8,6 +8,7 @@ compiler toolchain.
 - source loading and preprocessing
 - lexing, parsing, semantic analysis, and optimization
 - emission of `NCS` and `NDB` artifacts
+- `NCS` asm/disasm through the upstream-style `nwasm` text layer
 - typed vocabulary for NWScript-related binary formats
 
 ## Internal Structure
@@ -17,7 +18,7 @@ compiler toolchain.
 - `ast`, `hir`, `sema`, and `ir`: progressively richer semantic and lowered
   program forms
 - `opt` and `codegen`: optimization and NCS emission
-- `ncs` and `ndb`: binary format support for emitted artifacts
+- `ncs`, `ndb`, and `nwasm`: binary artifact support plus text asm/disasm
 - `diag`, `langspec`, and `hash`: diagnostics, builtin language specification,
   and NWScript-specific string hashing
 

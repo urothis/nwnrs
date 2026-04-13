@@ -45,6 +45,10 @@ nwnrs-cli convert out/model_ascii.mdl rebuilt/model.mdl
 # unpack and repack archives
 nwnrs-cli unpack path/to/module.mod -d out/
 nwnrs-cli pack out/ rebuilt.mod
+
+# unpack raw NCS to asm text and assemble it back
+nwnrs-cli unpack path/to/script.ncs -d out/
+nwnrs-cli pack out/ rebuilt.ncs
 ```
 
 More CLI details: [`cli/README.md`](./cli/README.md)
@@ -102,6 +106,7 @@ More wasm details: [`wasm/README.md`](./wasm/README.md)
 - inspect NWN files
 - parse and write common NWN formats
 - compile NWScript to `NCS` and `NDB`
+- disassemble `NCS` to asm text and assemble `.ncs.asm` back to bytecode
 - convert textures between `png`, `jpg`, `tga`, `dds`, and `webp`
 - load resources from installs, directories, archives, and manifests
 - lower compiled MDL into canonical ASCII

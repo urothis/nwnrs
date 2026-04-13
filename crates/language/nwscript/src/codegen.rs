@@ -18,7 +18,7 @@ use crate::{
         ConstValue, build_constant_env, evaluate_const_expr, meld_instructions,
         optimization_needs_hir_passes, optimization_needs_post_codegen_passes, optimize_hir,
     },
-    parse_source_bundle, write_ndb,
+    parse_source_bundle, parse_text, write_ndb,
 };
 
 /// Optimization levels accepted by the pure-Rust compiler pipeline.
@@ -401,6 +401,7 @@ impl Assembler {
 
 struct O0Compiler<'a> {
     hir:                   &'a HirModule,
+    langspec:              Option<&'a LangSpec>,
     builtin_functions:     BTreeMap<String, (u16, &'a BuiltinFunction)>,
     builtin_constants:     BTreeMap<String, BuiltinValue>,
     constant_env:          BTreeMap<String, ConstValue>,
@@ -523,6 +524,7 @@ impl<'a> O0Compiler<'a> {
 
         Ok(Self {
             hir,
+            langspec,
             builtin_functions,
             builtin_constants,
             constant_env,
@@ -1925,13 +1927,15 @@ fn emit_call(
             }
             for parameter in function.parameters.iter().skip(arguments.len()) {
                 if matches!(parameter.ty, BuiltinType::Action) {
-                    return Err(CodegenError::new(
-                        Some(expr.span),
-                        format!(
-                            "builtin {:?} requires an action default that is not supported",
-                            name
-                        ),
-                    ));
+                    let default = parameter.default.as_ref().ok_or_else(|| {
+                        CodegenError::new(
+                            Some(expr.span),
+                            format!("missing required parameter for builtin {:?}", name),
+                        )
+                    })?;
+                    let action = lower_builtin_action_default_expr(compiler, default, expr.span)?;
+                    emit_action_parameter(compiler, temp_bytes, layout, &action)?;
+                    continue;
                 }
                 let default = parameter.default.as_ref().ok_or_else(|| {
                     CodegenError::new(
@@ -2022,6 +2026,89 @@ fn emit_action_parameter(
     compiler.assembler.push(simple_instruction(NcsOpcode::Ret));
     compiler.assembler.place_label(action_end);
     Ok(())
+}
+
+fn lower_builtin_action_default_expr(
+    compiler: &O0Compiler<'_>,
+    default: &BuiltinValue,
+    span: crate::Span,
+) -> Result<HirExpr, CodegenError> {
+    let BuiltinValue::Raw(raw) = default else {
+        return Err(CodegenError::new(
+            Some(span),
+            format!("unsupported builtin action default value {:?}", default),
+        ));
+    };
+    let langspec = compiler.langspec.ok_or_else(|| {
+        CodegenError::new(
+            Some(span),
+            "builtin action defaults require an active langspec".to_string(),
+        )
+    })?;
+    let synthetic = format!("void __nwnrs_builtin_action_default__() {{ {raw}; }}");
+    let script =
+        parse_text(SourceId::new(u32::MAX - 1), &synthetic, Some(langspec)).map_err(|error| {
+            CodegenError::new(
+                Some(span),
+                format!(
+                    "failed to parse builtin action default {:?}: {}",
+                    raw, error
+                ),
+            )
+        })?;
+    let semantic = analyze_script_with_options(&script, Some(langspec), SemanticOptions::default())
+        .map_err(|error| {
+            CodegenError::new(
+                Some(span),
+                format!(
+                    "failed to analyze builtin action default {:?}: {}",
+                    raw, error
+                ),
+            )
+        })?;
+    let hir = lower_to_hir(&script, &semantic, Some(langspec)).map_err(|error| {
+        CodegenError::new(
+            Some(span),
+            format!(
+                "failed to lower builtin action default {:?}: {}",
+                raw, error
+            ),
+        )
+    })?;
+    let function = hir.functions.first().ok_or_else(|| {
+        CodegenError::new(
+            Some(span),
+            format!(
+                "builtin action default {:?} did not lower to a function body",
+                raw
+            ),
+        )
+    })?;
+    let body = function.body.as_ref().ok_or_else(|| {
+        CodegenError::new(
+            Some(span),
+            format!(
+                "builtin action default {:?} lowered without a function body",
+                raw
+            ),
+        )
+    })?;
+    let statement = body.statements.first().ok_or_else(|| {
+        CodegenError::new(
+            Some(span),
+            format!("builtin action default {:?} lowered to an empty body", raw),
+        )
+    })?;
+    match statement {
+        HirStmt::Expr(expr) => Ok((*expr.clone()).clone()),
+        _ => Err(CodegenError::new(
+            Some(span),
+            format!(
+                "builtin action default {:?} must lower to an expression statement",
+                raw
+            ),
+        )),
+    }
 }
 
 fn emit_store_target(
@@ -2813,8 +2900,8 @@ fn simple_aux_instruction(opcode: NcsOpcode, auxcode: NcsAuxCode) -> NcsInstruct
 mod tests {
     use super::{CompileOptions, OptimizationLevel};
     use crate::{
-        BuiltinConstant, BuiltinFunction, BuiltinParameter, BuiltinType, BuiltinValue, NcsOpcode,
-        SourceId, SourceMap, compile_script, compile_script_with_source_map,
+        BuiltinConstant, BuiltinFunction, BuiltinParameter, BuiltinType, BuiltinValue, NcsAuxCode,
+        NcsOpcode, SourceId, SourceMap, compile_script, compile_script_with_source_map,
         decode_ncs_instructions, parse_text, read_ndb,
     };
 
@@ -2953,6 +3040,33 @@ mod tests {
                         },
                     ],
                 },
+                BuiltinFunction {
+                    name:        "SpeakString".to_string(),
+                    return_type: BuiltinType::Void,
+                    parameters:  vec![BuiltinParameter {
+                        name:    "sMessage".to_string(),
+                        ty:      BuiltinType::String,
+                        default: None,
+                    }],
+                },
+                BuiltinFunction {
+                    name:        "DelayCommand".to_string(),
+                    return_type: BuiltinType::Void,
+                    parameters:  vec![
+                        BuiltinParameter {
+                            name:    "fSeconds".to_string(),
+                            ty:      BuiltinType::Float,
+                            default: None,
+                        },
+                        BuiltinParameter {
+                            name:    "aAction".to_string(),
+                            ty:      BuiltinType::Action,
+                            default: Some(BuiltinValue::Raw(
+                                "SpeakString(\"default action\")".to_string(),
+                            )),
+                        },
+                    ],
+                },
             ],
         }
     }
@@ -2999,6 +3113,39 @@ mod tests {
                 .iter()
                 .any(|instruction| instruction.opcode == NcsOpcode::Ret)
         );
+        Ok(())
+    }
+
+    #[test]
+    fn compiles_builtin_action_defaults() -> Result<(), Box<dyn std::error::Error>> {
+        let script = parse_text(
+            SourceId::new(95),
+            r#"
+                void main() {
+                    DelayCommand(1.0);
+                }
+            "#,
+            Some(&test_langspec()),
+        )?;
+
+        let artifacts = compile_script(&script, Some(&test_langspec()), CompileOptions::default())?;
+        let instructions = decode_ncs_instructions(&artifacts.ncs)?;
+
+        assert!(
+            instructions
+                .iter()
+                .any(|instruction| instruction.opcode == NcsOpcode::StoreState),
+            "builtin action defaults should emit an embedded action body"
+        );
+        assert!(
+            instructions.iter().any(|instruction| {
+                instruction.opcode == NcsOpcode::Constant
+                    && instruction.auxcode == NcsAuxCode::TypeString
+                    && decode_string_constant(&instruction.extra) == "default action"
+            }),
+            "builtin action default body should be compiled from its raw langspec expression"
+        );
+
         Ok(())
     }
 
