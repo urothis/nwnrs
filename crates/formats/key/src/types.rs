@@ -275,7 +275,7 @@ impl ResContainer for KeyTable {
             SystemTime::UNIX_EPOCH,
             loaded.stream.clone(),
             i64::try_from(variable.io_size)
-                .map_err(|_| ResManError::Message("KEY resource size exceeds i64 range".into()))?,
+                .map_err(|e| ResManError::Message(format!("KEY resource size exceeds i64 range: {e}")))?,
             variable.io_offset,
             variable.compression_type,
             None,

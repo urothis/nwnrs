@@ -58,17 +58,17 @@ pub fn read_erf_shared(stream: SharedReadSeek, filename: String) -> ErfResult<Er
     };
 
     let loc_str_count = usize::try_from(read_i32(io.as_mut())?)
-        .map_err(|_| ErfError::msg("ERF loc string count is negative"))?;
+        .map_err(|e| ErfError::msg(format!("ERF loc string count is negative: {e}")))?;
     let loc_string_size = u64::try_from(read_i32(io.as_mut())?)
-        .map_err(|_| ErfError::msg("ERF loc string size is negative"))?;
+        .map_err(|e| ErfError::msg(format!("ERF loc string size is negative: {e}")))?;
     let entry_count = usize::try_from(read_i32(io.as_mut())?)
-        .map_err(|_| ErfError::msg("ERF entry count is negative"))?;
+        .map_err(|e| ErfError::msg(format!("ERF entry count is negative: {e}")))?;
     let offset_to_loc_str = u64::try_from(read_i32(io.as_mut())?)
-        .map_err(|_| ErfError::msg("ERF loc string offset is negative"))?;
+        .map_err(|e| ErfError::msg(format!("ERF loc string offset is negative: {e}")))?;
     let offset_to_key_list = u64::try_from(read_i32(io.as_mut())?)
-        .map_err(|_| ErfError::msg("ERF key list offset is negative"))?;
+        .map_err(|e| ErfError::msg(format!("ERF key list offset is negative: {e}")))?;
     let offset_to_resource_list = u64::try_from(read_i32(io.as_mut())?)
-        .map_err(|_| ErfError::msg("ERF resource list offset is negative"))?;
+        .map_err(|e| ErfError::msg(format!("ERF resource list offset is negative: {e}")))?;
     let build_year = read_i32(io.as_mut())?;
     let build_day = read_i32(io.as_mut())?;
     let str_ref = read_i32(io.as_mut())?;
@@ -89,7 +89,7 @@ pub fn read_erf_shared(stream: SharedReadSeek, filename: String) -> ErfResult<Er
     for _ in 0..loc_str_count {
         let id = read_i32(io.as_mut())?;
         let len = usize::try_from(read_i32(io.as_mut())?)
-            .map_err(|_| ErfError::msg("ERF loc string length is negative"))?;
+            .map_err(|e| ErfError::msg(format!("ERF loc string length is negative: {e}")))?;
         let bytes = read_bytes_or_err(io.as_mut(), len)?;
         loc_strings.insert(id, from_nwnrs_encoding(&bytes)?);
     }
@@ -181,7 +181,7 @@ pub fn read_erf_shared(stream: SharedReadSeek, filename: String) -> ErfResult<Er
             if existing.io_offset() == meta.offset
                 && existing.io_size()
                     == i64::try_from(meta.disk_size)
-                        .map_err(|_| ErfError::msg("ERF resource size exceeds i64 range"))?
+                        .map_err(|e| ErfError::msg(format!("ERF resource size exceeds i64 range: {e}")))?
             {
                 continue;
             }
@@ -197,7 +197,7 @@ pub fn read_erf_shared(stream: SharedReadSeek, filename: String) -> ErfResult<Er
             SystemTime::UNIX_EPOCH,
             stream.clone(),
             i64::try_from(meta.disk_size)
-                .map_err(|_| ErfError::msg("ERF resource size exceeds i64 range"))?,
+                .map_err(|e| ErfError::msg(format!("ERF resource size exceeds i64 range: {e}")))?,
             meta.offset,
             meta.compression,
             read_compressed_buf_algorithm(io.as_mut(), meta)?,
