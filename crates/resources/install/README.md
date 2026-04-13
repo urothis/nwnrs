@@ -17,6 +17,15 @@ platform heuristics are consulted in a fixed order.
 The primary entry points are [`find_nwnrs_root`], [`find_user_root`], and
 [`new_default_resman`].
 
+## Discovery Overrides
+
+- `NWN_ROOT` overrides install-root discovery for [`find_nwnrs_root`]
+- `NWN_HOME` overrides user-directory discovery for [`find_user_root`]
+
+Both are lower priority than explicit function arguments such as `--root` and
+`--userdirectory`, but higher priority than Steam, Beamdog, or platform-default
+heuristics.
+
 ## Example
 
 ```rust,no_run
