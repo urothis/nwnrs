@@ -1835,6 +1835,7 @@ fn evaluate_int_constant_binary(op: BinaryOp, left: i32, right: i32) -> Option<i
     }
 }
 
+#[allow(clippy::float_cmp)]
 fn evaluate_float_constant_binary(op: BinaryOp, left: f32, right: f32) -> Option<ConstantValue> {
     match op {
         BinaryOp::Add => Some(ConstantValue::Float(left + right)),

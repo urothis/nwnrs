@@ -514,6 +514,7 @@ fn evaluate_int_binary(op: BinaryOp, left: i32, right: i32) -> Option<i32> {
     }
 }
 
+#[allow(clippy::float_cmp)]
 fn evaluate_float_binary(op: BinaryOp, left: f32, right: f32) -> Option<ConstValue> {
     match op {
         BinaryOp::Multiply => Some(ConstValue::Float(left * right)),

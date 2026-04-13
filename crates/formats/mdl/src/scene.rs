@@ -1159,6 +1159,7 @@ fn find_unique_node_index(scene: &NwnScene, name: &str, context: &str) -> ModelR
     Ok(first)
 }
 
+#[allow(clippy::float_cmp)]
 fn validate_uniform_scale(scale: &[f32; 3], context: &str) -> ModelResult<f32> {
     if scale[0] != scale[1] || scale[1] != scale[2] {
         return Err(ModelError::msg(format!(
