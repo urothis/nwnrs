@@ -32,6 +32,7 @@ struct DecodedAsmLine {
 
 /// Options controlling NCS disassembly rendering.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct NcsDisassemblyOptions {
     /// Render upstream internal enum names instead of canonical mnemonics.
     pub internal_names:    bool,

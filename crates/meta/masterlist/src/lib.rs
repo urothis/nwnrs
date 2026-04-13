@@ -38,6 +38,7 @@ pub struct Nwsync {
 /// A single Beamdog masterlist server entry.
 #[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(clippy::struct_excessive_bools)]
 pub struct Server {
     /// The first time the server was seen by the masterlist.
     #[serde(rename = "first_seen")]

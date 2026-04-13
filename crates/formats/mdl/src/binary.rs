@@ -218,6 +218,7 @@ struct BinaryNodeTree {
 
 /// Raw node content flags.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct BinaryNodeContent {
     /// Original bitfield value.
     pub raw:           u32,
@@ -329,6 +330,7 @@ pub struct BinaryLight {
 
 /// Emitter flags.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct BinaryEmitterFlags {
     /// Original bitfield value.
     pub raw:              u32,
