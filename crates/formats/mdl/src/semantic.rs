@@ -1883,14 +1883,11 @@ fn lower_special_node_statement(
     diagnostics: &mut Vec<ModelDiagnostic>,
 ) -> bool {
     match node_kind {
-        NodeKind::Skin => {
-            if statement.keyword_is("weights") {
+        NodeKind::Skin
+            if statement.keyword_is("weights") => {
                 mesh.weights = parse_skin_weights(statement, diagnostics);
                 true
-            } else {
-                false
             }
-        }
         NodeKind::Light => lower_light_statement(statement, light, diagnostics),
         NodeKind::Emitter => lower_emitter_statement(statement, emitter),
         NodeKind::Reference => lower_reference_statement(statement, reference, diagnostics),
