@@ -219,7 +219,7 @@ impl<'a> Parser<'a> {
         let ty = self.parse_any_type_specifier()?;
 
         if matches!(ty.kind, TypeKind::Struct(_)) && self.matches_kind(&TokenKind::LeftBrace) {
-            return self.parse_struct_definition(ty).map(TopLevelItem::Struct);
+            return self.parse_struct_definition(&ty).map(TopLevelItem::Struct);
         }
 
         let name = self.consume_identifier(
@@ -237,7 +237,7 @@ impl<'a> Parser<'a> {
         Ok(TopLevelItem::Global(declaration))
     }
 
-    fn parse_struct_definition(&mut self, ty: TypeSpec) -> Result<StructDecl, ParserError> {
+    fn parse_struct_definition(&mut self, ty: &TypeSpec) -> Result<StructDecl, ParserError> {
         let name = match &ty.kind {
             TypeKind::Struct(name) => name.clone(),
             _ => {
@@ -1536,6 +1536,7 @@ impl<'a> Parser<'a> {
         }
     }
 
+    #[allow(clippy::needless_pass_by_value)]
     fn consume_kind(
         &mut self,
         kind: TokenKind,

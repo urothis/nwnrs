@@ -673,6 +673,7 @@ impl<'a> LangSpecParser<'a> {
         }
     }
 
+    #[allow(clippy::needless_pass_by_value)]
     fn expect_kind(&mut self, kind: TokenKind) -> Result<(), LangSpecError> {
         let token = self
             .advance()

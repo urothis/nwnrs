@@ -44,6 +44,7 @@ where
     /// Returns the cached value for `key`, inserting one with an explicit
     /// weight if needed.
     #[instrument(level = "debug", skip_all)]
+    #[allow(clippy::needless_pass_by_value)]
     pub fn get_or_put_with_weight<F>(&mut self, key: K, when_missing: F) -> &V
     where
         F: FnOnce(&K) -> (Weight, V),

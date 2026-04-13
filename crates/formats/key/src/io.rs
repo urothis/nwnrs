@@ -62,6 +62,7 @@ pub fn read_key_table_from_file(path: impl AsRef<Path>) -> KeyResult<KeyTable> {
     read_key_table_from_reader(file, path.display().to_string(), resolver)
 }
 
+#[allow(clippy::needless_pass_by_value)]
 fn read_key_table_from_reader<R>(
     mut reader: R,
     label: String,
