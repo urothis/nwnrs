@@ -9,7 +9,7 @@ use crate::bindings::error_message;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LosslessDtoMetadata {
     /// The original source bytes returned by the reader.
-    pub original_bytes: Vec<u8>,
+    pub original_bytes:       Vec<u8>,
     /// A stable semantic fingerprint of the DTO with this metadata removed.
     pub semantic_fingerprint: String,
 }
