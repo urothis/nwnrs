@@ -119,12 +119,6 @@ pub fn new_default_resman(
         debug!("loading base override directory");
         result.add(Arc::new(nwnrs_resdir::read_resdir(root.join("ovr"))?));
     }
-    if load_ovr {
-        debug!("loading language override directory");
-        result.add(Arc::new(nwnrs_resdir::read_resdir(
-            resolved_language_root.join("data").join("ovr"),
-        )?));
-    }
 
     for dir in additional_dirs {
         debug!(path = %dir.display(), "loading additional directory");
@@ -223,5 +217,21 @@ mod tests {
         )
         .expect_err("builder should fail");
         assert!(err.to_string().contains("is not a directory"));
+    }
+
+    #[test]
+    fn load_ovr_uses_root_override_directory() {
+        let root = unique_test_dir("ovr-root");
+        let user = unique_test_dir("ovr-user");
+        let lang_root = root.join("lang").join("en");
+        let ovr_root = root.join("ovr");
+        fs::create_dir_all(&lang_root).unwrap_or_else(|error| panic!("create lang root: {error}"));
+        fs::create_dir_all(&ovr_root).unwrap_or_else(|error| panic!("create ovr root: {error}"));
+        fs::create_dir_all(&user).unwrap_or_else(|error| panic!("create user: {error}"));
+
+        let result =
+            new_default_resman(&root, &user, "english", 0, false, true, &[], &[], &[], &[]);
+
+        assert!(result.is_ok(), "load_ovr should use root-level ovr");
     }
 }

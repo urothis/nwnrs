@@ -1,9 +1,8 @@
 use nwnrs::prelude::checksums;
 use serde::{Deserialize, Serialize};
 use serde_json::to_vec as to_json_bytes;
-use wasm_bindgen::JsValue;
 
-use crate::bindings::js_error;
+use crate::bindings::error_message;
 
 /// Hidden provenance metadata used to preserve exact original bytes for
 /// untouched DTO values.
@@ -18,8 +17,8 @@ pub struct LosslessDtoMetadata {
 pub(crate) fn semantic_fingerprint<T: Serialize>(
     value: &T,
     context: &str,
-) -> Result<String, JsValue> {
-    let json = to_json_bytes(value).map_err(|error| js_error(context, error))?;
+) -> Result<String, String> {
+    let json = to_json_bytes(value).map_err(|error| error_message(context, error))?;
     Ok(checksums::secure_hash(&json).to_string())
 }
 
@@ -28,7 +27,7 @@ pub(crate) fn with_lossless_metadata<T>(
     original_bytes: Vec<u8>,
     metadata_slot: fn(&mut T) -> &mut Option<LosslessDtoMetadata>,
     context: &str,
-) -> Result<T, JsValue>
+) -> Result<T, String>
 where
     T: Serialize,
 {
@@ -44,12 +43,18 @@ where
 pub(crate) fn unchanged_lossless_bytes<T: Serialize>(
     value: &T,
     lossless: &Option<LosslessDtoMetadata>,
+    metadata_slot: fn(&mut T) -> &mut Option<LosslessDtoMetadata>,
     context: &str,
-) -> Result<Option<Vec<u8>>, JsValue> {
+) -> Result<Option<Vec<u8>>, String>
+where
+    T: Clone,
+{
     let Some(lossless) = lossless else {
         return Ok(None);
     };
-    if semantic_fingerprint(value, context)? == lossless.semantic_fingerprint {
+    let mut semantic = value.clone();
+    *metadata_slot(&mut semantic) = None;
+    if semantic_fingerprint(&semantic, context)? == lossless.semantic_fingerprint {
         return Ok(Some(lossless.original_bytes.clone()));
     }
     Ok(None)

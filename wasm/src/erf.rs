@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use wasm_bindgen::JsValue;
 
 use crate::{
-    bindings::js_error,
+    bindings::{js_error, js_error_message},
     lossless::{LosslessDtoMetadata, unchanged_lossless_bytes, with_lossless_metadata},
 };
 
@@ -237,11 +237,17 @@ pub(crate) fn read_erf_dto(bytes: &[u8], filename: &str) -> Result<ErfDto, JsVal
         |dto| &mut dto.lossless,
         "failed to fingerprint ERF DTO",
     )
+    .map_err(|error| js_error_message(&error))
 }
 
 pub(crate) fn write_erf_dto(value: &ErfDto) -> Result<Vec<u8>, JsValue> {
-    if let Some(bytes) =
-        unchanged_lossless_bytes(value, &value.lossless, "failed to fingerprint ERF DTO")?
+    if let Some(bytes) = unchanged_lossless_bytes(
+        value,
+        &value.lossless,
+        |dto| &mut dto.lossless,
+        "failed to fingerprint ERF DTO",
+    )
+    .map_err(|error| js_error_message(&error))?
     {
         Ok(bytes)
     } else {

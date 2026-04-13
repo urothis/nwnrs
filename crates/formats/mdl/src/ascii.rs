@@ -1321,7 +1321,7 @@ impl<'a> Parser<'a> {
             let comment = self
                 .next()
                 .ok_or_else(|| ModelError::msg("unexpected end of comment"))?;
-            return Ok(AsciiElement::Comment(comment.trim_end().to_string()));
+            return Ok(AsciiElement::Comment(comment.trim().to_string()));
         }
         Ok(AsciiElement::Statement(self.parse_statement()?))
     }

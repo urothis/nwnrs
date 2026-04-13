@@ -1,8 +1,16 @@
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::JsValue;
 
+pub(crate) fn error_message(context: &str, error: impl std::fmt::Display) -> String {
+    format!("{context}: {error}")
+}
+
+pub(crate) fn js_error_message(message: &str) -> JsValue {
+    JsValue::from_str(message)
+}
+
 pub(crate) fn js_error(context: &str, error: impl std::fmt::Display) -> JsValue {
-    JsValue::from_str(&format!("{context}: {error}"))
+    js_error_message(&error_message(context, error))
 }
 
 pub(crate) fn to_js_value<T: Serialize>(value: &T, context: &str) -> Result<JsValue, JsValue> {
