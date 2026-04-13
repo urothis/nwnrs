@@ -1446,10 +1446,7 @@ impl<'a> Parser<'a> {
         operators: &[(TokenKind, BinaryOp)],
     ) -> Result<Expr, ParserError> {
         let mut expr = subparser(self)?;
-        loop {
-            let Some(op) = self.current_binary_op(operators) else {
-                break;
-            };
+        while let Some(op) = self.current_binary_op(operators) {
             self.advance();
             let right = subparser(self)?;
             expr = Expr {
