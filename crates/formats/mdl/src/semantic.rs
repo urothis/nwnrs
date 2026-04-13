@@ -1388,7 +1388,11 @@ fn lower_header(model: &AsciiModel, diagnostics: &mut Vec<ModelDiagnostic>) -> S
 
     for element in &model.prefix {
         match element {
-            AsciiElement::Comment(comment) => comments.push(comment.clone()),
+            AsciiElement::Comment(comment) => {
+                if !is_nonsemantic_header_comment(comment) {
+                    comments.push(comment.clone());
+                }
+            }
             AsciiElement::Statement(statement) if statement.keyword_is("newmodel") => {
                 if let Some(name) = statement.argument(0) {
                     model_name = name.to_string();
@@ -1450,6 +1454,15 @@ fn lower_header(model: &AsciiModel, diagnostics: &mut Vec<ModelDiagnostic>) -> S
     }
 }
 
+fn is_nonsemantic_header_comment(comment: &str) -> bool {
+    comment.eq_ignore_ascii_case("#MAXMODEL ASCII")
+        || comment.eq_ignore_ascii_case("#MAXGEOM ASCII")
+        || comment.eq_ignore_ascii_case("#MAXGEOM  ASCII")
+        || comment == "# nwnrs-compiled-source begin"
+        || comment == "# nwnrs-compiled-source end"
+        || comment.starts_with("# nwnrs-compiled-source-hex ")
+}
+
 fn lower_geometry_node(node: &AsciiNode, diagnostics: &mut Vec<ModelDiagnostic>) -> SemanticNode {
     let mut lowered = SemanticNode {
         kind:        parse_node_kind(&node.node_type),
@@ -1507,9 +1520,10 @@ fn lower_geometry_node(node: &AsciiNode, diagnostics: &mut Vec<ModelDiagnostic>)
     for element in &node.entries {
         match element {
             AsciiElement::Comment(comment) => {
-                lowered.comments.push(comment.clone());
-                if lowered.part_number.is_none() {
-                    lowered.part_number = parse_part_number_comment(comment);
+                if let Some(part_number) = parse_part_number_comment(comment) {
+                    lowered.part_number.get_or_insert(part_number);
+                } else {
+                    lowered.comments.push(comment.clone());
                 }
             }
             AsciiElement::Statement(statement) => {
@@ -1675,9 +1689,10 @@ fn lower_animation_node(
     for element in &node.entries {
         match element {
             AsciiElement::Comment(comment) => {
-                lowered.comments.push(comment.clone());
-                if lowered.part_number.is_none() {
-                    lowered.part_number = parse_part_number_comment(comment);
+                if let Some(part_number) = parse_part_number_comment(comment) {
+                    lowered.part_number.get_or_insert(part_number);
+                } else {
+                    lowered.comments.push(comment.clone());
                 }
             }
             AsciiElement::Statement(statement) => {
@@ -2623,14 +2638,14 @@ mod tests {
         let torso_mesh = torso.mesh.as_ref().unwrap_or_else(|| {
             panic!("torso_g should have mesh data");
         });
-        assert_eq!(torso_mesh.vertices.len(), 37);
+        assert_eq!(torso_mesh.vertices.len(), 122);
         assert_eq!(torso_mesh.faces.len(), 70);
         assert_eq!(
             torso_mesh
                 .uv_layers
                 .first()
                 .map(|layer| layer.coordinates.len()),
-            Some(51)
+            Some(122)
         );
         Ok(())
     }

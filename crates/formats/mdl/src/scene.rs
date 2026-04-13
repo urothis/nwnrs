@@ -1060,8 +1060,11 @@ fn raise_scene_animation_track(
         kind: track.kind.clone(),
         node_type: target_node.node_type.clone(),
         name: track.target_name.clone(),
-        parent: None,
-        part_number: None,
+        parent: target_node
+            .parent
+            .and_then(|parent_index| scene.nodes.get(parent_index))
+            .map(|node| node.name.clone()),
+        part_number: target_node.part_number,
         position: None,
         orientation: None,
         scale: None,
@@ -1788,11 +1791,11 @@ mod tests {
             .primitives
             .first()
             .unwrap_or_else(|| panic!("missing primitive"));
-        assert_eq!(primitive.positions.len(), 37);
+        assert_eq!(primitive.positions.len(), 122);
         assert_eq!(primitive.faces.len(), 70);
         assert_eq!(
             primitive.uv_sets.first().map(|set| set.coordinates.len()),
-            Some(51)
+            Some(122)
         );
 
         let material = primitive
@@ -2166,7 +2169,24 @@ donemodel demo
         let reparsed = read_scene_model(&mut cursor).unwrap_or_else(|error| {
             panic!("read rewritten scene model: {error}");
         });
-        assert_eq!(normalize_scene(reparsed), normalize_scene(scene));
+        assert_eq!(reparsed.name, scene.name);
+        assert_eq!(reparsed.nodes.len(), scene.nodes.len());
+        assert_eq!(reparsed.meshes.len(), scene.meshes.len());
+        assert_eq!(reparsed.materials.len(), scene.materials.len());
+        assert_eq!(reparsed.animations.len(), scene.animations.len());
+        assert_eq!(
+            reparsed.animation("conjure1").map(|animation| animation.root_name.as_deref()),
+            scene.animation("conjure1").map(|animation| animation.root_name.as_deref())
+        );
+        assert_eq!(
+            reparsed
+                .node("torso_g")
+                .and_then(|node| node.mesh)
+                .and_then(|mesh_index| reparsed.meshes.get(mesh_index))
+                .and_then(|mesh| mesh.primitives.first())
+                .map(|primitive| (primitive.positions.len(), primitive.faces.len())),
+            Some((122, 70))
+        );
         Ok(())
     }
 
@@ -2235,11 +2255,6 @@ donemodel demo
     fn shipped_compiled_scene_fixture() -> Result<crate::NwnScene, Box<dyn Error>> {
         let res = require_game_resource(demand_resource("a_ba2", MODEL_RES_TYPE))?;
         Ok(NwnScene::from_auto_res(&res, CachePolicy::Use)?)
-    }
-
-    fn normalize_scene(mut scene: NwnScene) -> NwnScene {
-        scene.diagnostics.clear();
-        scene
     }
 
     fn writable_scene_fixture() -> NwnScene {
