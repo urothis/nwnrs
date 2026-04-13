@@ -37,19 +37,19 @@ impl Error for ParseSecureHashError {}
 
 impl SecureHash {
     /// Creates a digest from its raw bytes.
-    #[must_use] 
+    #[must_use]
     pub fn new(bytes: [u8; 20]) -> Self {
         Self(bytes)
     }
 
     /// Returns the digest as a fixed-size byte array.
-    #[must_use] 
+    #[must_use]
     pub fn into_bytes(self) -> [u8; 20] {
         self.0
     }
 
     /// Returns the digest as a borrowed byte array.
-    #[must_use] 
+    #[must_use]
     pub fn as_bytes(&self) -> &[u8; 20] {
         &self.0
     }
@@ -80,19 +80,19 @@ impl FromStr for SecureHash {
 
 impl Md5Digest {
     /// Creates a digest from its raw bytes.
-    #[must_use] 
+    #[must_use]
     pub fn new(bytes: [u8; 16]) -> Self {
         Self(bytes)
     }
 
     /// Returns the digest as a fixed-size byte array.
-    #[must_use] 
+    #[must_use]
     pub fn into_bytes(self) -> [u8; 16] {
         self.0
     }
 
     /// Returns the digest as a borrowed byte array.
-    #[must_use] 
+    #[must_use]
     pub fn as_bytes(&self) -> &[u8; 16] {
         &self.0
     }

@@ -40,9 +40,11 @@ impl NdbType {
             "s" => Self::String,
             "?" => Self::Unknown,
             _ if input.len() == 2 && input.starts_with('e') => input[1..]
-                .parse::<u8>().map_or_else(|_| Self::Raw(input.to_string()), Self::EngineStructure),
+                .parse::<u8>()
+                .map_or_else(|_| Self::Raw(input.to_string()), Self::EngineStructure),
             _ if input.len() == 5 && input.starts_with('t') => input[1..]
-                .parse::<usize>().map_or_else(|_| Self::Raw(input.to_string()), Self::Struct),
+                .parse::<usize>()
+                .map_or_else(|_| Self::Raw(input.to_string()), Self::Struct),
             _ => Self::Raw(input.to_string()),
         }
     }

@@ -50,7 +50,7 @@ pub struct NwnScene {
 
 impl NwnScene {
     /// Returns the first scene node named `name`, case-insensitively.
-    #[must_use] 
+    #[must_use]
     pub fn node(&self, name: &str) -> Option<&NwnSceneNode> {
         self.nodes
             .iter()
@@ -58,7 +58,7 @@ impl NwnScene {
     }
 
     /// Returns the first animation named `name`, case-insensitively.
-    #[must_use] 
+    #[must_use]
     pub fn animation(&self, name: &str) -> Option<&NwnAnimation> {
         self.animations
             .iter()
@@ -311,7 +311,7 @@ pub struct NwnAnimation {
 
 impl NwnAnimation {
     /// Returns the first node track named `name`, case-insensitively.
-    #[must_use] 
+    #[must_use]
     pub fn node_track(&self, name: &str) -> Option<&NwnNodeAnimationTrack> {
         self.node_tracks
             .iter()
@@ -653,7 +653,8 @@ fn validate_scene_for_write(scene: &NwnScene) -> ModelResult<SceneWriteOwnership
                 .get(owner_index)
                 .map_or("<invalid>", |node| node.name.as_str());
             return Err(ModelError::msg(format!(
-                "scene material {material_index} is referenced by both {previous_name} and {owner_name}"
+                "scene material {material_index} is referenced by both {previous_name} and \
+                 {owner_name}"
             )));
         }
     }
@@ -1147,9 +1148,9 @@ fn find_unique_node_index(scene: &NwnScene, name: &str, context: &str) -> ModelR
         .iter()
         .enumerate()
         .filter_map(|(index, node)| node.name.eq_ignore_ascii_case(name).then_some(index));
-    let first = matches.next().ok_or_else(|| {
-        ModelError::msg(format!("{context} {name} does not exist in the scene"))
-    })?;
+    let first = matches
+        .next()
+        .ok_or_else(|| ModelError::msg(format!("{context} {name} does not exist in the scene")))?;
     if matches.next().is_some() {
         return Err(ModelError::msg(format!(
             "{context} {name} is ambiguous because multiple scene nodes share that name"

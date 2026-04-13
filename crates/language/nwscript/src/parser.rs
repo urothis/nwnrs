@@ -547,9 +547,7 @@ impl<'a> Parser<'a> {
         } else {
             None
         };
-        let end_span = initializer
-            .as_ref()
-            .map_or(name.span, |expr| expr.span);
+        let end_span = initializer.as_ref().map_or(name.span, |expr| expr.span);
         Ok(VarDeclarator {
             span: join_spans(name.span, end_span),
             name: name.text,
@@ -712,7 +710,8 @@ impl<'a> Parser<'a> {
             None
         };
         let end_span = else_branch
-            .as_ref().map_or_else(|| then_branch.span(), |stmt| stmt.span());
+            .as_ref()
+            .map_or_else(|| then_branch.span(), |stmt| stmt.span());
         Ok(IfStmt {
             span: join_spans(if_token.span, end_span),
             condition,
@@ -1170,14 +1169,29 @@ impl<'a> Parser<'a> {
         })?;
 
         match token.kind {
-            TokenKind::Integer | TokenKind::HexInteger | TokenKind::BinaryInteger |
-TokenKind::OctalInteger | TokenKind::Float | TokenKind::String |
-TokenKind::LeftSquareBracket |
-TokenKind::Keyword(Keyword::ObjectSelf | Keyword::ObjectInvalid |
-Keyword::LocationInvalid | Keyword::JsonNull | Keyword::JsonFalse |
-Keyword::JsonTrue | Keyword::JsonObject | Keyword::JsonArray |
-Keyword::JsonString | Keyword::FunctionMacro | Keyword::FileMacro |
-Keyword::LineMacro | Keyword::DateMacro | Keyword::TimeMacro) => self.parse_literal_expression(),
+            TokenKind::Integer
+            | TokenKind::HexInteger
+            | TokenKind::BinaryInteger
+            | TokenKind::OctalInteger
+            | TokenKind::Float
+            | TokenKind::String
+            | TokenKind::LeftSquareBracket
+            | TokenKind::Keyword(
+                Keyword::ObjectSelf
+                | Keyword::ObjectInvalid
+                | Keyword::LocationInvalid
+                | Keyword::JsonNull
+                | Keyword::JsonFalse
+                | Keyword::JsonTrue
+                | Keyword::JsonObject
+                | Keyword::JsonArray
+                | Keyword::JsonString
+                | Keyword::FunctionMacro
+                | Keyword::FileMacro
+                | Keyword::LineMacro
+                | Keyword::DateMacro
+                | Keyword::TimeMacro,
+            ) => self.parse_literal_expression(),
             TokenKind::LeftParen => {
                 let left = self
                     .advance_required(CompilerErrorCode::NoLeftBracketOnExpression, "expected (")?;
@@ -1476,8 +1490,15 @@ Keyword::LineMacro | Keyword::DateMacro | Keyword::TimeMacro) => self.parse_lite
             return false;
         };
         match token.kind {
-            TokenKind::Keyword(Keyword::Const | Keyword::Int | Keyword::Float |
-Keyword::String | Keyword::Object | Keyword::Struct | Keyword::Vector) => true,
+            TokenKind::Keyword(
+                Keyword::Const
+                | Keyword::Int
+                | Keyword::Float
+                | Keyword::String
+                | Keyword::Object
+                | Keyword::Struct
+                | Keyword::Vector,
+            ) => true,
             TokenKind::Identifier => self.is_engine_structure_name(token),
             _ => false,
         }
@@ -1558,13 +1579,15 @@ Keyword::String | Keyword::Object | Keyword::Struct | Keyword::Vector) => true,
 
     fn error_here(&self, code: CompilerErrorCode, message: impl Into<String>) -> ParserError {
         let span = self
-            .peek().map_or_else(|| self.eof_span(), |token| token.span);
+            .peek()
+            .map_or_else(|| self.eof_span(), |token| token.span);
         ParserError::new(code, span, message)
     }
 
     fn eof_span(&self) -> Span {
         self.tokens
-            .last().map_or_else(|| Span::new(SourceId::new(0), 0, 0), |token| token.span)
+            .last()
+            .map_or_else(|| Span::new(SourceId::new(0), 0, 0), |token| token.span)
     }
 
     fn at_eof(&self) -> bool {

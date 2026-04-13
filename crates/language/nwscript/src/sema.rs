@@ -821,9 +821,7 @@ impl<'a> Analyzer<'a> {
                         return Err(SemanticError::new(
                             CompilerErrorCode::ReturnTypeAndFunctionTypeMismatched,
                             value.span,
-                            format!(
-                                "return expression has type {actual:?}, expected {expected:?}"
-                            ),
+                            format!("return expression has type {actual:?}, expected {expected:?}"),
                         ));
                     }
                     Ok(())
@@ -899,9 +897,7 @@ impl<'a> Analyzer<'a> {
                     return Err(SemanticError::new(
                         CompilerErrorCode::MultipleCaseConstantStatementsWithinSwitch,
                         statement.span,
-                        format!(
-                            "case value {value:?} was used more than once in this switch"
-                        ),
+                        format!("case value {value:?} was used more than once in this switch"),
                     ));
                 }
                 Ok(())
@@ -1336,7 +1332,8 @@ impl<'a> Analyzer<'a> {
                         CompilerErrorCode::EqualityTestHasInvalidOperands,
                         span,
                         format!(
-                            "equality test requires matching operand types, got {left:?} and {right:?}"
+                            "equality test requires matching operand types, got {left:?} and \
+                             {right:?}"
                         ),
                     ))
                 }
@@ -1351,7 +1348,8 @@ impl<'a> Analyzer<'a> {
                     CompilerErrorCode::ComparisonTestHasInvalidOperands,
                     span,
                     format!(
-                        "comparison requires int/int or float/float operands, got {left:?} and {right:?}"
+                        "comparison requires int/int or float/float operands, got {left:?} and \
+                         {right:?}"
                     ),
                 )),
             },
@@ -1371,8 +1369,8 @@ impl<'a> Analyzer<'a> {
             BinaryOp::Add | BinaryOp::Subtract | BinaryOp::Multiply | BinaryOp::Divide => {
                 match (left, right) {
                     (SemanticType::Int, SemanticType::Int) => Ok(SemanticType::Int),
-                    (SemanticType::Float, SemanticType::Int | SemanticType::Float) |
-(SemanticType::Int, SemanticType::Float) => Ok(SemanticType::Float),
+                    (SemanticType::Float, SemanticType::Int | SemanticType::Float)
+                    | (SemanticType::Int, SemanticType::Float) => Ok(SemanticType::Float),
                     (SemanticType::String, SemanticType::String) if op == BinaryOp::Add => {
                         Ok(SemanticType::String)
                     }
@@ -1405,9 +1403,7 @@ impl<'a> Analyzer<'a> {
                     Err(SemanticError::new(
                         CompilerErrorCode::ArithmeticOperationHasInvalidOperands,
                         span,
-                        format!(
-                            "modulus requires int operands, got {left:?} and {right:?}"
-                        ),
+                        format!("modulus requires int operands, got {left:?} and {right:?}"),
                     ))
                 }
             }
@@ -1441,9 +1437,7 @@ impl<'a> Analyzer<'a> {
                     return Err(SemanticError::new(
                         CompilerErrorCode::TypeDoesNotHaveAnOptionalParameter,
                         default.span,
-                        format!(
-                            "type {parameter_type:?} does not support optional parameters"
-                        ),
+                        format!("type {parameter_type:?} does not support optional parameters"),
                     ));
                 }
                 if !types_compatible(&parameter_type, &value.ty()) {
@@ -1767,8 +1761,13 @@ fn constant_from_literal(literal: &Literal) -> Option<ConstantValue> {
         Literal::LocationInvalid => Some(ConstantValue::LocationInvalid),
         Literal::Json(value) => Some(ConstantValue::Json(value.clone())),
         Literal::Vector(value) => Some(ConstantValue::Vector(*value)),
-        Literal::Magic(MagicLiteral::Function | MagicLiteral::File |
-MagicLiteral::Line | MagicLiteral::Date | MagicLiteral::Time) => None,
+        Literal::Magic(
+            MagicLiteral::Function
+            | MagicLiteral::File
+            | MagicLiteral::Line
+            | MagicLiteral::Date
+            | MagicLiteral::Time,
+        ) => None,
     }
 }
 
@@ -1796,8 +1795,9 @@ fn semantic_type_from_literal(literal: &Literal) -> SemanticType {
         Literal::Json(_) => SemanticType::EngineStructure("json".to_string()),
         Literal::Vector(_) => SemanticType::Vector,
         Literal::Magic(MagicLiteral::Line) => SemanticType::Int,
-        Literal::Magic(MagicLiteral::Function | MagicLiteral::File |
-MagicLiteral::Date | MagicLiteral::Time) => SemanticType::String,
+        Literal::Magic(
+            MagicLiteral::Function | MagicLiteral::File | MagicLiteral::Date | MagicLiteral::Time,
+        ) => SemanticType::String,
     }
 }
 

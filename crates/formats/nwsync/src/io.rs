@@ -69,9 +69,7 @@ pub fn read_manifest<R: Read>(reader: &mut R) -> ManifestResult<Manifest> {
         let (resref, raw_resref) = read_resref(reader)?;
         check(
             resref.resolve().is_some(),
-            format!(
-                "Entry at position {index} does not resolve to a valid resref: {resref:?}"
-            ),
+            format!("Entry at position {index} does not resolve to a valid resref: {resref:?}"),
         )?;
 
         primary_positions.push(manifest.entries.len());

@@ -882,8 +882,12 @@ fn semantic_type_from_literal(literal: &Literal) -> SemanticType {
         Literal::Json(_) => SemanticType::EngineStructure("json".to_string()),
         Literal::Vector(_) => SemanticType::Vector,
         Literal::Magic(crate::MagicLiteral::Line) => SemanticType::Int,
-        Literal::Magic(crate::MagicLiteral::Function | crate::MagicLiteral::File |
-crate::MagicLiteral::Date | crate::MagicLiteral::Time) => SemanticType::String,
+        Literal::Magic(
+            crate::MagicLiteral::Function
+            | crate::MagicLiteral::File
+            | crate::MagicLiteral::Date
+            | crate::MagicLiteral::Time,
+        ) => SemanticType::String,
     }
 }
 
@@ -975,8 +979,8 @@ fn binary_result_type(
         BinaryOp::Add | BinaryOp::Subtract | BinaryOp::Multiply | BinaryOp::Divide => {
             match (left, right) {
                 (SemanticType::Int, SemanticType::Int) => Ok(SemanticType::Int),
-                (SemanticType::Float, SemanticType::Int | SemanticType::Float) |
-(SemanticType::Int, SemanticType::Float) => Ok(SemanticType::Float),
+                (SemanticType::Float, SemanticType::Int | SemanticType::Float)
+                | (SemanticType::Int, SemanticType::Float) => Ok(SemanticType::Float),
                 (SemanticType::String, SemanticType::String) if op == BinaryOp::Add => {
                     Ok(SemanticType::String)
                 }
@@ -995,17 +999,13 @@ fn binary_result_type(
                 }
                 _ => Err(HirLowerError::new(
                     span,
-                    format!(
-                        "cannot lower binary operation {op:?} for {left:?} and {right:?}"
-                    ),
+                    format!("cannot lower binary operation {op:?} for {left:?} and {right:?}"),
                 )),
             }
         }
         _ => Err(HirLowerError::new(
             span,
-            format!(
-                "cannot lower binary operation {op:?} for {left:?} and {right:?}"
-            ),
+            format!("cannot lower binary operation {op:?} for {left:?} and {right:?}"),
         )),
     }
 }

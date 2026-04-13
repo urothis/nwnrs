@@ -151,7 +151,7 @@ impl BinaryModel {
 
 impl BinaryModel {
     /// Returns the first geometry node named `name`, case-insensitively.
-    #[must_use] 
+    #[must_use]
     pub fn node(&self, name: &str) -> Option<&BinaryNode> {
         self.nodes
             .iter()
@@ -159,7 +159,7 @@ impl BinaryModel {
     }
 
     /// Returns the first animation named `name`, case-insensitively.
-    #[must_use] 
+    #[must_use]
     pub fn animation(&self, name: &str) -> Option<&BinaryAnimation> {
         self.animations
             .iter()
@@ -565,7 +565,7 @@ pub struct UnknownBinaryBlock {
 
 impl Model {
     /// Detects the raw payload encoding.
-    #[must_use] 
+    #[must_use]
     pub fn encoding(&self) -> ModelEncoding {
         detect_model_encoding(self.bytes())
     }
@@ -2007,7 +2007,10 @@ fn slice_with_diagnostic<'a>(
 ) -> &'a [f32] {
     if let Some(slice) = start
         .checked_add(len)
-        .and_then(|end| values.get(start..end)) { slice } else {
+        .and_then(|end| values.get(start..end))
+    {
+        slice
+    } else {
         diagnostics.push(ModelDiagnostic {
             kind: ModelDiagnosticKind::MalformedValue,
             message,

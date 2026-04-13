@@ -86,7 +86,8 @@ pub fn open_nwsync(path: impl AsRef<Path>) -> ResNWSyncResult<NWSync> {
     Ok(result)
 }
 
-/// Opens an `NWSync` repository, creating the minimal `SQLite` layout when needed.
+/// Opens an `NWSync` repository, creating the minimal `SQLite` layout when
+/// needed.
 #[instrument(level = "debug", skip_all, err, fields(path = %path.as_ref().display()))]
 pub fn open_or_create_nwsync(path: impl AsRef<Path>) -> ResNWSyncResult<NWSync> {
     let root = path.as_ref();

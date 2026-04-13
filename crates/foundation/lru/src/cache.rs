@@ -74,19 +74,19 @@ where
     }
 
     /// Returns the number of cached entries.
-    #[must_use] 
+    #[must_use]
     pub fn len(&self) -> usize {
         self.entries.len()
     }
 
     /// Returns `true` if the cache has no entries.
-    #[must_use] 
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
 
     /// Returns the total cached weight.
-    #[must_use] 
+    #[must_use]
     pub fn weight(&self) -> Weight {
         self.current_weight
     }
@@ -155,7 +155,7 @@ where
     }
 
     /// Returns the current keys from most-recently-used to least-recently-used.
-    #[must_use] 
+    #[must_use]
     pub fn keys(&self) -> Vec<K> {
         self.order.iter().cloned().collect()
     }

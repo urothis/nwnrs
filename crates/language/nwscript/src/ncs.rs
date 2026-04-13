@@ -82,7 +82,7 @@ pub struct NcsInstruction {
 
 impl NcsInstruction {
     /// Returns the full encoded byte length of this instruction.
-    #[must_use] 
+    #[must_use]
     pub fn encoded_len(&self) -> usize {
         NCS_OPERATION_BASE_SIZE + self.extra.len()
     }
@@ -186,7 +186,7 @@ pub enum NcsOpcode {
 
 impl NcsOpcode {
     /// Returns the canonical mnemonic used by the upstream assembler helper.
-    #[must_use] 
+    #[must_use]
     pub fn canonical_name(self) -> &'static str {
         match self {
             Self::Assignment => "CPDOWNSP",
@@ -331,7 +331,7 @@ pub enum NcsAuxCode {
 impl NcsAuxCode {
     /// Returns the canonical short suffix used by the upstream assembler
     /// helper.
-    #[must_use] 
+    #[must_use]
     pub fn canonical_name(self) -> Option<&'static str> {
         match self {
             Self::None

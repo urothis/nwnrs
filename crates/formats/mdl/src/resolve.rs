@@ -19,7 +19,7 @@ pub enum TextureResourceKind {
 
 impl TextureResourceKind {
     /// Returns the registered NWN resource type for this kind.
-    #[must_use] 
+    #[must_use]
     pub fn res_type(self) -> ResType {
         match self {
             Self::Dds => get_res_type("dds"),
@@ -29,7 +29,7 @@ impl TextureResourceKind {
     }
 
     /// Returns the file extension for this kind.
-    #[must_use] 
+    #[must_use]
     pub fn extension(self) -> &'static str {
         match self {
             Self::Dds => "dds",
@@ -137,7 +137,7 @@ pub fn resolve_texture_ref(
 /// The returned names always start with the original texture name and then add
 /// appearance-aware aliases, such as body-part name normalization and nearest
 /// ancestor bitmap inheritance for placeholder child meshes.
-#[must_use] 
+#[must_use]
 pub fn scene_texture_resolution_names(
     scene: &NwnScene,
     material: &NwnMaterial,
@@ -339,7 +339,9 @@ fn resolve_model_backed_texture_candidate(
         return SceneTextureResolution::Ignored;
     }
 
-    let nested_scene = if let Ok(scene) = NwnScene::from_auto_res(&model_res, CachePolicy::Use) { scene } else {
+    let nested_scene = if let Ok(scene) = NwnScene::from_auto_res(&model_res, CachePolicy::Use) {
+        scene
+    } else {
         visited_models.remove(&trimmed.to_ascii_lowercase());
         return SceneTextureResolution::Ignored;
     };

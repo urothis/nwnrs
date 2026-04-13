@@ -77,7 +77,7 @@ impl ResRef {
     }
 
     /// Resolves this resource reference to a known file extension.
-    #[must_use] 
+    #[must_use]
     pub fn resolve(&self) -> Option<ResolvedResRef> {
         let res_ext = lookup_res_ext(self.res_type)?;
         Some(ResolvedResRef {
@@ -87,13 +87,13 @@ impl ResRef {
     }
 
     /// Returns the resource name portion.
-    #[must_use] 
+    #[must_use]
     pub fn res_ref(&self) -> &str {
         &self.res_ref
     }
 
     /// Returns the numeric resource type.
-    #[must_use] 
+    #[must_use]
     pub fn res_type(&self) -> ResType {
         self.res_type
     }
@@ -145,16 +145,14 @@ impl ResolvedResRef {
         let resolved = ResRef::new(res_ref.clone(), res_type)?
             .resolve()
             .ok_or_else(|| {
-                ResRefError::Message(format!(
-                    "'{res_ref}.{res_type}' is not a resolvable resref"
-                ))
+                ResRefError::Message(format!("'{res_ref}.{res_type}' is not a resolvable resref"))
             })?;
 
         Ok(resolved)
     }
 
     /// Attempts to resolve a `name.ext` filename into a resource reference.
-    #[must_use] 
+    #[must_use]
     pub fn try_from_filename(filename: &str) -> Option<Self> {
         let normalized = filename.to_ascii_lowercase();
         let (base, ext) = normalized.rsplit_once('.')?;
@@ -168,37 +166,36 @@ impl ResolvedResRef {
 
     /// Resolves a `name.ext` filename into a resource reference.
     pub fn from_filename(filename: &str) -> Result<Self, ResRefError> {
-        Self::try_from_filename(filename).ok_or_else(|| {
-            ResRefError::Message(format!("'{filename}' is not a resolvable resref"))
-        })
+        Self::try_from_filename(filename)
+            .ok_or_else(|| ResRefError::Message(format!("'{filename}' is not a resolvable resref")))
     }
 
     /// Returns the unresolved base resource reference.
-    #[must_use] 
+    #[must_use]
     pub fn base(&self) -> &ResRef {
         &self.base
     }
 
     /// Returns the resource name portion.
-    #[must_use] 
+    #[must_use]
     pub fn res_ref(&self) -> &str {
         self.base.res_ref()
     }
 
     /// Returns the numeric resource type.
-    #[must_use] 
+    #[must_use]
     pub fn res_type(&self) -> ResType {
         self.base.res_type()
     }
 
     /// Returns the resolved file extension.
-    #[must_use] 
+    #[must_use]
     pub fn res_ext(&self) -> &str {
         &self.res_ext
     }
 
     /// Formats the resolved reference as `name.ext`.
-    #[must_use] 
+    #[must_use]
     pub fn to_file(&self) -> String {
         format!("{}.{}", self.base.res_ref, self.res_ext)
     }

@@ -248,7 +248,7 @@ pub enum CompilerErrorCode {
 
 impl CompilerErrorCode {
     /// Returns the stable integer code used in diagnostics and fixtures.
-    #[must_use] 
+    #[must_use]
     pub fn code(self) -> i32 {
         self as i32
     }
@@ -262,7 +262,7 @@ pub struct UnknownCompilerErrorCode {
 
 impl UnknownCompilerErrorCode {
     /// Creates a new unknown-code error.
-    #[must_use] 
+    #[must_use]
     pub fn new(code: i32) -> Self {
         Self {
             code,
@@ -270,7 +270,7 @@ impl UnknownCompilerErrorCode {
     }
 
     /// Returns the unrecognized numeric code.
-    #[must_use] 
+    #[must_use]
     pub fn code(&self) -> i32 {
         self.code
     }

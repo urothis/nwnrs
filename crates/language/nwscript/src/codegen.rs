@@ -596,10 +596,7 @@ impl<'a> O0Compiler<'a> {
                 .iter()
                 .map(|(name, start)| {
                     let end = self.function_end_labels.get(name).copied().ok_or_else(|| {
-                        CodegenError::new(
-                            None,
-                            format!("missing function end label for {name:?}"),
-                        )
+                        CodegenError::new(None, format!("missing function end label for {name:?}"))
                     })?;
                     Ok::<_, CodegenError>((
                         name.clone(),
@@ -1025,7 +1022,9 @@ impl<'a> O0Compiler<'a> {
             crate::MagicLiteral::Line => {
                 let value = span
                     .and_then(|span| self.line_location(span))
-                    .map_or(0, |(_source_id, line)| i32::try_from(line).ok().unwrap_or(i32::MAX));
+                    .map_or(0, |(_source_id, line)| {
+                        i32::try_from(line).ok().unwrap_or(i32::MAX)
+                    });
                 Literal::Integer(value)
             }
             crate::MagicLiteral::Date => Literal::String(format_magic_date(self.compile_time)),
@@ -1045,10 +1044,11 @@ impl GlobalEmitter<'_, '_> {
     }
 
     fn emit_store_global(&mut self, name: &str, span: crate::Span) -> Result<(), CodegenError> {
-        let layout =
-            self.compiler.global_layout.get(name).ok_or_else(|| {
-                CodegenError::new(Some(span), format!("unknown global {name:?}"))
-            })?;
+        let layout = self
+            .compiler
+            .global_layout
+            .get(name)
+            .ok_or_else(|| CodegenError::new(Some(span), format!("unknown global {name:?}")))?;
         let offset = usize_to_i32(layout.offset, "global offset")?
             - usize_to_i32(self.compiler.global_size, "global size")?;
         self.compiler.assembler.push(NcsInstruction {
@@ -2047,42 +2047,32 @@ fn lower_builtin_action_default_expr(
         parse_text(SourceId::new(u32::MAX - 1), &synthetic, Some(langspec)).map_err(|error| {
             CodegenError::new(
                 Some(span),
-                format!(
-                    "failed to parse builtin action default {raw:?}: {error}"
-                ),
+                format!("failed to parse builtin action default {raw:?}: {error}"),
             )
         })?;
     let semantic = analyze_script_with_options(&script, Some(langspec), SemanticOptions::default())
         .map_err(|error| {
             CodegenError::new(
                 Some(span),
-                format!(
-                    "failed to analyze builtin action default {raw:?}: {error}"
-                ),
+                format!("failed to analyze builtin action default {raw:?}: {error}"),
             )
         })?;
     let hir = lower_to_hir(&script, &semantic, Some(langspec)).map_err(|error| {
         CodegenError::new(
             Some(span),
-            format!(
-                "failed to lower builtin action default {raw:?}: {error}"
-            ),
+            format!("failed to lower builtin action default {raw:?}: {error}"),
         )
     })?;
     let function = hir.functions.first().ok_or_else(|| {
         CodegenError::new(
             Some(span),
-            format!(
-                "builtin action default {raw:?} did not lower to a function body"
-            ),
+            format!("builtin action default {raw:?} did not lower to a function body"),
         )
     })?;
     let body = function.body.as_ref().ok_or_else(|| {
         CodegenError::new(
             Some(span),
-            format!(
-                "builtin action default {raw:?} lowered without a function body"
-            ),
+            format!("builtin action default {raw:?} lowered without a function body"),
         )
     })?;
     let statement = body.statements.first().ok_or_else(|| {
@@ -2095,9 +2085,7 @@ fn lower_builtin_action_default_expr(
         HirStmt::Expr(expr) => Ok((*expr.clone()).clone()),
         _ => Err(CodegenError::new(
             Some(span),
-            format!(
-                "builtin action default {raw:?} must lower to an expression statement"
-            ),
+            format!("builtin action default {raw:?} must lower to an expression statement"),
         )),
     }
 }
@@ -2131,9 +2119,10 @@ fn emit_store_target(
             Ok(())
         }
         AssignmentTargetRoot::Global(name) => {
-            let slot = compiler.global_layout.get(name).ok_or_else(|| {
-                CodegenError::new(Some(span), format!("unknown global {name:?}"))
-            })?;
+            let slot = compiler
+                .global_layout
+                .get(name)
+                .ok_or_else(|| CodegenError::new(Some(span), format!("unknown global {name:?}")))?;
             let offset = usize_to_i32(slot.offset + resolved.offset, "global assignment offset")?
                 - usize_to_i32(compiler.global_size, "global size")?;
             compiler.assembler.push(NcsInstruction {
@@ -2359,9 +2348,7 @@ fn aux_for_binary(
         }
         _ => Err(CodegenError::new(
             None,
-            format!(
-                "unsupported binary operand pair for code generation: {left:?} and {right:?}"
-            ),
+            format!("unsupported binary operand pair for code generation: {left:?} and {right:?}"),
         )),
     }
 }
@@ -2504,9 +2491,7 @@ fn field_layout(
         }
         _ => Err(CodegenError::new(
             span,
-            format!(
-                "field access requires a vector or struct base, got {base:?}"
-            ),
+            format!("field access requires a vector or struct base, got {base:?}"),
         )),
     }
 }
@@ -2533,8 +2518,9 @@ fn resolve_assignment_target<'a>(
             offset: 0,
             size:   size_of_type(&target.ty, structs)?,
         }),
-        HirExprKind::Value(crate::HirValueRef::Global(name) |
-crate::HirValueRef::ConstGlobal(name)) => Ok(AssignmentTarget {
+        HirExprKind::Value(
+            crate::HirValueRef::Global(name) | crate::HirValueRef::ConstGlobal(name),
+        ) => Ok(AssignmentTarget {
             root:   AssignmentTargetRoot::Global(name),
             offset: 0,
             size:   size_of_type(&target.ty, structs)?,

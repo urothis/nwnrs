@@ -141,7 +141,8 @@ where
         let bif_idx = (res_id >> 20) as usize;
         if bif_idx >= bifs.len() {
             return Err(KeyError::msg(format!(
-                "while reading res {res_id}={res_ref_raw}.{res_type}, bifidx not indiced by keyfile: {bif_idx}"
+                "while reading res {res_id}={res_ref_raw}.{res_type}, bifidx not indiced by \
+                 keyfile: {bif_idx}"
             )));
         }
 

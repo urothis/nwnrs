@@ -1,7 +1,7 @@
 /// Returns the exact `NWScript` runtime hash for a cooked byte string.
 ///
 /// Upstream computes this as `XXH32(bytes, 0) ^ XXH32("", 0, 0)`.
-#[must_use] 
+#[must_use]
 pub fn nwscript_string_hash_bytes(bytes: &[u8]) -> i32 {
     let null_hash = xxh32(&[], 0);
     let hash = xxh32(bytes, 0) ^ null_hash;
@@ -9,7 +9,7 @@ pub fn nwscript_string_hash_bytes(bytes: &[u8]) -> i32 {
 }
 
 /// Returns the exact `NWScript` runtime hash for a UTF-8 string slice.
-#[must_use] 
+#[must_use]
 pub fn nwscript_string_hash(input: &str) -> i32 {
     nwscript_string_hash_bytes(input.as_bytes())
 }

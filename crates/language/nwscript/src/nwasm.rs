@@ -122,7 +122,7 @@ impl From<NcsReadError> for NcsAsmError {
 
 impl NcsOpcode {
     /// Returns the upstream internal opcode constant name used by `nwasm`.
-    #[must_use] 
+    #[must_use]
     pub fn internal_name(self) -> &'static str {
         match self {
             Self::Assignment => "ASSIGNMENT",
@@ -176,7 +176,7 @@ impl NcsOpcode {
 
 impl NcsAuxCode {
     /// Returns the upstream internal auxcode constant name used by `nwasm`.
-    #[must_use] 
+    #[must_use]
     pub fn internal_name(self) -> &'static str {
         match self {
             Self::None => "NONE",
@@ -224,7 +224,7 @@ impl NcsAuxCode {
 
 impl NcsInstruction {
     /// Returns the upstream `nwasm` instruction name.
-    #[must_use] 
+    #[must_use]
     pub fn canonical_name(&self, internal: bool) -> String {
         let mut name = if internal {
             self.opcode.internal_name().to_string()
@@ -434,7 +434,7 @@ pub fn assemble_ncs_bytes(text: &str, langspec: Option<&LangSpec>) -> Result<Vec
 }
 
 /// Renders already-decoded disassembly lines into plain text.
-#[must_use] 
+#[must_use]
 pub fn render_disassembly_lines(lines: &[NcsAsmLine], options: NcsDisassemblyOptions) -> String {
     let mut rendered = Vec::new();
 
@@ -1398,7 +1398,10 @@ fn render_function_header(function: &NdbFunction, ndb: &Ndb) -> String {
         .join(", ");
     let start = function.binary_start.saturating_sub(13);
     let end = function.binary_end.saturating_sub(13);
-    let location = source_location_for_function(function, ndb).map_or_else(|| " ".to_string(), |(file, line)| format!(" {file}.nss:{} ", line.saturating_sub(1)));
+    let location = source_location_for_function(function, ndb).map_or_else(
+        || " ".to_string(),
+        |(file, line)| format!(" {file}.nss:{} ", line.saturating_sub(1)),
+    );
 
     format!(
         "{} {}({}):{}[{}:{}]",

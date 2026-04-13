@@ -107,31 +107,31 @@ pub struct VariableResource {
 
 impl VariableResource {
     /// Returns the packed KEY resource id for this entry.
-    #[must_use] 
+    #[must_use]
     pub fn id(&self) -> ResId {
         self.id
     }
 
     /// Returns the byte offset of the payload inside the BIF stream.
-    #[must_use] 
+    #[must_use]
     pub fn io_offset(&self) -> u64 {
         self.io_offset
     }
 
     /// Returns the stored payload size on disk.
-    #[must_use] 
+    #[must_use]
     pub fn io_size(&self) -> usize {
         self.io_size
     }
 
     /// Returns the compression marker stored for the payload.
-    #[must_use] 
+    #[must_use]
     pub fn compression_type(&self) -> ExoResFileCompressionType {
         self.compression_type
     }
 
     /// Returns the expected size after decompression.
-    #[must_use] 
+    #[must_use]
     pub fn uncompressed_size(&self) -> usize {
         self.uncompressed_size
     }
@@ -294,37 +294,37 @@ impl ResContainer for KeyTable {
 
 impl KeyTable {
     /// Returns the KEY/BIF version expected by this table.
-    #[must_use] 
+    #[must_use]
     pub fn version(&self) -> KeyBifVersion {
         self.version
     }
 
     /// Returns the build year stored in the KEY header.
-    #[must_use] 
+    #[must_use]
     pub fn build_year(&self) -> u32 {
         self.build_year
     }
 
     /// Returns the build day stored in the KEY header.
-    #[must_use] 
+    #[must_use]
     pub fn build_day(&self) -> u32 {
         self.build_day
     }
 
     /// Returns the enhanced-edition OID when present.
-    #[must_use] 
+    #[must_use]
     pub fn oid(&self) -> Option<&str> {
         self.oid.as_deref()
     }
 
     /// Returns the raw enhanced-edition OID bytes as stored in the KEY header.
-    #[must_use] 
+    #[must_use]
     pub fn raw_oid(&self) -> Option<&str> {
         self.raw_oid.as_deref()
     }
 
     /// Returns the referenced BIF filenames in table order.
-    #[must_use] 
+    #[must_use]
     pub fn bifs(&self) -> Vec<String> {
         self.bifs.iter().map(|bif| bif.filename.clone()).collect()
     }

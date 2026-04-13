@@ -798,8 +798,9 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
                 )?;
                 Ok((Some(dst), block))
             }
-            HirExprKind::Value(crate::HirValueRef::Global(name) |
-crate::HirValueRef::ConstGlobal(name)) => {
+            HirExprKind::Value(
+                crate::HirValueRef::Global(name) | crate::HirValueRef::ConstGlobal(name),
+            ) => {
                 let dst = self.new_value();
                 self.push_instruction(
                     block,
@@ -871,10 +872,7 @@ crate::HirValueRef::ConstGlobal(name)) => {
                     }
                     HirCallTarget::Function(name) => {
                         let callee = self.lowerer.functions.get(name).ok_or_else(|| {
-                            IrLowerError::new(
-                                Some(expr.span),
-                                format!("unknown function {name:?}"),
-                            )
+                            IrLowerError::new(Some(expr.span), format!("unknown function {name:?}"))
                         })?;
                         for (argument, parameter) in arguments.iter().zip(&callee.parameters) {
                             if parameter.ty == SemanticType::Action {
@@ -899,9 +897,7 @@ crate::HirValueRef::ConstGlobal(name)) => {
                                 let default = parameter.default.as_ref().ok_or_else(|| {
                                     IrLowerError::new(
                                         Some(expr.span),
-                                        format!(
-                                            "missing required parameter for function {name:?}"
-                                        ),
+                                        format!("missing required parameter for function {name:?}"),
                                     )
                                 })?;
                                 if parameter.ty == SemanticType::Action {
@@ -1178,8 +1174,9 @@ crate::HirValueRef::ConstGlobal(name)) => {
                     value,
                 },
             ),
-            HirExprKind::Value(crate::HirValueRef::Global(name) |
-crate::HirValueRef::ConstGlobal(name)) => self.push_instruction(
+            HirExprKind::Value(
+                crate::HirValueRef::Global(name) | crate::HirValueRef::ConstGlobal(name),
+            ) => self.push_instruction(
                 block,
                 IrInstruction::StoreGlobal {
                     name: name.clone(),

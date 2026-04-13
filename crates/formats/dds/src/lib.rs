@@ -74,7 +74,7 @@ pub enum DdsFormat {
 
 impl DdsFormat {
     /// Returns the number of bytes per encoded 4x4 block.
-    #[must_use] 
+    #[must_use]
     pub fn bytes_per_block(self) -> usize {
         match self {
             Self::Dxt1 => 8,
@@ -83,7 +83,7 @@ impl DdsFormat {
     }
 
     /// Returns the effective bits per pixel for the packed format.
-    #[must_use] 
+    #[must_use]
     pub fn bits_per_pixel(self) -> usize {
         match self {
             Self::Dxt1 => 4,
@@ -156,7 +156,7 @@ pub struct DdsTexture {
 
 impl DdsTexture {
     /// Returns the number of mip levels.
-    #[must_use] 
+    #[must_use]
     pub fn mip_count(&self) -> usize {
         self.mip_levels.len()
     }
@@ -904,14 +904,8 @@ fn dxt5_selector(selectors: &[u8], selector_index: u32) -> u8 {
     let bit_index = selector_index * 3;
     let byte_index = usize::try_from(bit_index >> 3).unwrap_or(0);
     let bit_offset = bit_index & 7;
-    let low = selectors
-        .get(byte_index)
-        .copied()
-        .map_or(0, u16::from);
-    let high = selectors
-        .get(byte_index + 1)
-        .copied()
-        .map_or(0, u16::from);
+    let low = selectors.get(byte_index).copied().map_or(0, u16::from);
+    let high = selectors.get(byte_index + 1).copied().map_or(0, u16::from);
     narrow_u16_to_u8((low | (high << 8)) >> bit_offset) & 0x07
 }
 

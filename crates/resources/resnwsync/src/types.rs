@@ -128,7 +128,7 @@ pub struct NWSync {
 
 impl NWSync {
     /// Returns the repository root path.
-    #[must_use] 
+    #[must_use]
     pub fn root(&self) -> &Path {
         &self.root
     }
@@ -146,13 +146,13 @@ impl NWSync {
     }
 
     /// Returns all resource payload hashes stored in the repository.
-    #[must_use] 
+    #[must_use]
     pub fn get_all_resrefs(&self) -> Vec<ResRefSha1> {
         self.shardmap.keys().copied().collect()
     }
 
     /// Returns whether the repository already stores a payload for `sha1`.
-    #[must_use] 
+    #[must_use]
     pub fn contains_resref_data(&self, sha1: ResRefSha1) -> bool {
         self.shardmap.contains_key(&sha1)
     }
@@ -293,19 +293,19 @@ pub struct ResNWSyncManifest {
 
 impl ResNWSyncManifest {
     /// Returns the manifest hash.
-    #[must_use] 
+    #[must_use]
     pub fn manifest_sha1(&self) -> ManifestSha1 {
         self.manifest_sha1
     }
 
     /// Returns the manifest timestamp derived from the metadata database.
-    #[must_use] 
+    #[must_use]
     pub fn mtime(&self) -> SystemTime {
         self.mtime
     }
 
     /// Returns the payload hash for a resource reference, if present.
-    #[must_use] 
+    #[must_use]
     pub fn sha1_for(&self, rr: &ResRef) -> Option<ResRefSha1> {
         self.sha1map.get(rr).copied()
     }

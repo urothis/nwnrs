@@ -41,7 +41,8 @@ pub(crate) fn load_key(
     let resolver: BifResolver = Arc::new(move |filename: &str| {
         let normalized = normalize_relative_path(filename);
         let basename = normalized
-            .file_name().map_or_else(|| normalized.clone(), PathBuf::from);
+            .file_name()
+            .map_or_else(|| normalized.clone(), PathBuf::from);
         let language_candidate = lang_root.join("data").join(basename);
         let candidate = if language_candidate.is_file() {
             language_candidate

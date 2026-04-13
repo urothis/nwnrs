@@ -88,7 +88,7 @@ pub enum Keyword {
 
 impl Keyword {
     /// Returns the canonical source text for this keyword.
-    #[must_use] 
+    #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::If => "if",
@@ -133,7 +133,7 @@ impl Keyword {
     }
 
     /// Returns the upstream token code from `scriptinternal.h`.
-    #[must_use] 
+    #[must_use]
     pub const fn upstream_token_code(self) -> u16 {
         match self {
             Self::If => 17,
@@ -178,7 +178,7 @@ impl Keyword {
     }
 
     /// Resolves a keyword from its exact source spelling.
-    #[must_use] 
+    #[must_use]
     pub fn from_lexeme(input: &str) -> Option<Self> {
         match input {
             "if" => Some(Self::If),

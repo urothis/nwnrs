@@ -131,7 +131,7 @@ pub struct CompressedBufPayload {
 
 impl CompressedBufPayload {
     /// Creates a canonical new payload with no preserved source bytes.
-    #[must_use] 
+    #[must_use]
     pub fn new(magic: u32, algorithm: Algorithm, data: Vec<u8>) -> Self {
         Self {
             magic,

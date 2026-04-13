@@ -50,7 +50,7 @@ pub struct Lexer<'a> {
 
 impl<'a> Lexer<'a> {
     /// Creates a lexer for one source file's contents.
-    #[must_use] 
+    #[must_use]
     pub fn new(source_id: SourceId, input: &'a [u8]) -> Self {
         Self {
             source_id,
