@@ -258,7 +258,7 @@ impl fmt::Debug for SingleTlk {
                 "io_cache_entries",
                 &self.io_cache.as_ref().map_or(0, WeightedLru::len),
             )
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 

@@ -153,7 +153,7 @@ impl fmt::Debug for LoadedBif {
             .field("file_version", &self.file_version)
             .field("variable_resources", &self.variable_resources.len())
             .field("oid", &self.oid)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -173,7 +173,7 @@ impl fmt::Debug for BifHandle {
             .field("filename", &self.filename)
             .field("expected_version", &self.expected_version)
             .field("expected_oid", &self.expected_oid)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -231,7 +231,7 @@ impl fmt::Debug for KeyTable {
                     .collect::<Vec<_>>(),
             )
             .field("entry_count", &self.resref_id_lookup.len())
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
