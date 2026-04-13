@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use wasm_bindgen::JsValue;
 
 use crate::{
-    bindings::js_error,
+    bindings::{js_error, js_error_message},
     lossless::{LosslessDtoMetadata, unchanged_lossless_bytes, with_lossless_metadata},
 };
 
@@ -29,6 +29,7 @@ pub(crate) fn unchanged_twoda_bytes(value: &TwoDaDto) -> Result<Option<Vec<u8>>,
     let mut semantic = value.clone();
     semantic.lossless = None;
     unchanged_lossless_bytes(&semantic, &value.lossless, "failed to fingerprint 2DA DTO")
+        .map_err(|error| js_error_message(&error))
 }
 
 fn twoda_to_dto(value: &twoda::TwoDa) -> TwoDaDto {
@@ -69,6 +70,7 @@ pub(crate) fn read_twoda_dto(bytes: &[u8]) -> Result<TwoDaDto, JsValue> {
         |dto| &mut dto.lossless,
         "failed to fingerprint 2DA DTO",
     )
+    .map_err(|error| js_error_message(&error))
 }
 
 pub(crate) fn write_twoda_dto(value: &TwoDaDto) -> Result<Vec<u8>, JsValue> {

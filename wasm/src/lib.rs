@@ -414,7 +414,7 @@ mod tests {
         value.text.push_str("\n# edited\n");
 
         let err = write_mdl_dto(&value).expect_err("edited compiled mdl should fail");
-        let message = err.as_string().expect("error string");
+        let message = err;
         assert!(message.contains("edited compiled MDL writes are not supported yet"));
     }
 }

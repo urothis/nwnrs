@@ -644,7 +644,7 @@ mod tests {
             match find_nwnrs_root_impl("", |_key| None, || Some(home.clone()), Platform::Linux) {
                 Ok(value) => value,
                 Err(error) => panic!("resolve game root: {error}"),
-        };
+            };
         assert_eq!(resolved, install);
     }
 
@@ -656,7 +656,9 @@ mod tests {
         let library_root = root.join("steam-library");
         let install = library_root.join("steamapps").join("common").join("NWN EE");
         let libraryfolders = steam_root.join("steamapps").join("libraryfolders.vdf");
-        let manifest = library_root.join("steamapps").join("appmanifest_704450.acf");
+        let manifest = library_root
+            .join("steamapps")
+            .join("appmanifest_704450.acf");
 
         if let Err(error) = fs::create_dir_all(install.join("data")) {
             panic!("create steam data dir: {error}");

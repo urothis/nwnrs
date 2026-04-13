@@ -2175,8 +2175,12 @@ donemodel demo
         assert_eq!(reparsed.materials.len(), scene.materials.len());
         assert_eq!(reparsed.animations.len(), scene.animations.len());
         assert_eq!(
-            reparsed.animation("conjure1").map(|animation| animation.root_name.as_deref()),
-            scene.animation("conjure1").map(|animation| animation.root_name.as_deref())
+            reparsed
+                .animation("conjure1")
+                .map(|animation| animation.root_name.as_deref()),
+            scene
+                .animation("conjure1")
+                .map(|animation| animation.root_name.as_deref())
         );
         assert_eq!(
             reparsed

@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use wasm_bindgen::JsValue;
 
 use crate::{
-    bindings::js_error,
+    bindings::{js_error, js_error_message},
     lossless::{LosslessDtoMetadata, unchanged_lossless_bytes, with_lossless_metadata},
 };
 
@@ -77,11 +77,13 @@ pub(crate) fn read_ssf_dto(bytes: &[u8]) -> Result<SsfRootDto, JsValue> {
         |dto| &mut dto.lossless,
         "failed to fingerprint SSF DTO",
     )
+    .map_err(|error| js_error_message(&error))
 }
 
 pub(crate) fn write_ssf_dto(value: &SsfRootDto) -> Result<Vec<u8>, JsValue> {
     if let Some(bytes) =
-        unchanged_lossless_bytes(value, &value.lossless, "failed to fingerprint SSF DTO")?
+        unchanged_lossless_bytes(value, &value.lossless, "failed to fingerprint SSF DTO")
+            .map_err(|error| js_error_message(&error))?
     {
         Ok(bytes)
     } else {
