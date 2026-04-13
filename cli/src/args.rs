@@ -193,7 +193,7 @@ pub(crate) struct PackCmd {
     pub(crate) language: Option<String>,
 
     #[argh(positional)]
-    /// explicit pack mode: INPUT OUTPUT; package mode: KEY_NAME OUTPUT_DIR
+    /// explicit pack mode: INPUT OUTPUT; package mode: `KEY_NAME` `OUTPUT_DIR`
     pub(crate) paths: Vec<PathBuf>,
 }
 
