@@ -9,7 +9,7 @@ use crate::bindings::error_message;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LosslessDtoMetadata {
     /// The original source bytes returned by the reader.
-    pub original_bytes:       Vec<u8>,
+    pub original_bytes: Vec<u8>,
     /// A stable semantic fingerprint of the DTO with this metadata removed.
     pub semantic_fingerprint: String,
 }
@@ -40,14 +40,14 @@ where
     Ok(value)
 }
 
-pub(crate) fn unchanged_lossless_bytes<T: Serialize>(
+pub(crate) fn unchanged_lossless_bytes<T>(
     value: &T,
     lossless: &Option<LosslessDtoMetadata>,
     metadata_slot: fn(&mut T) -> &mut Option<LosslessDtoMetadata>,
     context: &str,
 ) -> Result<Option<Vec<u8>>, String>
 where
-    T: Clone,
+    T: Clone + Serialize,
 {
     let Some(lossless) = lossless else {
         return Ok(None);

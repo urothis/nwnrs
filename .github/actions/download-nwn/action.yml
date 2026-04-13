@@ -74,6 +74,7 @@ runs:
         DEPOTDOWNLOADER_BIN: ${{ env.DEPOTDOWNLOADER_BIN }}
       run: |
         cd DepotDownloader
+        install_dir="${HOME}/.local/share/Steam/steamapps/common/Neverwinter Nights"
         channel="${INPUT_CHANNEL,,}"
         if [ "$channel" = "preview" ]; then
           EXTRA_ARGS="-betapassword previewpreview -beta preview"
@@ -82,11 +83,7 @@ runs:
         else
           EXTRA_ARGS=""
         fi
-        "${DEPOTDOWNLOADER_BIN}" -app ${{ inputs.nwn_app_id }} -depot ${{ inputs.nwn_bin_depot_id }} -username ${{ inputs.steam_username }} -password ${{ inputs.steam_password }} $EXTRA_ARGS
-        "${DEPOTDOWNLOADER_BIN}" -app ${{ inputs.nwn_app_id }} -depot ${{ inputs.nwn_content_depot_id }} -username ${{ inputs.steam_username }} -password ${{ inputs.steam_password }} $EXTRA_ARGS
-
-        # Move downloaded files to the steam location
-        mkdir -p ~/.local/share/Steam/steamapps/common/Neverwinter\ Nights/
-        mv depot_${{ inputs.nwn_bin_depot_id }}/* ~/.local/share/Steam/steamapps/common/Neverwinter\ Nights/
-        mv depot_${{ inputs.nwn_content_depot_id }}/* ~/.local/share/Steam/steamapps/common/Neverwinter\ Nights/
-        ls -la ~/.local/share/Steam/steamapps/common/Neverwinter\ Nights/
+        mkdir -p "$install_dir"
+        "${DEPOTDOWNLOADER_BIN}" -app ${{ inputs.nwn_app_id }} -depot ${{ inputs.nwn_bin_depot_id }} -username ${{ inputs.steam_username }} -password ${{ inputs.steam_password }} -dir "$install_dir" $EXTRA_ARGS
+        "${DEPOTDOWNLOADER_BIN}" -app ${{ inputs.nwn_app_id }} -depot ${{ inputs.nwn_content_depot_id }} -username ${{ inputs.steam_username }} -password ${{ inputs.steam_password }} -dir "$install_dir" $EXTRA_ARGS
+        ls -la "$install_dir"
