@@ -1,0 +1,92 @@
+name: "Download nwserver"
+description: "Download nwserver files from Steam"
+inputs:
+  channel:
+    description: "Channel"
+    required: true
+    default: "stable"
+  steam_username:
+    description: "Steam username"
+    required: true
+  steam_password:
+    description: "Steam password"
+    required: true
+  nwn_app_id:
+    description: "NWN App ID"
+    required: true
+    default: "704450"
+  nwn_bin_depot_id:
+    description: "NWN Linux Bin Depot ID"
+    required: true
+    default: "704454"
+  nwn_content_depot_id:
+    description: "NWN Content Depot ID"
+    required: true
+    default: "704451"
+  depotdownloader_version:
+    description: "DepotDownloader release version"
+    required: true
+    default: "3.4.0"
+runs:
+  using: "composite"
+  steps:
+    - uses: "actions/checkout@v4"
+    - name: Download DepotDownloader
+      shell: bash
+      env:
+        DEPOTDOWNLOADER_VERSION: ${{ inputs.depotdownloader_version }}
+        RUNNER_OS: ${{ runner.os }}
+        RUNNER_ARCH: ${{ runner.arch }}
+      run: |
+        case "${RUNNER_OS}/${RUNNER_ARCH}" in
+          Linux/X64)
+            asset="DepotDownloader-linux-x64.zip"
+            binary="./DepotDownloader"
+            ;;
+          Windows/X64)
+            asset="DepotDownloader-windows-x64.zip"
+            binary="./DepotDownloader.exe"
+            ;;
+          macOS/ARM64)
+            asset="DepotDownloader-macos-arm64.zip"
+            binary="./DepotDownloader"
+            ;;
+          *)
+            echo "Unsupported runner platform: ${RUNNER_OS}/${RUNNER_ARCH}" >&2
+            exit 1
+            ;;
+        esac
+
+        url="https://github.com/SteamRE/DepotDownloader/releases/download/DepotDownloader_${DEPOTDOWNLOADER_VERSION}/${asset}"
+        curl -fsSL "$url" -o depotdownloader.zip
+        rm -rf DepotDownloader
+        mkdir -p DepotDownloader
+        unzip -q depotdownloader.zip -d DepotDownloader
+        echo "DEPOTDOWNLOADER_BIN=${binary}" >> "$GITHUB_ENV"
+
+        if [ "${RUNNER_OS}" != "Windows" ]; then
+          chmod +x DepotDownloader/DepotDownloader
+        fi
+    - name: Download nwnee files
+      shell: bash
+      env:
+        INPUT_CHANNEL: ${{ inputs.channel }}
+        DEPOTDOWNLOADER_BIN: ${{ env.DEPOTDOWNLOADER_BIN }}
+      run: |
+        cd DepotDownloader
+        channel="${INPUT_CHANNEL,,}"
+        if [ "$channel" = "preview" ]; then
+          EXTRA_ARGS="-betapassword previewpreview -beta preview"
+        elif [ "$channel" = "development" ]; then  # Note the lowercase for consistency
+          EXTRA_ARGS="-beta development"
+        else
+          EXTRA_ARGS=""
+        fi
+        "${DEPOTDOWNLOADER_BIN}" -app ${{ inputs.nwn_app_id }} -depot ${{ inputs.nwn_bin_depot_id }} -username ${{ inputs.steam_username }} -password ${{ inputs.steam_password }} $EXTRA_ARGS
+        "${DEPOTDOWNLOADER_BIN}" -app ${{ inputs.nwn_app_id }} -depot ${{ inputs.nwn_content_depot_id }} -username ${{ inputs.steam_username }} -password ${{ inputs.steam_password }} $EXTRA_ARGS
+
+        # Move downloaded files to the steam location
+        mkdir -p ~/.local/share/Steam/steamapps/common/Neverwinter\ Nights/
+        mv depot_${{ inputs.nwn_bin_depot_id }}/* ~/.local/share/Steam/steamapps/common/Neverwinter\ Nights/
+        mv depot_${{ inputs.nwn_content_depot_id }}/* ~/.local/share/Steam/steamapps/common/Neverwinter\ Nights/
+        ls -la ~/.local/share/Steam/steamapps/common/Neverwinter\ Nights/

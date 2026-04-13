@@ -48,6 +48,10 @@ jobs:
               with:
                   toolchain: ${{ matrix.rust }}
             - uses: ./.github/actions/rust-check
+            - uses: ./.github/actions/download-nwn
+              with:
+                  steam_username: ${{ secrets.STEAM_USERNAME }}
+                  steam_password: ${{ secrets.STEAM_PASSWORD }}
             - uses: ./.github/actions/rust-test
               with:
                   workspace: true
