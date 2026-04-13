@@ -657,6 +657,7 @@ fn gff_i32(value: &GffStruct, label: &str) -> Option<i32> {
     }
 }
 
+#[allow(clippy::cast_precision_loss)]
 fn gff_f32(value: &GffStruct, label: &str) -> Option<f32> {
     match value.get_field(label)?.value() {
         GffValue::Byte(raw) => Some(f32::from(*raw)),

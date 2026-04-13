@@ -559,6 +559,7 @@ fn downsample_rgba8(
     Ok(dst)
 }
 
+#[allow(clippy::cast_precision_loss)]
 fn alpha_mean_rgba8(rgba: &[u8]) -> DdsResult<f32> {
     let pixel_count = rgba
         .len()

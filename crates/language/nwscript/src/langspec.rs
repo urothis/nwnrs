@@ -503,6 +503,7 @@ impl<'a> LangSpecParser<'a> {
         Ok(sign * value)
     }
 
+    #[allow(clippy::cast_precision_loss)]
     fn parse_float_like_value(&mut self) -> Result<f32, LangSpecError> {
         let sign = if self.matches_kind(&TokenKind::Minus) {
             self.advance();

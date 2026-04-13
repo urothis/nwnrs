@@ -249,6 +249,7 @@ impl TgaTexture {
     }
 
     /// Decodes the TGA image into top-left-origin RGBA8 pixels.
+    #[allow(clippy::many_single_char_names)]
     pub fn decode_rgba8(&self) -> TgaResult<Vec<u8>> {
         if self.image_type.uses_color_map() {
             return Err(TgaError::msg(
@@ -268,7 +269,6 @@ impl TgaTexture {
                 .ok_or_else(|| TgaError::msg("TGA RGBA length overflow"))?
         ];
 
-        #[allow(clippy::many_single_char_names)]
         for idx in 0..pixel_count {
             let src = idx
                 .checked_mul(bytes_per_pixel)
