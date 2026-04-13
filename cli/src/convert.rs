@@ -28,7 +28,7 @@ pub(crate) fn run_convert(cmd: ConvertCmd) -> Result<(), String> {
         "tga" => write_output_tga(&cmd.output, &decoded)?,
         "webp" => write_output_webp(&cmd.output, &decoded)?,
         other => {
-            return Err(format!("unsupported convert output format: {}", other));
+            return Err(format!("unsupported convert output format: {other}"));
         }
     }
 
@@ -177,7 +177,7 @@ fn parse_dds_format(value: &str) -> Result<dds::DdsFormat, String> {
 fn output_extension(path: &Path) -> Result<String, String> {
     path.extension()
         .and_then(OsStr::to_str)
-        .map(|ext| ext.to_ascii_lowercase())
+        .map(str::to_ascii_lowercase)
         .ok_or_else(|| format!("failed to infer format from {}", path.display()))
 }
 

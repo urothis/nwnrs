@@ -72,9 +72,7 @@ fn run_pack_key(cmd: PackCmd) -> Result<(), String> {
     let destination = cmd
         .output
         .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| PathBuf::from("."));
+        .filter(|parent| !parent.as_os_str().is_empty()).map_or_else(|| PathBuf::from("."), Path::to_path_buf);
     run_key_pack(KeyPackCmd {
         data_version: cmd.data_version,
         data_compression: cmd.data_compression,
@@ -110,8 +108,7 @@ fn run_pack_erf(cmd: PackCmd) -> Result<(), String> {
     }
     let version = metadata
         .as_ref()
-        .map(|meta| meta.file_version)
-        .unwrap_or(parse_erf_version(&cmd.data_version)?);
+        .map_or(parse_erf_version(&cmd.data_version)?, |meta| meta.file_version);
     let compalg = parse_algorithm(&cmd.data_compression)?;
     let exocomp = exo_compression_from_algorithm(compalg);
     let file_type = metadata
@@ -131,14 +128,12 @@ fn run_pack_erf(cmd: PackCmd) -> Result<(), String> {
         .map(|entry| entry.rr.clone())
         .collect::<Vec<_>>();
     let (build_year, build_day) = metadata
-        .as_ref()
-        .map(|meta| (meta.build_year as u32, meta.build_day as u32))
-        .unwrap_or_else(current_build_date);
+        .as_ref().map_or_else(current_build_date, |meta| (meta.build_year as u32, meta.build_day as u32));
     let loc_strings = metadata
         .as_ref()
         .map(|meta| meta.loc_strings.clone())
         .unwrap_or_default();
-    let str_ref = metadata.as_ref().map(|meta| meta.str_ref).unwrap_or(0);
+    let str_ref = metadata.as_ref().map_or(0, |meta| meta.str_ref);
     let oid = metadata.as_ref().and_then(|meta| meta.oid.as_deref());
     let entry_algorithms = metadata
         .as_ref()
@@ -147,8 +142,7 @@ fn run_pack_erf(cmd: PackCmd) -> Result<(), String> {
     let mut out = Cursor::new(Vec::new());
     let resource_list_padding = metadata
         .as_ref()
-        .map(|meta| meta.resource_list_padding)
-        .unwrap_or(0);
+        .map_or(0, |meta| meta.resource_list_padding);
     erf::write_erf_with_options(
         &mut out,
         &file_type,

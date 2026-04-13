@@ -22,7 +22,7 @@ pub(crate) enum Command {
 
 #[derive(FromArgs)]
 #[argh(subcommand, name = "compile")]
-/// compile one NWScript source file to NCS and optional NDB output
+/// compile one `NWScript` source file to NCS and optional NDB output
 pub(crate) struct CompileCmd {
     #[argh(switch, short = 'f')]
     /// overwrite existing output files
@@ -262,7 +262,7 @@ pub(crate) struct NwsyncPruneCmd {
 
 #[derive(FromArgs)]
 #[argh(subcommand, name = "write")]
-/// generate a serverside NWSync manifest from directory
+/// generate a serverside `NWSync` manifest from directory
 pub(crate) struct NwsyncWriteCmd {
     #[argh(positional)]
     /// input directory containing NWN resources

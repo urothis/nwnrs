@@ -68,14 +68,14 @@ pub(crate) fn run_nwsync_print(cmd: NwsyncPrintCmd) -> Result<(), String> {
                 error
             )
         })?;
-        manifests.sort_by_key(|sha1| sha1.to_string());
+        manifests.sort_by_key(std::string::ToString::to_string);
         write_stdout_line(&format!("root {}", nwsync.root().display()))?;
         write_stdout_line(&format!("manifests {}", manifests.len()))?;
         for sha1 in manifests {
             write_stdout_line(&format!("manifest {sha1}"))?;
         }
         let mut resrefs = nwsync.get_all_resrefs();
-        resrefs.sort_by_key(|sha1| sha1.to_string());
+        resrefs.sort_by_key(std::string::ToString::to_string);
         write_stdout_line(&format!("resrefs {}", resrefs.len()))?;
         return Ok(());
     }
@@ -183,7 +183,7 @@ fn collect_files_recursively(
             // Skip common directories
             if matches!(
                 path.file_name().and_then(|n| n.to_str()),
-                Some(".git") | Some(".svn")
+                Some(".git" | ".svn")
             ) {
                 continue;
             }
@@ -236,7 +236,7 @@ pub(crate) fn run_nwsync_prune(cmd: NwsyncPruneCmd) -> Result<(), String> {
     let mut referenced_sha1s = std::collections::HashSet::new();
     for manifest_sha1 in &manifests {
         let manifest = resnwsync::new_resnwsync_manifest(&nwsync, *manifest_sha1)
-            .map_err(|error| format!("failed to load manifest {}: {error}", manifest_sha1))?;
+            .map_err(|error| format!("failed to load manifest {manifest_sha1}: {error}"))?;
 
         for resref in manifest.contents() {
             if let Some(sha1) = manifest.sha1_for(&resref) {
@@ -408,7 +408,7 @@ fn manifest_repository_base_url(manifest_url: &Url) -> Result<Url, String> {
     let trim = if segments.len() >= 2
         && matches!(
             segments.get(segments.len() - 2).map(String::as_str),
-            Some("manifest") | Some("manifests")
+            Some("manifest" | "manifests")
         ) {
         2
     } else {
