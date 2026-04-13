@@ -2319,7 +2319,7 @@ fn parse_float_rows(
             let mut parsed = Vec::with_capacity(row.len());
             for value in row {
                 if let Ok(value) = value.parse::<f32>() {
-                    parsed.push(value)
+                    parsed.push(value);
                 } else {
                     diagnostics.push(ModelDiagnostic {
                         kind:    ModelDiagnosticKind::MalformedPayloadRow,
