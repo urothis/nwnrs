@@ -57,9 +57,11 @@ pub fn read_erf_shared(stream: SharedReadSeek, filename: String) -> ErfResult<Er
         other => return Err(ErfError::msg(format!("unsupported erf version: {other}"))),
     };
 
-    let loc_str_count = read_i32(io.as_mut())? as usize;
+    let loc_str_count = usize::try_from(read_i32(io.as_mut())?)
+        .map_err(|_| ErfError::msg("ERF loc string count is negative"))?;
     let loc_string_size = read_i32(io.as_mut())? as u64;
-    let entry_count = read_i32(io.as_mut())? as usize;
+    let entry_count = usize::try_from(read_i32(io.as_mut())?)
+        .map_err(|_| ErfError::msg("ERF entry count is negative"))?;
     let offset_to_loc_str = read_i32(io.as_mut())? as u64;
     let offset_to_key_list = read_i32(io.as_mut())? as u64;
     let offset_to_resource_list = read_i32(io.as_mut())? as u64;
@@ -82,7 +84,8 @@ pub fn read_erf_shared(stream: SharedReadSeek, filename: String) -> ErfResult<Er
     io.seek(SeekFrom::Start(offset_to_loc_str))?;
     for _ in 0..loc_str_count {
         let id = read_i32(io.as_mut())?;
-        let len = read_i32(io.as_mut())? as usize;
+        let len = usize::try_from(read_i32(io.as_mut())?)
+            .map_err(|_| ErfError::msg("ERF loc string length is negative"))?;
         let bytes = read_bytes_or_err(io.as_mut(), len)?;
         loc_strings.insert(id, from_nwnrs_encoding(&bytes)?);
     }
