@@ -7,6 +7,7 @@
 - read and write Neverwinter Nights `MDL` payloads
 - expose syntax-faithful ASCII and compiled-model parsing
 - lower models into richer semantic and scene-oriented representations
+- write semantic and scene-oriented representations back as canonical ASCII
 - support inspection at multiple abstraction levels rather than only one
   canonical model
 
@@ -20,6 +21,8 @@ Choose the entry point that matches the fidelity you need rather than treating
 - scene and semantic layers make normalization explicit instead of hiding it
 - model references, helper data, and material-facing metadata remain first-class
   concepts where the corresponding layer supports them
+- higher-level writers canonicalize through ASCII and do not preserve original
+  authored formatting or compiled bytes
 
 ## Non-goals
 

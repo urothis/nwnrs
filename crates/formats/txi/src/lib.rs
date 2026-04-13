@@ -107,6 +107,54 @@ impl TxiFile {
             .iter()
             .find(|directive| directive.name.eq_ignore_ascii_case(name))
     }
+
+    /// Reads a typed `TXI` payload from disk.
+    pub fn from_file(path: impl AsRef<Path>) -> TxiResult<Self> {
+        let mut file = File::open(path.as_ref())?;
+        read_txi(&mut file)
+    }
+
+    /// Reads a typed `TXI` payload from a [`Res`].
+    pub fn from_res(res: &Res, cache_policy: CachePolicy) -> TxiResult<Self> {
+        if res.resref().res_type() != TXI_RES_TYPE {
+            return Err(TxiError::msg(format!(
+                "expected txi resource, got {}",
+                res.resref()
+            )));
+        }
+        let bytes = res.read_all(cache_policy)?;
+        let text = String::from_utf8(bytes)
+            .map_err(|error| TxiError::msg(format!("TXI payload is not valid UTF-8: {error}")))?;
+        parse_txi(&text)
+    }
+
+    /// Reads a typed `TXI` payload from a [`ResMan`] by texture name.
+    pub fn from_resman(
+        resman: &mut ResMan,
+        name: &str,
+        cache_policy: CachePolicy,
+    ) -> TxiResult<Self> {
+        let resolved = ResolvedResRef::new(name.to_string(), TXI_RES_TYPE)
+            .map_err(|error| TxiError::msg(format!("invalid txi resref {name}: {error}")))?;
+        let res = resman
+            .get_resolved(&resolved)
+            .ok_or_else(|| TxiError::msg(format!("txi not found in ResMan: {resolved}")))?;
+        Self::from_res(&res, cache_policy)
+    }
+
+    /// Reads an optional typed `TXI` payload from a [`ResMan`] by texture name.
+    pub fn optional_from_resman(
+        resman: &mut ResMan,
+        name: &str,
+        cache_policy: CachePolicy,
+    ) -> TxiResult<Option<Self>> {
+        let resolved = ResolvedResRef::new(name.to_string(), TXI_RES_TYPE)
+            .map_err(|error| TxiError::msg(format!("invalid txi resref {name}: {error}")))?;
+        let Some(res) = resman.get_resolved(&resolved) else {
+            return Ok(None);
+        };
+        Self::from_res(&res, cache_policy).map(Some)
+    }
 }
 
 /// One parsed TXI directive.
@@ -147,62 +195,6 @@ pub fn read_txi(reader: &mut dyn Read) -> TxiResult<TxiFile> {
     let mut text = String::new();
     reader.read_to_string(&mut text)?;
     parse_txi(&text)
-}
-
-/// Reads a typed `TXI` payload from disk.
-#[instrument(level = "debug", skip_all, err, fields(path = %path.as_ref().display()))]
-pub fn read_txi_from_file(path: impl AsRef<Path>) -> TxiResult<TxiFile> {
-    let mut file = File::open(path.as_ref())?;
-    read_txi(&mut file)
-}
-
-/// Reads a typed `TXI` payload from a [`Res`].
-#[instrument(level = "debug", skip_all, err, fields(resref = %res.resref(), use_cache))]
-pub fn read_txi_from_res(res: &Res, use_cache: bool) -> TxiResult<TxiFile> {
-    if res.resref().res_type() != TXI_RES_TYPE {
-        return Err(TxiError::msg(format!(
-            "expected txi resource, got {}",
-            res.resref()
-        )));
-    }
-    let bytes = res.read_all(use_cache)?;
-    let text = String::from_utf8(bytes)
-        .map_err(|error| TxiError::msg(format!("TXI payload is not valid UTF-8: {error}")))?;
-    parse_txi(&text)
-}
-
-/// Reads a typed `TXI` payload from a [`ResMan`] by texture name.
-#[instrument(level = "debug", skip_all, err, fields(name, use_cache))]
-pub fn read_txi_from_resman(
-    resman: &mut ResMan,
-    name: &str,
-    use_cache: bool,
-) -> TxiResult<TxiFile> {
-    let resolved = ResolvedResRef::new(name.to_string(), TXI_RES_TYPE)
-        .map_err(|error| TxiError::msg(format!("invalid txi resref {name}: {error}")))?;
-    let res = resman
-        .get_resolved(&resolved)
-        .ok_or_else(|| TxiError::msg(format!("txi not found in ResMan: {resolved}")))?;
-    read_txi_from_res(&res, use_cache)
-}
-
-/// Reads an optional typed `TXI` payload from a [`ResMan`] by texture name.
-///
-/// Missing sidecars are normal in NWN content, so this returns `Ok(None)`
-/// when no `.txi` exists. Invalid resrefs or malformed payloads still return
-/// an error.
-#[instrument(level = "debug", skip_all, fields(name, use_cache))]
-pub fn read_optional_txi_from_resman(
-    resman: &mut ResMan,
-    name: &str,
-    use_cache: bool,
-) -> TxiResult<Option<TxiFile>> {
-    let resolved = ResolvedResRef::new(name.to_string(), TXI_RES_TYPE)
-        .map_err(|error| TxiError::msg(format!("invalid txi resref {name}: {error}")))?;
-    let Some(res) = resman.get_resolved(&resolved) else {
-        return Ok(None);
-    };
-    read_txi_from_res(&res, use_cache).map(Some)
 }
 
 /// Parses a typed `TXI` payload from text.
@@ -421,21 +413,17 @@ fn push_counted_f32_directive(
 pub mod prelude {
     pub use crate::{
         TXI_RES_TYPE, TxiDirective, TxiError, TxiFile, TxiResult, build_txi_text, parse_txi,
-        read_optional_txi_from_resman, read_txi, read_txi_from_file, read_txi_from_res,
-        read_txi_from_resman, write_txi,
+        read_txi, write_txi,
     };
 }
 
 #[cfg(test)]
 mod tests {
-    use nwnrs_resman::{ResContainer, ResMan};
+    use nwnrs_resman::{CachePolicy, ResContainer, ResMan};
     use nwnrs_resmemfile::prelude::read_resmemfile;
     use nwnrs_resref::prelude::ResolvedResRef;
 
-    use super::{
-        TXI_RES_TYPE, TxiDirective, TxiFile, build_txi_text, parse_txi,
-        read_optional_txi_from_resman, read_txi_from_resman, write_txi,
-    };
+    use super::{TXI_RES_TYPE, TxiDirective, TxiFile, build_txi_text, parse_txi, write_txi};
 
     #[test]
     fn parses_water_txi_directives_and_channel_blocks() {
@@ -506,7 +494,7 @@ channeltranslate 4
         let mut resman = ResMan::new(0);
         resman.add(std::sync::Arc::new(container) as std::sync::Arc<dyn ResContainer>);
 
-        let parsed_result = read_txi_from_resman(&mut resman, "water01", true);
+        let parsed_result = TxiFile::from_resman(&mut resman, "water01", CachePolicy::Use);
         assert!(
             parsed_result.is_ok(),
             "read txi from resman: {:?}",
@@ -524,7 +512,8 @@ channeltranslate 4
     #[test]
     fn missing_txi_from_resman_is_optional() {
         let mut resman = ResMan::new(0);
-        let parsed_result = read_optional_txi_from_resman(&mut resman, "missing_water", true);
+        let parsed_result =
+            TxiFile::optional_from_resman(&mut resman, "missing_water", CachePolicy::Use);
         assert!(
             parsed_result.is_ok(),
             "read optional txi from resman: {:?}",

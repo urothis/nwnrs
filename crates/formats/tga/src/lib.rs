@@ -297,6 +297,25 @@ impl TgaTexture {
 
         Ok(rgba)
     }
+
+    /// Reads a typed TGA texture from disk.
+    pub fn from_file(path: impl AsRef<Path>) -> TgaResult<Self> {
+        let mut file = File::open(path.as_ref())?;
+        read_tga(&mut file)
+    }
+
+    /// Reads a typed TGA texture from a [`Res`].
+    pub fn from_res(res: &Res, cache_policy: CachePolicy) -> TgaResult<Self> {
+        if res.resref().res_type() != TGA_RES_TYPE {
+            return Err(TgaError::msg(format!(
+                "expected tga resource, got {}",
+                res.resref()
+            )));
+        }
+
+        let bytes = res.read_all(cache_policy)?;
+        parse_tga_bytes(&bytes)
+    }
 }
 
 /// Reads a typed TGA texture from `reader`.
@@ -304,27 +323,6 @@ impl TgaTexture {
 pub fn read_tga<R: Read>(reader: &mut R) -> TgaResult<TgaTexture> {
     let mut bytes = Vec::new();
     reader.read_to_end(&mut bytes)?;
-    parse_tga_bytes(&bytes)
-}
-
-/// Reads a typed TGA texture from disk.
-#[instrument(level = "debug", skip_all, err, fields(path = %path.as_ref().display()))]
-pub fn read_tga_from_file(path: impl AsRef<Path>) -> TgaResult<TgaTexture> {
-    let mut file = File::open(path.as_ref())?;
-    read_tga(&mut file)
-}
-
-/// Reads a typed TGA texture from a [`Res`].
-#[instrument(level = "debug", skip_all, err, fields(resref = %res.resref(), use_cache))]
-pub fn read_tga_from_res(res: &Res, use_cache: bool) -> TgaResult<TgaTexture> {
-    if res.resref().res_type() != TGA_RES_TYPE {
-        return Err(TgaError::msg(format!(
-            "expected tga resource, got {}",
-            res.resref()
-        )));
-    }
-
-    let bytes = res.read_all(use_cache)?;
     parse_tga_bytes(&bytes)
 }
 
@@ -718,7 +716,7 @@ fn encode_image_type(image_type: TgaImageType) -> u8 {
 pub mod prelude {
     pub use crate::{
         TGA_HEADER_SIZE, TGA_RES_TYPE, TgaError, TgaFooter, TgaImageType, TgaResult, TgaTexture,
-        read_tga, read_tga_from_file, read_tga_from_res, write_tga,
+        read_tga, write_tga,
     };
 }
 

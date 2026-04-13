@@ -902,6 +902,7 @@ fn semantic_type_from_builtin_value(value: &BuiltinValue) -> Option<SemanticType
         }
         BuiltinValue::Json(_) => Some(SemanticType::EngineStructure("json".to_string())),
         BuiltinValue::Vector(_) => Some(SemanticType::Vector),
+        BuiltinValue::Raw(_) => None,
     }
 }
 

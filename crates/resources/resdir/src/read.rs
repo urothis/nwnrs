@@ -128,7 +128,7 @@ mod tests {
         time::{SystemTime, UNIX_EPOCH},
     };
 
-    use nwnrs_resman::ResContainer;
+    use nwnrs_resman::{CachePolicy, ResContainer};
     use nwnrs_resref::ResolvedResRef;
 
     use crate::read_resdir;
@@ -168,7 +168,7 @@ mod tests {
             Ok(value) => value,
             Err(error) => panic!("demand alpha: {error}"),
         };
-        let bytes = match res.read_all(false) {
+        let bytes = match res.read_all(CachePolicy::Bypass) {
             Ok(value) => value,
             Err(error) => panic!("read alpha: {error}"),
         };

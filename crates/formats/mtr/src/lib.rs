@@ -92,6 +92,27 @@ impl MtrMaterial {
     pub fn texture0(&self) -> Option<&str> {
         self.textures.get(&0).map(String::as_str)
     }
+
+    /// Reads a typed MTR material from disk.
+    pub fn from_file(path: impl AsRef<Path>) -> MtrResult<Self> {
+        let mut file = File::open(path.as_ref())?;
+        read_mtr(&mut file)
+    }
+
+    /// Reads a typed MTR material from a [`Res`].
+    pub fn from_res(res: &Res, cache_policy: CachePolicy) -> MtrResult<Self> {
+        if res.resref().res_type() != MTR_RES_TYPE {
+            return Err(MtrError::msg(format!(
+                "expected mtr resource, got {}",
+                res.resref()
+            )));
+        }
+
+        let bytes = res.read_all(cache_policy)?;
+        let text = String::from_utf8(bytes)
+            .map_err(|error| MtrError::msg(format!("MTR payload is not valid UTF-8: {error}")))?;
+        parse_mtr(&text)
+    }
 }
 
 /// Reads a typed MTR material from `reader`.
@@ -99,29 +120,6 @@ impl MtrMaterial {
 pub fn read_mtr<R: Read>(reader: &mut R) -> MtrResult<MtrMaterial> {
     let mut text = String::new();
     reader.read_to_string(&mut text)?;
-    parse_mtr(&text)
-}
-
-/// Reads a typed MTR material from disk.
-#[instrument(level = "debug", skip_all, err, fields(path = %path.as_ref().display()))]
-pub fn read_mtr_from_file(path: impl AsRef<Path>) -> MtrResult<MtrMaterial> {
-    let mut file = File::open(path.as_ref())?;
-    read_mtr(&mut file)
-}
-
-/// Reads a typed MTR material from a [`Res`].
-#[instrument(level = "debug", skip_all, err, fields(resref = %res.resref(), use_cache))]
-pub fn read_mtr_from_res(res: &Res, use_cache: bool) -> MtrResult<MtrMaterial> {
-    if res.resref().res_type() != MTR_RES_TYPE {
-        return Err(MtrError::msg(format!(
-            "expected mtr resource, got {}",
-            res.resref()
-        )));
-    }
-
-    let bytes = res.read_all(use_cache)?;
-    let text = String::from_utf8(bytes)
-        .map_err(|error| MtrError::msg(format!("MTR payload is not valid UTF-8: {error}")))?;
     parse_mtr(&text)
 }
 
@@ -243,7 +241,7 @@ fn texture_index(label: &str) -> Option<usize> {
 pub mod prelude {
     pub use crate::{
         MTR_RES_TYPE, MtrError, MtrMaterial, MtrParameter, MtrResult, parse_mtr, read_mtr,
-        read_mtr_from_file, read_mtr_from_res, write_mtr,
+        write_mtr,
     };
 }
 

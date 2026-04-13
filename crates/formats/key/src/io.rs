@@ -153,7 +153,7 @@ where
             EMPTY_SECURE_HASH
         };
 
-        let rr = new_res_ref(res_ref_raw, ResType(res_type))?;
+        let rr = ResRef::new(res_ref_raw, ResType(res_type))?;
         resref_id_lookup.insert(
             rr,
             crate::KeyEntry {
@@ -541,7 +541,7 @@ pub fn write_key_table_archive(
             .ok_or_else(|| KeyError::msg("missing bif handle"))?;
         let loaded = handle.load()?;
         for rr in &contents.resources {
-            payloads.insert(rr.clone(), value.demand(rr)?.read_all(false)?);
+            payloads.insert(rr.clone(), value.demand(rr)?.read_all(CachePolicy::Bypass)?);
         }
 
         let path = Path::new(&contents.filename);
@@ -720,8 +720,8 @@ mod tests {
 
     use nwnrs_compressedbuf::Algorithm;
     use nwnrs_exo::ExoResFileCompressionType;
-    use nwnrs_resman::ResContainer;
-    use nwnrs_resref::{ResRef, new_resolved_res_ref_from_filename};
+    use nwnrs_resman::{CachePolicy, ResContainer};
+    use nwnrs_resref::{ResRef, ResolvedResRef};
 
     use super::{read_key_table_from_file, write_key_and_bif, write_key_table_archive};
     use crate::{KeyBifEntry, KeyBifVersion};
@@ -741,10 +741,10 @@ mod tests {
         fs::create_dir_all(&source_dir).expect("create source dir");
         fs::create_dir_all(&output_dir).expect("create output dir");
 
-        let alpha: ResRef = new_resolved_res_ref_from_filename("alpha.uti")
+        let alpha: ResRef = ResolvedResRef::from_filename("alpha.uti")
             .expect("alpha resref")
             .into();
-        let beta: ResRef = new_resolved_res_ref_from_filename("beta.utc")
+        let beta: ResRef = ResolvedResRef::from_filename("beta.utc")
             .expect("beta resref")
             .into();
 
@@ -802,7 +802,7 @@ mod tests {
         assert_eq!(
             key.demand(&beta)
                 .expect("demand second bif resource")
-                .read_all(false)
+                .read_all(CachePolicy::Bypass)
                 .expect("read second bif resource"),
             b"beta-bytes"
         );

@@ -1,6 +1,9 @@
 use std::io::Cursor;
 
-use nwnrs::prelude::{compressedbuf, erf};
+use nwnrs::{
+    prelude::{compressedbuf, erf},
+    resman::CachePolicy,
+};
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::JsValue;
 
@@ -87,7 +90,7 @@ fn dto_to_erf_bytes(value: &ErfDto) -> Result<Vec<u8>, JsValue> {
         .entries
         .iter()
         .map(|entry| {
-            nwnrs::prelude::resref::new_resolved_res_ref_from_filename(&entry.filename)
+            nwnrs::prelude::resref::ResolvedResRef::from_filename(&entry.filename)
                 .map(Into::into)
                 .map_err(|error| js_error("invalid ERF entry filename", error))
         })
@@ -197,7 +200,7 @@ fn erf_to_dto(value: &erf::Erf) -> Result<ErfDto, JsValue> {
             Ok(ErfEntryDto {
                 filename:                 rr.to_string(),
                 bytes:                    res
-                    .read_all(false)
+                    .read_all(CachePolicy::Bypass)
                     .map_err(|error| js_error("failed to read ERF entry bytes", error))?,
                 compressed_buf_algorithm: res.compressed_buf_algorithm().map(Into::into),
             })

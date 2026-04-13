@@ -274,6 +274,25 @@ impl PltTexture {
         }
         Ok(rgba)
     }
+
+    /// Reads a typed PLT texture from disk.
+    pub fn from_file(path: impl AsRef<Path>) -> PltResult<Self> {
+        let mut file = File::open(path.as_ref())?;
+        read_plt(&mut file)
+    }
+
+    /// Reads a typed PLT texture from a [`Res`].
+    pub fn from_res(res: &Res, cache_policy: CachePolicy) -> PltResult<Self> {
+        if res.resref().res_type() != PLT_RES_TYPE {
+            return Err(PltError::msg(format!(
+                "expected plt resource, got {}",
+                res.resref()
+            )));
+        }
+
+        let bytes = res.read_all(cache_policy)?;
+        parse_plt_bytes(&bytes)
+    }
 }
 
 /// Reads a typed PLT texture from `reader`.
@@ -281,27 +300,6 @@ impl PltTexture {
 pub fn read_plt<R: Read>(reader: &mut R) -> PltResult<PltTexture> {
     let mut bytes = Vec::new();
     reader.read_to_end(&mut bytes)?;
-    parse_plt_bytes(&bytes)
-}
-
-/// Reads a typed PLT texture from disk.
-#[instrument(level = "debug", skip_all, err, fields(path = %path.as_ref().display()))]
-pub fn read_plt_from_file(path: impl AsRef<Path>) -> PltResult<PltTexture> {
-    let mut file = File::open(path.as_ref())?;
-    read_plt(&mut file)
-}
-
-/// Reads a typed PLT texture from a [`Res`].
-#[instrument(level = "debug", skip_all, err, fields(resref = %res.resref(), use_cache))]
-pub fn read_plt_from_res(res: &Res, use_cache: bool) -> PltResult<PltTexture> {
-    if res.resref().res_type() != PLT_RES_TYPE {
-        return Err(PltError::msg(format!(
-            "expected plt resource, got {}",
-            res.resref()
-        )));
-    }
-
-    let bytes = res.read_all(use_cache)?;
     parse_plt_bytes(&bytes)
 }
 
@@ -444,7 +442,7 @@ fn scale_channel(channel: u8, value: u16) -> u8 {
 pub mod prelude {
     pub use crate::{
         PLT_HEADER_SIZE, PLT_RES_TYPE, PLT_SIGNATURE, PltError, PltLayer, PltPixel, PltRenderSpec,
-        PltResult, PltTexture, read_plt, read_plt_from_file, read_plt_from_res, write_plt,
+        PltResult, PltTexture, read_plt, write_plt,
     };
 }
 
@@ -453,6 +451,7 @@ pub mod prelude {
 mod tests {
     use std::{error::Error, io::Cursor};
 
+    use nwnrs_resman::CachePolicy;
     use nwnrs_test_support::{
         demand_resource, read_resource_bytes, require_game_resource,
         skip_if_game_resources_unavailable,
@@ -460,7 +459,7 @@ mod tests {
 
     use crate::{
         PLT_HEADER_SIZE, PLT_RES_TYPE, PLT_SIGNATURE, PltLayer, PltPixel, PltRenderSpec,
-        PltTexture, read_plt, read_plt_from_res, write_plt,
+        PltTexture, read_plt, write_plt,
     };
 
     #[test]
@@ -469,7 +468,7 @@ mod tests {
             Ok(res) => res,
             Err(error) => return skip_if_game_resources_unavailable(error),
         };
-        let plt = read_plt_from_res(&res, true).unwrap_or_else(|error| {
+        let plt = PltTexture::from_res(&res, CachePolicy::Use).unwrap_or_else(|error| {
             panic!("read shipped plt fixture: {error}");
         });
 

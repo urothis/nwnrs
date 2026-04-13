@@ -101,6 +101,42 @@ pub struct GitFile {
     pub placeables:      Vec<GitPlaceable>,
 }
 
+impl GitFile {
+    /// Reads a typed `GIT` file from disk.
+    pub fn from_file(path: impl AsRef<Path>) -> GitResult<Self> {
+        let mut file = File::open(path.as_ref())?;
+        read_git(&mut file)
+    }
+
+    /// Reads a typed `GIT` file from a [`Res`].
+    pub fn from_res(res: &Res, cache_policy: CachePolicy) -> GitResult<Self> {
+        if res.resref().res_type() != GIT_RES_TYPE {
+            return Err(GitError::msg(format!(
+                "expected git resource, got {}",
+                res.resref()
+            )));
+        }
+
+        let bytes = res.read_all(cache_policy)?;
+        let mut cursor = io::Cursor::new(bytes);
+        read_git(&mut cursor)
+    }
+
+    /// Reads a typed `GIT` file from a [`ResMan`] by area name.
+    pub fn from_resman(
+        resman: &mut ResMan,
+        area_name: &str,
+        cache_policy: CachePolicy,
+    ) -> GitResult<Self> {
+        let resolved = ResolvedResRef::from_filename(&format!("{area_name}.git"))
+            .map_err(|error| GitError::msg(format!("git resref: {error}")))?;
+        let res = resman
+            .get_resolved(&resolved)
+            .ok_or_else(|| GitError::msg(format!("git not found in ResMan: {resolved}")))?;
+        Self::from_res(&res, cache_policy)
+    }
+}
+
 /// Parsed `AreaProperties` block.
 #[derive(Debug, Clone, PartialEq)]
 pub struct GitAreaProperties {
@@ -324,43 +360,6 @@ pub fn read_git<R: Read + Seek>(reader: &mut R) -> GitResult<GitFile> {
     parse_git_root(&root)
 }
 
-/// Reads a typed `GIT` file from disk.
-#[instrument(level = "debug", skip_all, err, fields(path = %path.as_ref().display()))]
-pub fn read_git_from_file(path: impl AsRef<Path>) -> GitResult<GitFile> {
-    let mut file = File::open(path.as_ref())?;
-    read_git(&mut file)
-}
-
-/// Reads a typed `GIT` file from a [`Res`].
-#[instrument(level = "debug", skip_all, err, fields(resref = %res.resref(), use_cache))]
-pub fn read_git_from_res(res: &Res, use_cache: bool) -> GitResult<GitFile> {
-    if res.resref().res_type() != GIT_RES_TYPE {
-        return Err(GitError::msg(format!(
-            "expected git resource, got {}",
-            res.resref()
-        )));
-    }
-
-    let bytes = res.read_all(use_cache)?;
-    let mut cursor = io::Cursor::new(bytes);
-    read_git(&mut cursor)
-}
-
-/// Reads a typed `GIT` file from a [`ResMan`] by area name.
-#[instrument(level = "debug", skip_all, err, fields(area_name, use_cache))]
-pub fn read_git_from_resman(
-    resman: &mut ResMan,
-    area_name: &str,
-    use_cache: bool,
-) -> GitResult<GitFile> {
-    let resolved = ResolvedResRef::from_filename(&format!("{area_name}.git"))
-        .map_err(|error| GitError::msg(format!("git resref: {error}")))?;
-    let res = resman
-        .get_resolved(&resolved)
-        .ok_or_else(|| GitError::msg(format!("git not found in ResMan: {resolved}")))?;
-    read_git_from_res(&res, use_cache)
-}
-
 /// Parses a typed `GIT` file from a decoded [`GffRoot`].
 pub fn parse_git_root(root: &GffRoot) -> GitResult<GitFile> {
     if root.file_type != "GIT " {
@@ -422,7 +421,7 @@ pub fn parse_git_root(root: &GffRoot) -> GitResult<GitFile> {
 /// Known typed fields are rewritten from the typed model. Unknown fields stored
 /// on per-entry raw structures are preserved.
 pub fn build_git_root(git: &GitFile) -> GitResult<GffRoot> {
-    let mut root = new_gff_root("GIT ");
+    let mut root = GffRoot::new("GIT ");
 
     if let Some(area_properties) = &git.area_properties {
         root.put_value(
@@ -907,7 +906,7 @@ fn build_sound(value: &GitSound) -> GitResult<GffStruct> {
 }
 
 fn build_sound_ref(value: &GitSoundRef) -> GitResult<GffStruct> {
-    let mut result = new_gff_struct(0);
+    let mut result = GffStruct::new(0);
     put_resref(&mut result, "Sound", value.sound.as_deref())?;
     Ok(result)
 }
@@ -1080,7 +1079,7 @@ fn put_geometry(target: &mut GffStruct, value: &[GitPoint]) -> GitResult<()> {
     let geometry = value
         .iter()
         .map(|point| {
-            let mut result = new_gff_struct(0);
+            let mut result = GffStruct::new(0);
             put_f32(&mut result, "X", point.x)?;
             put_f32(&mut result, "Y", point.y)?;
             put_f32(&mut result, "Z", point.z)?;
@@ -1192,8 +1191,7 @@ pub mod prelude {
     pub use crate::{
         GIT_RES_TYPE, GitAreaProperties, GitCreature, GitDoor, GitEncounter, GitError, GitFile,
         GitPlaceable, GitPoint, GitResult, GitSound, GitSoundRef, GitStore, GitTransform,
-        GitTrigger, GitWaypoint, build_git_root, parse_git_root, read_git, read_git_from_file,
-        read_git_from_res, read_git_from_resman, write_git,
+        GitTrigger, GitWaypoint, build_git_root, parse_git_root, read_git, write_git,
     };
 }
 
@@ -1203,16 +1201,13 @@ mod tests {
     use std::{io::Cursor, sync::Arc};
 
     use nwnrs_gff::prelude::{
-        GffCExoLocString, GffRoot, GffValue, new_c_exo_loc_string, new_gff_root, new_gff_struct,
-        read_gff_root, write_gff_root,
+        GffCExoLocString, GffRoot, GffStruct, GffValue, read_gff_root, write_gff_root,
     };
-    use nwnrs_resman::{ResContainer, ResMan};
+    use nwnrs_resman::{CachePolicy, ResContainer, ResMan};
     use nwnrs_resmemfile::prelude::read_resmemfile;
-    use nwnrs_resref::prelude::new_res_ref;
+    use nwnrs_resref::ResRef;
 
-    use super::{
-        GIT_RES_TYPE, build_git_root, parse_git_root, read_git, read_git_from_resman, write_git,
-    };
+    use super::{GIT_RES_TYPE, GitFile, build_git_root, parse_git_root, read_git, write_git};
 
     fn encode_root(root: &GffRoot) -> Vec<u8> {
         let mut output = Cursor::new(Vec::new());
@@ -1223,15 +1218,15 @@ mod tests {
     }
 
     fn make_loc_string(text: &str) -> GffCExoLocString {
-        let mut result = new_c_exo_loc_string();
+        let mut result = GffCExoLocString::default();
         result.entries.push((0, text.to_string()));
         result
     }
 
     fn sample_git_root() -> GffRoot {
-        let mut root = new_gff_root("GIT ");
+        let mut root = GffRoot::new("GIT ");
 
-        let mut area = new_gff_struct(100);
+        let mut area = GffStruct::new(100);
         area.put_value("AmbientSndDay", GffValue::Int(81))
             .unwrap_or_else(|error| panic!("area ambient day: {error}"));
         area.put_value("MusicDay", GffValue::Int(12))
@@ -1239,7 +1234,7 @@ mod tests {
         root.put_value("AreaProperties", GffValue::Struct(area))
             .unwrap_or_else(|error| panic!("root area properties: {error}"));
 
-        let mut creature = new_gff_struct(1);
+        let mut creature = GffStruct::new(1);
         creature
             .put_value("Tag", GffValue::CExoString("orc_01".to_string()))
             .unwrap_or_else(|error| panic!("creature tag: {error}"));
@@ -1264,7 +1259,7 @@ mod tests {
         root.put_value("Creature List", GffValue::List(vec![creature]))
             .unwrap_or_else(|error| panic!("root creature list: {error}"));
 
-        let mut door = new_gff_struct(2);
+        let mut door = GffStruct::new(2);
         door.put_value("Tag", GffValue::CExoString("gate".to_string()))
             .unwrap_or_else(|error| panic!("door tag: {error}"));
         door.put_value("TemplateResRef", GffValue::ResRef("door_gate".to_string()))
@@ -1282,12 +1277,12 @@ mod tests {
         root.put_value("Door List", GffValue::List(vec![door]))
             .unwrap_or_else(|error| panic!("root door list: {error}"));
 
-        let mut sound_ref = new_gff_struct(0);
+        let mut sound_ref = GffStruct::new(0);
         sound_ref
             .put_value("Sound", GffValue::ResRef("as_pl_creak1".to_string()))
             .unwrap_or_else(|error| panic!("sound ref: {error}"));
 
-        let mut sound = new_gff_struct(3);
+        let mut sound = GffStruct::new(3);
         sound
             .put_value("Tag", GffValue::CExoString("creak".to_string()))
             .unwrap_or_else(|error| panic!("sound tag: {error}"));
@@ -1303,7 +1298,7 @@ mod tests {
         root.put_value("SoundList", GffValue::List(vec![sound]))
             .unwrap_or_else(|error| panic!("root sound list: {error}"));
 
-        let mut waypoint = new_gff_struct(4);
+        let mut waypoint = GffStruct::new(4);
         waypoint
             .put_value("Tag", GffValue::CExoString("spawn0".to_string()))
             .unwrap_or_else(|error| panic!("waypoint tag: {error}"));
@@ -1334,7 +1329,7 @@ mod tests {
         root.put_value("WaypointList", GffValue::List(vec![waypoint]))
             .unwrap_or_else(|error| panic!("root waypoint list: {error}"));
 
-        let mut placeable = new_gff_struct(5);
+        let mut placeable = GffStruct::new(5);
         placeable
             .put_value("Tag", GffValue::CExoString("chest_01".to_string()))
             .unwrap_or_else(|error| panic!("placeable tag: {error}"));
@@ -1450,7 +1445,7 @@ mod tests {
     #[test]
     fn reads_git_from_resman() {
         let bytes = encode_root(&sample_git_root());
-        let rr = new_res_ref("arena", GIT_RES_TYPE).unwrap_or_else(|error| {
+        let rr = ResRef::new("arena", GIT_RES_TYPE).unwrap_or_else(|error| {
             panic!("arena rr: {error}");
         });
         let resmem = read_resmemfile("arena.git", rr, bytes).unwrap_or_else(|error| {
@@ -1460,9 +1455,10 @@ mod tests {
         let mut resman = ResMan::new(0);
         resman.add(Arc::new(resmem) as Arc<dyn ResContainer>);
 
-        let parsed = read_git_from_resman(&mut resman, "arena", false).unwrap_or_else(|error| {
-            panic!("read git from resman: {error}");
-        });
+        let parsed = GitFile::from_resman(&mut resman, "arena", CachePolicy::Bypass)
+            .unwrap_or_else(|error| {
+                panic!("read git from resman: {error}");
+            });
         assert_eq!(
             parsed
                 .area_properties

@@ -130,7 +130,7 @@ pub fn demand_resource(resref: &str, res_type: ResType) -> Result<Res, TestResou
     let mut guard = context.resman.lock().map_err(|error| {
         TestResourceError::install_unavailable(format!("test resman lock poisoned: {error}"))
     })?;
-    guard.demand(&rr, true).map_err(|error| {
+    guard.demand(&rr, CachePolicy::Use).map_err(|error| {
         TestResourceError::resource_unavailable(format!("missing shipped resource {rr}: {error}"))
     })
 }
@@ -139,7 +139,7 @@ pub fn demand_resource(resref: &str, res_type: ResType) -> Result<Res, TestResou
 /// [`ResMan`].
 pub fn read_resource_bytes(resref: &str, res_type: ResType) -> Result<Vec<u8>, TestResourceError> {
     demand_resource(resref, res_type)?
-        .read_all(false)
+        .read_all(CachePolicy::Bypass)
         .map_err(Into::into)
 }
 

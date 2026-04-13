@@ -88,6 +88,43 @@ pub struct SetFile {
     pub groups:        BTreeMap<u32, SetGroup>,
 }
 
+impl SetFile {
+    /// Reads a typed `SET` file from disk.
+    pub fn from_file(path: impl AsRef<Path>) -> SetResult<Self> {
+        let mut file = File::open(path.as_ref())?;
+        read_set(&mut file)
+    }
+
+    /// Reads a typed `SET` file from a [`Res`].
+    pub fn from_res(res: &Res, cache_policy: CachePolicy) -> SetResult<Self> {
+        if res.resref().res_type() != SET_RES_TYPE {
+            return Err(SetError::msg(format!(
+                "expected set resource, got {}",
+                res.resref()
+            )));
+        }
+
+        let bytes = res.read_all(cache_policy)?;
+        let text = String::from_utf8(bytes)
+            .map_err(|error| SetError::msg(format!("SET payload is not valid UTF-8: {error}")))?;
+        parse_set(&text)
+    }
+
+    /// Reads a typed `SET` file from a [`ResMan`] by tileset name.
+    pub fn from_resman(
+        resman: &mut ResMan,
+        set_name: &str,
+        cache_policy: CachePolicy,
+    ) -> SetResult<Self> {
+        let resolved = ResolvedResRef::from_filename(&format!("{set_name}.set"))
+            .map_err(|error| SetError::msg(format!("set resref: {error}")))?;
+        let res = resman
+            .get_resolved(&resolved)
+            .ok_or_else(|| SetError::msg(format!("tileset not found in ResMan: {resolved}")))?;
+        Self::from_res(&res, cache_policy)
+    }
+}
+
 /// Parsed `[GENERAL]` section.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct SetGeneral {
@@ -283,44 +320,6 @@ pub fn read_set<R: Read>(reader: &mut R) -> SetResult<SetFile> {
     let mut text = String::new();
     reader.read_to_string(&mut text)?;
     parse_set(&text)
-}
-
-/// Reads a typed `SET` file from disk.
-#[instrument(level = "debug", skip_all, err, fields(path = %path.as_ref().display()))]
-pub fn read_set_from_file(path: impl AsRef<Path>) -> SetResult<SetFile> {
-    let mut file = File::open(path.as_ref())?;
-    read_set(&mut file)
-}
-
-/// Reads a typed `SET` file from a [`Res`].
-#[instrument(level = "debug", skip_all, err, fields(resref = %res.resref(), use_cache))]
-pub fn read_set_from_res(res: &Res, use_cache: bool) -> SetResult<SetFile> {
-    if res.resref().res_type() != SET_RES_TYPE {
-        return Err(SetError::msg(format!(
-            "expected set resource, got {}",
-            res.resref()
-        )));
-    }
-
-    let bytes = res.read_all(use_cache)?;
-    let text = String::from_utf8(bytes)
-        .map_err(|error| SetError::msg(format!("SET payload is not valid UTF-8: {error}")))?;
-    parse_set(&text)
-}
-
-/// Reads a typed `SET` file from a [`ResMan`] by tileset name.
-#[instrument(level = "debug", skip_all, err, fields(set_name, use_cache))]
-pub fn read_set_from_resman(
-    resman: &mut ResMan,
-    set_name: &str,
-    use_cache: bool,
-) -> SetResult<SetFile> {
-    let resolved = ResolvedResRef::from_filename(&format!("{set_name}.set"))
-        .map_err(|error| SetError::msg(format!("set resref: {error}")))?;
-    let res = resman
-        .get_resolved(&resolved)
-        .ok_or_else(|| SetError::msg(format!("tileset not found in ResMan: {resolved}")))?;
-    read_set_from_res(&res, use_cache)
 }
 
 /// Parses a typed `SET` file from text.
@@ -856,8 +855,7 @@ pub mod prelude {
     pub use crate::{
         SET_RES_TYPE, SetError, SetFile, SetGeneral, SetGrass, SetGroup, SetNamedType,
         SetPrimaryRule, SetResult, SetTile, SetTileCorner, SetTileDoor, SetTileEdges,
-        build_set_text, parse_set, read_set, read_set_from_file, read_set_from_res,
-        read_set_from_resman, write_set,
+        build_set_text, parse_set, read_set, write_set,
     };
 }
 
@@ -866,7 +864,7 @@ pub mod prelude {
 mod tests {
     use std::{fs, path::PathBuf};
 
-    use super::{SetFile, build_set_text, parse_set, read_set_from_file, write_set};
+    use super::{SetFile, build_set_text, parse_set, write_set};
 
     #[test]
     fn parses_minimal_tileset() {
@@ -941,7 +939,7 @@ mod tests {
                 continue;
             }
 
-            let parsed = read_set_from_file(&path).unwrap_or_else(|error| {
+            let parsed = SetFile::from_file(&path).unwrap_or_else(|error| {
                 panic!("parse {}: {error}", path.display());
             });
             assert!(

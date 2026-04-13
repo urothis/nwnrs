@@ -225,4 +225,111 @@ mod tests {
         let _finder: fn(&str) -> nwnrs_install::InstallResult<std::path::PathBuf> =
             prelude::install::find_nwnrs_root;
     }
+
+    #[test]
+    fn serializable_types_expose_read_and_write_entry_points() {
+        type Cursor = std::io::Cursor<Vec<u8>>;
+
+        let _compressedbuf_read: fn(
+            &[u8],
+            u32,
+        ) -> compressedbuf::CompressedBufResult<
+            compressedbuf::CompressedBufPayload,
+        > = compressedbuf::read_payload_bytes;
+        let _compressedbuf_write: fn(
+            &compressedbuf::CompressedBufPayload,
+        ) -> compressedbuf::CompressedBufResult<Vec<u8>> = compressedbuf::write_payload_bytes;
+
+        let _dds_read: fn(&mut Cursor) -> dds::DdsResult<dds::DdsTexture> = dds::read_dds::<Cursor>;
+        let _dds_write: fn(&mut Cursor, &dds::DdsTexture) -> dds::DdsResult<()> =
+            dds::write_dds::<Cursor>;
+
+        let _erf_read: fn(std::path::PathBuf) -> erf::ErfResult<erf::Erf> = erf::read_erf_from_file;
+        let _erf_write: fn(&mut Cursor, &erf::Erf) -> erf::ErfResult<()> =
+            erf::write_erf_archive::<Cursor>;
+
+        let _gff_read: fn(&mut Cursor) -> gff::GffResult<gff::GffRoot> =
+            gff::read_gff_root::<Cursor>;
+        let _gff_write: fn(&mut Cursor, &gff::GffRoot) -> gff::GffResult<()> =
+            gff::write_gff_root::<Cursor>;
+
+        let _git_read: fn(&mut Cursor) -> git::GitResult<git::GitFile> = git::read_git::<Cursor>;
+        let _git_write: fn(&mut Cursor, &git::GitFile) -> git::GitResult<()> =
+            git::write_git::<Cursor>;
+
+        let _key_read: fn(std::path::PathBuf) -> key::KeyResult<key::KeyTable> =
+            key::read_key_table_from_file;
+        let _key_write: fn(&key::KeyTable, std::path::PathBuf, &str) -> key::KeyResult<()> =
+            key::write_key_table_archive;
+
+        let _model_read: fn(&mut Cursor) -> mdl::ModelResult<mdl::Model> =
+            mdl::read_model::<Cursor>;
+        let _model_write: fn(&mut Cursor, &mdl::Model) -> mdl::ModelResult<()> =
+            mdl::write_model::<Cursor>;
+        let _ascii_read: fn(&mut Cursor) -> mdl::ModelResult<mdl::AsciiModel> =
+            mdl::read_ascii_model::<Cursor>;
+        let _ascii_write: fn(&mut Cursor, &mdl::AsciiModel) -> mdl::ModelResult<()> =
+            mdl::write_ascii_model::<Cursor>;
+        let _parsed_read: fn(&mut Cursor) -> mdl::ModelResult<mdl::ParsedModel> =
+            mdl::read_parsed_model::<Cursor>;
+        let _parsed_write: fn(&mut Cursor, &mdl::ParsedModel) -> mdl::ModelResult<()> =
+            mdl::write_parsed_model::<Cursor>;
+        let _binary_read: fn(&mut Cursor) -> mdl::ModelResult<mdl::BinaryModel> =
+            mdl::read_binary_model::<Cursor>;
+        let _binary_write: fn(&mut Cursor, &mdl::BinaryModel) -> mdl::ModelResult<()> =
+            mdl::write_binary_model::<Cursor>;
+        let _semantic_read: fn(&mut Cursor) -> mdl::ModelResult<mdl::SemanticModel> =
+            mdl::read_semantic_model::<Cursor>;
+        let _semantic_write: fn(&mut Cursor, &mdl::SemanticModel) -> mdl::ModelResult<()> =
+            mdl::write_semantic_model::<Cursor>;
+        let _scene_read: fn(&mut Cursor) -> mdl::ModelResult<mdl::NwnScene> =
+            mdl::read_scene_model::<Cursor>;
+        let _scene_write: fn(&mut Cursor, &mdl::NwnScene) -> mdl::ModelResult<()> =
+            mdl::write_scene_model::<Cursor>;
+
+        let _mtr_read: fn(&mut Cursor) -> mtr::MtrResult<mtr::MtrMaterial> =
+            mtr::read_mtr::<Cursor>;
+        let _mtr_write: fn(&mut Cursor, &mtr::MtrMaterial) -> mtr::MtrResult<()> =
+            mtr::write_mtr::<Cursor>;
+
+        let _manifest_read: fn(&mut Cursor) -> nwsync::ManifestResult<nwsync::Manifest> =
+            nwsync::read_manifest::<Cursor>;
+        let _manifest_write: fn(&mut Cursor, &nwsync::Manifest) -> nwsync::ManifestResult<()> =
+            nwsync::write_manifest::<Cursor>;
+
+        let _plt_read: fn(&mut Cursor) -> plt::PltResult<plt::PltTexture> = plt::read_plt::<Cursor>;
+        let _plt_write: fn(&mut Cursor, &plt::PltTexture) -> plt::PltResult<()> =
+            plt::write_plt::<Cursor>;
+
+        let _set_read: fn(&mut Cursor) -> set::SetResult<set::SetFile> = set::read_set::<Cursor>;
+        let _set_write: fn(&mut Cursor, &set::SetFile) -> set::SetResult<()> =
+            set::write_set::<Cursor>;
+
+        let _ssf_read: fn(&mut Cursor) -> ssf::SsfResult<ssf::SsfRoot> = ssf::read_ssf::<Cursor>;
+        let _ssf_write: fn(&mut Cursor, &ssf::SsfRoot) -> ssf::SsfResult<()> =
+            ssf::write_ssf::<Cursor>;
+
+        let _tga_read: fn(&mut Cursor) -> tga::TgaResult<tga::TgaTexture> = tga::read_tga::<Cursor>;
+        let _tga_write: fn(&mut Cursor, &tga::TgaTexture) -> std::io::Result<()> =
+            tga::write_tga::<Cursor>;
+
+        let _single_tlk_read: fn(Cursor, tlk::CachePolicy) -> tlk::TlkResult<tlk::SingleTlk> =
+            tlk::read_single_tlk::<Cursor>;
+        let _single_tlk_write: fn(&mut Cursor, &mut tlk::SingleTlk) -> tlk::TlkResult<()> =
+            tlk::write_single_tlk::<Cursor>;
+        let _tlk_new: fn(Vec<tlk::TlkPair>) -> tlk::Tlk = tlk::Tlk::new;
+        let _tlk_write: for<'a> fn(
+            &mut [tlk::TlkLayerWriteTarget<'a>],
+            &mut tlk::Tlk,
+        ) -> tlk::TlkResult<()> = tlk::write_tlk_chain;
+
+        let _twoda_read: fn(Cursor) -> twoda::TwoDaResult<twoda::TwoDa> =
+            twoda::read_twoda::<Cursor>;
+        let _twoda_write: fn(&mut Cursor, &twoda::TwoDa, bool) -> twoda::TwoDaResult<()> =
+            twoda::write_twoda::<Cursor>;
+
+        let _txi_read: fn(&mut dyn std::io::Read) -> txi::TxiResult<txi::TxiFile> = txi::read_txi;
+        let _txi_write: fn(&mut Cursor, &txi::TxiFile) -> txi::TxiResult<()> =
+            txi::write_txi::<Cursor>;
+    }
 }

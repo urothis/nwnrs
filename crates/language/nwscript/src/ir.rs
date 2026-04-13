@@ -3,8 +3,8 @@ use std::{collections::BTreeMap, error::Error, fmt};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    AssignmentOp, BinaryOp, BuiltinValue, HirBlock, HirCallTarget, HirExpr, HirExprKind,
-    HirFunction, HirModule, HirStmt, LangSpec, Literal, SemanticType, UnaryOp,
+    AssignmentOp, BinaryOp, BuiltinType, BuiltinValue, HirBlock, HirCallTarget, HirExpr,
+    HirExprKind, HirFunction, HirModule, HirStmt, LangSpec, Literal, SemanticType, UnaryOp,
     nwscript_string_hash,
 };
 
@@ -145,8 +145,8 @@ pub enum IrInstruction {
         dst:       Option<IrValueId>,
         /// Function name.
         function:  String,
-        /// Argument values.
-        arguments: Vec<IrValueId>,
+        /// Argument payloads in source order.
+        arguments: Vec<IrCallArgument>,
     },
     /// Load one structure field.
     FieldLoad {
@@ -197,6 +197,15 @@ pub enum IrTerminator {
     Unreachable,
 }
 
+/// One lowered call argument.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum IrCallArgument {
+    /// One eagerly-evaluated value argument.
+    Value(IrValueId),
+    /// One deferred action body preserved as HIR because it executes later.
+    Action(Box<HirExpr>),
+}
+
 /// One HIR-to-IR lowering failure.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IrLowerError {
@@ -232,19 +241,31 @@ pub fn lower_hir_to_ir(
 }
 
 struct IrLowerer<'a> {
-    hir:               &'a HirModule,
-    builtin_constants: BTreeMap<String, Literal>,
-    functions:         BTreeMap<String, &'a HirFunction>,
+    hir:                     &'a HirModule,
+    builtin_constants:       BTreeMap<String, Literal>,
+    builtin_parameter_types: BTreeMap<String, Vec<SemanticType>>,
+    functions:               BTreeMap<String, &'a HirFunction>,
 }
 
 impl<'a> IrLowerer<'a> {
     fn new(hir: &'a HirModule, langspec: Option<&LangSpec>) -> Self {
         let mut builtin_constants = BTreeMap::new();
+        let mut builtin_parameter_types = BTreeMap::new();
         if let Some(langspec) = langspec {
             for constant in &langspec.constants {
                 if let Some(literal) = literal_from_builtin_value(&constant.value) {
                     builtin_constants.insert(constant.name.clone(), literal);
                 }
+            }
+            for function in &langspec.functions {
+                builtin_parameter_types.insert(
+                    function.name.clone(),
+                    function
+                        .parameters
+                        .iter()
+                        .map(|parameter| semantic_type_from_builtin_type(&parameter.ty))
+                        .collect(),
+                );
             }
         }
         let functions = hir
@@ -255,6 +276,7 @@ impl<'a> IrLowerer<'a> {
         Self {
             hir,
             builtin_constants,
+            builtin_parameter_types,
             functions,
         }
     }
@@ -292,6 +314,7 @@ struct BlockBuilder {
 struct FunctionLowerer<'a, 'b> {
     lowerer:          &'b IrLowerer<'a>,
     function:         &'a HirFunction,
+    locals:           Vec<SemanticType>,
     blocks:           Vec<BlockBuilder>,
     next_value:       u32,
     break_targets:    Vec<IrBlockId>,
@@ -303,6 +326,11 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
         Self {
             lowerer,
             function,
+            locals: function
+                .locals
+                .iter()
+                .map(|local| local.ty.clone())
+                .collect(),
             blocks: Vec::new(),
             next_value: 0,
             break_targets: Vec::new(),
@@ -333,12 +361,7 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
                 .iter()
                 .map(|parameter| parameter.ty.clone())
                 .collect(),
-            locals:      self
-                .function
-                .locals
-                .iter()
-                .map(|local| local.ty.clone())
-                .collect(),
+            locals:      self.locals,
             blocks:      self
                 .blocks
                 .into_iter()
@@ -391,6 +414,12 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
         id
     }
 
+    fn new_temp_local(&mut self, ty: SemanticType) -> IrLocalId {
+        let local = IrLocalId(u32::try_from(self.locals.len()).ok().unwrap_or(u32::MAX));
+        self.locals.push(ty);
+        local
+    }
+
     fn lower_block(
         &mut self,
         block: &HirBlock,
@@ -414,9 +443,12 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
         match statement {
             HirStmt::Block(block) => self.lower_block(block, Some(current)),
             HirStmt::Declare(statement) => {
+                let mut current = current;
                 for declarator in &statement.declarators {
                     if let Some(initializer) = &declarator.initializer {
-                        let value = self.lower_expr(initializer, current)?.ok_or_else(|| {
+                        let (value, next_block) = self.lower_expr(initializer, current)?;
+                        current = next_block;
+                        let value = value.ok_or_else(|| {
                             IrLowerError::new(
                                 Some(initializer.span),
                                 "void initializer is not supported in IR",
@@ -434,7 +466,7 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
                 Ok(Some(current))
             }
             HirStmt::Expr(expr) => {
-                self.lower_expr(expr, current)?;
+                let (_value, current) = self.lower_expr(expr, current)?;
                 Ok(Some(current))
             }
             HirStmt::If(statement) => self.lower_if(statement, current),
@@ -444,8 +476,8 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
                     .value
                     .as_ref()
                     .map(|expr| self.lower_expr(expr, current))
-                    .transpose()?
-                    .flatten();
+                    .transpose()?;
+                let (value, current) = value.unwrap_or((None, current));
                 self.set_terminator(current, IrTerminator::Return(value))?;
                 Ok(None)
             }
@@ -480,14 +512,13 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
         statement: &crate::HirIfStmt,
         current: IrBlockId,
     ) -> Result<Option<IrBlockId>, IrLowerError> {
-        let condition = self
-            .lower_expr(&statement.condition, current)?
-            .ok_or_else(|| {
-                IrLowerError::new(
-                    Some(statement.condition.span),
-                    "if condition must produce a value",
-                )
-            })?;
+        let (condition, current) = self.lower_expr(&statement.condition, current)?;
+        let condition = condition.ok_or_else(|| {
+            IrLowerError::new(
+                Some(statement.condition.span),
+                "if condition must produce a value",
+            )
+        })?;
         let then_block = self.new_block();
         let else_block = self.new_block();
         self.set_terminator(
@@ -530,14 +561,13 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
         let end_block = self.new_block();
         self.set_terminator(current, IrTerminator::Jump(cond_block))?;
 
-        let condition = self
-            .lower_expr(&statement.condition, cond_block)?
-            .ok_or_else(|| {
-                IrLowerError::new(
-                    Some(statement.condition.span),
-                    "while condition must produce a value",
-                )
-            })?;
+        let (condition, cond_block) = self.lower_expr(&statement.condition, cond_block)?;
+        let condition = condition.ok_or_else(|| {
+            IrLowerError::new(
+                Some(statement.condition.span),
+                "while condition must produce a value",
+            )
+        })?;
         self.set_terminator(
             cond_block,
             IrTerminator::Branch {
@@ -578,14 +608,13 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
             self.set_terminator(body_tail, IrTerminator::Jump(cond_block))?;
         }
 
-        let condition = self
-            .lower_expr(&statement.condition, cond_block)?
-            .ok_or_else(|| {
-                IrLowerError::new(
-                    Some(statement.condition.span),
-                    "do/while condition must produce a value",
-                )
-            })?;
+        let (condition, cond_block) = self.lower_expr(&statement.condition, cond_block)?;
+        let condition = condition.ok_or_else(|| {
+            IrLowerError::new(
+                Some(statement.condition.span),
+                "do/while condition must produce a value",
+            )
+        })?;
         self.set_terminator(
             cond_block,
             IrTerminator::Branch {
@@ -603,8 +632,10 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
         statement: &crate::HirForStmt,
         current: IrBlockId,
     ) -> Result<Option<IrBlockId>, IrLowerError> {
+        let mut current = current;
         if let Some(initializer) = &statement.initializer {
-            self.lower_expr(initializer, current)?;
+            let (_value, next_block) = self.lower_expr(initializer, current)?;
+            current = next_block;
         }
 
         let cond_block = self.new_block();
@@ -614,14 +645,13 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
         self.set_terminator(current, IrTerminator::Jump(cond_block))?;
 
         if let Some(condition_expr) = &statement.condition {
-            let condition = self
-                .lower_expr(condition_expr, cond_block)?
-                .ok_or_else(|| {
-                    IrLowerError::new(
-                        Some(condition_expr.span),
-                        "for condition must produce a value",
-                    )
-                })?;
+            let (condition, cond_block) = self.lower_expr(condition_expr, cond_block)?;
+            let condition = condition.ok_or_else(|| {
+                IrLowerError::new(
+                    Some(condition_expr.span),
+                    "for condition must produce a value",
+                )
+            })?;
             self.set_terminator(
                 cond_block,
                 IrTerminator::Branch {
@@ -644,7 +674,9 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
         }
 
         if let Some(update) = &statement.update {
-            self.lower_expr(update, update_block)?;
+            let (_value, update_block) = self.lower_expr(update, update_block)?;
+            self.set_terminator(update_block, IrTerminator::Jump(cond_block))?;
+            return Ok(Some(end_block));
         }
         self.set_terminator(update_block, IrTerminator::Jump(cond_block))?;
 
@@ -662,14 +694,13 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
                 "switch lowering requires a block body",
             ));
         };
-        let condition = self
-            .lower_expr(&statement.condition, current)?
-            .ok_or_else(|| {
-                IrLowerError::new(
-                    Some(statement.condition.span),
-                    "switch condition must produce a value",
-                )
-            })?;
+        let (condition, current) = self.lower_expr(&statement.condition, current)?;
+        let condition = condition.ok_or_else(|| {
+            IrLowerError::new(
+                Some(statement.condition.span),
+                "switch condition must produce a value",
+            )
+        })?;
         let end_block = self.new_block();
 
         let mut case_targets = Vec::new();
@@ -743,7 +774,7 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
         &mut self,
         expr: &HirExpr,
         block: IrBlockId,
-    ) -> Result<Option<IrValueId>, IrLowerError> {
+    ) -> Result<(Option<IrValueId>, IrBlockId), IrLowerError> {
         match &expr.kind {
             HirExprKind::Literal(literal) => {
                 let dst = self.new_value();
@@ -754,7 +785,7 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
                         literal: literal.clone(),
                     },
                 )?;
-                Ok(Some(dst))
+                Ok((Some(dst), block))
             }
             HirExprKind::Value(crate::HirValueRef::Local(local)) => {
                 let dst = self.new_value();
@@ -765,7 +796,7 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
                         local: IrLocalId(local.0),
                     },
                 )?;
-                Ok(Some(dst))
+                Ok((Some(dst), block))
             }
             HirExprKind::Value(crate::HirValueRef::Global(name))
             | HirExprKind::Value(crate::HirValueRef::ConstGlobal(name)) => {
@@ -777,7 +808,7 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
                         name: name.clone(),
                     },
                 )?;
-                Ok(Some(dst))
+                Ok((Some(dst), block))
             }
             HirExprKind::Value(crate::HirValueRef::BuiltinConstant(name)) => {
                 let literal = self.lowerer.builtin_constants.get(name).ok_or_else(|| {
@@ -794,7 +825,7 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
                         literal: literal.clone(),
                     },
                 )?;
-                Ok(Some(dst))
+                Ok((Some(dst), block))
             }
             HirExprKind::Call {
                 target,
@@ -803,59 +834,94 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
                 let function_name = match target {
                     HirCallTarget::Builtin(name) | HirCallTarget::Function(name) => name.clone(),
                 };
+                let mut current = block;
                 let mut lowered_arguments = Vec::new();
-                for argument in arguments {
-                    let value = self.lower_expr(argument, block)?.ok_or_else(|| {
-                        IrLowerError::new(
-                            Some(argument.span),
-                            "void-valued call arguments are not represented in IR yet",
-                        )
-                    })?;
-                    lowered_arguments.push(value);
-                }
-
-                if let HirCallTarget::Function(name) = target
-                    && arguments.len()
-                        < self
+                match target {
+                    HirCallTarget::Builtin(_) => {
+                        let parameter_types = self
                             .lowerer
-                            .functions
-                            .get(name)
+                            .builtin_parameter_types
+                            .get(&function_name)
                             .ok_or_else(|| {
                                 IrLowerError::new(
                                     Some(expr.span),
-                                    format!("unknown function {:?}", name),
+                                    format!("unknown builtin {:?}", function_name),
                                 )
-                            })?
-                            .parameters
-                            .len()
-                {
-                    for parameter in self
-                        .lowerer
-                        .functions
-                        .get(name)
-                        .ok_or_else(|| {
+                            })?;
+                        for (index, argument) in arguments.iter().enumerate() {
+                            if parameter_types
+                                .get(index)
+                                .is_some_and(|ty| *ty == SemanticType::Action)
+                            {
+                                lowered_arguments
+                                    .push(IrCallArgument::Action(Box::new(argument.clone())));
+                                continue;
+                            }
+
+                            let (value, next_block) = self.lower_expr(argument, current)?;
+                            current = next_block;
+                            let value = value.ok_or_else(|| {
+                                IrLowerError::new(
+                                    Some(argument.span),
+                                    "void-valued call arguments are not represented in IR yet",
+                                )
+                            })?;
+                            lowered_arguments.push(IrCallArgument::Value(value));
+                        }
+                    }
+                    HirCallTarget::Function(name) => {
+                        let callee = self.lowerer.functions.get(name).ok_or_else(|| {
                             IrLowerError::new(
                                 Some(expr.span),
                                 format!("unknown function {:?}", name),
                             )
-                        })?
-                        .parameters
-                        .iter()
-                        .skip(arguments.len())
-                    {
-                        let default = parameter.default.as_ref().ok_or_else(|| {
-                            IrLowerError::new(
-                                Some(expr.span),
-                                format!("missing required parameter for function {:?}", name),
-                            )
                         })?;
-                        let value = self.lower_expr(default, block)?.ok_or_else(|| {
-                            IrLowerError::new(
-                                Some(default.span),
-                                "void-valued default argument is not supported in IR",
-                            )
-                        })?;
-                        lowered_arguments.push(value);
+                        for (argument, parameter) in arguments.iter().zip(&callee.parameters) {
+                            if parameter.ty == SemanticType::Action {
+                                lowered_arguments
+                                    .push(IrCallArgument::Action(Box::new(argument.clone())));
+                                continue;
+                            }
+
+                            let (value, next_block) = self.lower_expr(argument, current)?;
+                            current = next_block;
+                            let value = value.ok_or_else(|| {
+                                IrLowerError::new(
+                                    Some(argument.span),
+                                    "void-valued call arguments are not represented in IR yet",
+                                )
+                            })?;
+                            lowered_arguments.push(IrCallArgument::Value(value));
+                        }
+
+                        if arguments.len() < callee.parameters.len() {
+                            for parameter in callee.parameters.iter().skip(arguments.len()) {
+                                let default = parameter.default.as_ref().ok_or_else(|| {
+                                    IrLowerError::new(
+                                        Some(expr.span),
+                                        format!(
+                                            "missing required parameter for function {:?}",
+                                            name
+                                        ),
+                                    )
+                                })?;
+                                if parameter.ty == SemanticType::Action {
+                                    lowered_arguments
+                                        .push(IrCallArgument::Action(Box::new(default.clone())));
+                                    continue;
+                                }
+
+                                let (value, next_block) = self.lower_expr(default, current)?;
+                                current = next_block;
+                                let value = value.ok_or_else(|| {
+                                    IrLowerError::new(
+                                        Some(default.span),
+                                        "void-valued default argument is not supported in IR",
+                                    )
+                                })?;
+                                lowered_arguments.push(IrCallArgument::Value(value));
+                            }
+                        }
                     }
                 }
 
@@ -865,20 +931,21 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
                     Some(self.new_value())
                 };
                 self.push_instruction(
-                    block,
+                    current,
                     IrInstruction::Call {
                         dst,
                         function: function_name,
                         arguments: lowered_arguments,
                     },
                 )?;
-                Ok(dst)
+                Ok((dst, current))
             }
             HirExprKind::FieldAccess {
                 base,
                 field,
             } => {
-                let base = self.lower_expr(base, block)?.ok_or_else(|| {
+                let (base, block) = self.lower_expr(base, block)?;
+                let base = base.ok_or_else(|| {
                     IrLowerError::new(
                         Some(expr.span),
                         "field access requires a value-producing base",
@@ -893,7 +960,7 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
                         field: field.clone(),
                     },
                 )?;
-                Ok(Some(dst))
+                Ok((Some(dst), block))
             }
             HirExprKind::Unary {
                 op,
@@ -903,7 +970,8 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
                 | UnaryOp::PreDecrement
                 | UnaryOp::PostIncrement
                 | UnaryOp::PostDecrement => {
-                    let old = self.lower_expr(inner, block)?.ok_or_else(|| {
+                    let (old, block) = self.lower_expr(inner, block)?;
+                    let old = old.ok_or_else(|| {
                         IrLowerError::new(Some(inner.span), "increment requires an int lvalue")
                     })?;
                     let one = self.new_value();
@@ -931,16 +999,18 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
                         },
                     )?;
                     self.lower_store_target(inner, block, next)?;
-                    Ok(Some(
+                    Ok((
                         if matches!(op, UnaryOp::PostIncrement | UnaryOp::PostDecrement) {
-                            old
+                            Some(old)
                         } else {
-                            next
+                            Some(next)
                         },
+                        block,
                     ))
                 }
                 _ => {
-                    let operand = self.lower_expr(inner, block)?.ok_or_else(|| {
+                    let (operand, block) = self.lower_expr(inner, block)?;
+                    let operand = operand.ok_or_else(|| {
                         IrLowerError::new(Some(inner.span), "unary operator requires a value")
                     })?;
                     let dst = self.new_value();
@@ -952,7 +1022,7 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
                             operand,
                         },
                     )?;
-                    Ok(Some(dst))
+                    Ok((Some(dst), block))
                 }
             },
             HirExprKind::Binary {
@@ -960,10 +1030,12 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
                 left,
                 right,
             } => {
-                let left = self.lower_expr(left, block)?.ok_or_else(|| {
+                let (left_value, block) = self.lower_expr(left, block)?;
+                let left_value = left_value.ok_or_else(|| {
                     IrLowerError::new(Some(left.span), "left operand must produce a value")
                 })?;
-                let right = self.lower_expr(right, block)?.ok_or_else(|| {
+                let (right_value, block) = self.lower_expr(right, block)?;
+                let right_value = right_value.ok_or_else(|| {
                     IrLowerError::new(Some(right.span), "right operand must produce a value")
                 })?;
                 let dst = self.new_value();
@@ -972,35 +1044,109 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
                     IrInstruction::Binary {
                         dst,
                         op: *op,
-                        left,
-                        right,
+                        left: left_value,
+                        right: right_value,
                     },
                 )?;
-                Ok(Some(dst))
+                Ok((Some(dst), block))
             }
             HirExprKind::Conditional {
-                ..
-            } => Err(IrLowerError::new(
-                Some(expr.span),
-                "conditional expressions are not lowered into IR yet",
-            )),
+                condition,
+                when_true,
+                when_false,
+            } => {
+                let (condition_value, block) = self.lower_expr(condition, block)?;
+                let condition_value = condition_value.ok_or_else(|| {
+                    IrLowerError::new(
+                        Some(condition.span),
+                        "conditional expression condition must produce a value",
+                    )
+                })?;
+                let then_block = self.new_block();
+                let else_block = self.new_block();
+                let join_block = self.new_block();
+                self.set_terminator(
+                    block,
+                    IrTerminator::Branch {
+                        condition: condition_value,
+                        then_block,
+                        else_block,
+                    },
+                )?;
+
+                let result_local =
+                    (expr.ty != SemanticType::Void).then(|| self.new_temp_local(expr.ty.clone()));
+
+                let (then_value, then_tail) = self.lower_expr(when_true, then_block)?;
+                if let Some(local) = result_local {
+                    let then_value = then_value.ok_or_else(|| {
+                        IrLowerError::new(
+                            Some(when_true.span),
+                            "conditional true branch must produce a value",
+                        )
+                    })?;
+                    self.push_instruction(
+                        then_tail,
+                        IrInstruction::StoreLocal {
+                            local,
+                            value: then_value,
+                        },
+                    )?;
+                }
+                self.set_terminator(then_tail, IrTerminator::Jump(join_block))?;
+
+                let (else_value, else_tail) = self.lower_expr(when_false, else_block)?;
+                if let Some(local) = result_local {
+                    let else_value = else_value.ok_or_else(|| {
+                        IrLowerError::new(
+                            Some(when_false.span),
+                            "conditional false branch must produce a value",
+                        )
+                    })?;
+                    self.push_instruction(
+                        else_tail,
+                        IrInstruction::StoreLocal {
+                            local,
+                            value: else_value,
+                        },
+                    )?;
+                }
+                self.set_terminator(else_tail, IrTerminator::Jump(join_block))?;
+
+                if let Some(local) = result_local {
+                    let dst = self.new_value();
+                    self.push_instruction(
+                        join_block,
+                        IrInstruction::LoadLocal {
+                            dst,
+                            local,
+                        },
+                    )?;
+                    Ok((Some(dst), join_block))
+                } else {
+                    Ok((None, join_block))
+                }
+            }
             HirExprKind::Assignment {
                 op,
                 left,
                 right,
             } => {
                 if *op == AssignmentOp::Assign {
-                    let value = self.lower_expr(right, block)?.ok_or_else(|| {
+                    let (value, block) = self.lower_expr(right, block)?;
+                    let value = value.ok_or_else(|| {
                         IrLowerError::new(Some(right.span), "assignment requires a value")
                     })?;
                     self.lower_store_target(left, block, value)?;
-                    return Ok(Some(value));
+                    return Ok((Some(value), block));
                 }
 
-                let left_value = self.lower_expr(left, block)?.ok_or_else(|| {
+                let (left_value, block) = self.lower_expr(left, block)?;
+                let left_value = left_value.ok_or_else(|| {
                     IrLowerError::new(Some(left.span), "assignment target must produce a value")
                 })?;
-                let right_value = self.lower_expr(right, block)?.ok_or_else(|| {
+                let (right_value, block) = self.lower_expr(right, block)?;
+                let right_value = right_value.ok_or_else(|| {
                     IrLowerError::new(Some(right.span), "assignment requires a value")
                 })?;
                 let dst = self.new_value();
@@ -1014,7 +1160,7 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
                     },
                 )?;
                 self.lower_store_target(left, block, dst)?;
-                Ok(Some(dst))
+                Ok((Some(dst), block))
             }
         }
     }
@@ -1090,15 +1236,29 @@ fn literal_from_builtin_value(value: &BuiltinValue) -> Option<Literal> {
         BuiltinValue::LocationInvalid => Some(Literal::LocationInvalid),
         BuiltinValue::Json(value) => Some(Literal::Json(value.clone())),
         BuiltinValue::Vector(value) => Some(Literal::Vector(*value)),
+        BuiltinValue::Raw(_) => None,
+    }
+}
+
+fn semantic_type_from_builtin_type(ty: &BuiltinType) -> SemanticType {
+    match ty {
+        BuiltinType::Void => SemanticType::Void,
+        BuiltinType::Int => SemanticType::Int,
+        BuiltinType::Float => SemanticType::Float,
+        BuiltinType::String => SemanticType::String,
+        BuiltinType::Object => SemanticType::Object,
+        BuiltinType::Action => SemanticType::Action,
+        BuiltinType::Vector => SemanticType::Vector,
+        BuiltinType::EngineStructure(name) => SemanticType::EngineStructure(name.clone()),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{IrInstruction, IrTerminator, lower_hir_to_ir};
+    use super::{IrCallArgument, IrInstruction, IrTerminator, lower_hir_to_ir};
     use crate::{
-        BuiltinConstant, BuiltinFunction, BuiltinType, BuiltinValue, LangSpec, SourceId,
-        analyze_script, lower_to_hir, parse_text,
+        BuiltinConstant, BuiltinFunction, BuiltinParameter, BuiltinType, BuiltinValue,
+        HirCallTarget, HirExprKind, LangSpec, SourceId, analyze_script, lower_to_hir, parse_text,
     };
 
     fn test_langspec() -> LangSpec {
@@ -1121,11 +1281,29 @@ mod tests {
                     value: BuiltinValue::Int(0),
                 },
             ],
-            functions:             vec![BuiltinFunction {
-                name:        "GetCurrentHitPoints".to_string(),
-                return_type: BuiltinType::Int,
-                parameters:  vec![],
-            }],
+            functions:             vec![
+                BuiltinFunction {
+                    name:        "GetCurrentHitPoints".to_string(),
+                    return_type: BuiltinType::Int,
+                    parameters:  vec![],
+                },
+                BuiltinFunction {
+                    name:        "DelayCommand".to_string(),
+                    return_type: BuiltinType::Void,
+                    parameters:  vec![
+                        BuiltinParameter {
+                            name:    "fSeconds".to_string(),
+                            ty:      BuiltinType::Float,
+                            default: None,
+                        },
+                        BuiltinParameter {
+                            name:    "aAction".to_string(),
+                            ty:      BuiltinType::Action,
+                            default: None,
+                        },
+                    ],
+                },
+            ],
         }
     }
 
@@ -1202,5 +1380,114 @@ mod tests {
                 matches!(instruction, IrInstruction::Call { function, arguments, .. } if function == "AddOne" && arguments.len() == 1)
             })
         }));
+    }
+
+    #[test]
+    fn lowers_conditional_expressions_into_branching_ir() {
+        let script = parse_text(
+            SourceId::new(92),
+            r#"
+                int StartingConditional() {
+                    int nCurHP = GetCurrentHitPoints();
+                    return nCurHP > 0 ? TRUE : FALSE;
+                }
+            "#,
+            Some(&test_langspec()),
+        )
+        .expect("script should parse");
+        let semantic =
+            analyze_script(&script, Some(&test_langspec())).expect("script should analyze");
+        let hir =
+            lower_to_hir(&script, &semantic, Some(&test_langspec())).expect("HIR should lower");
+        let ir = lower_hir_to_ir(&hir, Some(&test_langspec())).expect("IR should lower");
+
+        let function = ir
+            .functions
+            .iter()
+            .find(|function| function.name == "StartingConditional")
+            .expect("function should exist");
+
+        assert!(
+            function
+                .blocks
+                .iter()
+                .any(|block| matches!(block.terminator, IrTerminator::Branch { .. })),
+            "conditional expression should lower into a branch",
+        );
+        assert!(
+            function.blocks.iter().any(|block| {
+                block
+                    .instructions
+                    .iter()
+                    .any(|instruction| matches!(instruction, IrInstruction::StoreLocal { .. }))
+            }),
+            "conditional expression should store branch results into a merge slot",
+        );
+        assert!(
+            function.blocks.iter().any(|block| {
+                block
+                    .instructions
+                    .iter()
+                    .any(|instruction| matches!(instruction, IrInstruction::LoadLocal { .. }))
+            }),
+            "conditional expression should reload the merged branch result",
+        );
+    }
+
+    #[test]
+    fn preserves_deferred_action_arguments_in_ir_calls() {
+        let script = parse_text(
+            SourceId::new(93),
+            r#"
+                void helper() {}
+                void main() {
+                    DelayCommand(1.0, helper());
+                }
+            "#,
+            Some(&test_langspec()),
+        )
+        .expect("script should parse");
+        let semantic =
+            analyze_script(&script, Some(&test_langspec())).expect("script should analyze");
+        let hir =
+            lower_to_hir(&script, &semantic, Some(&test_langspec())).expect("HIR should lower");
+        let ir = lower_hir_to_ir(&hir, Some(&test_langspec())).expect("IR should lower");
+
+        let main = ir
+            .functions
+            .iter()
+            .find(|function| function.name == "main")
+            .expect("main should exist");
+        let call = main
+            .blocks
+            .iter()
+            .flat_map(|block| block.instructions.iter())
+            .find_map(|instruction| match instruction {
+                IrInstruction::Call {
+                    function,
+                    arguments,
+                    ..
+                } if function == "DelayCommand" => Some(arguments),
+                _ => None,
+            })
+            .expect("DelayCommand call should be present");
+
+        assert_eq!(call.len(), 2);
+        assert!(matches!(call.first(), Some(IrCallArgument::Value(_))));
+        assert!(matches!(call.get(1), Some(IrCallArgument::Action(_))));
+        let action = match call.get(1) {
+            Some(IrCallArgument::Action(action)) => action,
+            _ => return,
+        };
+        assert!(matches!(&action.kind, HirExprKind::Call { .. }));
+        let (target, arguments) = match &action.kind {
+            HirExprKind::Call {
+                target,
+                arguments,
+            } => (target, arguments),
+            _ => return,
+        };
+        assert_eq!(target, &HirCallTarget::Function("helper".to_string()));
+        assert!(arguments.is_empty());
     }
 }

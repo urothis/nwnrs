@@ -9,7 +9,7 @@ use crate::{
 
 /// Reads an `SSF` document from `reader`.
 #[instrument(level = "debug", skip_all, err)]
-pub fn read_ssf<R: Read + Seek>(reader: &mut R) -> io::Result<SsfRoot> {
+pub fn read_ssf<R: Read + Seek>(reader: &mut R) -> SsfResult<SsfRoot> {
     let file_type = read_str_or_err(reader, 4)?;
     expect(
         file_type == HEADER_MAGIC,
@@ -67,7 +67,7 @@ pub fn read_ssf<R: Read + Seek>(reader: &mut R) -> io::Result<SsfRoot> {
 
 /// Writes an `SSF` document to `writer`.
 #[instrument(level = "debug", skip_all, err, fields(entry_count = ssf.entries.len()))]
-pub fn write_ssf<W: Write>(writer: &mut W, ssf: &SsfRoot) -> io::Result<()> {
+pub fn write_ssf<W: Write>(writer: &mut W, ssf: &SsfRoot) -> SsfResult<()> {
     writer.write_all(HEADER_MAGIC.as_bytes())?;
     writer.write_all(HEADER_VERSION.as_bytes())?;
     writer.write_all(&to_u32(ssf.entries.len(), "SSF entry count")?.to_le_bytes())?;
@@ -120,7 +120,7 @@ fn to_u32(value: usize, what: &str) -> io::Result<u32> {
 mod tests {
     use std::io::Cursor;
 
-    use crate::{SsfEntry, new_ssf, read_ssf, write_ssf};
+    use crate::{SsfEntry, SsfRoot, read_ssf, write_ssf};
 
     #[test]
     fn ssf_preserves_raw_resref_bytes_when_only_strref_changes() {
@@ -171,7 +171,7 @@ mod tests {
 
     #[test]
     fn ssf_new_entry_uses_canonical_padding() {
-        let mut ssf = new_ssf();
+        let mut ssf = SsfRoot::new();
         ssf.entries.push(SsfEntry::new("hello", 7));
 
         let mut encoded = Vec::new();

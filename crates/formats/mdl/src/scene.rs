@@ -1,4 +1,9 @@
-use std::{collections::BTreeMap, fs::File, io::Read, path::Path};
+use std::{
+    collections::BTreeMap,
+    fs::File,
+    io::{Read, Write},
+    path::Path,
+};
 
 use nwnrs_resman::prelude::*;
 use tracing::instrument;
@@ -6,10 +11,11 @@ use tracing::instrument;
 use crate::{
     AnimationEvent, MODEL_RES_TYPE, Model, ModelClassification, ModelDiagnostic,
     ModelDiagnosticKind, ModelError, ModelResult, NodeKind, ScalarKey, SemanticAnimation,
-    SemanticAnimationNode, SemanticEmitter, SemanticEmitterProperty, SemanticFace, SemanticLight,
-    SemanticMaterial, SemanticMesh, SemanticModel, SemanticPropertyValue, SemanticReference,
-    SemanticSkinWeight, SemanticTextureBinding, SemanticUvLayer, Vec3Key, Vec4Key,
-    parse_semantic_model, parse_semantic_model_auto, read_semantic_model, read_semantic_model_auto,
+    SemanticAnimationNode, SemanticEmitter, SemanticEmitterProperty, SemanticFace, SemanticHeader,
+    SemanticLight, SemanticMaterial, SemanticMesh, SemanticModel, SemanticNode,
+    SemanticPropertyValue, SemanticReference, SemanticSkinWeight, SemanticTextureBinding,
+    SemanticUvLayer, Vec3Key, Vec4Key, parse_semantic_model, parse_semantic_model_auto,
+    read_semantic_model, read_semantic_model_auto,
 };
 
 /// An engine-neutral scene representation lowered from a semantic NWN model.
@@ -55,6 +61,46 @@ impl NwnScene {
         self.animations
             .iter()
             .find(|animation| animation.name.eq_ignore_ascii_case(name))
+    }
+
+    /// Reads and lowers an engine-neutral scene from disk.
+    pub fn from_file(path: impl AsRef<Path>) -> ModelResult<Self> {
+        let mut file = File::open(path.as_ref())?;
+        read_scene_model(&mut file)
+    }
+
+    /// Reads and lowers an engine-neutral scene from disk using automatic
+    /// ASCII/compiled dispatch.
+    pub fn from_auto_file(path: impl AsRef<Path>) -> ModelResult<Self> {
+        let mut file = File::open(path.as_ref())?;
+        read_scene_model_auto(&mut file)
+    }
+
+    /// Reads and lowers an engine-neutral scene from a [`Res`].
+    pub fn from_res(res: &Res, cache_policy: CachePolicy) -> ModelResult<Self> {
+        if res.resref().res_type() != MODEL_RES_TYPE {
+            return Err(ModelError::msg(format!(
+                "expected mdl resource, got {}",
+                res.resref()
+            )));
+        }
+
+        let semantic = crate::SemanticModel::from_res(res, cache_policy)?;
+        lower_semantic_model_to_scene(&semantic)
+    }
+
+    /// Reads and lowers an engine-neutral scene from a [`Res`] using automatic
+    /// ASCII/compiled dispatch.
+    pub fn from_auto_res(res: &Res, cache_policy: CachePolicy) -> ModelResult<Self> {
+        if res.resref().res_type() != MODEL_RES_TYPE {
+            return Err(ModelError::msg(format!(
+                "expected mdl resource, got {}",
+                res.resref()
+            )));
+        }
+
+        let semantic = crate::SemanticModel::from_auto_res(res, cache_policy)?;
+        lower_semantic_model_to_scene(&semantic)
     }
 }
 
@@ -413,6 +459,8 @@ pub struct NwnVec2Sample {
     pub values: Vec<[f32; 2]>,
 }
 
+type SceneWriteOwnership = (Vec<Option<usize>>, Vec<Option<usize>>);
+
 impl Model {
     /// Parses and lowers the raw payload into an engine-neutral NWN scene.
     pub fn parse_scene(&self) -> ModelResult<NwnScene> {
@@ -452,48 +500,670 @@ pub fn read_scene_model_auto<R: Read>(reader: &mut R) -> ModelResult<NwnScene> {
     lower_semantic_model_to_scene(&semantic)
 }
 
-/// Reads and lowers an engine-neutral scene from disk.
-#[instrument(level = "debug", skip_all, err, fields(path = %path.as_ref().display()))]
-pub fn read_scene_model_from_file(path: impl AsRef<Path>) -> ModelResult<NwnScene> {
-    let mut file = File::open(path.as_ref())?;
-    read_scene_model(&mut file)
+/// Writes an engine-neutral scene as canonical ASCII MDL.
+#[instrument(level = "debug", skip_all, err, fields(model_name = %scene.name))]
+pub fn write_scene_model<W: Write>(writer: &mut W, scene: &NwnScene) -> ModelResult<()> {
+    let semantic = raise_scene_to_semantic(scene)?;
+    crate::write_semantic_model(writer, &semantic)
 }
 
-/// Reads and lowers an engine-neutral scene from disk using automatic
-/// ASCII/compiled dispatch.
-#[instrument(level = "debug", skip_all, err, fields(path = %path.as_ref().display()))]
-pub fn read_scene_model_auto_from_file(path: impl AsRef<Path>) -> ModelResult<NwnScene> {
-    let mut file = File::open(path.as_ref())?;
-    read_scene_model_auto(&mut file)
+fn raise_scene_to_semantic(scene: &NwnScene) -> ModelResult<SemanticModel> {
+    let (mesh_owners, material_owners) = validate_scene_for_write(scene)?;
+
+    let nodes = scene
+        .nodes
+        .iter()
+        .enumerate()
+        .map(|(node_index, node)| {
+            raise_scene_node(scene, node_index, node, &mesh_owners, &material_owners)
+        })
+        .collect::<ModelResult<Vec<_>>>()?;
+    let animations = scene
+        .animations
+        .iter()
+        .map(|animation| raise_scene_animation(scene, animation))
+        .collect::<ModelResult<Vec<_>>>()?;
+
+    Ok(SemanticModel {
+        header: SemanticHeader {
+            model_name:      scene.name.clone(),
+            supermodel:      scene.supermodel.clone(),
+            classification:  scene.classification.clone(),
+            animation_scale: scene.animation_scale,
+            comments:        Vec::new(),
+            extras:          Vec::new(),
+        },
+        geometry_name: scene.name.clone(),
+        nodes,
+        geometry_extras: Vec::new(),
+        between_geometry_and_animations: Vec::new(),
+        animations,
+        between_animations: if scene.animations.len() > 1 {
+            vec![Vec::new(); scene.animations.len() - 1]
+        } else {
+            Vec::new()
+        },
+        suffix: Vec::new(),
+        diagnostics: scene.diagnostics.clone(),
+    })
 }
 
-/// Reads and lowers an engine-neutral scene from a [`Res`].
-#[instrument(level = "debug", skip_all, err, fields(resref = %res.resref(), use_cache))]
-pub fn read_scene_model_from_res(res: &Res, use_cache: bool) -> ModelResult<NwnScene> {
-    if res.resref().res_type() != MODEL_RES_TYPE {
+fn validate_scene_for_write(scene: &NwnScene) -> ModelResult<SceneWriteOwnership> {
+    let node_count = scene.nodes.len();
+    let mut mesh_owners = vec![None; scene.meshes.len()];
+
+    for (node_index, node) in scene.nodes.iter().enumerate() {
+        if let Some(parent_index) = node.parent {
+            if parent_index >= node_count {
+                return Err(ModelError::msg(format!(
+                    "scene node {} references invalid parent index {}",
+                    node.name, parent_index
+                )));
+            }
+            if parent_index == node_index {
+                return Err(ModelError::msg(format!(
+                    "scene node {} cannot parent itself",
+                    node.name
+                )));
+            }
+        }
+
+        if let Some(mesh_index) = node.mesh {
+            let owner = mesh_owners.get_mut(mesh_index).ok_or_else(|| {
+                ModelError::msg(format!(
+                    "scene node {} references invalid mesh index {}",
+                    node.name, mesh_index
+                ))
+            })?;
+            if let Some(previous_owner) = owner.replace(node_index) {
+                let previous_name = scene
+                    .nodes
+                    .get(previous_owner)
+                    .map_or("<invalid>", |node| node.name.as_str());
+                return Err(ModelError::msg(format!(
+                    "scene mesh {} is referenced by both {} and {}",
+                    mesh_index, previous_name, node.name
+                )));
+            }
+        }
+
+        validate_uniform_scale(&node.local_transform.scale, &node.name)?;
+    }
+
+    let mut material_owners = vec![None; scene.materials.len()];
+    for (mesh_index, mesh) in scene.meshes.iter().enumerate() {
+        let owner_index = mesh_owners
+            .get(mesh_index)
+            .copied()
+            .flatten()
+            .ok_or_else(|| {
+                ModelError::msg(format!(
+                    "scene mesh {} is not referenced by any scene node",
+                    mesh.name
+                ))
+            })?;
+        if mesh.source_node >= node_count {
+            return Err(ModelError::msg(format!(
+                "scene mesh {} records invalid source node index {}",
+                mesh.name, mesh.source_node
+            )));
+        }
+        if mesh.source_node != owner_index {
+            let owner_name = scene
+                .nodes
+                .get(owner_index)
+                .map_or("<invalid>", |node| node.name.as_str());
+            return Err(ModelError::msg(format!(
+                "scene mesh {} source node {} does not match owner {}",
+                mesh.name, mesh.source_node, owner_name
+            )));
+        }
+        if mesh.primitives.len() != 1 {
+            return Err(ModelError::msg(format!(
+                "scene mesh {} must contain exactly one primitive to serialize as NWN MDL",
+                mesh.name
+            )));
+        }
+
+        let primitive = mesh.primitives.first().ok_or_else(|| {
+            ModelError::msg(format!("scene mesh {} is missing its primitive", mesh.name))
+        })?;
+        let material_index = primitive.material.ok_or_else(|| {
+            ModelError::msg(format!(
+                "scene mesh {} is missing a material reference",
+                mesh.name
+            ))
+        })?;
+        let material_owner = material_owners.get_mut(material_index).ok_or_else(|| {
+            ModelError::msg(format!(
+                "scene mesh {} references invalid material index {}",
+                mesh.name, material_index
+            ))
+        })?;
+        if let Some(previous_owner) = material_owner.replace(owner_index) {
+            let previous_name = scene
+                .nodes
+                .get(previous_owner)
+                .map_or("<invalid>", |node| node.name.as_str());
+            let owner_name = scene
+                .nodes
+                .get(owner_index)
+                .map_or("<invalid>", |node| node.name.as_str());
+            return Err(ModelError::msg(format!(
+                "scene material {} is referenced by both {} and {}",
+                material_index, previous_name, owner_name
+            )));
+        }
+    }
+
+    for (material_index, material) in scene.materials.iter().enumerate() {
+        let owner_index = material_owners
+            .get(material_index)
+            .copied()
+            .flatten()
+            .ok_or_else(|| {
+                ModelError::msg(format!(
+                    "scene material {} is not referenced by any mesh",
+                    material_index
+                ))
+            })?;
+        if material.source_node >= node_count {
+            return Err(ModelError::msg(format!(
+                "scene material {} records invalid source node index {}",
+                material_index, material.source_node
+            )));
+        }
+        if material.source_node != owner_index {
+            let owner_name = scene
+                .nodes
+                .get(owner_index)
+                .map_or("<invalid>", |node| node.name.as_str());
+            return Err(ModelError::msg(format!(
+                "scene material {} source node {} does not match owner {}",
+                material_index, material.source_node, owner_name
+            )));
+        }
+    }
+
+    Ok((mesh_owners, material_owners))
+}
+
+fn raise_scene_node(
+    scene: &NwnScene,
+    node_index: usize,
+    node: &NwnSceneNode,
+    _mesh_owners: &[Option<usize>],
+    material_owners: &[Option<usize>],
+) -> ModelResult<SemanticNode> {
+    let scale = validate_uniform_scale(&node.local_transform.scale, &node.name)?;
+    let parent = node
+        .parent
+        .and_then(|parent_index| scene.nodes.get(parent_index))
+        .map(|node| node.name.clone());
+    let (material, mesh) = if let Some(mesh_index) = node.mesh {
+        let mesh = scene.meshes.get(mesh_index).ok_or_else(|| {
+            ModelError::msg(format!(
+                "scene node {} references invalid mesh index {}",
+                node.name, mesh_index
+            ))
+        })?;
+        let primitive = mesh.primitives.first().ok_or_else(|| {
+            ModelError::msg(format!("scene mesh {} is missing its primitive", mesh.name))
+        })?;
+        let material_index = primitive.material.ok_or_else(|| {
+            ModelError::msg(format!(
+                "scene mesh {} lost its material reference",
+                mesh.name
+            ))
+        })?;
+        let owner = material_owners
+            .get(material_index)
+            .copied()
+            .flatten()
+            .ok_or_else(|| {
+                ModelError::msg(format!(
+                    "scene material {} is missing an owning node",
+                    material_index
+                ))
+            })?;
+        if owner != node_index {
+            let owner_name = scene
+                .nodes
+                .get(owner)
+                .map_or("<invalid>", |node| node.name.as_str());
+            return Err(ModelError::msg(format!(
+                "scene node {} references mesh {} whose material belongs to {}",
+                node.name, mesh.name, owner_name
+            )));
+        }
+        let material = raise_scene_material(
+            &node.kind,
+            scene.materials.get(material_index).ok_or_else(|| {
+                ModelError::msg(format!(
+                    "scene mesh {} references invalid material index {}",
+                    mesh.name, material_index
+                ))
+            })?,
+        )?;
+        let mesh = raise_scene_mesh(mesh)?;
+        (material, Some(mesh))
+    } else {
+        (default_scene_material(node.alpha), None)
+    };
+
+    if let Some(alpha) = node.alpha
+        && material.alpha != Some(alpha)
+    {
         return Err(ModelError::msg(format!(
-            "expected mdl resource, got {}",
-            res.resref()
+            "scene node {} alpha {} does not match its material alpha {}",
+            node.name,
+            alpha,
+            material.alpha.unwrap_or_default()
         )));
     }
 
-    let semantic = crate::read_semantic_model_from_res(res, use_cache)?;
-    lower_semantic_model_to_scene(&semantic)
+    Ok(SemanticNode {
+        kind: node.kind.clone(),
+        node_type: node.node_type.clone(),
+        name: node.name.clone(),
+        parent,
+        part_number: node.part_number,
+        position: Some(node.local_transform.translation),
+        orientation: Some(node.local_transform.rotation_axis_angle),
+        scale: Some(scale),
+        color: node.color,
+        radius: node.radius,
+        center: node.center,
+        wirecolor: node.wirecolor,
+        material,
+        light: node.light.as_ref().map(raise_scene_light),
+        emitter: node.emitter.as_ref().map(raise_scene_emitter),
+        reference: node.reference.as_ref().map(raise_scene_reference),
+        mesh,
+        comments: Vec::new(),
+        extras: Vec::new(),
+    })
 }
 
-/// Reads and lowers an engine-neutral scene from a [`Res`] using automatic
-/// ASCII/compiled dispatch.
-#[instrument(level = "debug", skip_all, err, fields(resref = %res.resref(), use_cache))]
-pub fn read_scene_model_auto_from_res(res: &Res, use_cache: bool) -> ModelResult<NwnScene> {
-    if res.resref().res_type() != MODEL_RES_TYPE {
+fn raise_scene_mesh(mesh: &NwnMesh) -> ModelResult<SemanticMesh> {
+    let primitive = mesh.primitives.first().ok_or_else(|| {
+        ModelError::msg(format!("scene mesh {} is missing its primitive", mesh.name))
+    })?;
+    Ok(SemanticMesh {
+        vertices:      primitive.positions.clone(),
+        faces:         primitive.faces.iter().map(raise_scene_face).collect(),
+        uv_layers:     primitive.uv_sets.iter().map(raise_scene_uv_set).collect(),
+        normals:       primitive.normals.clone(),
+        tangents:      primitive.tangents.clone(),
+        colors:        primitive.color_rows.clone(),
+        weights:       primitive
+            .weight_rows
+            .iter()
+            .map(|row| row.iter().map(raise_scene_skin_weight).collect())
+            .collect(),
+        constraints:   primitive.constraint_rows.clone(),
+        multimaterial: primitive.surface_labels.clone(),
+        texture_names: primitive.texture_names.clone(),
+    })
+}
+
+fn raise_scene_material(
+    node_kind: &NodeKind,
+    material: &NwnMaterial,
+) -> ModelResult<SemanticMaterial> {
+    let mut bitmap = material.helper_bitmap.clone();
+    let mut saw_bitmap_slot = false;
+    let mut textures = Vec::new();
+
+    if !matches!(node_kind, NodeKind::Aabb)
+        && let Some(helper_bitmap) = &material.helper_bitmap
+    {
         return Err(ModelError::msg(format!(
-            "expected mdl resource, got {}",
-            res.resref()
+            "non-AABB material on node {} cannot use helper bitmap {}",
+            material.source_node, helper_bitmap
         )));
     }
 
-    let semantic = crate::read_semantic_model_auto_from_res(res, use_cache)?;
-    lower_semantic_model_to_scene(&semantic)
+    for texture in &material.textures {
+        match texture.slot {
+            NwnTextureSlot::Bitmap => {
+                if saw_bitmap_slot {
+                    return Err(ModelError::msg(format!(
+                        "material on node {} contains multiple bitmap slots",
+                        material.source_node
+                    )));
+                }
+                saw_bitmap_slot = true;
+                if let Some(existing) = &bitmap
+                    && existing != &texture.name
+                {
+                    return Err(ModelError::msg(format!(
+                        "material on node {} has conflicting bitmap values {} and {}",
+                        material.source_node, existing, texture.name
+                    )));
+                }
+                bitmap = Some(texture.name.clone());
+            }
+            NwnTextureSlot::Texture(index) => textures.push(SemanticTextureBinding {
+                index,
+                name: texture.name.clone(),
+            }),
+        }
+    }
+
+    Ok(SemanticMaterial {
+        render: Some(material.render_enabled),
+        shadow: Some(material.shadow_enabled),
+        beaming: Some(material.beaming),
+        inherit_color: Some(material.inherit_color),
+        tilefade: Some(material.tilefade),
+        rotate_texture: Some(material.rotate_texture),
+        transparency_hint: Some(material.transparency_hint),
+        shininess: Some(material.shininess),
+        alpha: Some(material.alpha),
+        ambient: Some(material.ambient),
+        diffuse: Some(material.diffuse),
+        specular: Some(material.specular),
+        self_illum_color: Some(material.self_illum_color),
+        material_name: material.material_name.clone(),
+        render_hint: material.render_hint.clone(),
+        bitmap,
+        textures,
+    })
+}
+
+fn default_scene_material(alpha: Option<f32>) -> SemanticMaterial {
+    SemanticMaterial {
+        render: None,
+        shadow: None,
+        beaming: None,
+        inherit_color: None,
+        tilefade: None,
+        rotate_texture: None,
+        transparency_hint: None,
+        shininess: None,
+        alpha,
+        ambient: None,
+        diffuse: None,
+        specular: None,
+        self_illum_color: None,
+        material_name: None,
+        render_hint: None,
+        bitmap: None,
+        textures: Vec::new(),
+    }
+}
+
+fn raise_scene_light(light: &NwnLight) -> SemanticLight {
+    SemanticLight {
+        multiplier:         Some(light.multiplier),
+        ambient_only:       Some(light.ambient_only),
+        n_dynamic_type:     light.n_dynamic_type,
+        is_dynamic:         Some(light.is_dynamic),
+        affect_dynamic:     Some(light.affect_dynamic),
+        negative_light:     Some(light.negative_light),
+        light_priority:     Some(light.light_priority),
+        fading_light:       Some(light.fading_light),
+        lens_flares:        Some(light.lens_flares),
+        flare_radius:       Some(light.flare_radius),
+        flare_textures:     light.flare_textures.clone(),
+        flare_sizes:        light.flare_sizes.clone(),
+        flare_positions:    light.flare_positions.clone(),
+        flare_color_shifts: light.flare_color_shifts.clone(),
+    }
+}
+
+fn raise_scene_emitter(emitter: &NwnEmitter) -> SemanticEmitter {
+    SemanticEmitter {
+        x_size:     Some(emitter.x_size),
+        y_size:     Some(emitter.y_size),
+        properties: emitter
+            .properties
+            .iter()
+            .map(|property| SemanticEmitterProperty {
+                name:   property.name.clone(),
+                values: property
+                    .values
+                    .iter()
+                    .map(raise_scene_property_value)
+                    .collect(),
+            })
+            .collect(),
+    }
+}
+
+fn raise_scene_property_value(value: &NwnPropertyValue) -> SemanticPropertyValue {
+    match value {
+        NwnPropertyValue::Bool(value) => SemanticPropertyValue::Bool(*value),
+        NwnPropertyValue::Int(value) => SemanticPropertyValue::Int(*value),
+        NwnPropertyValue::Float(value) => SemanticPropertyValue::Float(*value),
+        NwnPropertyValue::Text(value) => SemanticPropertyValue::Text(value.clone()),
+    }
+}
+
+fn raise_scene_reference(reference: &NwnReference) -> SemanticReference {
+    SemanticReference {
+        model:        reference.model.clone(),
+        reattachable: Some(reference.reattachable),
+    }
+}
+
+fn raise_scene_face(face: &NwnFace) -> SemanticFace {
+    SemanticFace {
+        vertex_indices: face.vertex_indices,
+        group:          face.group,
+        uv_indices:     face.uv_indices,
+        material_index: face.material_index,
+    }
+}
+
+fn raise_scene_uv_set(layer: &NwnUvSet) -> SemanticUvLayer {
+    SemanticUvLayer {
+        index:       layer.index,
+        coordinates: layer.coordinates.clone(),
+    }
+}
+
+fn raise_scene_skin_weight(weight: &NwnSkinWeight) -> SemanticSkinWeight {
+    SemanticSkinWeight {
+        bone:   weight.bone.clone(),
+        weight: weight.weight,
+    }
+}
+
+fn raise_scene_animation(
+    scene: &NwnScene,
+    animation: &NwnAnimation,
+) -> ModelResult<SemanticAnimation> {
+    let animroot = resolve_animation_root(scene, animation)?;
+    let nodes = animation
+        .node_tracks
+        .iter()
+        .map(|track| raise_scene_animation_track(scene, animation, track))
+        .collect::<ModelResult<Vec<_>>>()?;
+
+    Ok(SemanticAnimation {
+        name: animation.name.clone(),
+        model_name: animation.model_name.clone(),
+        length: Some(animation.length),
+        transtime: Some(animation.transition_time),
+        animroot,
+        events: animation.events.clone(),
+        nodes,
+        comments: Vec::new(),
+        extras: Vec::new(),
+    })
+}
+
+fn resolve_animation_root(
+    scene: &NwnScene,
+    animation: &NwnAnimation,
+) -> ModelResult<Option<String>> {
+    match (animation.root_name.as_deref(), animation.root_node) {
+        (None, None) => Ok(None),
+        (None, Some(_)) => Err(ModelError::msg(format!(
+            "animation {} sets root_node without root_name",
+            animation.name
+        ))),
+        (Some(name), None) => {
+            let _index = find_unique_node_index(scene, name, "animation root")?;
+            Ok(Some(name.to_string()))
+        }
+        (Some(name), Some(index)) => {
+            let node = scene.nodes.get(index).ok_or_else(|| {
+                ModelError::msg(format!(
+                    "animation {} references invalid root node index {}",
+                    animation.name, index
+                ))
+            })?;
+            if !node.name.eq_ignore_ascii_case(name) {
+                return Err(ModelError::msg(format!(
+                    "animation {} root {} does not match node {} at index {}",
+                    animation.name, name, node.name, index
+                )));
+            }
+            Ok(Some(name.to_string()))
+        }
+    }
+}
+
+fn raise_scene_animation_track(
+    scene: &NwnScene,
+    animation: &NwnAnimation,
+    track: &NwnNodeAnimationTrack,
+) -> ModelResult<SemanticAnimationNode> {
+    let target_index = resolve_track_target_index(scene, animation, track)?;
+    let target_node = scene.nodes.get(target_index).ok_or_else(|| {
+        ModelError::msg(format!(
+            "animation {} track {} resolved to invalid node index {}",
+            animation.name, track.target_name, target_index
+        ))
+    })?;
+    let scale_keys = track
+        .transform
+        .scale_keys
+        .iter()
+        .map(|key| {
+            validate_uniform_scale(
+                &key.value,
+                &format!("animation {} track {}", animation.name, track.target_name),
+            )
+            .map(|value| ScalarKey {
+                time: key.time,
+                value,
+            })
+        })
+        .collect::<ModelResult<Vec<_>>>()?;
+    let animmesh = track.animmesh.as_ref();
+
+    Ok(SemanticAnimationNode {
+        kind: track.kind.clone(),
+        node_type: target_node.node_type.clone(),
+        name: track.target_name.clone(),
+        parent: None,
+        part_number: None,
+        position: None,
+        orientation: None,
+        scale: None,
+        color: None,
+        radius: None,
+        alpha: None,
+        self_illum_color: None,
+        position_keys: track.transform.translation_keys.clone(),
+        orientation_keys: track.transform.rotation_axis_angle_keys.clone(),
+        scale_keys,
+        color_keys: track.material.color_keys.clone(),
+        radius_keys: track.material.radius_keys.clone(),
+        alpha_keys: track.material.alpha_keys.clone(),
+        self_illum_color_keys: track.material.self_illum_color_keys.clone(),
+        sample_period: animmesh.and_then(|animmesh| animmesh.sample_period),
+        faces: animmesh
+            .map(|animmesh| {
+                animmesh
+                    .face_overrides
+                    .iter()
+                    .map(raise_scene_face)
+                    .collect()
+            })
+            .unwrap_or_default(),
+        animverts: animmesh
+            .map(|animmesh| {
+                animmesh
+                    .vertex_samples
+                    .iter()
+                    .flat_map(|sample| sample.values.iter().copied())
+                    .collect()
+            })
+            .unwrap_or_default(),
+        animtverts: animmesh
+            .map(|animmesh| {
+                animmesh
+                    .uv_samples
+                    .iter()
+                    .flat_map(|sample| sample.values.iter().copied())
+                    .collect()
+            })
+            .unwrap_or_default(),
+        comments: Vec::new(),
+        extras: Vec::new(),
+    })
+}
+
+fn resolve_track_target_index(
+    scene: &NwnScene,
+    animation: &NwnAnimation,
+    track: &NwnNodeAnimationTrack,
+) -> ModelResult<usize> {
+    match track.target_node {
+        Some(index) => {
+            let node = scene.nodes.get(index).ok_or_else(|| {
+                ModelError::msg(format!(
+                    "animation {} track {} references invalid target index {}",
+                    animation.name, track.target_name, index
+                ))
+            })?;
+            if !node.name.eq_ignore_ascii_case(&track.target_name) {
+                return Err(ModelError::msg(format!(
+                    "animation {} track {} does not match node {} at index {}",
+                    animation.name, track.target_name, node.name, index
+                )));
+            }
+            Ok(index)
+        }
+        None => find_unique_node_index(
+            scene,
+            &track.target_name,
+            &format!("animation {} track target", animation.name),
+        ),
+    }
+}
+
+fn find_unique_node_index(scene: &NwnScene, name: &str, context: &str) -> ModelResult<usize> {
+    let mut matches = scene
+        .nodes
+        .iter()
+        .enumerate()
+        .filter_map(|(index, node)| node.name.eq_ignore_ascii_case(name).then_some(index));
+    let first = matches.next().ok_or_else(|| {
+        ModelError::msg(format!("{context} {} does not exist in the scene", name))
+    })?;
+    if matches.next().is_some() {
+        return Err(ModelError::msg(format!(
+            "{context} {} is ambiguous because multiple scene nodes share that name",
+            name
+        )));
+    }
+    Ok(first)
+}
+
+fn validate_uniform_scale(scale: &[f32; 3], context: &str) -> ModelResult<f32> {
+    if scale[0] != scale[1] || scale[1] != scale[2] {
+        return Err(ModelError::msg(format!(
+            "{context} uses non-uniform scale [{}, {}, {}], which NWN MDL cannot serialize",
+            scale[0], scale[1], scale[2]
+        )));
+    }
+    Ok(scale[0])
 }
 
 /// Lowers a semantic MDL model into an engine-neutral scene representation.
@@ -1086,15 +1756,16 @@ struct BaseMeshLayout {
 #[allow(clippy::panic)]
 #[cfg(test)]
 mod tests {
-    use std::error::Error;
+    use std::{error::Error, io::Cursor};
 
+    use nwnrs_resman::CachePolicy;
     use nwnrs_test_support::{
         demand_resource, require_game_resource, skip_if_game_resources_unavailable,
     };
 
     use crate::{
-        MODEL_RES_TYPE, NwnPropertyValue, NwnTextureSlot, lower_binary_model_to_ascii,
-        parse_scene_model, read_binary_model_from_res, read_scene_model_auto_from_res,
+        BinaryModel, MODEL_RES_TYPE, NwnPropertyValue, NwnScene, NwnTextureSlot,
+        lower_binary_model_to_ascii, parse_scene_model, read_scene_model, write_scene_model,
     };
 
     #[test]
@@ -1479,15 +2150,136 @@ donemodel demo
         assert!(material.textures.is_empty());
     }
 
+    #[test]
+    fn scene_writer_roundtrips_canonical_model() -> Result<(), Box<dyn Error>> {
+        let scene = match shipped_ascii_scene_fixture() {
+            Ok(scene) => scene,
+            Err(error) => return skip_if_game_resources_unavailable(error),
+        };
+
+        let mut encoded = Vec::new();
+        if let Err(error) = write_scene_model(&mut encoded, &scene) {
+            panic!("write scene model: {error}");
+        }
+
+        let mut cursor = Cursor::new(encoded);
+        let reparsed = read_scene_model(&mut cursor).unwrap_or_else(|error| {
+            panic!("read rewritten scene model: {error}");
+        });
+        assert_eq!(normalize_scene(reparsed), normalize_scene(scene));
+        Ok(())
+    }
+
+    #[test]
+    fn scene_writer_rejects_invalid_parent_indices() {
+        let mut scene = writable_scene_fixture();
+        scene
+            .nodes
+            .get_mut(1)
+            .unwrap_or_else(|| panic!("writable scene fixture missing body node"))
+            .parent = Some(usize::MAX);
+
+        let error = write_scene_model(&mut Vec::new(), &scene).unwrap_err();
+        assert!(error.to_string().contains("invalid parent index"));
+    }
+
+    #[test]
+    fn scene_writer_rejects_invalid_material_indices() {
+        let mut scene = writable_scene_fixture();
+        scene
+            .meshes
+            .get_mut(0)
+            .and_then(|mesh| mesh.primitives.get_mut(0))
+            .unwrap_or_else(|| panic!("writable scene fixture missing body primitive"))
+            .material = Some(usize::MAX);
+
+        let error = write_scene_model(&mut Vec::new(), &scene).unwrap_err();
+        assert!(error.to_string().contains("invalid material index"));
+    }
+
+    #[test]
+    fn scene_writer_rejects_invalid_animation_targets() {
+        let mut scene = writable_scene_fixture();
+        scene
+            .animations
+            .get_mut(0)
+            .and_then(|animation| animation.node_tracks.get_mut(0))
+            .unwrap_or_else(|| panic!("writable scene fixture missing animation track"))
+            .target_node = Some(usize::MAX);
+
+        let error = write_scene_model(&mut Vec::new(), &scene).unwrap_err();
+        assert!(error.to_string().contains("invalid target index"));
+    }
+
+    #[test]
+    fn scene_writer_rejects_non_uniform_scale() {
+        let mut scene = writable_scene_fixture();
+        scene
+            .nodes
+            .get_mut(1)
+            .unwrap_or_else(|| panic!("writable scene fixture missing body node"))
+            .local_transform
+            .scale = [1.0, 2.0, 1.0];
+
+        let error = write_scene_model(&mut Vec::new(), &scene).unwrap_err();
+        assert!(error.to_string().contains("non-uniform scale"));
+    }
+
     fn shipped_ascii_scene_fixture() -> Result<crate::NwnScene, Box<dyn Error>> {
         let res = require_game_resource(demand_resource("a_ba_casts", MODEL_RES_TYPE))?;
-        let binary = read_binary_model_from_res(&res, true)?;
+        let binary = BinaryModel::from_res(&res, CachePolicy::Use)?;
         let ascii = lower_binary_model_to_ascii(&binary)?;
         Ok(parse_scene_model(&ascii.to_text())?)
     }
 
     fn shipped_compiled_scene_fixture() -> Result<crate::NwnScene, Box<dyn Error>> {
         let res = require_game_resource(demand_resource("a_ba2", MODEL_RES_TYPE))?;
-        Ok(read_scene_model_auto_from_res(&res, true)?)
+        Ok(NwnScene::from_auto_res(&res, CachePolicy::Use)?)
+    }
+
+    fn normalize_scene(mut scene: NwnScene) -> NwnScene {
+        scene.diagnostics.clear();
+        scene
+    }
+
+    fn writable_scene_fixture() -> NwnScene {
+        parse_scene_model(
+            "\
+newmodel demo
+setsupermodel demo null
+classification character
+setanimationscale 1
+beginmodelgeom demo
+node dummy demo
+  parent NULL
+endnode
+node trimesh body
+  parent demo
+  bitmap tex01
+  verts 3
+    0 0 0
+    1 0 0
+    0 1 0
+  faces 1
+    0 1 2  0  0 1 2  0
+  tverts 3
+    0 0 0
+    1 0 0
+    0 1 0
+endnode
+endmodelgeom demo
+newanim idle demo
+  length 1
+  transtime 0.25
+  animroot body
+  node trimesh body
+    positionkey 1
+      0 0 0 0
+  endnode
+doneanim idle demo
+donemodel demo
+",
+        )
+        .unwrap_or_else(|error| panic!("parse writable scene fixture: {error}"))
     }
 }

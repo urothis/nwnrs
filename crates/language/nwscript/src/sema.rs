@@ -1759,6 +1759,7 @@ fn constant_from_builtin_value(value: &BuiltinValue) -> Option<ConstantValue> {
         BuiltinValue::LocationInvalid => Some(ConstantValue::LocationInvalid),
         BuiltinValue::Json(value) => Some(ConstantValue::Json(value.clone())),
         BuiltinValue::Vector(value) => Some(ConstantValue::Vector(*value)),
+        BuiltinValue::Raw(_) => None,
     }
 }
 

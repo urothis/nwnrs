@@ -512,7 +512,7 @@ fn parse_entry_order(
     entries
         .into_iter()
         .map(|entry| {
-            resref::new_resolved_res_ref_from_filename(&entry)
+            resref::ResolvedResRef::from_filename(&entry)
                 .map(Into::into)
                 .map_err(|error| {
                     format!(
@@ -546,7 +546,7 @@ fn parse_entry_algorithms(
     entries
         .into_iter()
         .map(|(entry, algorithm)| {
-            let rr = resref::new_resolved_res_ref_from_filename(&entry)
+            let rr = resref::ResolvedResRef::from_filename(&entry)
                 .map(Into::into)
                 .map_err(|error| {
                     format!(
@@ -632,11 +632,9 @@ mod tests {
             loc_strings:           BTreeMap::from([(0, "Hello".to_string())]),
             oid:                   Some("0123456789abcdef01234567".to_string()),
             resource_list_padding: 12,
-            entry_order:           vec![
-                resref::new_resolved_res_ref_from_filename("alpha.uti")?.into(),
-            ],
+            entry_order:           vec![resref::ResolvedResRef::from_filename("alpha.uti")?.into()],
             entry_algorithms:      BTreeMap::from([(
-                resref::new_resolved_res_ref_from_filename("alpha.uti")?.into(),
+                resref::ResolvedResRef::from_filename("alpha.uti")?.into(),
                 compressedbuf::Algorithm::Zlib,
             )]),
             file_md5s:             BTreeMap::from([(
@@ -701,7 +699,7 @@ mod tests {
         let entries = parse_entry_order(vec!["alpha.uti".to_string()], Path::new("meta.json"))?;
         assert_eq!(
             entries,
-            vec![resref::new_res_ref("alpha", restype::ResType(2025))?]
+            vec![resref::ResRef::new("alpha", restype::ResType(2025))?]
         );
         Ok(())
     }

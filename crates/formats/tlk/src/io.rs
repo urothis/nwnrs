@@ -8,12 +8,27 @@ use nwnrs_resman::prelude::*;
 use tracing::{debug, instrument};
 
 use crate::{
-    DATA_ELEMENT_SIZE, HEADER_SIZE, SingleTlk, TlkEntry, TlkError, TlkResult, decode_sound_res_ref,
+    DATA_ELEMENT_SIZE, HEADER_SIZE, SingleTlk, Tlk, TlkEntry, TlkError, TlkResult,
+    decode_sound_res_ref,
 };
 
+/// Trait object helper for TLK write targets that must support both writing
+/// and seeking.
+pub trait TlkWriteStream: Write + Seek {}
+
+impl<T: Write + Seek + ?Sized> TlkWriteStream for T {}
+
+/// Write targets for one male/female TLK layer in a chain.
+pub struct TlkLayerWriteTarget<'a> {
+    /// Writer for the male TLK table, when present.
+    pub male:   Option<&'a mut dyn TlkWriteStream>,
+    /// Writer for the female TLK table, when present.
+    pub female: Option<&'a mut dyn TlkWriteStream>,
+}
+
 /// Reads a single-language TLK table from a reader.
-#[instrument(level = "debug", skip_all, err, fields(use_cache))]
-pub fn read_single_tlk<R>(mut reader: R, use_cache: bool) -> TlkResult<SingleTlk>
+#[instrument(level = "debug", skip_all, err, fields(cache_policy = ?cache_policy))]
+pub fn read_single_tlk<R>(mut reader: R, cache_policy: CachePolicy) -> TlkResult<SingleTlk>
 where
     R: Read + Seek + Send + 'static,
 {
@@ -46,11 +61,10 @@ where
     result.io_entries_offset = entries_offset;
     result.source_bytes = Some(bytes);
     result.source_language = Some(language);
-    result.use_cache = use_cache;
-    result.io_cache = Some(WeightedLru::new(
-        std::mem::size_of::<TlkEntry>() * entry_count.max(1) / 2,
-        1,
-    ));
+    result.cache_policy = cache_policy;
+    result.io_cache = cache_policy
+        .uses_cache()
+        .then(|| WeightedLru::new(std::mem::size_of::<TlkEntry>() * entry_count.max(1) / 2, 1));
     debug!(entry_count = result.io_entry_count, language = ?result.language, "read tlk");
     Ok(result)
 }
@@ -142,10 +156,53 @@ pub fn write_single_tlk<W: Write + Seek>(writer: &mut W, tlk: &mut SingleTlk) ->
     Ok(())
 }
 
-/// Reads a single-language TLK table from a [`Res`].
-#[instrument(level = "debug", skip_all, err, fields(use_cache))]
-pub fn read_single_tlk_from_res(res: &Res, use_cache: bool) -> TlkResult<SingleTlk> {
-    SingleTlk::from_res(res, use_cache)
+/// Writes a layered TLK chain to explicit male/female layer targets.
+#[instrument(level = "debug", skip_all, err, fields(layer_count = tlk.chain.len()))]
+pub fn write_tlk_chain(targets: &mut [TlkLayerWriteTarget<'_>], tlk: &mut Tlk) -> TlkResult<()> {
+    if targets.len() != tlk.chain.len() {
+        return Err(TlkError::msg(format!(
+            "tlk chain has {} layers but {} write targets were provided",
+            tlk.chain.len(),
+            targets.len()
+        )));
+    }
+
+    for (layer_index, (target, pair)) in targets.iter_mut().zip(tlk.chain.iter_mut()).enumerate() {
+        write_optional_layer(
+            layer_index,
+            "male",
+            target.male.as_mut(),
+            pair.male.as_mut(),
+        )?;
+        write_optional_layer(
+            layer_index,
+            "female",
+            target.female.as_mut(),
+            pair.female.as_mut(),
+        )?;
+    }
+
+    Ok(())
+}
+
+fn write_optional_layer(
+    layer_index: usize,
+    gender: &str,
+    writer: Option<&mut &mut dyn TlkWriteStream>,
+    tlk: Option<&mut SingleTlk>,
+) -> TlkResult<()> {
+    match (writer, tlk) {
+        (Some(writer), Some(tlk)) => write_single_tlk(writer, tlk),
+        (None, Some(_)) => Err(TlkError::msg(format!(
+            "tlk layer {} has a {} table but no writer target was provided",
+            layer_index, gender
+        ))),
+        (Some(_), None) => Err(TlkError::msg(format!(
+            "tlk layer {} has a {} writer target but no table to write",
+            layer_index, gender
+        ))),
+        (None, None) => Ok(()),
+    }
 }
 
 pub(crate) fn get_from_io(tlk: &SingleTlk, str_ref: StrRef) -> TlkResult<(usize, TlkEntry)> {
@@ -269,8 +326,11 @@ fn write_f32<W: Write + ?Sized>(writer: &mut W, value: f32) -> io::Result<()> {
 mod tests {
     use std::io::Cursor;
 
-    use super::{read_single_tlk, write_single_tlk};
-    use crate::{SingleTlk, TlkEntry};
+    use nwnrs_localization::Gender;
+    use nwnrs_resman::CachePolicy;
+
+    use super::{TlkLayerWriteTarget, read_single_tlk, write_single_tlk, write_tlk_chain};
+    use crate::{SingleTlk, Tlk, TlkEntry, TlkPair};
 
     #[test]
     fn tlk_preserves_descriptor_fields_when_only_text_changes() {
@@ -297,8 +357,8 @@ mod tests {
         let mut encoded = Cursor::new(Vec::new());
         write_single_tlk(&mut encoded, &mut tlk).expect("encode source tlk");
 
-        let mut parsed =
-            read_single_tlk(Cursor::new(encoded.into_inner()), false).expect("parse tlk");
+        let mut parsed = read_single_tlk(Cursor::new(encoded.into_inner()), CachePolicy::Bypass)
+            .expect("parse tlk");
         let mut edited = parsed.get(0).expect("load entry").expect("entry present");
         edited.text = "new\r\ntext".to_string();
         parsed.set_entry(0, edited);
@@ -307,7 +367,8 @@ mod tests {
         write_single_tlk(&mut rewritten, &mut parsed).expect("rewrite tlk");
 
         let mut reparsed =
-            read_single_tlk(Cursor::new(rewritten.into_inner()), false).expect("reparse tlk");
+            read_single_tlk(Cursor::new(rewritten.into_inner()), CachePolicy::Bypass)
+                .expect("reparse tlk");
         let entry = reparsed
             .get(0)
             .expect("load rewritten entry")
@@ -329,8 +390,8 @@ mod tests {
         let mut encoded = Cursor::new(Vec::new());
         write_single_tlk(&mut encoded, &mut tlk).expect("encode tlk");
 
-        let mut parsed =
-            read_single_tlk(Cursor::new(encoded.into_inner()), false).expect("parse tlk");
+        let mut parsed = read_single_tlk(Cursor::new(encoded.into_inner()), CachePolicy::Bypass)
+            .expect("parse tlk");
         let entry = parsed.get(0).expect("load entry").expect("entry present");
 
         assert_eq!(entry.text, "fixture");
@@ -339,5 +400,125 @@ mod tests {
         assert_eq!(entry.volume_variance, 0);
         assert_eq!(entry.pitch_variance, 0);
         assert_eq!(entry.sound_length, 1.25);
+    }
+
+    #[test]
+    fn tlk_chain_writes_each_layer_and_preserves_lookup_order() {
+        let mut high_male = SingleTlk::new();
+        high_male.set_entry(0, TlkEntry::new("high male", "", 0.0));
+
+        let mut low_male = SingleTlk::new();
+        low_male.set_entry(0, TlkEntry::new("low male", "", 0.0));
+        let mut low_female = SingleTlk::new();
+        low_female.set_entry(0, TlkEntry::new("low female", "", 0.0));
+
+        let mut chain = Tlk::new(vec![
+            TlkPair {
+                male:   Some(high_male),
+                female: None,
+            },
+            TlkPair {
+                male:   Some(low_male),
+                female: Some(low_female),
+            },
+        ]);
+
+        let mut high_male_bytes = Cursor::new(Vec::new());
+        let mut low_male_bytes = Cursor::new(Vec::new());
+        let mut low_female_bytes = Cursor::new(Vec::new());
+        let mut targets = [
+            TlkLayerWriteTarget {
+                male:   Some(&mut high_male_bytes),
+                female: None,
+            },
+            TlkLayerWriteTarget {
+                male:   Some(&mut low_male_bytes),
+                female: Some(&mut low_female_bytes),
+            },
+        ];
+
+        write_tlk_chain(&mut targets, &mut chain).expect("write tlk chain");
+
+        let reparsed_high_male = read_single_tlk(
+            Cursor::new(high_male_bytes.into_inner()),
+            CachePolicy::Bypass,
+        )
+        .expect("read back high male");
+        let reparsed_low_male = read_single_tlk(
+            Cursor::new(low_male_bytes.into_inner()),
+            CachePolicy::Bypass,
+        )
+        .expect("read back low male");
+        let reparsed_low_female = read_single_tlk(
+            Cursor::new(low_female_bytes.into_inner()),
+            CachePolicy::Bypass,
+        )
+        .expect("read back low female");
+
+        let mut reparsed_chain = Tlk::new(vec![
+            TlkPair {
+                male:   Some(reparsed_high_male),
+                female: None,
+            },
+            TlkPair {
+                male:   Some(reparsed_low_male),
+                female: Some(reparsed_low_female),
+            },
+        ]);
+
+        let male = reparsed_chain
+            .get(0, Gender::Male)
+            .expect("query male")
+            .expect("male entry present");
+        let female = reparsed_chain
+            .get(0, Gender::Female)
+            .expect("query female")
+            .expect("female entry present");
+
+        assert_eq!(male.text, "high male");
+        assert_eq!(female.text, "low female");
+    }
+
+    #[test]
+    fn tlk_chain_rejects_target_count_mismatch() {
+        let mut tlk = Tlk::new(vec![TlkPair {
+            male:   Some(SingleTlk::new()),
+            female: None,
+        }]);
+        let mut targets: [TlkLayerWriteTarget<'_>; 0] = [];
+
+        let error = write_tlk_chain(&mut targets, &mut tlk).unwrap_err();
+        assert!(error.to_string().contains("write targets"));
+    }
+
+    #[test]
+    fn tlk_chain_rejects_missing_writer_for_present_table() {
+        let mut tlk = Tlk::new(vec![TlkPair {
+            male:   Some(SingleTlk::new()),
+            female: None,
+        }]);
+        let mut targets = [TlkLayerWriteTarget {
+            male:   None,
+            female: None,
+        }];
+
+        let error = write_tlk_chain(&mut targets, &mut tlk).unwrap_err();
+        assert!(error.to_string().contains("no writer target"));
+    }
+
+    #[test]
+    fn tlk_chain_rejects_writer_for_missing_table() {
+        let mut tlk = Tlk::new(vec![TlkPair {
+            male:   None,
+            female: None,
+        }]);
+        let mut male_bytes = Cursor::new(Vec::new());
+        let mut targets = [TlkLayerWriteTarget {
+            male:   Some(&mut male_bytes),
+            female: None,
+        }];
+
+        let error = write_tlk_chain(&mut targets, &mut tlk).unwrap_err();
+        assert!(error.to_string().contains("no table to write"));
     }
 }

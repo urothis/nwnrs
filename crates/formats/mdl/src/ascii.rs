@@ -1,6 +1,6 @@
 use std::{
     fs::File,
-    io::{self, Read, Write},
+    io::{Read, Write},
     path::Path,
 };
 
@@ -293,6 +293,25 @@ impl AsciiModel {
         write_statement_line(&mut out, 0, "donemodel", &[self.done_model_name.as_str()]);
         out
     }
+
+    /// Reads an ASCII MDL model from disk.
+    pub fn from_file(path: impl AsRef<Path>) -> ModelResult<Self> {
+        let mut file = File::open(path.as_ref())?;
+        read_ascii_model(&mut file)
+    }
+
+    /// Reads an ASCII MDL model from a [`Res`].
+    pub fn from_res(res: &Res, cache_policy: CachePolicy) -> ModelResult<Self> {
+        if res.resref().res_type() != MODEL_RES_TYPE {
+            return Err(ModelError::msg(format!(
+                "expected mdl resource, got {}",
+                res.resref()
+            )));
+        }
+
+        let bytes = res.read_all(cache_policy)?;
+        parse_ascii_model_bytes(&bytes)
+    }
 }
 
 impl Model {
@@ -344,34 +363,14 @@ pub fn read_ascii_model<R: Read>(reader: &mut R) -> ModelResult<AsciiModel> {
     parse_ascii_model_bytes(&bytes)
 }
 
-/// Reads an ASCII MDL model from disk.
-#[instrument(level = "debug", skip_all, err, fields(path = %path.as_ref().display()))]
-pub fn read_ascii_model_from_file(path: impl AsRef<Path>) -> ModelResult<AsciiModel> {
-    let mut file = File::open(path.as_ref())?;
-    read_ascii_model(&mut file)
-}
-
-/// Reads an ASCII MDL model from a [`Res`].
-#[instrument(level = "debug", skip_all, err, fields(resref = %res.resref(), use_cache))]
-pub fn read_ascii_model_from_res(res: &Res, use_cache: bool) -> ModelResult<AsciiModel> {
-    if res.resref().res_type() != MODEL_RES_TYPE {
-        return Err(ModelError::msg(format!(
-            "expected mdl resource, got {}",
-            res.resref()
-        )));
-    }
-
-    let bytes = res.read_all(use_cache)?;
-    parse_ascii_model_bytes(&bytes)
-}
-
 /// Writes a parsed ASCII MDL model using canonical indentation.
 #[instrument(level = "debug", skip_all, err, fields(geometry_name = %model.geometry_name))]
-pub fn write_ascii_model<W: Write>(writer: &mut W, model: &AsciiModel) -> io::Result<()> {
-    writer.write_all(model.to_text().as_bytes())
+pub fn write_ascii_model<W: Write>(writer: &mut W, model: &AsciiModel) -> ModelResult<()> {
+    writer.write_all(model.to_text().as_bytes())?;
+    Ok(())
 }
 
-fn lower_semantic_model_to_ascii(
+pub(crate) fn lower_semantic_model_to_ascii(
     model: &SemanticModel,
     compiled_source_bytes: Option<&[u8]>,
 ) -> AsciiModel {
@@ -1552,14 +1551,14 @@ fn write_row_line(out: &mut String, indent: usize, row: &[String]) {
 mod tests {
     use std::{error::Error, io::Cursor};
 
+    use nwnrs_resman::CachePolicy;
     use nwnrs_test_support::{
         demand_resource, require_game_resource, skip_if_game_resources_unavailable,
     };
 
     use crate::{
-        AsciiElement, AsciiPayloadKind, MODEL_RES_TYPE, compile_ascii_model,
-        lower_binary_model_to_ascii, parse_ascii_model, read_binary_model_from_res,
-        write_ascii_model,
+        AsciiElement, AsciiPayloadKind, BinaryModel, MODEL_RES_TYPE, compile_ascii_model,
+        lower_binary_model_to_ascii, parse_ascii_model, write_ascii_model,
     };
 
     #[test]
@@ -1725,7 +1724,7 @@ donemodel demo
 
     fn shipped_ascii_fixture() -> Result<crate::AsciiModel, Box<dyn Error>> {
         let res = require_game_resource(demand_resource("a_ba_casts", MODEL_RES_TYPE))?;
-        let binary = read_binary_model_from_res(&res, true)?;
+        let binary = BinaryModel::from_res(&res, CachePolicy::Use)?;
         Ok(lower_binary_model_to_ascii(&binary)?)
     }
 }

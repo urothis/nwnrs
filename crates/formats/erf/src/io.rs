@@ -165,16 +165,16 @@ pub fn read_erf_shared(stream: SharedReadSeek, filename: String) -> ErfResult<Er
             EMPTY_SECURE_HASH
         };
 
-        let mut rr = match new_res_ref(res_ref_raw, nwnrs_restype::ResType(res_type)) {
+        let mut rr = match ResRef::new(res_ref_raw, nwnrs_restype::ResType(res_type)) {
             Ok(rr) => rr,
-            Err(_) => new_res_ref(format!("invalid_{index}"), nwnrs_restype::ResType(res_type))?,
+            Err(_) => ResRef::new(format!("invalid_{index}"), nwnrs_restype::ResType(res_type))?,
         };
 
         if let Some(existing) = entries.get(&rr) {
             if existing.io_offset() == meta.offset && existing.io_size() == meta.disk_size as i64 {
                 continue;
             }
-            rr = new_res_ref(
+            rr = ResRef::new(
                 format!("__erfdup__{index}"),
                 nwnrs_restype::ResType(res_type),
             )?;
@@ -298,14 +298,14 @@ mod tests {
     use nwnrs_checksums::prelude::secure_hash;
     use nwnrs_compressedbuf::prelude::Algorithm;
     use nwnrs_exo::prelude::ExoResFileCompressionType;
-    use nwnrs_resref::prelude::new_resolved_res_ref_from_filename;
+    use nwnrs_resref::ResolvedResRef;
 
     use super::{ErfVersion, read_erf, write_erf_with_options};
     use crate::ErfWriteOptions;
 
     #[test]
     fn malformed_erf_resource_list_offset_is_rejected() {
-        let entry = new_resolved_res_ref_from_filename("test.utc")
+        let entry = ResolvedResRef::from_filename("test.utc")
             .expect("resref")
             .into();
         let mut encoded = Cursor::new(Vec::new());
@@ -399,7 +399,7 @@ where
     let mut exocomp = ExoResFileCompressionType::None;
 
     for (rr, res) in value.entries() {
-        payloads.insert(rr.clone(), res.read_all(false)?);
+        payloads.insert(rr.clone(), res.read_all(CachePolicy::Bypass)?);
         let algorithm = res.compressed_buf_algorithm().unwrap_or(Algorithm::None);
         if algorithm != Algorithm::None {
             exocomp = ExoResFileCompressionType::CompressedBuf;
