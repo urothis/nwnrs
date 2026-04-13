@@ -81,6 +81,7 @@ pub(crate) struct ConvertCmd {
 #[derive(FromArgs)]
 #[argh(subcommand, name = "inspect")]
 /// inspect a single NWN resource file by extension
+#[allow(clippy::struct_excessive_bools)]
 pub(crate) struct InspectCmd {
     #[argh(switch)]
     /// for .ncs input, render internal opcode/aux names instead of canonical
