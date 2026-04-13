@@ -608,9 +608,9 @@ fn instruction_extra_size(opcode: NcsOpcode, auxcode: NcsAuxCode, bytes: &[u8]) 
         NcsOpcode::RunstackCopy
         | NcsOpcode::RunstackCopyBase
         | NcsOpcode::Assignment
-        | NcsOpcode::AssignmentBase => 6,
+        | NcsOpcode::AssignmentBase
+        | NcsOpcode::DeStruct => 6,
         NcsOpcode::Equal | NcsOpcode::NotEqual if auxcode == NcsAuxCode::TypeTypeStructStruct => 2,
-        NcsOpcode::DeStruct => 6,
         _ => 0,
     }
 }
