@@ -148,7 +148,8 @@ pub(crate) struct UnpackCmd {
 
 #[derive(FromArgs)]
 #[argh(subcommand, name = "pack")]
-/// pack a directory into NWN binary form
+/// pack a directory into NWN binary form or package an install-backed resource
+/// view
 pub(crate) struct PackCmd {
     #[argh(switch, short = 'f')]
     /// overwrite existing output files
@@ -178,13 +179,17 @@ pub(crate) struct PackCmd {
     /// override archive header type when packing erf/mod/hak/nwm
     pub(crate) erf_type: Option<String>,
 
-    #[argh(positional)]
-    /// source file or directory
-    pub(crate) input: PathBuf,
+    #[argh(option)]
+    /// package mode: explicit NWN install root override
+    pub(crate) root: Option<PathBuf>,
+
+    #[argh(option)]
+    /// package mode: language root under root/lang to resolve
+    pub(crate) language: Option<String>,
 
     #[argh(positional)]
-    /// output file
-    pub(crate) output: PathBuf,
+    /// explicit pack mode: INPUT OUTPUT; package mode: KEY_NAME OUTPUT_DIR
+    pub(crate) paths: Vec<PathBuf>,
 }
 
 pub(crate) struct KeyPackCmd {
@@ -411,5 +416,65 @@ mod tests {
         assert!(no_langspec);
         assert_eq!(langspec, Some(PathBuf::from("specs/custom.nss")));
         assert_eq!(path, PathBuf::from("scripts/test.ncs"));
+    }
+
+    #[test]
+    fn parses_pack_command_for_generic_packing() {
+        let cli = Cli::from_args(
+            &["nwnrs"],
+            &["pack", "--data-version", "E1", "input", "output.key"],
+        )
+        .unwrap_or_else(|error| panic!("parse pack args: {error:?}"));
+
+        let Command::Pack(cmd) = cli.command else {
+            panic!("expected pack command");
+        };
+
+        assert_eq!(cmd.data_version, "E1");
+        assert_eq!(
+            cmd.paths,
+            vec![PathBuf::from("input"), PathBuf::from("output.key")]
+        );
+        assert_eq!(cmd.root, None);
+        assert_eq!(cmd.language, None);
+    }
+
+    #[test]
+    fn parses_pack_command_for_install_packaging() {
+        let cli = Cli::from_args(
+            &["nwnrs"],
+            &[
+                "pack",
+                "-f",
+                "--root",
+                "/srv/nwn",
+                "--language",
+                "en",
+                "--data-version",
+                "E1",
+                "--data-compression",
+                "zstd",
+                "custom_base.key",
+                "docker/data/data",
+            ],
+        )
+        .unwrap_or_else(|error| panic!("parse pack args: {error:?}"));
+
+        let Command::Pack(cmd) = cli.command else {
+            panic!("expected pack command");
+        };
+
+        assert!(cmd.force);
+        assert_eq!(cmd.root, Some(PathBuf::from("/srv/nwn")));
+        assert_eq!(cmd.language, Some("en".to_string()));
+        assert_eq!(cmd.data_version, "E1");
+        assert_eq!(cmd.data_compression, "zstd");
+        assert_eq!(
+            cmd.paths,
+            vec![
+                PathBuf::from("custom_base.key"),
+                PathBuf::from("docker/data/data")
+            ]
+        );
     }
 }
