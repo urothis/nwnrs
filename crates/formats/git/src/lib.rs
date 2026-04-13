@@ -1128,11 +1128,11 @@ fn put_list<T, F>(target: &mut GffStruct, label: &str, values: &[T], mut build: 
 where
     F: FnMut(&T) -> GitResult<GffStruct>,
 {
-    let built = values
+    let structs = values
         .iter()
         .map(&mut build)
         .collect::<GitResult<Vec<_>>>()?;
-    put_list_value(target, label, built)?;
+    put_list_value(target, label, structs)?;
     Ok(())
 }
 

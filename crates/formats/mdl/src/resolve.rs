@@ -329,7 +329,7 @@ fn resolve_model_backed_texture_candidate(
             attempted: Vec::new(),
         });
     };
-    let Some(model_res) = resman.get(&model_ref) else {
+    let Some(model_resource) = resman.get(&model_ref) else {
         return SceneTextureResolution::Missing(UnresolvedTexture {
             texture:   original_texture.clone(),
             attempted: Vec::new(),
@@ -339,7 +339,7 @@ fn resolve_model_backed_texture_candidate(
         return SceneTextureResolution::Ignored;
     }
 
-    let Ok(nested_scene) = NwnScene::from_auto_res(&model_res, CachePolicy::Use) else {
+    let Ok(nested_scene) = NwnScene::from_auto_res(&model_resource, CachePolicy::Use) else {
         visited_models.remove(&trimmed.to_ascii_lowercase());
         return SceneTextureResolution::Ignored;
     };
