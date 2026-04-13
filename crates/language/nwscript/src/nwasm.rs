@@ -2,6 +2,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     error::Error,
     fmt,
+    fmt::Write,
 };
 
 use crate::{
@@ -447,7 +448,7 @@ pub fn render_disassembly_lines(lines: &[NcsAsmLine], options: NcsDisassemblyOpt
 
         let mut row = String::new();
         if options.offsets {
-            row.push_str(&format!("{:04}", line.offset));
+            let _ = write!(row, "{:04}", line.offset);
             row.push_str(": ");
         }
 
@@ -511,14 +512,14 @@ fn render_disassembly_with_ndb_lines(
 
         let mut row = String::new();
         if options.offsets {
-            row.push_str(&format!("{:04}", line.offset));
+            let _ = write!(row, "{:04}", line.offset);
             if options.local_offsets
                 && let Some(index) = current_function
                 && let Some(function) = functions.get(index)
             {
                 let local = local_offset(line.offset, function);
                 row.push(' ');
-                row.push_str(&format!("{local:04}"));
+                let _ = write!(row, "{local:04}");
             }
             row.push_str(": ");
         }
