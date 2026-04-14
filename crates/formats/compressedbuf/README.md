@@ -4,7 +4,7 @@ Reader and writer for the EXO compressed-buffer wrapper.
 
 ## Scope
 
-- parse the wrapper header, compression algorithm tag, and declared output size
+- parse the wrapper header, compression algorithm tag, and declared uncompressed output size
 - decompress wrapped payloads from byte slices or generic readers
 - compress payloads back into the same wrapper format
 
