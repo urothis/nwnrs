@@ -141,7 +141,7 @@ pub(crate) fn read_tlk_dto(bytes: &[u8]) -> Result<SingleTlkDto, JsValue> {
 pub(crate) fn write_tlk_dto(value: &SingleTlkDto) -> Result<Vec<u8>, JsValue> {
     if let Some(bytes) = unchanged_lossless_bytes(
         value,
-        &value.lossless,
+        value.lossless.as_ref(),
         |dto| &mut dto.lossless,
         "failed to fingerprint TLK DTO",
     )

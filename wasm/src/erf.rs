@@ -243,7 +243,7 @@ pub(crate) fn read_erf_dto(bytes: &[u8], filename: &str) -> Result<ErfDto, JsVal
 pub(crate) fn write_erf_dto(value: &ErfDto) -> Result<Vec<u8>, JsValue> {
     if let Some(bytes) = unchanged_lossless_bytes(
         value,
-        &value.lossless,
+        value.lossless.as_ref(),
         |dto| &mut dto.lossless,
         "failed to fingerprint ERF DTO",
     )

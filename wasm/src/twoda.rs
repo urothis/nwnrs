@@ -30,7 +30,7 @@ pub(crate) fn unchanged_twoda_bytes(value: &TwoDaDto) -> Result<Option<Vec<u8>>,
     semantic.lossless = None;
     unchanged_lossless_bytes(
         &semantic,
-        &value.lossless,
+        value.lossless.as_ref(),
         |dto| &mut dto.lossless,
         "failed to fingerprint 2DA DTO",
     )

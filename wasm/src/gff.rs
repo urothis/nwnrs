@@ -222,7 +222,7 @@ pub(crate) fn read_gff_dto(bytes: &[u8]) -> Result<GffRootDto, JsValue> {
 pub(crate) fn write_gff_dto(value: &GffRootDto) -> Result<Vec<u8>, JsValue> {
     if let Some(bytes) = unchanged_lossless_bytes(
         value,
-        &value.lossless,
+        value.lossless.as_ref(),
         |dto| &mut dto.lossless,
         "failed to fingerprint GFF DTO",
     )

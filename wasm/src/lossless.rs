@@ -42,7 +42,7 @@ where
 
 pub(crate) fn unchanged_lossless_bytes<T>(
     value: &T,
-    lossless: &Option<LosslessDtoMetadata>,
+    lossless: Option<&LosslessDtoMetadata>,
     metadata_slot: fn(&mut T) -> &mut Option<LosslessDtoMetadata>,
     context: &str,
 ) -> Result<Option<Vec<u8>>, String>
