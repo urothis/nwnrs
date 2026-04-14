@@ -1,10 +1,8 @@
-<h1 align="center">
-  <img src="assets/logo/icon.svg" width="150" alt="nwnrs logo"/><br>
-  nwnrs
-</h1>
-<div align="center">
-  Rust tools and libraries for Neverwinter Nights
-</div>
+# nwnrs
+
+![nwnrs logo](assets/logo/icon.svg)
+
+Rust tools and libraries for Neverwinter Nights
 
 ## What Is This?
 
