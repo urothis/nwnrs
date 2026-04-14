@@ -25,6 +25,9 @@ cargo run -p nwnrs-cli -- unpack path/to/script.ncs -d out/
 cargo run -p nwnrs-cli -- pack out/ rebuilt.ncs
 cargo run -p nwnrs-cli -- pack nwn_base.key docker/data/data
 cargo run -p nwnrs-cli -- nwsync print path/to/repository --manifest <sha1>
+cargo run -p nwnrs-cli -- nwsync fetch https://example.com/manifest/abc123 -o repo/
+cargo run -p nwnrs-cli -- nwsync prune path/to/repository
+cargo run -p nwnrs-cli -- nwsync write path/to/resources/ output.manifest
 ```
 
 Useful patterns:
