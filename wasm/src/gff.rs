@@ -155,7 +155,7 @@ fn gff_value_to_dto(value: &gff::GffValue) -> GffValueDto {
 
 fn dto_to_gff_root(value: &GffRootDto) -> Result<gff::GffRoot, JsValue> {
     let mut root = gff::GffRoot::new(&value.file_type);
-    root.file_version = value.file_version.clone();
+    root.file_version.clone_from(&value.file_version);
     root.root = dto_to_gff_struct(&value.root)?;
     Ok(root)
 }
