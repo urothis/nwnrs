@@ -42,6 +42,12 @@ nwnrs-cli convert input.png output.tga
 nwnrs-cli convert path/to/model.mdl out/model_ascii.mdl
 nwnrs-cli convert out/model_ascii.mdl rebuilt/model.mdl
 
+# export one MDL scene to OBJ
+nwnrs-cli convert path/to/model.mdl out/model.obj
+
+# export an equipped creature blueprint to OBJ using installed resources
+nwnrs-cli convert --root /path/to/Neverwinter\ Nights --user /path/to/Neverwinter\ Nights out/player.utc out/player.obj
+
 # unpack and repack archives
 nwnrs-cli unpack path/to/module.mod -d out/
 nwnrs-cli pack out/ rebuilt.mod
@@ -108,6 +114,7 @@ More wasm details: [`wasm/README.md`](./wasm/README.md)
 - compile NWScript to `NCS` and `NDB`
 - disassemble `NCS` to asm text and assemble `.ncs.asm` back to bytecode
 - convert textures between `png`, `jpg`, `tga`, `dds`, and `webp`
+- export `mdl` scenes or equipped `utc` player creatures to flattened `obj`
 - load resources from installs, directories, archives, and manifests
 - lower compiled MDL into canonical ASCII
 

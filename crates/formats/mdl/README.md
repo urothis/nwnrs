@@ -7,6 +7,9 @@
 - read and write Neverwinter Nights `MDL` payloads
 - expose syntax-faithful ASCII and compiled-model parsing
 - lower models into richer semantic and scene-oriented representations
+- rewrite appearance-token slots before texture/model resolution
+- resolve equipped player-creature part attachments into composed scene trees
+- export scenes or composed scene trees as flattened Wavefront `OBJ`
 - write semantic and scene-oriented representations back as canonical ASCII
 - support inspection at multiple abstraction levels rather than only one
   canonical model
@@ -37,6 +40,9 @@ Choose the entry point that matches the fidelity you need rather than treating
   concepts
 - `scene`: engine-neutral scene lowering for rendering or tooling integrations
 - `resolve`: texture and material-reference resolution helpers
+- `appearance`: appearance-slot discovery and override application
+- `compose`: install-backed player-creature composition helpers
+- `obj`: flattened Wavefront OBJ export
 - `io` and `types`: typed read/write entry points and shared vocabulary
 
 ## See also

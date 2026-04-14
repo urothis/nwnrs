@@ -11,9 +11,11 @@ documentation = "https://docs.rs/nwnrs-mdl"
 readme = "README.md"
 
 [dependencies]
+nwnrs-gff.workspace = true
 nwnrs-resman.workspace = true
 nwnrs-resref.workspace = true
 nwnrs-restype.workspace = true
+nwnrs-twoda.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]

@@ -69,13 +69,41 @@ pub(crate) struct ConvertCmd {
     /// dds block format when OUTPUT ends in .dds: dxt1 or dxt5
     pub(crate) dds_format: String,
 
+    #[argh(option)]
+    /// install root for install-backed conversions such as utc -> obj
+    pub(crate) root: Option<PathBuf>,
+
+    #[argh(option)]
+    /// user directory for install-backed conversions; defaults to autodetect
+    pub(crate) user: Option<PathBuf>,
+
+    #[argh(option, default = "String::from(\"english\")")]
+    /// install language for install-backed conversions
+    pub(crate) language: String,
+
+    #[argh(switch)]
+    /// include the install override directory for install-backed conversions
+    pub(crate) load_ovr: bool,
+
+    #[argh(option)]
+    /// explicit animation name to snapshot for obj export
+    pub(crate) animation: Option<String>,
+
+    #[argh(option)]
+    /// animation time in seconds for obj export
+    pub(crate) time: Option<f32>,
+
+    #[argh(switch)]
+    /// list available animations for mdl or utc input and exit
+    pub(crate) list_animations: bool,
+
     #[argh(positional)]
     /// input file path
     pub(crate) input: PathBuf,
 
     #[argh(positional)]
-    /// output file path
-    pub(crate) output: PathBuf,
+    /// output file path when converting to a new file
+    pub(crate) output: Option<PathBuf>,
 }
 
 #[derive(FromArgs)]
@@ -367,8 +395,41 @@ mod tests {
             panic!("expected convert command");
         };
         assert!(cmd.force);
+        assert_eq!(cmd.root, None);
+        assert_eq!(cmd.user, None);
+        assert_eq!(cmd.language, "english");
+        assert!(!cmd.load_ovr);
+        assert_eq!(cmd.animation, None);
+        assert_eq!(cmd.time, None);
+        assert!(!cmd.list_animations);
         assert_eq!(cmd.input, PathBuf::from("models/input.mdl"));
-        assert_eq!(cmd.output, PathBuf::from("models/output.mdl"));
+        assert_eq!(cmd.output, Some(PathBuf::from("models/output.mdl")));
+    }
+
+    #[test]
+    fn parses_convert_command_for_animation_listing_without_output() {
+        let cli = Cli::from_args(
+            &["nwnrs"],
+            &[
+                "convert",
+                "--list-animations",
+                "--animation",
+                "default",
+                "--time",
+                "0.0",
+                "models/input.mdl",
+            ],
+        )
+        .unwrap_or_else(|error| panic!("parse convert args: {error:?}"));
+
+        let Command::Convert(cmd) = cli.command else {
+            panic!("expected convert command");
+        };
+        assert!(cmd.list_animations);
+        assert_eq!(cmd.animation.as_deref(), Some("default"));
+        assert_eq!(cmd.time, Some(0.0));
+        assert_eq!(cmd.input, PathBuf::from("models/input.mdl"));
+        assert_eq!(cmd.output, None);
     }
 
     #[test]

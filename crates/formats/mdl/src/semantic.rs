@@ -1023,10 +1023,33 @@ fn lower_binary_skin_weights(
                         return None;
                     }
                     let mapped_part = skin
-                        .bone_mapping
+                        .bone_parts
                         .get(usize::from(*index))
                         .copied()
-                        .unwrap_or(*index);
+                        .filter(|part| *part != u16::MAX)
+                        .or_else(|| {
+                            skin.bone_mapping
+                                .get(usize::from(*index))
+                                .copied()
+                                .filter(|part| *part != u16::MAX)
+                        })
+                        .or_else(|| {
+                            skin.bone_mapping
+                                .get(usize::from(*index))
+                                .copied()
+                                .and_then(|mapped| {
+                                    skin.bone_parts
+                                        .get(usize::from(mapped))
+                                        .copied()
+                                        .filter(|part| *part != u16::MAX)
+                                })
+                        })
+                        .unwrap_or_else(|| {
+                            skin.bone_mapping
+                                .get(usize::from(*index))
+                                .copied()
+                                .unwrap_or(*index)
+                        });
                     let bone = part_number_to_name
                         .get(&i32::from(mapped_part))
                         .cloned()
@@ -2786,6 +2809,33 @@ donemodel demo
                 .map(|weight| weight.bone.as_str()),
             Some("lforearm_g")
         );
+    }
+
+    #[test]
+    fn binary_skin_weights_prefer_bone_parts_when_mapping_is_unset() {
+        let skin = crate::BinarySkin {
+            bone_mapping:        vec![u16::MAX, u16::MAX],
+            vertex_weights:      vec![[1.0, 0.0, 0.0, 0.0]],
+            vertex_bone_indices: vec![[0, 0, 0, 0]],
+            bone_parts:          vec![83, 84],
+        };
+        let part_number_to_name = BTreeMap::from([
+            (83, "Dragon_Rwing".to_string()),
+            (84, "Dragon_Lwing".to_string()),
+        ]);
+
+        let lowered = super::lower_binary_skin_weights(&skin, &part_number_to_name);
+
+        assert_eq!(lowered.len(), 1);
+        let row = lowered
+            .first()
+            .unwrap_or_else(|| panic!("lowered weights missing first row"));
+        assert_eq!(row.len(), 1);
+        let weight = row
+            .first()
+            .unwrap_or_else(|| panic!("lowered weights missing first influence"));
+        assert_eq!(weight.bone, "Dragon_Rwing");
+        assert_eq!(weight.weight, 1.0);
     }
 
     #[test]
