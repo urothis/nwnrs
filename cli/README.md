@@ -44,6 +44,8 @@ Useful patterns:
 
 ## CLI Behavior and Supported Commands
 
+Each command is implemented in its own source file:
+
 - [`main.rs`](./src/main.rs)
 - [`args.rs`](./src/args.rs)
 - [`convert.rs`](./src/convert.rs)
