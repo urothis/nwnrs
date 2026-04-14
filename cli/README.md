@@ -7,7 +7,7 @@ The command-line interface for inspecting, converting, packing, unpacking, and m
 Install from the repository:
 
 ```bash
-cargo install --git https://github.com/urothis/nwn-rs --bin nwnrs-cli
+cargo install --git https://github.com/urothis/nwnrs --bin nwnrs-cli
 ```
 
 Build or run the CLI from the workspace root:

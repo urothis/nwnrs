@@ -37,7 +37,7 @@ Operational and interface-specific docs live here:
 Install:
 
 ```bash
-cargo install --git https://github.com/urothis/nwn-rs --bin nwnrs-cli
+cargo install --git https://github.com/urothis/nwnrs --bin nwnrs-cli
 ```
 
 Use:
@@ -57,7 +57,7 @@ nwnrs-cli pack out/ rebuilt.mod
 
 ```toml
 [dependencies]
-nwnrs = { git = "https://github.com/urothis/nwn-rs" }
+nwnrs = { git = "https://github.com/urothis/nwnrs" }
 ```
 
 ```rust
