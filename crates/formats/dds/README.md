@@ -1,4 +1,4 @@
-# `nwnrs-dds`
+# nwnrs-dds
 
 Typed Neverwinter Nights `DDS` support.
 
