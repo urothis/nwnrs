@@ -124,8 +124,8 @@ Each variable-resource row records:
 
 - resource references remain typed rather than stringly indexed
 - the mapping from KEY entries to BIF-backed payload locations remains explicit
-- the same typed value may be inspected structurally and used as a resource
-  container
+- the same typed value may be inspected structurally and used as a
+  `ResContainer`
 - KEY indexing and BIF payload storage are separate concepts
 - `BifResolver` exists because the KEY file references BIFs by filename and the
   actual stream-opening policy belongs to the caller
