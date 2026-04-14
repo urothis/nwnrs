@@ -30,8 +30,6 @@ For every supported format, the read API also carries hidden provenance metadata
 
 Edited DTO writes are supported for `GFF`, `2DA`, `TLK`, `SSF`, `ERF`, and ASCII `MDL`. The wasm layer delegates preservation behavior to the native crates instead of maintaining a second set of format rules.
 
-## Installation
-
 ## Building
 
 This crate is not consumed directly with `cargo build`. The intended output is
