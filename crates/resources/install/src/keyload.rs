@@ -42,8 +42,7 @@ pub(crate) fn load_key(
         let normalized = normalize_relative_path(filename);
         let basename = normalized
             .file_name()
-            .map(PathBuf::from)
-            .unwrap_or_else(|| normalized.clone());
+            .map_or_else(|| normalized.clone(), PathBuf::from);
         let language_candidate = lang_root.join("data").join(basename);
         let candidate = if language_candidate.is_file() {
             language_candidate

@@ -155,7 +155,7 @@ fn gff_value_to_dto(value: &gff::GffValue) -> GffValueDto {
 
 fn dto_to_gff_root(value: &GffRootDto) -> Result<gff::GffRoot, JsValue> {
     let mut root = gff::GffRoot::new(&value.file_type);
-    root.file_version = value.file_version.clone();
+    root.file_version.clone_from(&value.file_version);
     root.root = dto_to_gff_struct(&value.root)?;
     Ok(root)
 }
@@ -222,7 +222,7 @@ pub(crate) fn read_gff_dto(bytes: &[u8]) -> Result<GffRootDto, JsValue> {
 pub(crate) fn write_gff_dto(value: &GffRootDto) -> Result<Vec<u8>, JsValue> {
     if let Some(bytes) = unchanged_lossless_bytes(
         value,
-        &value.lossless,
+        value.lossless.as_ref(),
         |dto| &mut dto.lossless,
         "failed to fingerprint GFF DTO",
     )

@@ -502,7 +502,9 @@ impl<'a> Analyzer<'a> {
                     .zip(&signature.parameters)
                 {
                     if existing_parameter.default.is_none() && new_parameter.default.is_some() {
-                        existing_parameter.default = new_parameter.default.clone();
+                        existing_parameter
+                            .default
+                            .clone_from(&new_parameter.default);
                         existing_parameter.is_optional = true;
                     }
                 }
@@ -703,6 +705,7 @@ impl<'a> Analyzer<'a> {
         Ok(())
     }
 
+    #[allow(clippy::too_many_lines)]
     fn analyze_stmt(
         &self,
         statement: &Stmt,
@@ -821,10 +824,7 @@ impl<'a> Analyzer<'a> {
                         return Err(SemanticError::new(
                             CompilerErrorCode::ReturnTypeAndFunctionTypeMismatched,
                             value.span,
-                            format!(
-                                "return expression has type {:?}, expected {:?}",
-                                actual, expected
-                            ),
+                            format!("return expression has type {actual:?}, expected {expected:?}"),
                         ));
                     }
                     Ok(())
@@ -900,10 +900,7 @@ impl<'a> Analyzer<'a> {
                     return Err(SemanticError::new(
                         CompilerErrorCode::MultipleCaseConstantStatementsWithinSwitch,
                         statement.span,
-                        format!(
-                            "case value {:?} was used more than once in this switch",
-                            value
-                        ),
+                        format!("case value {value:?} was used more than once in this switch"),
                     ));
                 }
                 Ok(())
@@ -937,6 +934,7 @@ impl<'a> Analyzer<'a> {
         }
     }
 
+    #[allow(clippy::too_many_lines)]
     fn analyze_expr(
         &self,
         expr: &Expr,
@@ -953,7 +951,7 @@ impl<'a> Analyzer<'a> {
                     SemanticError::new(
                         CompilerErrorCode::UndefinedIdentifier,
                         expr.span,
-                        format!("undefined identifier {:?}", name),
+                        format!("undefined identifier {name:?}"),
                     )
                 })?;
                 Ok(ResolvedExpr {
@@ -978,7 +976,7 @@ impl<'a> Analyzer<'a> {
                     SemanticError::new(
                         CompilerErrorCode::UndefinedIdentifier,
                         callee.span,
-                        format!("undefined function {:?}", name),
+                        format!("undefined function {name:?}"),
                     )
                 })?;
 
@@ -1055,7 +1053,7 @@ impl<'a> Analyzer<'a> {
                         _ => Err(SemanticError::new(
                             CompilerErrorCode::UndefinedFieldInStructure,
                             expr.span,
-                            format!("field {:?} does not exist on vector", field),
+                            format!("field {field:?} does not exist on vector"),
                         )),
                     },
                     SemanticType::Struct(name) => self
@@ -1072,7 +1070,7 @@ impl<'a> Analyzer<'a> {
                             SemanticError::new(
                                 CompilerErrorCode::UndefinedFieldInStructure,
                                 expr.span,
-                                format!("field {:?} does not exist on structure {:?}", field, name),
+                                format!("field {field:?} does not exist on structure {name:?}"),
                             )
                         }),
                     _ => Err(SemanticError::new(
@@ -1160,7 +1158,7 @@ impl<'a> Analyzer<'a> {
             } => {
                 let left = self.analyze_expr(left, scopes)?;
                 let right = self.analyze_expr(right, scopes)?;
-                let ty = self.binary_result_type(*op, &left.ty, &right.ty, expr.span)?;
+                let ty = Self::binary_result_type(*op, &left.ty, &right.ty, expr.span)?;
                 Ok(ResolvedExpr {
                     ty,
                     is_lvalue: false,
@@ -1206,67 +1204,67 @@ impl<'a> Analyzer<'a> {
                 let right_resolved = self.analyze_expr(right, scopes)?;
                 let result_type = match op {
                     AssignmentOp::Assign => right_resolved.ty.clone(),
-                    AssignmentOp::AssignMinus => self.binary_result_type(
+                    AssignmentOp::AssignMinus => Self::binary_result_type(
                         BinaryOp::Subtract,
                         &left_resolved.ty,
                         &right_resolved.ty,
                         expr.span,
                     )?,
-                    AssignmentOp::AssignPlus => self.binary_result_type(
+                    AssignmentOp::AssignPlus => Self::binary_result_type(
                         BinaryOp::Add,
                         &left_resolved.ty,
                         &right_resolved.ty,
                         expr.span,
                     )?,
-                    AssignmentOp::AssignMultiply => self.binary_result_type(
+                    AssignmentOp::AssignMultiply => Self::binary_result_type(
                         BinaryOp::Multiply,
                         &left_resolved.ty,
                         &right_resolved.ty,
                         expr.span,
                     )?,
-                    AssignmentOp::AssignDivide => self.binary_result_type(
+                    AssignmentOp::AssignDivide => Self::binary_result_type(
                         BinaryOp::Divide,
                         &left_resolved.ty,
                         &right_resolved.ty,
                         expr.span,
                     )?,
-                    AssignmentOp::AssignModulus => self.binary_result_type(
+                    AssignmentOp::AssignModulus => Self::binary_result_type(
                         BinaryOp::Modulus,
                         &left_resolved.ty,
                         &right_resolved.ty,
                         expr.span,
                     )?,
-                    AssignmentOp::AssignAnd => self.binary_result_type(
+                    AssignmentOp::AssignAnd => Self::binary_result_type(
                         BinaryOp::BooleanAnd,
                         &left_resolved.ty,
                         &right_resolved.ty,
                         expr.span,
                     )?,
-                    AssignmentOp::AssignXor => self.binary_result_type(
+                    AssignmentOp::AssignXor => Self::binary_result_type(
                         BinaryOp::ExclusiveOr,
                         &left_resolved.ty,
                         &right_resolved.ty,
                         expr.span,
                     )?,
-                    AssignmentOp::AssignOr => self.binary_result_type(
+                    AssignmentOp::AssignOr => Self::binary_result_type(
                         BinaryOp::InclusiveOr,
                         &left_resolved.ty,
                         &right_resolved.ty,
                         expr.span,
                     )?,
-                    AssignmentOp::AssignShiftLeft => self.binary_result_type(
+                    AssignmentOp::AssignShiftLeft => Self::binary_result_type(
                         BinaryOp::ShiftLeft,
                         &left_resolved.ty,
                         &right_resolved.ty,
                         expr.span,
                     )?,
-                    AssignmentOp::AssignShiftRight => self.binary_result_type(
+                    AssignmentOp::AssignShiftRight => Self::binary_result_type(
                         BinaryOp::ShiftRight,
                         &left_resolved.ty,
                         &right_resolved.ty,
                         expr.span,
                     )?,
-                    AssignmentOp::AssignUnsignedShiftRight => self.binary_result_type(
+                    AssignmentOp::AssignUnsignedShiftRight => Self::binary_result_type(
                         BinaryOp::UnsignedShiftRight,
                         &left_resolved.ty,
                         &right_resolved.ty,
@@ -1295,7 +1293,6 @@ impl<'a> Analyzer<'a> {
     }
 
     fn binary_result_type(
-        &self,
         op: BinaryOp,
         left: &SemanticType,
         right: &SemanticType,
@@ -1314,8 +1311,7 @@ impl<'a> Analyzer<'a> {
                         CompilerErrorCode::LogicalOperationHasInvalidOperands,
                         span,
                         format!(
-                            "logical operation requires int operands, got {:?} and {:?}",
-                            left, right
+                            "logical operation requires int operands, got {left:?} and {right:?}"
                         ),
                     ))
                 }
@@ -1339,8 +1335,8 @@ impl<'a> Analyzer<'a> {
                         CompilerErrorCode::EqualityTestHasInvalidOperands,
                         span,
                         format!(
-                            "equality test requires matching operand types, got {:?} and {:?}",
-                            left, right
+                            "equality test requires matching operand types, got {left:?} and \
+                             {right:?}"
                         ),
                     ))
                 }
@@ -1355,8 +1351,8 @@ impl<'a> Analyzer<'a> {
                     CompilerErrorCode::ComparisonTestHasInvalidOperands,
                     span,
                     format!(
-                        "comparison requires int/int or float/float operands, got {:?} and {:?}",
-                        left, right
+                        "comparison requires int/int or float/float operands, got {left:?} and \
+                         {right:?}"
                     ),
                 )),
             },
@@ -1368,8 +1364,7 @@ impl<'a> Analyzer<'a> {
                         CompilerErrorCode::ShiftOperationHasInvalidOperands,
                         span,
                         format!(
-                            "shift operation requires int operands, got {:?} and {:?}",
-                            left, right
+                            "shift operation requires int operands, got {left:?} and {right:?}"
                         ),
                     ))
                 }
@@ -1377,9 +1372,8 @@ impl<'a> Analyzer<'a> {
             BinaryOp::Add | BinaryOp::Subtract | BinaryOp::Multiply | BinaryOp::Divide => {
                 match (left, right) {
                     (SemanticType::Int, SemanticType::Int) => Ok(SemanticType::Int),
-                    (SemanticType::Float, SemanticType::Int)
-                    | (SemanticType::Int, SemanticType::Float)
-                    | (SemanticType::Float, SemanticType::Float) => Ok(SemanticType::Float),
+                    (SemanticType::Float, SemanticType::Int | SemanticType::Float)
+                    | (SemanticType::Int, SemanticType::Float) => Ok(SemanticType::Float),
                     (SemanticType::String, SemanticType::String) if op == BinaryOp::Add => {
                         Ok(SemanticType::String)
                     }
@@ -1400,8 +1394,7 @@ impl<'a> Analyzer<'a> {
                         CompilerErrorCode::ArithmeticOperationHasInvalidOperands,
                         span,
                         format!(
-                            "arithmetic operation {:?} is invalid for {:?} and {:?}",
-                            op, left, right
+                            "arithmetic operation {op:?} is invalid for {left:?} and {right:?}"
                         ),
                     )),
                 }
@@ -1413,10 +1406,7 @@ impl<'a> Analyzer<'a> {
                     Err(SemanticError::new(
                         CompilerErrorCode::ArithmeticOperationHasInvalidOperands,
                         span,
-                        format!(
-                            "modulus requires int operands, got {:?} and {:?}",
-                            left, right
-                        ),
+                        format!("modulus requires int operands, got {left:?} and {right:?}"),
                     ))
                 }
             }
@@ -1450,10 +1440,7 @@ impl<'a> Analyzer<'a> {
                     return Err(SemanticError::new(
                         CompilerErrorCode::TypeDoesNotHaveAnOptionalParameter,
                         default.span,
-                        format!(
-                            "type {:?} does not support optional parameters",
-                            parameter_type
-                        ),
+                        format!("type {parameter_type:?} does not support optional parameters"),
                     ));
                 }
                 if !types_compatible(&parameter_type, &value.ty()) {
@@ -1488,7 +1475,7 @@ impl<'a> Analyzer<'a> {
                 name:        parameter.name.clone(),
                 ty:          parameter_type,
                 is_optional: default.is_some(),
-                default:     default.as_ref().and_then(literal_from_constant_value),
+                default:     default.as_ref().map(literal_from_constant_value),
             });
         }
 
@@ -1514,7 +1501,7 @@ impl<'a> Analyzer<'a> {
                     return Err(SemanticError::new(
                         CompilerErrorCode::UndefinedStructure,
                         ty.span,
-                        format!("undefined structure {:?}", name),
+                        format!("undefined structure {name:?}"),
                     ));
                 }
                 if name == "vector" {
@@ -1556,14 +1543,6 @@ impl<'a> Analyzer<'a> {
                 ConstantValue::Int(value) => Some(ConstantValue::Int(!value)),
                 _ => None,
             },
-            ExprKind::Unary {
-                op:
-                    UnaryOp::PreIncrement
-                    | UnaryOp::PreDecrement
-                    | UnaryOp::PostIncrement
-                    | UnaryOp::PostDecrement,
-                ..
-            } => None,
             ExprKind::Binary {
                 op,
                 left,
@@ -1764,7 +1743,7 @@ fn constant_from_builtin_value(value: &BuiltinValue) -> Option<ConstantValue> {
 }
 
 fn literal_from_builtin_value(value: &BuiltinValue) -> Option<Literal> {
-    constant_from_builtin_value(value).and_then(|value| literal_from_constant_value(&value))
+    constant_from_builtin_value(value).map(|value| literal_from_constant_value(&value))
 }
 
 fn constant_from_literal(literal: &Literal) -> Option<ConstantValue> {
@@ -1777,42 +1756,41 @@ fn constant_from_literal(literal: &Literal) -> Option<ConstantValue> {
         Literal::LocationInvalid => Some(ConstantValue::LocationInvalid),
         Literal::Json(value) => Some(ConstantValue::Json(value.clone())),
         Literal::Vector(value) => Some(ConstantValue::Vector(*value)),
-        Literal::Magic(MagicLiteral::Function)
-        | Literal::Magic(MagicLiteral::File)
-        | Literal::Magic(MagicLiteral::Line)
-        | Literal::Magic(MagicLiteral::Date)
-        | Literal::Magic(MagicLiteral::Time) => None,
+        Literal::Magic(
+            MagicLiteral::Function
+            | MagicLiteral::File
+            | MagicLiteral::Line
+            | MagicLiteral::Date
+            | MagicLiteral::Time,
+        ) => None,
     }
 }
 
-fn literal_from_constant_value(value: &ConstantValue) -> Option<Literal> {
+fn literal_from_constant_value(value: &ConstantValue) -> Literal {
     match value {
-        ConstantValue::Int(value) => Some(Literal::Integer(*value)),
-        ConstantValue::Float(value) => Some(Literal::Float(*value)),
-        ConstantValue::String(value) => Some(Literal::String(value.clone())),
-        ConstantValue::ObjectId(value) => Some(Literal::Integer(*value)),
-        ConstantValue::ObjectSelf => Some(Literal::ObjectSelf),
-        ConstantValue::ObjectInvalid => Some(Literal::ObjectInvalid),
-        ConstantValue::LocationInvalid => Some(Literal::LocationInvalid),
-        ConstantValue::Json(value) => Some(Literal::Json(value.clone())),
-        ConstantValue::Vector(value) => Some(Literal::Vector(*value)),
+        ConstantValue::Int(value) | ConstantValue::ObjectId(value) => Literal::Integer(*value),
+        ConstantValue::Float(value) => Literal::Float(*value),
+        ConstantValue::String(value) => Literal::String(value.clone()),
+        ConstantValue::ObjectSelf => Literal::ObjectSelf,
+        ConstantValue::ObjectInvalid => Literal::ObjectInvalid,
+        ConstantValue::LocationInvalid => Literal::LocationInvalid,
+        ConstantValue::Json(value) => Literal::Json(value.clone()),
+        ConstantValue::Vector(value) => Literal::Vector(*value),
     }
 }
 
 fn semantic_type_from_literal(literal: &Literal) -> SemanticType {
     match literal {
-        Literal::Integer(_) => SemanticType::Int,
+        Literal::Integer(_) | Literal::Magic(MagicLiteral::Line) => SemanticType::Int,
         Literal::Float(_) => SemanticType::Float,
-        Literal::String(_) => SemanticType::String,
+        Literal::String(_)
+        | Literal::Magic(
+            MagicLiteral::Function | MagicLiteral::File | MagicLiteral::Date | MagicLiteral::Time,
+        ) => SemanticType::String,
         Literal::ObjectSelf | Literal::ObjectInvalid => SemanticType::Object,
         Literal::LocationInvalid => SemanticType::EngineStructure("location".to_string()),
         Literal::Json(_) => SemanticType::EngineStructure("json".to_string()),
         Literal::Vector(_) => SemanticType::Vector,
-        Literal::Magic(MagicLiteral::Line) => SemanticType::Int,
-        Literal::Magic(MagicLiteral::Function)
-        | Literal::Magic(MagicLiteral::File)
-        | Literal::Magic(MagicLiteral::Date)
-        | Literal::Magic(MagicLiteral::Time) => SemanticType::String,
     }
 }
 
@@ -1838,9 +1816,11 @@ fn evaluate_int_constant_binary(op: BinaryOp, left: i32, right: i32) -> Option<i
         BinaryOp::GreaterThan => Some(i32::from(left > right)),
         BinaryOp::LessThan => Some(i32::from(left < right)),
         BinaryOp::LessEqual => Some(i32::from(left <= right)),
-        BinaryOp::ShiftLeft => Some(left.wrapping_shl(right as u32)),
-        BinaryOp::ShiftRight => Some(left.wrapping_shr(right as u32)),
-        BinaryOp::UnsignedShiftRight => Some(((left as u32).wrapping_shr(right as u32)) as i32),
+        BinaryOp::ShiftLeft => Some(left.wrapping_shl(right.cast_unsigned())),
+        BinaryOp::ShiftRight => Some(left.wrapping_shr(right.cast_unsigned())),
+        BinaryOp::UnsignedShiftRight => {
+            Some(((left.cast_unsigned()).wrapping_shr(right.cast_unsigned())).cast_signed())
+        }
         BinaryOp::Add => Some(left.wrapping_add(right)),
         BinaryOp::Subtract => Some(left.wrapping_sub(right)),
         BinaryOp::Multiply => Some(left.wrapping_mul(right)),
@@ -1849,6 +1829,7 @@ fn evaluate_int_constant_binary(op: BinaryOp, left: i32, right: i32) -> Option<i
     }
 }
 
+#[allow(clippy::float_cmp)]
 fn evaluate_float_constant_binary(op: BinaryOp, left: f32, right: f32) -> Option<ConstantValue> {
     match op {
         BinaryOp::Add => Some(ConstantValue::Float(left + right)),
@@ -1915,7 +1896,7 @@ fn insert_scope_binding(
         return Err(SemanticError::new(
             CompilerErrorCode::VariableAlreadyUsedWithinScope,
             span,
-            format!("variable {:?} was already declared in this scope", name),
+            format!("variable {name:?} was already declared in this scope"),
         ));
     }
 

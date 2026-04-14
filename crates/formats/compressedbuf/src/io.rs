@@ -220,8 +220,8 @@ pub fn write_payload_writer<W: Write + ?Sized>(
             write_u32(writer, *version)?;
             let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
             encoder.write_all(&payload.data)?;
-            let encoded = encoder.finish()?;
-            writer.write_all(&encoded)?;
+            let compressed = encoder.finish()?;
+            writer.write_all(&compressed)?;
         }
         (
             Algorithm::Zstd,

@@ -92,6 +92,7 @@ pub enum PltLayer {
 
 impl PltLayer {
     /// Resolves a known PLT layer id.
+    #[must_use]
     pub fn from_id(value: u8) -> Option<Self> {
         match value {
             0 => Some(Self::Skin),
@@ -109,11 +110,13 @@ impl PltLayer {
     }
 
     /// Returns the on-disk layer id.
+    #[must_use]
     pub fn id(self) -> u8 {
         self as u8
     }
 
     /// Returns a stable display label for the layer.
+    #[must_use]
     pub fn label(self) -> &'static str {
         match self {
             Self::Skin => "skin",
@@ -141,6 +144,7 @@ pub struct PltPixel {
 
 impl PltPixel {
     /// Resolves the pixel's layer id to a known PLT layer when possible.
+    #[must_use]
     pub fn layer(self) -> Option<PltLayer> {
         PltLayer::from_id(self.layer_id)
     }
@@ -177,6 +181,7 @@ impl Default for PltRenderSpec {
 
 impl PltRenderSpec {
     /// Returns the base RGBA color for one PLT layer id.
+    #[must_use]
     pub fn color_for_layer_id(&self, layer_id: u8) -> [u8; 4] {
         self.layer_colors
             .get(usize::from(layer_id))
@@ -339,8 +344,7 @@ fn parse_plt_bytes(bytes: &[u8]) -> PltResult<PltTexture> {
         .ok_or_else(|| PltError::msg("PLT signature extends past end of file"))?;
     if signature != PLT_SIGNATURE {
         return Err(PltError::msg(format!(
-            "unsupported PLT signature: {:?}",
-            signature
+            "unsupported PLT signature: {signature:?}"
         )));
     }
 

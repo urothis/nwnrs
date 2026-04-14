@@ -2,14 +2,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::source::Span;
 
-/// One parsed NWScript translation unit.
+/// One parsed `NWScript` translation unit.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Script {
     /// Top-level items in source order.
     pub items: Vec<TopLevelItem>,
 }
 
-/// One top-level NWScript item.
+/// One top-level `NWScript` item.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum TopLevelItem {
     /// One `#include "..."` directive.
@@ -101,7 +101,7 @@ pub struct TypeSpec {
     pub kind:     TypeKind,
 }
 
-/// One NWScript type kind recognized syntactically by the parser.
+/// One `NWScript` type kind recognized syntactically by the parser.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum TypeKind {
     /// `void`
@@ -153,7 +153,7 @@ pub struct BlockStmt {
     pub statements: Vec<Stmt>,
 }
 
-/// One statement in NWScript source.
+/// One statement in `NWScript` source.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Stmt {
     /// `{ ... }`
@@ -288,7 +288,7 @@ pub struct DefaultStmt {
     pub span: Span,
 }
 
-/// One expression in NWScript source.
+/// One expression in `NWScript` source.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Expr {
     /// Source span covering the whole expression.

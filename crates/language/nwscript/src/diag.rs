@@ -2,7 +2,7 @@ use std::{error::Error, fmt};
 
 use serde::{Deserialize, Serialize};
 
-/// Stable compiler and VM error codes used by the upstream NWScript compiler.
+/// Stable compiler and VM error codes used by the upstream `NWScript` compiler.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[repr(i32)]
 pub enum CompilerErrorCode {
@@ -248,6 +248,7 @@ pub enum CompilerErrorCode {
 
 impl CompilerErrorCode {
     /// Returns the stable integer code used in diagnostics and fixtures.
+    #[must_use]
     pub fn code(self) -> i32 {
         self as i32
     }
@@ -261,6 +262,7 @@ pub struct UnknownCompilerErrorCode {
 
 impl UnknownCompilerErrorCode {
     /// Creates a new unknown-code error.
+    #[must_use]
     pub fn new(code: i32) -> Self {
         Self {
             code,
@@ -268,6 +270,7 @@ impl UnknownCompilerErrorCode {
     }
 
     /// Returns the unrecognized numeric code.
+    #[must_use]
     pub fn code(&self) -> i32 {
         self.code
     }

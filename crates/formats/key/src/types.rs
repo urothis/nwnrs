@@ -107,26 +107,31 @@ pub struct VariableResource {
 
 impl VariableResource {
     /// Returns the packed KEY resource id for this entry.
+    #[must_use]
     pub fn id(&self) -> ResId {
         self.id
     }
 
     /// Returns the byte offset of the payload inside the BIF stream.
+    #[must_use]
     pub fn io_offset(&self) -> u64 {
         self.io_offset
     }
 
     /// Returns the stored payload size on disk.
+    #[must_use]
     pub fn io_size(&self) -> usize {
         self.io_size
     }
 
     /// Returns the compression marker stored for the payload.
+    #[must_use]
     pub fn compression_type(&self) -> ExoResFileCompressionType {
         self.compression_type
     }
 
     /// Returns the expected size after decompression.
+    #[must_use]
     pub fn uncompressed_size(&self) -> usize {
         self.uncompressed_size
     }
@@ -148,7 +153,7 @@ impl fmt::Debug for LoadedBif {
             .field("file_version", &self.file_version)
             .field("variable_resources", &self.variable_resources.len())
             .field("oid", &self.oid)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -168,7 +173,7 @@ impl fmt::Debug for BifHandle {
             .field("filename", &self.filename)
             .field("expected_version", &self.expected_version)
             .field("expected_oid", &self.expected_oid)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -226,7 +231,7 @@ impl fmt::Debug for KeyTable {
                     .collect::<Vec<_>>(),
             )
             .field("entry_count", &self.resref_id_lookup.len())
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -269,7 +274,9 @@ impl ResContainer for KeyTable {
             rr.clone(),
             SystemTime::UNIX_EPOCH,
             loaded.stream.clone(),
-            variable.io_size as i64,
+            i64::try_from(variable.io_size).map_err(|e| {
+                ResManError::Message(format!("KEY resource size exceeds i64 range: {e}"))
+            })?,
             variable.io_offset,
             variable.compression_type,
             None,
@@ -289,31 +296,37 @@ impl ResContainer for KeyTable {
 
 impl KeyTable {
     /// Returns the KEY/BIF version expected by this table.
+    #[must_use]
     pub fn version(&self) -> KeyBifVersion {
         self.version
     }
 
     /// Returns the build year stored in the KEY header.
+    #[must_use]
     pub fn build_year(&self) -> u32 {
         self.build_year
     }
 
     /// Returns the build day stored in the KEY header.
+    #[must_use]
     pub fn build_day(&self) -> u32 {
         self.build_day
     }
 
     /// Returns the enhanced-edition OID when present.
+    #[must_use]
     pub fn oid(&self) -> Option<&str> {
         self.oid.as_deref()
     }
 
     /// Returns the raw enhanced-edition OID bytes as stored in the KEY header.
+    #[must_use]
     pub fn raw_oid(&self) -> Option<&str> {
         self.raw_oid.as_deref()
     }
 
     /// Returns the referenced BIF filenames in table order.
+    #[must_use]
     pub fn bifs(&self) -> Vec<String> {
         self.bifs.iter().map(|bif| bif.filename.clone()).collect()
     }

@@ -552,6 +552,7 @@ fn parse_field<R: Read + Seek>(
     ))
 }
 
+#[allow(clippy::too_many_lines)]
 fn collect_struct(structure: &GffStruct, state: &mut WriteState) -> GffResult<i32> {
     let struct_idx = to_i32_len(state.structs.len(), "GFF struct index")?;
     state.structs.push(WriteStructEntry {
@@ -628,7 +629,7 @@ fn collect_struct(structure: &GffStruct, state: &mut WriteState) -> GffResult<i3
                     offset
                 } else {
                     let offset = to_i32_len(state.field_data.len(), "GFF field data offset")?;
-                    expect(value.len() <= u8::MAX as usize, "ResRef too long for GFF")?;
+                    expect(u8::try_from(value.len()).is_ok(), "ResRef too long for GFF")?;
                     state.field_data.push(
                         u8::try_from(value.len())
                             .map_err(|_error| GffError::msg("ResRef too long for GFF"))?,
@@ -772,15 +773,17 @@ fn get_or_insert_label(
     } else {
         let bytes = provenance
             .filter(|provenance| trim_trailing_nuls(&provenance.label_bytes) == label)
-            .map(|provenance| provenance.label_bytes)
-            .unwrap_or_else(|| {
-                let mut padded = [0_u8; 16];
-                let label_bytes = label.as_bytes();
-                if let Some(prefix) = padded.get_mut(..label_bytes.len()) {
-                    prefix.copy_from_slice(label_bytes);
-                }
-                padded
-            });
+            .map_or_else(
+                || {
+                    let mut padded = [0_u8; 16];
+                    let label_bytes = label.as_bytes();
+                    if let Some(prefix) = padded.get_mut(..label_bytes.len()) {
+                        prefix.copy_from_slice(label_bytes);
+                    }
+                    padded
+                },
+                |provenance| provenance.label_bytes,
+            );
         labels.push(RawLabelEntry {
             text: label.to_string(),
             bytes,
@@ -901,7 +904,7 @@ fn to_u32_len(value: usize, what: &str) -> GffResult<u32> {
 fn read_i8<R: Read>(reader: &mut R) -> io::Result<i8> {
     let mut bytes = [0_u8; 1];
     reader.read_exact(&mut bytes)?;
-    Ok(bytes[0] as i8)
+    Ok(i8::from_ne_bytes([bytes[0]]))
 }
 
 fn read_u32<R: Read>(reader: &mut R) -> io::Result<u32> {

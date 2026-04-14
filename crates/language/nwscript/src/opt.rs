@@ -256,7 +256,9 @@ fn collect_user_calls_stmt(
                 }
             }
         }
-        HirStmt::Expr(expr) => collect_user_calls_expr(expr, ordered, visited, function_map),
+        HirStmt::Expr(expr) | HirStmt::Case(expr) => {
+            collect_user_calls_expr(expr, ordered, visited, function_map);
+        }
         HirStmt::If(statement) => {
             collect_user_calls_expr(&statement.condition, ordered, visited, function_map);
             collect_user_calls_stmt(&statement.then_branch, ordered, visited, function_map);
@@ -293,7 +295,6 @@ fn collect_user_calls_stmt(
                 collect_user_calls_expr(update, ordered, visited, function_map);
             }
         }
-        HirStmt::Case(expr) => collect_user_calls_expr(expr, ordered, visited, function_map),
         HirStmt::Default(_) | HirStmt::Break(_) | HirStmt::Continue(_) | HirStmt::Empty(_) => {}
     }
 }
@@ -393,11 +394,9 @@ pub(crate) fn evaluate_const_expr(
 ) -> Option<ConstValue> {
     match &expr.kind {
         HirExprKind::Literal(literal) => const_from_literal(literal),
-        HirExprKind::Value(crate::HirValueRef::ConstGlobal(name))
-        | HirExprKind::Value(crate::HirValueRef::BuiltinConstant(name)) => {
-            constants.get(name).cloned()
-        }
-        HirExprKind::Value(_) => None,
+        HirExprKind::Value(
+            crate::HirValueRef::ConstGlobal(name) | crate::HirValueRef::BuiltinConstant(name),
+        ) => constants.get(name).cloned(),
         HirExprKind::Unary {
             op,
             expr,
@@ -442,7 +441,8 @@ pub(crate) fn evaluate_const_expr(
             ConstValue::Int(_) => evaluate_const_expr(when_false, constants),
             _ => None,
         },
-        HirExprKind::Call {
+        HirExprKind::Value(_)
+        | HirExprKind::Call {
             ..
         }
         | HirExprKind::FieldAccess {
@@ -456,10 +456,9 @@ pub(crate) fn evaluate_const_expr(
 
 fn const_from_builtin_value(value: &BuiltinValue) -> Option<ConstValue> {
     match value {
-        BuiltinValue::Int(value) => Some(ConstValue::Int(*value)),
+        BuiltinValue::Int(value) | BuiltinValue::ObjectId(value) => Some(ConstValue::Int(*value)),
         BuiltinValue::Float(value) => Some(ConstValue::Float(*value)),
         BuiltinValue::String(value) => Some(ConstValue::String(value.clone())),
-        BuiltinValue::ObjectId(value) => Some(ConstValue::Int(*value)),
         BuiltinValue::ObjectSelf => Some(ConstValue::Int(0)),
         BuiltinValue::ObjectInvalid => Some(ConstValue::Int(1)),
         BuiltinValue::LocationInvalid
@@ -498,9 +497,11 @@ fn evaluate_int_binary(op: BinaryOp, left: i32, right: i32) -> Option<i32> {
         BinaryOp::Modulus => (right != 0).then_some(left.wrapping_rem(right)),
         BinaryOp::Add => Some(left.wrapping_add(right)),
         BinaryOp::Subtract => Some(left.wrapping_sub(right)),
-        BinaryOp::ShiftLeft => Some(left.wrapping_shl(right as u32)),
-        BinaryOp::ShiftRight => Some(left.wrapping_shr(right as u32)),
-        BinaryOp::UnsignedShiftRight => Some(((left as u32).wrapping_shr(right as u32)) as i32),
+        BinaryOp::ShiftLeft => Some(left.wrapping_shl(right.cast_unsigned())),
+        BinaryOp::ShiftRight => Some(left.wrapping_shr(right.cast_unsigned())),
+        BinaryOp::UnsignedShiftRight => {
+            Some(((left.cast_unsigned()).wrapping_shr(right.cast_unsigned())).cast_signed())
+        }
         BinaryOp::GreaterEqual => Some(i32::from(left >= right)),
         BinaryOp::GreaterThan => Some(i32::from(left > right)),
         BinaryOp::LessThan => Some(i32::from(left < right)),
@@ -515,6 +516,7 @@ fn evaluate_int_binary(op: BinaryOp, left: i32, right: i32) -> Option<i32> {
     }
 }
 
+#[allow(clippy::float_cmp)]
 fn evaluate_float_binary(op: BinaryOp, left: f32, right: f32) -> Option<ConstValue> {
     match op {
         BinaryOp::Multiply => Some(ConstValue::Float(left * right)),

@@ -44,6 +44,7 @@ where
     /// Returns the cached value for `key`, inserting one with an explicit
     /// weight if needed.
     #[instrument(level = "debug", skip_all)]
+    #[allow(clippy::needless_pass_by_value)]
     pub fn get_or_put_with_weight<F>(&mut self, key: K, when_missing: F) -> &V
     where
         F: FnOnce(&K) -> (Weight, V),
@@ -74,16 +75,19 @@ where
     }
 
     /// Returns the number of cached entries.
+    #[must_use]
     pub fn len(&self) -> usize {
         self.entries.len()
     }
 
     /// Returns `true` if the cache has no entries.
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
 
     /// Returns the total cached weight.
+    #[must_use]
     pub fn weight(&self) -> Weight {
         self.current_weight
     }
@@ -152,6 +156,7 @@ where
     }
 
     /// Returns the current keys from most-recently-used to least-recently-used.
+    #[must_use]
     pub fn keys(&self) -> Vec<K> {
         self.order.iter().cloned().collect()
     }

@@ -387,7 +387,7 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
     fn block_mut(&mut self, id: IrBlockId) -> Result<&mut BlockBuilder, IrLowerError> {
         self.blocks
             .get_mut(id.0 as usize)
-            .ok_or_else(|| IrLowerError::new(None, format!("unknown IR block {:?}", id)))
+            .ok_or_else(|| IrLowerError::new(None, format!("unknown IR block {id:?}")))
     }
 
     fn push_instruction(
@@ -770,6 +770,7 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
         Ok(Some(end_block))
     }
 
+    #[allow(clippy::too_many_lines)]
     fn lower_expr(
         &mut self,
         expr: &HirExpr,
@@ -798,8 +799,9 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
                 )?;
                 Ok((Some(dst), block))
             }
-            HirExprKind::Value(crate::HirValueRef::Global(name))
-            | HirExprKind::Value(crate::HirValueRef::ConstGlobal(name)) => {
+            HirExprKind::Value(
+                crate::HirValueRef::Global(name) | crate::HirValueRef::ConstGlobal(name),
+            ) => {
                 let dst = self.new_value();
                 self.push_instruction(
                     block,
@@ -814,7 +816,7 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
                 let literal = self.lowerer.builtin_constants.get(name).ok_or_else(|| {
                     IrLowerError::new(
                         Some(expr.span),
-                        format!("unknown builtin constant {:?}", name),
+                        format!("unknown builtin constant {name:?}"),
                     )
                 })?;
                 let dst = self.new_value();
@@ -845,7 +847,7 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
                             .ok_or_else(|| {
                                 IrLowerError::new(
                                     Some(expr.span),
-                                    format!("unknown builtin {:?}", function_name),
+                                    format!("unknown builtin {function_name:?}"),
                                 )
                             })?;
                         for (index, argument) in arguments.iter().enumerate() {
@@ -871,10 +873,7 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
                     }
                     HirCallTarget::Function(name) => {
                         let callee = self.lowerer.functions.get(name).ok_or_else(|| {
-                            IrLowerError::new(
-                                Some(expr.span),
-                                format!("unknown function {:?}", name),
-                            )
+                            IrLowerError::new(Some(expr.span), format!("unknown function {name:?}"))
                         })?;
                         for (argument, parameter) in arguments.iter().zip(&callee.parameters) {
                             if parameter.ty == SemanticType::Action {
@@ -899,10 +898,7 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
                                 let default = parameter.default.as_ref().ok_or_else(|| {
                                     IrLowerError::new(
                                         Some(expr.span),
-                                        format!(
-                                            "missing required parameter for function {:?}",
-                                            name
-                                        ),
+                                        format!("missing required parameter for function {name:?}"),
                                     )
                                 })?;
                                 if parameter.ty == SemanticType::Action {
@@ -1179,8 +1175,9 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
                     value,
                 },
             ),
-            HirExprKind::Value(crate::HirValueRef::Global(name))
-            | HirExprKind::Value(crate::HirValueRef::ConstGlobal(name)) => self.push_instruction(
+            HirExprKind::Value(
+                crate::HirValueRef::Global(name) | crate::HirValueRef::ConstGlobal(name),
+            ) => self.push_instruction(
                 block,
                 IrInstruction::StoreGlobal {
                     name: name.clone(),
@@ -1206,7 +1203,7 @@ fn evaluate_case_value(
             let literal = builtin_constants.get(name).ok_or_else(|| {
                 IrLowerError::new(
                     Some(expr.span),
-                    format!("unknown builtin constant {:?}", name),
+                    format!("unknown builtin constant {name:?}"),
                 )
             })?;
             match literal {
@@ -1227,10 +1224,9 @@ fn evaluate_case_value(
 
 fn literal_from_builtin_value(value: &BuiltinValue) -> Option<Literal> {
     match value {
-        BuiltinValue::Int(value) => Some(Literal::Integer(*value)),
+        BuiltinValue::Int(value) | BuiltinValue::ObjectId(value) => Some(Literal::Integer(*value)),
         BuiltinValue::Float(value) => Some(Literal::Float(*value)),
         BuiltinValue::String(value) => Some(Literal::String(value.clone())),
-        BuiltinValue::ObjectId(value) => Some(Literal::Integer(*value)),
         BuiltinValue::ObjectSelf => Some(Literal::ObjectSelf),
         BuiltinValue::ObjectInvalid => Some(Literal::ObjectInvalid),
         BuiltinValue::LocationInvalid => Some(Literal::LocationInvalid),

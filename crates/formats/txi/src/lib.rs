@@ -102,6 +102,7 @@ pub struct TxiFile {
 
 impl TxiFile {
     /// Returns the first directive named `name`, case-insensitively.
+    #[must_use]
     pub fn directive(&self, name: &str) -> Option<&TxiDirective> {
         self.directives
             .iter()
@@ -175,6 +176,7 @@ impl TxiDirective {
     }
 
     /// Parses the directive as a counted float block like `channeltranslate 4`.
+    #[must_use]
     pub fn counted_f32_values(&self) -> Option<Vec<f32>> {
         let count = self.first_argument()?.parse::<usize>().ok()?;
         let values = self

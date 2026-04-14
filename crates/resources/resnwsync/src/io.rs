@@ -25,7 +25,7 @@ pub fn nwsync_compressed_buf_magic() -> ResNWSyncResult<u32> {
         .map_err(|error| ResNWSyncError::msg(error.to_string()))
 }
 
-/// Opens an NWSync repository rooted at `path`.
+/// Opens an `NWSync` repository rooted at `path`.
 #[instrument(level = "debug", skip_all, err, fields(path = %path.as_ref().display()))]
 pub fn open_nwsync(path: impl AsRef<Path>) -> ResNWSyncResult<NWSync> {
     let root = path.as_ref().to_path_buf();
@@ -86,7 +86,8 @@ pub fn open_nwsync(path: impl AsRef<Path>) -> ResNWSyncResult<NWSync> {
     Ok(result)
 }
 
-/// Opens an NWSync repository, creating the minimal SQLite layout when needed.
+/// Opens an `NWSync` repository, creating the minimal `SQLite` layout when
+/// needed.
 #[instrument(level = "debug", skip_all, err, fields(path = %path.as_ref().display()))]
 pub fn open_or_create_nwsync(path: impl AsRef<Path>) -> ResNWSyncResult<NWSync> {
     let root = path.as_ref();
@@ -150,7 +151,7 @@ pub fn new_resnwsync_manifest(
     let result = ResNWSyncManifest {
         nwsync: nwsync.clone(),
         manifest_sha1,
-        mtime: UNIX_EPOCH + Duration::from_secs(created_at.max(0) as u64),
+        mtime: UNIX_EPOCH + Duration::from_secs(created_at.max(0).unsigned_abs()),
         contents,
         sha1map,
     };

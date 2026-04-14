@@ -118,8 +118,8 @@ fn dto_to_erf_bytes(value: &ErfDto) -> Result<Vec<u8>, JsValue> {
         &mut out,
         &value.file_type,
         value.file_version.into(),
-        value.build_year as u32,
-        value.build_day as u32,
+        u32::try_from(value.build_year).unwrap_or(0),
+        u32::try_from(value.build_day).unwrap_or(0),
         exocomp,
         compressedbuf::Algorithm::None,
         &loc_strings,
@@ -243,7 +243,7 @@ pub(crate) fn read_erf_dto(bytes: &[u8], filename: &str) -> Result<ErfDto, JsVal
 pub(crate) fn write_erf_dto(value: &ErfDto) -> Result<Vec<u8>, JsValue> {
     if let Some(bytes) = unchanged_lossless_bytes(
         value,
-        &value.lossless,
+        value.lossless.as_ref(),
         |dto| &mut dto.lossless,
         "failed to fingerprint ERF DTO",
     )

@@ -147,7 +147,7 @@ pub(crate) fn sorted_dir_entries(dir: &Path) -> Result<Vec<DirEntryInfo>, String
 pub(crate) fn should_skip_top_level_dir(path: &Path) -> bool {
     matches!(
         path.file_name().and_then(OsStr::to_str),
-        Some(".git") | Some(".svn")
+        Some(".git" | ".svn")
     )
 }
 
@@ -175,14 +175,14 @@ pub(crate) fn entry_is_file(path: &Path, no_symlinks: bool) -> Result<bool, Stri
     Ok(meta.is_file())
 }
 
-pub(crate) fn infer_erf_type(path: &Path, explicit: Option<&str>) -> Result<String, String> {
+pub(crate) fn infer_erf_type(path: &Path, explicit: Option<&str>) -> String {
     if let Some(value) = explicit {
         let mut type_name = value.to_ascii_uppercase();
         type_name.truncate(4);
         while type_name.len() < 4 {
             type_name.push(' ');
         }
-        return Ok(type_name);
+        return type_name;
     }
 
     let ext = path
@@ -200,7 +200,7 @@ pub(crate) fn infer_erf_type(path: &Path, explicit: Option<&str>) -> Result<Stri
     while padded.len() < 4 {
         padded.push(' ');
     }
-    Ok(padded)
+    padded
 }
 
 pub(crate) fn write_lines<I>(path: &Path, lines: I) -> Result<(), String>
@@ -252,7 +252,7 @@ fn civil_from_days(days_since_epoch: i64) -> (i32, u32, u32) {
     let mp = (5 * doy + 2) / 153;
     let d = doy - (153 * mp + 2) / 5 + 1;
     let m = mp + if mp < 10 { 3 } else { -9 };
-    let year = y + if m <= 2 { 1 } else { 0 };
+    let year = y + i64::from(m <= 2);
     (
         i32::try_from(year).unwrap_or(i32::MAX),
         u32::try_from(m).unwrap_or(0),

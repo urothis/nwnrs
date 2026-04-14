@@ -106,7 +106,7 @@ fn inspect_model(path: &Path) -> Result<String, String> {
     let parsed = mdl::ParsedModel::from_file(path)
         .map_err(|error| format!("failed to parse {} as MDL: {error}", path.display()))?;
     match parsed {
-        mdl::ParsedModel::Ascii(model) => Ok(format!("MDL encoding: ascii\n{model:#?}",)),
+        mdl::ParsedModel::Ascii(model) => Ok(format!("MDL encoding: ascii\n{model:#?}")),
         mdl::ParsedModel::Compiled(model) => {
             let block_kinds = compiled_block_kinds(&model).join(", ");
             Ok(format!(

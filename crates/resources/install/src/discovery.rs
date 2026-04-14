@@ -276,12 +276,12 @@ fn resolve_existing_dir(
 }
 
 fn validate_install_root(path: &Path) {
-    if !path.join("databuild.txt").is_file() {
-        warn!(path = %path.display(), "NWN root does not contain databuild.txt");
-    } else {
+    if path.join("databuild.txt").is_file() {
         let _ = fs::read_to_string(path.join("databuild.txt"))
             .ok()
             .and_then(|data| data.lines().next().map(str::trim).map(str::to_string));
+    } else {
+        warn!(path = %path.display(), "NWN root does not contain databuild.txt");
     }
 }
 

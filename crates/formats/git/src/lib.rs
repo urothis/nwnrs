@@ -387,7 +387,7 @@ pub fn parse_git_root(root: &GffRoot) -> GitResult<GitFile> {
             .map(parse_encounter)
             .collect(),
         legacy_list:     gff_list(&root.root, "List")
-            .map_or_else(Vec::new, |entries| entries.to_vec()),
+            .map_or_else(Vec::new, <[nwnrs_gff::GffStruct]>::to_vec),
         sounds:          gff_list(&root.root, "SoundList")
             .into_iter()
             .flatten()
@@ -657,6 +657,7 @@ fn gff_i32(value: &GffStruct, label: &str) -> Option<i32> {
     }
 }
 
+#[allow(clippy::cast_precision_loss)]
 fn gff_f32(value: &GffStruct, label: &str) -> Option<f32> {
     match value.get_field(label)?.value() {
         GffValue::Byte(raw) => Some(f32::from(*raw)),
@@ -1127,11 +1128,11 @@ fn put_list<T, F>(target: &mut GffStruct, label: &str, values: &[T], mut build: 
 where
     F: FnMut(&T) -> GitResult<GffStruct>,
 {
-    let built = values
+    let structs = values
         .iter()
         .map(&mut build)
         .collect::<GitResult<Vec<_>>>()?;
-    put_list_value(target, label, built)?;
+    put_list_value(target, label, structs)?;
     Ok(())
 }
 

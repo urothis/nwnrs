@@ -158,8 +158,7 @@ fn run_pack_key(cmd: PackCmd) -> Result<(), String> {
     let destination = output
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| PathBuf::from("."));
+        .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
     run_key_pack(KeyPackCmd {
         data_version: cmd.data_version,
         data_compression: cmd.data_compression,
@@ -198,14 +197,15 @@ fn run_pack_erf(cmd: PackCmd) -> Result<(), String> {
     }
     let version = metadata
         .as_ref()
-        .map(|meta| meta.file_version)
-        .unwrap_or(parse_erf_version(&cmd.data_version)?);
+        .map_or(parse_erf_version(&cmd.data_version)?, |meta| {
+            meta.file_version
+        });
     let compalg = parse_algorithm(&cmd.data_compression)?;
     let exocomp = exo_compression_from_algorithm(compalg);
-    let file_type = metadata
-        .as_ref()
-        .map(|meta| meta.file_type.clone())
-        .unwrap_or(infer_erf_type(output.as_path(), cmd.erf_type.as_deref())?);
+    let file_type = metadata.as_ref().map_or_else(
+        || infer_erf_type(output.as_path(), cmd.erf_type.as_deref()),
+        |meta| meta.file_type.clone(),
+    );
     let sources = collect_generic_pack_sources(&input, true, 1, cmd.recurse, cmd.no_symlinks)?;
     let sources = apply_erf_entry_order(metadata.as_ref(), sources);
     let sources = normalize_pack_sources(sources)?;
@@ -215,15 +215,17 @@ fn run_pack_erf(cmd: PackCmd) -> Result<(), String> {
         .iter()
         .map(|entry| entry.rr.clone())
         .collect::<Vec<_>>();
-    let (build_year, build_day) = metadata
-        .as_ref()
-        .map(|meta| (meta.build_year as u32, meta.build_day as u32))
-        .unwrap_or_else(current_build_date);
+    let (build_year, build_day) = metadata.as_ref().map_or_else(current_build_date, |meta| {
+        (
+            meta.build_year.cast_unsigned(),
+            meta.build_day.cast_unsigned(),
+        )
+    });
     let loc_strings = metadata
         .as_ref()
         .map(|meta| meta.loc_strings.clone())
         .unwrap_or_default();
-    let str_ref = metadata.as_ref().map(|meta| meta.str_ref).unwrap_or(0);
+    let str_ref = metadata.as_ref().map_or(0, |meta| meta.str_ref);
     let oid = metadata.as_ref().and_then(|meta| meta.oid.as_deref());
     let entry_algorithms = metadata
         .as_ref()
@@ -232,8 +234,7 @@ fn run_pack_erf(cmd: PackCmd) -> Result<(), String> {
     let mut out = Cursor::new(Vec::new());
     let resource_list_padding = metadata
         .as_ref()
-        .map(|meta| meta.resource_list_padding)
-        .unwrap_or(0);
+        .map_or(0, |meta| meta.resource_list_padding);
     erf::write_erf_with_options(
         &mut out,
         &file_type,
@@ -680,11 +681,11 @@ pub(crate) struct PackSourceEntry {
 impl PackSourceEntry {
     fn source_label(&self) -> String {
         match &self.source {
-            PackSourceKind::File(path) => path.display().to_string(),
-            PackSourceKind::CompiledScript {
+            PackSourceKind::File(path)
+            | PackSourceKind::CompiledScript {
                 path, ..
-            } => path.display().to_string(),
-            PackSourceKind::AssembledNcs {
+            }
+            | PackSourceKind::AssembledNcs {
                 path, ..
             } => path.display().to_string(),
         }
@@ -696,8 +697,8 @@ impl PackSourceEntry {
                 .map_err(|error| format!("failed to read {}: {error}", path.display())),
             PackSourceKind::CompiledScript {
                 bytes, ..
-            } => Ok(bytes.clone()),
-            PackSourceKind::AssembledNcs {
+            }
+            | PackSourceKind::AssembledNcs {
                 bytes, ..
             } => Ok(bytes.clone()),
         }

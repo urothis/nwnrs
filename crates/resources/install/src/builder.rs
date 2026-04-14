@@ -14,7 +14,7 @@ use crate::prelude::*;
 /// installation.
 ///
 /// The resulting manager may include, in precedence order, additional
-/// directories, override directories, NWSync manifests, additional ERFs, and
+/// directories, override directories, `NWSync` manifests, additional ERFs, and
 /// the selected KEY/BIF sets.
 #[instrument(
     level = "info",
@@ -47,10 +47,10 @@ pub fn new_default_resman(
     let resolved_language_root = crate::resolve_language_root(root, language)?;
 
     let autodetect_keys = keys.is_empty() || matches!(keys, [single] if single == "autodetect");
-    let actual_keys = if !autodetect_keys {
-        keys.join(",")
-    } else {
+    let actual_keys = if autodetect_keys {
         DEFAULT_KEYFILES.join(",")
+    } else {
+        keys.join(",")
     };
     let keys = actual_keys
         .split(',')

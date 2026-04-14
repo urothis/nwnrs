@@ -348,8 +348,7 @@ fn write_twoda_with_layout<W: Write>(
         .lines
         .iter()
         .rposition(|line| !matches!(line, TwoDaSourceLine::Blank { .. }))
-        .map(|idx| idx + 1)
-        .unwrap_or(0);
+        .map_or(0, |idx| idx + 1);
     let preferred_line_ending = preferred_line_ending(layout);
     let mut emitted_rows = vec![false; twoda.rows.len()];
     let mut saw_default_line = false;
@@ -689,7 +688,7 @@ fn parse_default_line(line: &SourceLine<'_>) -> TwoDaResult<Option<ParsedDefault
     let remainder = &line.text[prefix_end..];
     let consumed = remainder
         .chars()
-        .take_while(|ch| ch.is_ascii_whitespace())
+        .take_while(char::is_ascii_whitespace)
         .map(char::len_utf8)
         .sum::<usize>();
     let prefix = format!("{}{}", &line.text[..prefix_end], &remainder[..consumed]);

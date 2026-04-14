@@ -105,7 +105,7 @@ impl From<ParserError> for ResolvedParseError {
     }
 }
 
-/// Parses one already-tokenized NWScript translation unit.
+/// Parses one already-tokenized `NWScript` translation unit.
 pub fn parse_tokens(
     tokens: Vec<Token>,
     langspec: Option<&LangSpec>,
@@ -219,7 +219,7 @@ impl<'a> Parser<'a> {
         let ty = self.parse_any_type_specifier()?;
 
         if matches!(ty.kind, TypeKind::Struct(_)) && self.matches_kind(&TokenKind::LeftBrace) {
-            return self.parse_struct_definition(ty).map(TopLevelItem::Struct);
+            return self.parse_struct_definition(&ty).map(TopLevelItem::Struct);
         }
 
         let name = self.consume_identifier(
@@ -237,7 +237,7 @@ impl<'a> Parser<'a> {
         Ok(TopLevelItem::Global(declaration))
     }
 
-    fn parse_struct_definition(&mut self, ty: TypeSpec) -> Result<StructDecl, ParserError> {
+    fn parse_struct_definition(&mut self, ty: &TypeSpec) -> Result<StructDecl, ParserError> {
         let name = match &ty.kind {
             TypeKind::Struct(name) => name.clone(),
             _ => {
@@ -374,7 +374,7 @@ impl<'a> Parser<'a> {
             } else {
                 None
             };
-            let end_span = default.as_ref().map(|expr| expr.span).unwrap_or(name.span);
+            let end_span = default.as_ref().map_or(name.span, |expr| expr.span);
             parameters.push(Parameter {
                 span: join_spans(ty.span, end_span),
                 ty,
@@ -475,7 +475,7 @@ impl<'a> Parser<'a> {
                 )?;
                 return Ok(TypeSpec {
                     span: join_spans(
-                        const_token.map(|token| token.span).unwrap_or(token.span),
+                        const_token.map_or(token.span, |token| token.span),
                         name.span,
                     ),
                     is_const,
@@ -506,7 +506,7 @@ impl<'a> Parser<'a> {
             }
         };
 
-        let start_span = const_token.map(|token| token.span).unwrap_or(token.span);
+        let start_span = const_token.map_or(token.span, |token| token.span);
         Ok(TypeSpec {
             span: join_spans(start_span, token.span),
             is_const,
@@ -547,10 +547,7 @@ impl<'a> Parser<'a> {
         } else {
             None
         };
-        let end_span = initializer
-            .as_ref()
-            .map(|expr| expr.span)
-            .unwrap_or(name.span);
+        let end_span = initializer.as_ref().map_or(name.span, |expr| expr.span);
         Ok(VarDeclarator {
             span: join_spans(name.span, end_span),
             name: name.text,
@@ -714,8 +711,7 @@ impl<'a> Parser<'a> {
         };
         let end_span = else_branch
             .as_ref()
-            .map(|stmt| stmt.span())
-            .unwrap_or_else(|| then_branch.span());
+            .map_or_else(|| then_branch.span(), |stmt| stmt.span());
         Ok(IfStmt {
             span: join_spans(if_token.span, end_span),
             condition,
@@ -1180,20 +1176,22 @@ impl<'a> Parser<'a> {
             | TokenKind::Float
             | TokenKind::String
             | TokenKind::LeftSquareBracket
-            | TokenKind::Keyword(Keyword::ObjectSelf)
-            | TokenKind::Keyword(Keyword::ObjectInvalid)
-            | TokenKind::Keyword(Keyword::LocationInvalid)
-            | TokenKind::Keyword(Keyword::JsonNull)
-            | TokenKind::Keyword(Keyword::JsonFalse)
-            | TokenKind::Keyword(Keyword::JsonTrue)
-            | TokenKind::Keyword(Keyword::JsonObject)
-            | TokenKind::Keyword(Keyword::JsonArray)
-            | TokenKind::Keyword(Keyword::JsonString)
-            | TokenKind::Keyword(Keyword::FunctionMacro)
-            | TokenKind::Keyword(Keyword::FileMacro)
-            | TokenKind::Keyword(Keyword::LineMacro)
-            | TokenKind::Keyword(Keyword::DateMacro)
-            | TokenKind::Keyword(Keyword::TimeMacro) => self.parse_literal_expression(),
+            | TokenKind::Keyword(
+                Keyword::ObjectSelf
+                | Keyword::ObjectInvalid
+                | Keyword::LocationInvalid
+                | Keyword::JsonNull
+                | Keyword::JsonFalse
+                | Keyword::JsonTrue
+                | Keyword::JsonObject
+                | Keyword::JsonArray
+                | Keyword::JsonString
+                | Keyword::FunctionMacro
+                | Keyword::FileMacro
+                | Keyword::LineMacro
+                | Keyword::DateMacro
+                | Keyword::TimeMacro,
+            ) => self.parse_literal_expression(),
             TokenKind::LeftParen => {
                 let left = self
                     .advance_required(CompilerErrorCode::NoLeftBracketOnExpression, "expected (")?;
@@ -1446,10 +1444,7 @@ impl<'a> Parser<'a> {
         operators: &[(TokenKind, BinaryOp)],
     ) -> Result<Expr, ParserError> {
         let mut expr = subparser(self)?;
-        loop {
-            let Some(op) = self.current_binary_op(operators) else {
-                break;
-            };
+        while let Some(op) = self.current_binary_op(operators) {
             self.advance();
             let right = subparser(self)?;
             expr = Expr {
@@ -1495,13 +1490,15 @@ impl<'a> Parser<'a> {
             return false;
         };
         match token.kind {
-            TokenKind::Keyword(Keyword::Const)
-            | TokenKind::Keyword(Keyword::Int)
-            | TokenKind::Keyword(Keyword::Float)
-            | TokenKind::Keyword(Keyword::String)
-            | TokenKind::Keyword(Keyword::Object)
-            | TokenKind::Keyword(Keyword::Struct)
-            | TokenKind::Keyword(Keyword::Vector) => true,
+            TokenKind::Keyword(
+                Keyword::Const
+                | Keyword::Int
+                | Keyword::Float
+                | Keyword::String
+                | Keyword::Object
+                | Keyword::Struct
+                | Keyword::Vector,
+            ) => true,
             TokenKind::Identifier => self.is_engine_structure_name(token),
             _ => false,
         }
@@ -1539,6 +1536,7 @@ impl<'a> Parser<'a> {
         }
     }
 
+    #[allow(clippy::needless_pass_by_value)]
     fn consume_kind(
         &mut self,
         kind: TokenKind,
@@ -1583,16 +1581,14 @@ impl<'a> Parser<'a> {
     fn error_here(&self, code: CompilerErrorCode, message: impl Into<String>) -> ParserError {
         let span = self
             .peek()
-            .map(|token| token.span)
-            .unwrap_or_else(|| self.eof_span());
+            .map_or_else(|| self.eof_span(), |token| token.span);
         ParserError::new(code, span, message)
     }
 
     fn eof_span(&self) -> Span {
         self.tokens
             .last()
-            .map(|token| token.span)
-            .unwrap_or_else(|| Span::new(SourceId::new(0), 0, 0))
+            .map_or_else(|| Span::new(SourceId::new(0), 0, 0), |token| token.span)
     }
 
     fn at_eof(&self) -> bool {
@@ -1625,6 +1621,7 @@ impl<'a> Parser<'a> {
 }
 
 impl Stmt {
+    #[allow(clippy::match_same_arms)]
     fn span(&self) -> Span {
         match self {
             Self::Block(stmt) => stmt.span,

@@ -9,10 +9,10 @@ use crate::{
     lex_source, load_source_bundle,
 };
 
-/// Default logical script name for the builtin NWScript language definition.
+/// Default logical script name for the builtin `NWScript` language definition.
 pub const DEFAULT_LANGSPEC_SCRIPT_NAME: &str = "nwscript";
 
-/// One builtin NWScript type defined by `nwscript.nss`.
+/// One builtin `NWScript` type defined by `nwscript.nss`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum BuiltinType {
     /// `int`
@@ -254,14 +254,7 @@ impl<'a> LangSpecParser<'a> {
             .ok_or_else(|| LangSpecError::parse("unexpected EOF after #define"))?;
         let define_line = self.line_number_for_token(&token);
         let index = match &token.kind {
-            TokenKind::Identifier => {
-                let Some(index) = parse_engine_structure_define_index(&token.text) else {
-                    self.skip_line(define_line);
-                    return Ok(());
-                };
-                index
-            }
-            TokenKind::Keyword(Keyword::EngineStructureDefinition) => {
+            TokenKind::Identifier | TokenKind::Keyword(Keyword::EngineStructureDefinition) => {
                 let Some(index) = parse_engine_structure_define_index(&token.text) else {
                     self.skip_line(define_line);
                     return Ok(());
@@ -383,8 +376,7 @@ impl<'a> LangSpecParser<'a> {
                 self.parse_json_default()
             }
             _ => Err(LangSpecError::parse(format!(
-                "unsupported builtin default value for type {:?}",
-                ty
+                "unsupported builtin default value for type {ty:?}"
             ))),
         }
     }
@@ -504,6 +496,7 @@ impl<'a> LangSpecParser<'a> {
         Ok(sign * value)
     }
 
+    #[allow(clippy::cast_precision_loss)]
     fn parse_float_like_value(&mut self) -> Result<f32, LangSpecError> {
         let sign = if self.matches_kind(&TokenKind::Minus) {
             self.advance();
@@ -650,8 +643,9 @@ impl<'a> LangSpecParser<'a> {
             .advance()
             .ok_or_else(|| LangSpecError::parse("unexpected EOF while parsing identifier"))?;
         match token.kind {
-            TokenKind::Identifier => Ok(token.text),
-            TokenKind::Keyword(Keyword::EngineStructureDefinition) => Ok(token.text),
+            TokenKind::Identifier | TokenKind::Keyword(Keyword::EngineStructureDefinition) => {
+                Ok(token.text)
+            }
             _ => Err(LangSpecError::parse(format!(
                 "expected identifier, found {:?}",
                 token.kind
@@ -673,6 +667,7 @@ impl<'a> LangSpecParser<'a> {
         }
     }
 
+    #[allow(clippy::needless_pass_by_value)]
     fn expect_kind(&mut self, kind: TokenKind) -> Result<(), LangSpecError> {
         let token = self
             .advance()

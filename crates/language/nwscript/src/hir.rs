@@ -683,7 +683,7 @@ impl<'a> HirLowerer<'a> {
                 } else {
                     return Err(HirLowerError::new(
                         expr.span,
-                        format!("unresolved value reference {:?}", name),
+                        format!("unresolved value reference {name:?}"),
                     ));
                 }
             }
@@ -874,18 +874,19 @@ fn lower_decl_type(ty: &TypeSpec, semantic: &SemanticModel) -> Result<SemanticTy
 
 fn semantic_type_from_literal(literal: &Literal) -> SemanticType {
     match literal {
-        Literal::Integer(_) => SemanticType::Int,
+        Literal::Integer(_) | Literal::Magic(crate::MagicLiteral::Line) => SemanticType::Int,
         Literal::Float(_) => SemanticType::Float,
-        Literal::String(_) => SemanticType::String,
+        Literal::String(_)
+        | Literal::Magic(
+            crate::MagicLiteral::Function
+            | crate::MagicLiteral::File
+            | crate::MagicLiteral::Date
+            | crate::MagicLiteral::Time,
+        ) => SemanticType::String,
         Literal::ObjectSelf | Literal::ObjectInvalid => SemanticType::Object,
         Literal::LocationInvalid => SemanticType::EngineStructure("location".to_string()),
         Literal::Json(_) => SemanticType::EngineStructure("json".to_string()),
         Literal::Vector(_) => SemanticType::Vector,
-        Literal::Magic(crate::MagicLiteral::Line) => SemanticType::Int,
-        Literal::Magic(crate::MagicLiteral::Function)
-        | Literal::Magic(crate::MagicLiteral::File)
-        | Literal::Magic(crate::MagicLiteral::Date)
-        | Literal::Magic(crate::MagicLiteral::Time) => SemanticType::String,
     }
 }
 
@@ -977,9 +978,8 @@ fn binary_result_type(
         BinaryOp::Add | BinaryOp::Subtract | BinaryOp::Multiply | BinaryOp::Divide => {
             match (left, right) {
                 (SemanticType::Int, SemanticType::Int) => Ok(SemanticType::Int),
-                (SemanticType::Float, SemanticType::Int)
-                | (SemanticType::Int, SemanticType::Float)
-                | (SemanticType::Float, SemanticType::Float) => Ok(SemanticType::Float),
+                (SemanticType::Float, SemanticType::Int | SemanticType::Float)
+                | (SemanticType::Int, SemanticType::Float) => Ok(SemanticType::Float),
                 (SemanticType::String, SemanticType::String) if op == BinaryOp::Add => {
                     Ok(SemanticType::String)
                 }
@@ -998,19 +998,13 @@ fn binary_result_type(
                 }
                 _ => Err(HirLowerError::new(
                     span,
-                    format!(
-                        "cannot lower binary operation {:?} for {:?} and {:?}",
-                        op, left, right
-                    ),
+                    format!("cannot lower binary operation {op:?} for {left:?} and {right:?}"),
                 )),
             }
         }
         _ => Err(HirLowerError::new(
             span,
-            format!(
-                "cannot lower binary operation {:?} for {:?} and {:?}",
-                op, left, right
-            ),
+            format!("cannot lower binary operation {op:?} for {left:?} and {right:?}"),
         )),
     }
 }
@@ -1052,7 +1046,7 @@ fn field_result_type(
             "x" | "y" | "z" => Ok(SemanticType::Float),
             _ => Err(HirLowerError::new(
                 span,
-                format!("field {:?} does not exist on vector", field),
+                format!("field {field:?} does not exist on vector"),
             )),
         },
         SemanticType::Struct(name) => semantic
@@ -1068,7 +1062,7 @@ fn field_result_type(
             .ok_or_else(|| {
                 HirLowerError::new(
                     span,
-                    format!("field {:?} does not exist on structure {:?}", field, name),
+                    format!("field {field:?} does not exist on structure {name:?}"),
                 )
             }),
         _ => Err(HirLowerError::new(

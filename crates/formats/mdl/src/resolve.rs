@@ -19,6 +19,7 @@ pub enum TextureResourceKind {
 
 impl TextureResourceKind {
     /// Returns the registered NWN resource type for this kind.
+    #[must_use]
     pub fn res_type(self) -> ResType {
         match self {
             Self::Dds => get_res_type("dds"),
@@ -28,6 +29,7 @@ impl TextureResourceKind {
     }
 
     /// Returns the file extension for this kind.
+    #[must_use]
     pub fn extension(self) -> &'static str {
         match self {
             Self::Dds => "dds",
@@ -135,6 +137,7 @@ pub fn resolve_texture_ref(
 /// The returned names always start with the original texture name and then add
 /// appearance-aware aliases, such as body-part name normalization and nearest
 /// ancestor bitmap inheritance for placeholder child meshes.
+#[must_use]
 pub fn scene_texture_resolution_names(
     scene: &NwnScene,
     material: &NwnMaterial,
@@ -326,7 +329,7 @@ fn resolve_model_backed_texture_candidate(
             attempted: Vec::new(),
         });
     };
-    let Some(model_res) = resman.get(&model_ref) else {
+    let Some(model_resource) = resman.get(&model_ref) else {
         return SceneTextureResolution::Missing(UnresolvedTexture {
             texture:   original_texture.clone(),
             attempted: Vec::new(),
@@ -336,12 +339,9 @@ fn resolve_model_backed_texture_candidate(
         return SceneTextureResolution::Ignored;
     }
 
-    let nested_scene = match NwnScene::from_auto_res(&model_res, CachePolicy::Use) {
-        Ok(scene) => scene,
-        Err(_) => {
-            visited_models.remove(&trimmed.to_ascii_lowercase());
-            return SceneTextureResolution::Ignored;
-        }
+    let Ok(nested_scene) = NwnScene::from_auto_res(&model_resource, CachePolicy::Use) else {
+        visited_models.remove(&trimmed.to_ascii_lowercase());
+        return SceneTextureResolution::Ignored;
     };
 
     let mut attempted = Vec::new();

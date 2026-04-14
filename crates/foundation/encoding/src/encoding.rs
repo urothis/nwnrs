@@ -16,6 +16,7 @@ pub fn get_nwnrs_encoding() -> &'static Encoding {
 }
 
 /// Returns the canonical label for the current NWN text encoding.
+#[must_use]
 pub fn get_nwnrs_encoding_name() -> &'static str {
     get_nwnrs_encoding().name()
 }
@@ -183,8 +184,7 @@ pub(crate) fn parse_locale_encoding(locale: &str) -> Option<&'static Encoding> {
     let without_modifier = trimmed.split('@').next().unwrap_or(trimmed);
     let candidate = without_modifier
         .split_once('.')
-        .map(|(_, encoding)| encoding)
-        .unwrap_or(without_modifier);
+        .map_or(without_modifier, |(_, encoding)| encoding);
 
     Encoding::for_label(candidate.trim().as_bytes())
 }

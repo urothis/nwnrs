@@ -57,12 +57,18 @@ pub fn read_erf_shared(stream: SharedReadSeek, filename: String) -> ErfResult<Er
         other => return Err(ErfError::msg(format!("unsupported erf version: {other}"))),
     };
 
-    let loc_str_count = read_i32(io.as_mut())? as usize;
-    let loc_string_size = read_i32(io.as_mut())? as u64;
-    let entry_count = read_i32(io.as_mut())? as usize;
-    let offset_to_loc_str = read_i32(io.as_mut())? as u64;
-    let offset_to_key_list = read_i32(io.as_mut())? as u64;
-    let offset_to_resource_list = read_i32(io.as_mut())? as u64;
+    let loc_str_count = usize::try_from(read_i32(io.as_mut())?)
+        .map_err(|e| ErfError::msg(format!("ERF loc string count is negative: {e}")))?;
+    let loc_string_size = u64::try_from(read_i32(io.as_mut())?)
+        .map_err(|e| ErfError::msg(format!("ERF loc string size is negative: {e}")))?;
+    let entry_count = usize::try_from(read_i32(io.as_mut())?)
+        .map_err(|e| ErfError::msg(format!("ERF entry count is negative: {e}")))?;
+    let offset_to_loc_str = u64::try_from(read_i32(io.as_mut())?)
+        .map_err(|e| ErfError::msg(format!("ERF loc string offset is negative: {e}")))?;
+    let offset_to_key_list = u64::try_from(read_i32(io.as_mut())?)
+        .map_err(|e| ErfError::msg(format!("ERF key list offset is negative: {e}")))?;
+    let offset_to_resource_list = u64::try_from(read_i32(io.as_mut())?)
+        .map_err(|e| ErfError::msg(format!("ERF resource list offset is negative: {e}")))?;
     let build_year = read_i32(io.as_mut())?;
     let build_day = read_i32(io.as_mut())?;
     let str_ref = read_i32(io.as_mut())?;
@@ -82,7 +88,8 @@ pub fn read_erf_shared(stream: SharedReadSeek, filename: String) -> ErfResult<Er
     io.seek(SeekFrom::Start(offset_to_loc_str))?;
     for _ in 0..loc_str_count {
         let id = read_i32(io.as_mut())?;
-        let len = read_i32(io.as_mut())? as usize;
+        let len = usize::try_from(read_i32(io.as_mut())?)
+            .map_err(|e| ErfError::msg(format!("ERF loc string length is negative: {e}")))?;
         let bytes = read_bytes_or_err(io.as_mut(), len)?;
         loc_strings.insert(id, from_nwnrs_encoding(&bytes)?);
     }
@@ -171,7 +178,12 @@ pub fn read_erf_shared(stream: SharedReadSeek, filename: String) -> ErfResult<Er
         };
 
         if let Some(existing) = entries.get(&rr) {
-            if existing.io_offset() == meta.offset && existing.io_size() == meta.disk_size as i64 {
+            if existing.io_offset() == meta.offset
+                && existing.io_size()
+                    == i64::try_from(meta.disk_size).map_err(|e| {
+                        ErfError::msg(format!("ERF resource size exceeds i64 range: {e}"))
+                    })?
+            {
                 continue;
             }
             rr = ResRef::new(
@@ -185,7 +197,8 @@ pub fn read_erf_shared(stream: SharedReadSeek, filename: String) -> ErfResult<Er
             rr.clone(),
             SystemTime::UNIX_EPOCH,
             stream.clone(),
-            meta.disk_size as i64,
+            i64::try_from(meta.disk_size)
+                .map_err(|e| ErfError::msg(format!("ERF resource size exceeds i64 range: {e}")))?,
             meta.offset,
             meta.compression,
             read_compressed_buf_algorithm(io.as_mut(), meta)?,
@@ -197,6 +210,8 @@ pub fn read_erf_shared(stream: SharedReadSeek, filename: String) -> ErfResult<Er
 
     drop(io);
 
+    // TODO: possibly dead code - value is never read
+    #[allow(clippy::no_effect_underscore_binding)]
     let _has_oversized_loc_table =
         offset_to_loc_str + loc_string_size > HEADER_SIZE && entry_count == 0;
 

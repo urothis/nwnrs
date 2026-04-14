@@ -26,7 +26,7 @@ impl fmt::Display for RegisterResTypeError {
         match self {
             Self::Expectation(error) => error.fmt(f),
             Self::InvalidCharacters(ext) => {
-                write!(f, "ResType {:?} contains invalid characters", ext)
+                write!(f, "ResType {ext:?} contains invalid characters")
             }
         }
     }

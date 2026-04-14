@@ -130,6 +130,7 @@ impl TlkEntry {
     }
 
     /// Returns `true` when the entry contains either text or a sound reference.
+    #[must_use]
     pub fn has_value(&self) -> bool {
         !self.text.is_empty()
             || !self.sound_res_ref.is_empty()
@@ -255,9 +256,9 @@ impl fmt::Debug for SingleTlk {
             .field("cache_policy", &self.cache_policy)
             .field(
                 "io_cache_entries",
-                &self.io_cache.as_ref().map(WeightedLru::len).unwrap_or(0),
+                &self.io_cache.as_ref().map_or(0, WeightedLru::len),
             )
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -285,6 +286,7 @@ impl SingleTlk {
     ///
     /// Use [`set_entry`](Self::set_entry) or [`set_text`](Self::set_text) to
     /// populate authored content after construction.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             language:               Language::English,
@@ -314,6 +316,7 @@ impl SingleTlk {
     }
 
     /// Returns the highest string reference known to this table.
+    #[must_use]
     pub fn highest(&self) -> i32 {
         let io_highest = i32::try_from(self.io_entry_count.saturating_sub(1)).unwrap_or(i32::MAX);
         io_highest.max(self.static_entries_highest)
@@ -388,6 +391,7 @@ pub(crate) fn decode_sound_res_ref(bytes: &[u8]) -> String {
 
 impl Tlk {
     /// Creates a TLK chain from explicit layers.
+    #[must_use]
     pub fn new(chain: Vec<TlkPair>) -> Self {
         Self {
             chain,

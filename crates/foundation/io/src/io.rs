@@ -50,6 +50,7 @@ pub fn expect(condition: bool, message: impl Into<String>) -> Result<(), Expecta
 /// A value that can be byte-swapped.
 pub trait SwappableEndian: Sized {
     /// Returns the value with its byte order reversed.
+    #[must_use]
     fn swap_endian(self) -> Self;
 }
 

@@ -28,7 +28,9 @@ pub fn read_resmemfile(
             resref,
             SystemTime::UNIX_EPOCH,
             stream,
-            len as i64,
+            i64::try_from(len).map_err(|e| {
+                ResManError::Message(format!("resource size exceeds i64 range: {e}"))
+            })?,
             0,
             ExoResFileCompressionType::None,
             None,

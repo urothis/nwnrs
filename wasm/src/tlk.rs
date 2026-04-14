@@ -56,7 +56,7 @@ fn dto_to_tlk(value: &SingleTlkDto) -> Result<tlk::SingleTlk, JsValue> {
             };
             let mut next =
                 tlk::TlkEntry::new(&entry.text, &entry.sound_res_ref, entry.sound_length);
-            next.raw_text = entry.raw_text.clone();
+            next.raw_text.clone_from(&entry.raw_text);
             next.raw_sound_res_ref = raw_sound_res_ref;
             next.sound_length_bits = if entry.sound_length_bits == 0 {
                 entry.sound_length.to_bits()
@@ -141,7 +141,7 @@ pub(crate) fn read_tlk_dto(bytes: &[u8]) -> Result<SingleTlkDto, JsValue> {
 pub(crate) fn write_tlk_dto(value: &SingleTlkDto) -> Result<Vec<u8>, JsValue> {
     if let Some(bytes) = unchanged_lossless_bytes(
         value,
-        &value.lossless,
+        value.lossless.as_ref(),
         |dto| &mut dto.lossless,
         "failed to fingerprint TLK DTO",
     )

@@ -58,11 +58,13 @@ impl Error for ParseLanguageError {}
 
 impl Language {
     /// Returns the numeric NWN language id.
+    #[must_use]
     pub fn id(self) -> u32 {
         self as u32
     }
 
     /// Returns the two-letter NWN language code.
+    #[must_use]
     pub fn short_code(self) -> &'static str {
         match self {
             Self::English => "en",
@@ -75,6 +77,7 @@ impl Language {
     }
 
     /// Resolves a language from its numeric NWN id.
+    #[must_use]
     pub fn from_id(id: u32) -> Option<Self> {
         match id {
             0 => Some(Self::English),

@@ -62,7 +62,7 @@ pub(crate) fn read_mdl_dto(bytes: &[u8]) -> Result<MdlDto, String> {
 pub(crate) fn write_mdl_dto(value: &MdlDto) -> Result<Vec<u8>, String> {
     if let Some(bytes) = unchanged_lossless_bytes(
         value,
-        &value.lossless,
+        value.lossless.as_ref(),
         |dto| &mut dto.lossless,
         "failed to fingerprint MDL DTO",
     )? {

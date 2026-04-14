@@ -15,15 +15,15 @@ use nwnrs_resman::prelude::*;
 use nwnrs_resref::prelude::*;
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 
-/// The compressed-buffer magic used by NWSync shards.
+/// The compressed-buffer magic used by `NWSync` shards.
 pub const NWSYNC_COMPRESSED_BUF_MAGIC_STR: &str = "NSYC";
 
-/// Errors returned while working with NWSync repositories.
+/// Errors returned while working with `NWSync` repositories.
 #[derive(Debug)]
 pub enum ResNWSyncError {
     /// Filesystem access failed.
     Io(io::Error),
-    /// SQLite access failed.
+    /// `SQLite` access failed.
     Sqlite(rusqlite::Error),
     /// SHA-1 parsing failed.
     ParseSecureHash(ParseSecureHashError),
@@ -95,7 +95,7 @@ impl From<CompressedBufError> for ResNWSyncError {
     }
 }
 
-/// Result type for NWSync resource operations.
+/// Result type for `NWSync` resource operations.
 pub type ResNWSyncResult<T> = Result<T, ResNWSyncError>;
 
 type ShardId = i64;
@@ -117,7 +117,7 @@ impl fmt::Display for NWSyncShard {
     }
 }
 
-/// An opened NWSync repository.
+/// An opened `NWSync` repository.
 #[derive(Debug, Clone)]
 pub struct NWSync {
     pub(crate) root:      PathBuf,
@@ -128,6 +128,7 @@ pub struct NWSync {
 
 impl NWSync {
     /// Returns the repository root path.
+    #[must_use]
     pub fn root(&self) -> &Path {
         &self.root
     }
@@ -145,11 +146,13 @@ impl NWSync {
     }
 
     /// Returns all resource payload hashes stored in the repository.
+    #[must_use]
     pub fn get_all_resrefs(&self) -> Vec<ResRefSha1> {
         self.shardmap.keys().copied().collect()
     }
 
     /// Returns whether the repository already stores a payload for `sha1`.
+    #[must_use]
     pub fn contains_resref_data(&self, sha1: ResRefSha1) -> bool {
         self.shardmap.contains_key(&sha1)
     }
@@ -278,7 +281,7 @@ impl NWSync {
     }
 }
 
-/// A single NWSync manifest exposed as a resource container.
+/// A single `NWSync` manifest exposed as a resource container.
 #[derive(Debug, Clone)]
 pub struct ResNWSyncManifest {
     pub(crate) nwsync:        NWSync,
@@ -290,16 +293,19 @@ pub struct ResNWSyncManifest {
 
 impl ResNWSyncManifest {
     /// Returns the manifest hash.
+    #[must_use]
     pub fn manifest_sha1(&self) -> ManifestSha1 {
         self.manifest_sha1
     }
 
     /// Returns the manifest timestamp derived from the metadata database.
+    #[must_use]
     pub fn mtime(&self) -> SystemTime {
         self.mtime
     }
 
     /// Returns the payload hash for a resource reference, if present.
+    #[must_use]
     pub fn sha1_for(&self, rr: &ResRef) -> Option<ResRefSha1> {
         self.sha1map.get(rr).copied()
     }
@@ -351,7 +357,9 @@ impl ResContainer for ResNWSyncManifest {
             rr.clone(),
             self.mtime,
             shared_stream(Cursor::new(data.clone())),
-            data.len() as i64,
+            i64::try_from(data.len()).map_err(|e| {
+                ResManError::Message(format!("NWSync resource size exceeds i64 range: {e}"))
+            })?,
             0,
             ExoResFileCompressionType::None,
             None,

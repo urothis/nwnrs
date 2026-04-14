@@ -15,7 +15,7 @@ pub mod prelude {
     };
 }
 
-/// A single required or optional NWSync manifest entry.
+/// A single required or optional `NWSync` manifest entry.
 #[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Manifest {
@@ -25,19 +25,20 @@ pub struct Manifest {
     pub hash:     String,
 }
 
-/// NWSync metadata advertised by a masterlist server entry.
+/// `NWSync` metadata advertised by a masterlist server entry.
 #[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Nwsync {
     /// The manifests associated with the server.
     pub manifests: Vec<Manifest>,
-    /// The base URL for the NWSync repository.
+    /// The base URL for the `NWSync` repository.
     pub url:       String,
 }
 
 /// A single Beamdog masterlist server entry.
 #[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(clippy::struct_excessive_bools)]
 pub struct Server {
     /// The first time the server was seen by the masterlist.
     #[serde(rename = "first_seen")]
@@ -105,7 +106,7 @@ pub struct Server {
     /// The advertised signing public key, if present.
     #[serde(rename = "sign_pk")]
     pub sign_pk:            Option<String>,
-    /// The advertised NWSync details, if present.
+    /// The advertised `NWSync` details, if present.
     pub nwsync:             Option<Nwsync>,
     /// An optional connection hint.
     pub connecthint:        Option<String>,

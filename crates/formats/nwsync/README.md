@@ -1,10 +1,10 @@
 # nwnrs-nwsync
 
-Reader and writer for NWSync manifest files.
+Reader and writer for `NWSync` manifest files.
 
 ## Scope
 
-- parse standalone NWSync manifests into typed entries
+- parse standalone `NWSync` manifests into typed entries
 - write typed manifests back to disk
 - model manifest hashes, sizes, and resource-reference mappings directly
 
@@ -22,7 +22,7 @@ Start with [`read_manifest`], [`read_manifest_file`], [`write_manifest`], and
 
 ## Non-goals
 
-- open or manage an on-disk NWSync repository
+- open or manage an on-disk `NWSync` repository
 - fetch shard payloads or enforce repository precedence
 
 ## See also

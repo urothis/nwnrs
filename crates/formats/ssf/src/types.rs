@@ -95,6 +95,7 @@ pub struct SsfRoot {
 
 impl SsfRoot {
     /// Creates an empty `SSF` document.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }

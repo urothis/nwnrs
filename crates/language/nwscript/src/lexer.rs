@@ -5,7 +5,7 @@ use crate::{
     source::{SourceFile, SourceId, Span},
 };
 
-/// A lexical error returned while scanning NWScript source text.
+/// A lexical error returned while scanning `NWScript` source text.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LexerError {
     /// Stable upstream-aligned compiler error code.
@@ -40,7 +40,7 @@ impl fmt::Display for LexerError {
 
 impl Error for LexerError {}
 
-/// Lexes NWScript source using the upstream compiler's token vocabulary.
+/// Lexes `NWScript` source using the upstream compiler's token vocabulary.
 #[derive(Debug, Clone)]
 pub struct Lexer<'a> {
     source_id: SourceId,
@@ -50,6 +50,7 @@ pub struct Lexer<'a> {
 
 impl<'a> Lexer<'a> {
     /// Creates a lexer for one source file's contents.
+    #[must_use]
     pub fn new(source_id: SourceId, input: &'a [u8]) -> Self {
         Self {
             source_id,
@@ -419,8 +420,10 @@ impl<'a> Lexer<'a> {
                 }
                 b'"' => {
                     self.position += 1;
-                    let lowered =
-                        format!("0x{:x}", nwscript_string_hash_bytes(&cooked_bytes) as u32);
+                    let lowered = format!(
+                        "0x{:x}",
+                        nwscript_string_hash_bytes(&cooked_bytes).cast_unsigned()
+                    );
                     return self.finish_token(TokenKind::HexInteger, start, self.position, lowered);
                 }
                 b'\\' => {
@@ -580,7 +583,7 @@ impl<'a> Lexer<'a> {
             start.saturating_add(1),
             format!(
                 "unexpected character {:?}",
-                self.current_byte().map(char::from).unwrap_or('\0')
+                self.current_byte().map_or('\0', char::from)
             ),
         ))
     }

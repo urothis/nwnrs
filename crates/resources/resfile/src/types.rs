@@ -66,16 +66,19 @@ pub struct ResFile {
 
 impl ResFile {
     /// Returns the underlying file path.
+    #[must_use]
     pub fn path(&self) -> &Path {
         &self.path
     }
 
     /// Returns the display label used for this container.
+    #[must_use]
     pub fn label(&self) -> &str {
         &self.label
     }
 
     /// Returns the contained resource entry.
+    #[must_use]
     pub fn res(&self) -> Res {
         self.entry.clone()
     }

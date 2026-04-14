@@ -46,7 +46,7 @@ where
     let language_id = u32::try_from(read_i32(&mut *locked)?)
         .map_err(|_error| TlkError::msg("invalid negative tlk language id"))?;
     let language = Language::from_id(language_id)
-        .ok_or_else(|| TlkError::msg(format!("invalid tlk language id {}", language_id)))?;
+        .ok_or_else(|| TlkError::msg(format!("invalid tlk language id {language_id}")))?;
     let entry_count = usize::try_from(read_i32(&mut *locked)?)
         .map_err(|_error| TlkError::msg("invalid negative tlk entry count"))?;
     let entries_offset = u64::try_from(read_i32(&mut *locked)?)
@@ -185,6 +185,7 @@ pub fn write_tlk_chain(targets: &mut [TlkLayerWriteTarget<'_>], tlk: &mut Tlk) -
     Ok(())
 }
 
+#[allow(clippy::mut_mut)]
 fn write_optional_layer(
     layer_index: usize,
     gender: &str,
@@ -194,12 +195,10 @@ fn write_optional_layer(
     match (writer, tlk) {
         (Some(writer), Some(tlk)) => write_single_tlk(writer, tlk),
         (None, Some(_)) => Err(TlkError::msg(format!(
-            "tlk layer {} has a {} table but no writer target was provided",
-            layer_index, gender
+            "tlk layer {layer_index} has a {gender} table but no writer target was provided"
         ))),
         (Some(_), None) => Err(TlkError::msg(format!(
-            "tlk layer {} has a {} writer target but no table to write",
-            layer_index, gender
+            "tlk layer {layer_index} has a {gender} writer target but no table to write"
         ))),
         (None, None) => Ok(()),
     }

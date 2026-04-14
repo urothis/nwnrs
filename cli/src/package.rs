@@ -137,8 +137,7 @@ fn collect_package_entries(resman: &mut resman::ResMan) -> Result<Vec<PackageEnt
 
 fn resolved_resource_name(rr: &resref::ResRef) -> String {
     rr.resolve()
-        .map(|resolved| resolved.to_file())
-        .unwrap_or_else(|| rr.to_string())
+        .map_or_else(|| rr.to_string(), |resolved| resolved.to_file())
 }
 
 fn is_included_package_extension(ext: &str) -> bool {

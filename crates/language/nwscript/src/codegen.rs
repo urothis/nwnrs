@@ -372,7 +372,7 @@ impl Assembler {
                     target,
                 } => {
                     let target_offset = offsets.get(&target).copied().ok_or_else(|| {
-                        CodegenError::new(None, format!("unresolved code label {:?}", target))
+                        CodegenError::new(None, format!("unresolved code label {target:?}"))
                     })?;
                     let delta = usize_to_i32(target_offset, "jump target offset")?
                         - usize_to_i32(offset, "jump offset")?;
@@ -596,10 +596,7 @@ impl<'a> O0Compiler<'a> {
                 .iter()
                 .map(|(name, start)| {
                     let end = self.function_end_labels.get(name).copied().ok_or_else(|| {
-                        CodegenError::new(
-                            None,
-                            format!("missing function end label for {:?}", name),
-                        )
+                        CodegenError::new(None, format!("missing function end label for {name:?}"))
                     })?;
                     Ok::<_, CodegenError>((
                         name.clone(),
@@ -830,7 +827,9 @@ impl<'a> O0Compiler<'a> {
 
     fn function_layout(&self, function: &HirFunction) -> Result<FunctionLayout, CodegenError> {
         let mut offset = 0usize;
-        let return_layout = if function.return_type != SemanticType::Void {
+        let return_layout = if function.return_type == SemanticType::Void {
+            None
+        } else {
             let size = size_of_type(&function.return_type, &self.structs)?;
             let layout = ValueLayout {
                 offset,
@@ -838,8 +837,6 @@ impl<'a> O0Compiler<'a> {
             };
             offset += size;
             Some(layout)
-        } else {
-            None
         };
 
         let mut locals = BTreeMap::new();
@@ -907,7 +904,7 @@ impl<'a> O0Compiler<'a> {
             }
             SemanticType::Struct(name) => {
                 let structure = self.structs.get(name).ok_or_else(|| {
-                    CodegenError::new(None, format!("unknown structure {:?}", name))
+                    CodegenError::new(None, format!("unknown structure {name:?}"))
                 })?;
                 for field in &structure.fields {
                     self.emit_stack_alloc(&field.ty)?;
@@ -1008,7 +1005,7 @@ impl<'a> O0Compiler<'a> {
 
     fn magic_literal_value(
         &self,
-        literal: &crate::MagicLiteral,
+        literal: crate::MagicLiteral,
         span: Option<crate::Span>,
     ) -> Literal {
         match literal {
@@ -1025,8 +1022,9 @@ impl<'a> O0Compiler<'a> {
             crate::MagicLiteral::Line => {
                 let value = span
                     .and_then(|span| self.line_location(span))
-                    .map(|(_source_id, line)| i32::try_from(line).ok().unwrap_or(i32::MAX))
-                    .unwrap_or(0);
+                    .map_or(0, |(_source_id, line)| {
+                        i32::try_from(line).ok().unwrap_or(i32::MAX)
+                    });
                 Literal::Integer(value)
             }
             crate::MagicLiteral::Date => Literal::String(format_magic_date(self.compile_time)),
@@ -1040,16 +1038,17 @@ struct GlobalEmitter<'a, 'b> {
     temp_bytes: usize,
 }
 
-impl<'a> GlobalEmitter<'a, '_> {
+impl GlobalEmitter<'_, '_> {
     fn emit_expr(&mut self, expr: &HirExpr) -> Result<(), CodegenError> {
         emit_expr_common(self.compiler, &mut self.temp_bytes, None, expr)
     }
 
     fn emit_store_global(&mut self, name: &str, span: crate::Span) -> Result<(), CodegenError> {
-        let layout =
-            self.compiler.global_layout.get(name).ok_or_else(|| {
-                CodegenError::new(Some(span), format!("unknown global {:?}", name))
-            })?;
+        let layout = self
+            .compiler
+            .global_layout
+            .get(name)
+            .ok_or_else(|| CodegenError::new(Some(span), format!("unknown global {name:?}")))?;
         let offset = usize_to_i32(layout.offset, "global offset")?
             - usize_to_i32(self.compiler.global_size, "global size")?;
         self.compiler.assembler.push(NcsInstruction {
@@ -1076,7 +1075,7 @@ impl<'a> GlobalEmitter<'a, '_> {
     }
 }
 
-impl<'a> FunctionEmitter<'a, '_> {
+impl FunctionEmitter<'_, '_> {
     fn emit_prologue(&mut self) -> Result<(), CodegenError> {
         for local in &self.function.locals {
             if local.kind == HirLocalKind::Local {
@@ -1095,6 +1094,7 @@ impl<'a> FunctionEmitter<'a, '_> {
         Ok(())
     }
 
+    #[allow(clippy::too_many_lines)]
     fn emit_stmt(&mut self, statement: &HirStmt) -> Result<(), CodegenError> {
         match statement {
             HirStmt::Block(block) => self.emit_block(block),
@@ -1395,7 +1395,7 @@ impl<'a> FunctionEmitter<'a, '_> {
             .locals
             .iter()
             .find(|local| local.id == local_id)
-            .ok_or_else(|| CodegenError::new(Some(span), format!("unknown local {:?}", local_id)))
+            .ok_or_else(|| CodegenError::new(Some(span), format!("unknown local {local_id:?}")))
     }
 
     fn local_stack_loc(
@@ -1404,7 +1404,7 @@ impl<'a> FunctionEmitter<'a, '_> {
         span: crate::Span,
     ) -> Result<u32, CodegenError> {
         let slot = self.layout.locals.get(&local_id).ok_or_else(|| {
-            CodegenError::new(Some(span), format!("unknown local slot {:?}", local_id))
+            CodegenError::new(Some(span), format!("unknown local slot {local_id:?}"))
         })?;
         usize_to_u32(slot.offset, "local stack location")
     }
@@ -1530,7 +1530,7 @@ impl<'a> FunctionEmitter<'a, '_> {
         span: crate::Span,
     ) -> Result<(), CodegenError> {
         let layout = self.layout.locals.get(&local).ok_or_else(|| {
-            CodegenError::new(Some(span), format!("unknown local slot {:?}", local))
+            CodegenError::new(Some(span), format!("unknown local slot {local:?}"))
         })?;
         let offset = usize_to_i32(layout.offset, "local slot offset")?
             - usize_to_i32(self.current_stack_bytes(), "current stack bytes")?;
@@ -1636,8 +1636,7 @@ impl<'a> FunctionEmitter<'a, '_> {
             .layout
             .return_layout
             .as_ref()
-            .map(|layout| layout.size)
-            .unwrap_or(0)
+            .map_or(0, |layout| layout.size)
             + self
                 .function
                 .parameters
@@ -1646,14 +1645,14 @@ impl<'a> FunctionEmitter<'a, '_> {
                     self.layout
                         .locals
                         .get(&parameter.local)
-                        .map(|layout| layout.size)
-                        .unwrap_or(0)
+                        .map_or(0, |layout| layout.size)
                 })
                 .sum::<usize>();
         params_and_ret + locals + self.temp_bytes
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn emit_expr_common(
     compiler: &mut O0Compiler<'_>,
     temp_bytes: &mut usize,
@@ -1670,7 +1669,7 @@ fn emit_expr_common(
                     CodegenError::new(Some(expr.span), "local value used outside a function")
                 })?;
                 let slot = layout.locals.get(local).ok_or_else(|| {
-                    CodegenError::new(Some(expr.span), format!("unknown local slot {:?}", local))
+                    CodegenError::new(Some(expr.span), format!("unknown local slot {local:?}"))
                 })?;
                 let frame_bytes = function_frame_bytes(layout);
                 let offset = usize_to_i32(slot.offset, "local load offset")?
@@ -1685,7 +1684,7 @@ fn emit_expr_common(
             }
             crate::HirValueRef::Global(name) | crate::HirValueRef::ConstGlobal(name) => {
                 let slot = compiler.global_layout.get(name).ok_or_else(|| {
-                    CodegenError::new(Some(expr.span), format!("unknown global {:?}", name))
+                    CodegenError::new(Some(expr.span), format!("unknown global {name:?}"))
                 })?;
                 let offset = usize_to_i32(slot.offset, "global load offset")?
                     - usize_to_i32(compiler.global_size, "global size")?;
@@ -1701,13 +1700,13 @@ fn emit_expr_common(
                 let value = compiler.builtin_constants.get(name).ok_or_else(|| {
                     CodegenError::new(
                         Some(expr.span),
-                        format!("unknown builtin constant {:?}", name),
+                        format!("unknown builtin constant {name:?}"),
                     )
                 })?;
                 let literal = literal_from_builtin_value(value).ok_or_else(|| {
                     CodegenError::new(
                         Some(expr.span),
-                        format!("unsupported builtin constant value for {:?}", name),
+                        format!("unsupported builtin constant value for {name:?}"),
                     )
                 })?;
                 emit_push_literal(compiler, temp_bytes, &literal, &expr.ty, Some(expr.span))
@@ -1912,7 +1911,7 @@ fn emit_call(
                     .get(name)
                     .copied()
                     .ok_or_else(|| {
-                        CodegenError::new(Some(expr.span), format!("unknown builtin {:?}", name))
+                        CodegenError::new(Some(expr.span), format!("unknown builtin {name:?}"))
                     })?;
             for (index, argument) in arguments.iter().enumerate() {
                 if function
@@ -1930,7 +1929,7 @@ fn emit_call(
                     let default = parameter.default.as_ref().ok_or_else(|| {
                         CodegenError::new(
                             Some(expr.span),
-                            format!("missing required parameter for builtin {:?}", name),
+                            format!("missing required parameter for builtin {name:?}"),
                         )
                     })?;
                     let action = lower_builtin_action_default_expr(compiler, default, expr.span)?;
@@ -1940,13 +1939,13 @@ fn emit_call(
                 let default = parameter.default.as_ref().ok_or_else(|| {
                     CodegenError::new(
                         Some(expr.span),
-                        format!("missing required parameter for builtin {:?}", name),
+                        format!("missing required parameter for builtin {name:?}"),
                     )
                 })?;
                 let literal = literal_from_builtin_value(default).ok_or_else(|| {
                     CodegenError::new(
                         Some(expr.span),
-                        format!("unsupported builtin default value for {:?}", name),
+                        format!("unsupported builtin default value for {name:?}"),
                     )
                 })?;
                 let ty = semantic_type_from_builtin_type(&parameter.ty);
@@ -1967,7 +1966,7 @@ fn emit_call(
         }
         HirCallTarget::Function(name) => {
             let function = compiler.functions.get(name).copied().ok_or_else(|| {
-                CodegenError::new(Some(expr.span), format!("unknown function {:?}", name))
+                CodegenError::new(Some(expr.span), format!("unknown function {name:?}"))
             })?;
             if function.return_type != SemanticType::Void {
                 compiler.emit_stack_alloc(&function.return_type)?;
@@ -1980,7 +1979,7 @@ fn emit_call(
                 let default = parameter.default.as_ref().ok_or_else(|| {
                     CodegenError::new(
                         Some(expr.span),
-                        format!("missing required parameter for function {:?}", name),
+                        format!("missing required parameter for function {name:?}"),
                     )
                 })?;
                 emit_expr_common(compiler, temp_bytes, layout, default)?;
@@ -1988,7 +1987,7 @@ fn emit_call(
             let label = compiler.function_labels.get(name).copied().ok_or_else(|| {
                 CodegenError::new(
                     Some(expr.span),
-                    format!("missing function label for {:?}", name),
+                    format!("missing function label for {name:?}"),
                 )
             })?;
             compiler.assembler.push_jump(NcsOpcode::Jsr, label);
@@ -2005,7 +2004,7 @@ fn emit_action_parameter(
     layout: Option<&FunctionLayout>,
     argument: &HirExpr,
 ) -> Result<(), CodegenError> {
-    let stack_bytes = layout.map(function_frame_bytes).unwrap_or(0) + *temp_bytes;
+    let stack_bytes = layout.map_or(0, function_frame_bytes) + *temp_bytes;
 
     // Upstream emits STORESTATE with aux byte 0x10 before a JMP over the
     // embedded action body. Our NCS model does not have a dedicated STORESTATE
@@ -2036,7 +2035,7 @@ fn lower_builtin_action_default_expr(
     let BuiltinValue::Raw(raw) = default else {
         return Err(CodegenError::new(
             Some(span),
-            format!("unsupported builtin action default value {:?}", default),
+            format!("unsupported builtin action default value {default:?}"),
         ));
     };
     let langspec = compiler.langspec.ok_or_else(|| {
@@ -2050,63 +2049,45 @@ fn lower_builtin_action_default_expr(
         parse_text(SourceId::new(u32::MAX - 1), &synthetic, Some(langspec)).map_err(|error| {
             CodegenError::new(
                 Some(span),
-                format!(
-                    "failed to parse builtin action default {:?}: {}",
-                    raw, error
-                ),
+                format!("failed to parse builtin action default {raw:?}: {error}"),
             )
         })?;
     let semantic = analyze_script_with_options(&script, Some(langspec), SemanticOptions::default())
         .map_err(|error| {
             CodegenError::new(
                 Some(span),
-                format!(
-                    "failed to analyze builtin action default {:?}: {}",
-                    raw, error
-                ),
+                format!("failed to analyze builtin action default {raw:?}: {error}"),
             )
         })?;
     let hir = lower_to_hir(&script, &semantic, Some(langspec)).map_err(|error| {
         CodegenError::new(
             Some(span),
-            format!(
-                "failed to lower builtin action default {:?}: {}",
-                raw, error
-            ),
+            format!("failed to lower builtin action default {raw:?}: {error}"),
         )
     })?;
     let function = hir.functions.first().ok_or_else(|| {
         CodegenError::new(
             Some(span),
-            format!(
-                "builtin action default {:?} did not lower to a function body",
-                raw
-            ),
+            format!("builtin action default {raw:?} did not lower to a function body"),
         )
     })?;
     let body = function.body.as_ref().ok_or_else(|| {
         CodegenError::new(
             Some(span),
-            format!(
-                "builtin action default {:?} lowered without a function body",
-                raw
-            ),
+            format!("builtin action default {raw:?} lowered without a function body"),
         )
     })?;
     let statement = body.statements.first().ok_or_else(|| {
         CodegenError::new(
             Some(span),
-            format!("builtin action default {:?} lowered to an empty body", raw),
+            format!("builtin action default {raw:?} lowered to an empty body"),
         )
     })?;
     match statement {
         HirStmt::Expr(expr) => Ok((*expr.clone()).clone()),
         _ => Err(CodegenError::new(
             Some(span),
-            format!(
-                "builtin action default {:?} must lower to an expression statement",
-                raw
-            ),
+            format!("builtin action default {raw:?} must lower to an expression statement"),
         )),
     }
 }
@@ -2125,7 +2106,7 @@ fn emit_store_target(
                 CodegenError::new(Some(span), "local assignment used outside a function")
             })?;
             let slot = layout.locals.get(&local).ok_or_else(|| {
-                CodegenError::new(Some(span), format!("unknown local slot {:?}", local))
+                CodegenError::new(Some(span), format!("unknown local slot {local:?}"))
             })?;
             let offset = usize_to_i32(slot.offset + resolved.offset, "local assignment offset")?
                 - usize_to_i32(
@@ -2140,9 +2121,10 @@ fn emit_store_target(
             Ok(())
         }
         AssignmentTargetRoot::Global(name) => {
-            let slot = compiler.global_layout.get(name).ok_or_else(|| {
-                CodegenError::new(Some(span), format!("unknown global {:?}", name))
-            })?;
+            let slot = compiler
+                .global_layout
+                .get(name)
+                .ok_or_else(|| CodegenError::new(Some(span), format!("unknown global {name:?}")))?;
             let offset = usize_to_i32(slot.offset + resolved.offset, "global assignment offset")?
                 - usize_to_i32(compiler.global_size, "global size")?;
             compiler.assembler.push(NcsInstruction {
@@ -2208,7 +2190,7 @@ fn emit_push_literal(
             }
         }
         Literal::Magic(magic) => {
-            let resolved = compiler.magic_literal_value(magic, span);
+            let resolved = compiler.magic_literal_value(*magic, span);
             return emit_push_literal(compiler, temp_bytes, &resolved, ty, span);
         }
     }
@@ -2219,10 +2201,9 @@ fn emit_push_literal(
 
 fn literal_from_builtin_value(value: &BuiltinValue) -> Option<Literal> {
     match value {
-        BuiltinValue::Int(value) => Some(Literal::Integer(*value)),
+        BuiltinValue::Int(value) | BuiltinValue::ObjectId(value) => Some(Literal::Integer(*value)),
         BuiltinValue::Float(value) => Some(Literal::Float(*value)),
         BuiltinValue::String(value) => Some(Literal::String(value.clone())),
-        BuiltinValue::ObjectId(value) => Some(Literal::Integer(*value)),
         BuiltinValue::ObjectSelf => Some(Literal::ObjectSelf),
         BuiltinValue::ObjectInvalid => Some(Literal::ObjectInvalid),
         BuiltinValue::LocationInvalid => Some(Literal::LocationInvalid),
@@ -2264,8 +2245,7 @@ fn function_frame_bytes(layout: &FunctionLayout) -> usize {
         + layout
             .return_layout
             .as_ref()
-            .map(|layout| layout.size)
-            .unwrap_or(0)
+            .map_or(0, |layout| layout.size)
 }
 
 fn size_of_binary_result(
@@ -2369,10 +2349,7 @@ fn aux_for_binary(
         }
         _ => Err(CodegenError::new(
             None,
-            format!(
-                "unsupported binary operand pair for code generation: {:?} and {:?}",
-                left, right
-            ),
+            format!("unsupported binary operand pair for code generation: {left:?} and {right:?}"),
         )),
     }
 }
@@ -2392,7 +2369,7 @@ fn aux_for_unary(
         SemanticType::Struct(_) => Ok(NcsAuxCode::TypeTypeStructStruct),
         SemanticType::Void | SemanticType::Action => Err(CodegenError::new(
             None,
-            format!("unsupported unary operand type {:?}", ty),
+            format!("unsupported unary operand type {ty:?}"),
         )),
     }
 }
@@ -2420,7 +2397,7 @@ fn aux_for_engine_structure(
             .iter()
             .position(|candidate| *candidate == name)
         })
-        .ok_or_else(|| CodegenError::new(None, format!("unknown engine structure {:?}", name)))?;
+        .ok_or_else(|| CodegenError::new(None, format!("unknown engine structure {name:?}")))?;
 
     Ok(match index {
         0 => NcsAuxCode::TypeEngst0,
@@ -2436,7 +2413,7 @@ fn aux_for_engine_structure(
         _ => {
             return Err(CodegenError::new(
                 None,
-                format!("engine structure index out of range for {:?}", name),
+                format!("engine structure index out of range for {name:?}"),
             ));
         }
     })
@@ -2457,7 +2434,7 @@ fn size_of_type(
         SemanticType::Struct(name) => {
             let structure = structs
                 .get(name)
-                .ok_or_else(|| CodegenError::new(None, format!("unknown structure {:?}", name)))?;
+                .ok_or_else(|| CodegenError::new(None, format!("unknown structure {name:?}")))?;
             let mut size = 0usize;
             for field in &structure.fields {
                 size += size_of_type(&field.ty, structs)?;
@@ -2482,7 +2459,7 @@ fn field_layout(
                 _ => {
                     return Err(CodegenError::new(
                         span,
-                        format!("field {:?} does not exist on vector", field),
+                        format!("field {field:?} does not exist on vector"),
                     ));
                 }
             };
@@ -2495,7 +2472,7 @@ fn field_layout(
         SemanticType::Struct(name) => {
             let structure = structs
                 .get(name)
-                .ok_or_else(|| CodegenError::new(span, format!("unknown structure {:?}", name)))?;
+                .ok_or_else(|| CodegenError::new(span, format!("unknown structure {name:?}")))?;
             let mut offset = 0usize;
             for candidate in &structure.fields {
                 let size = size_of_type(&candidate.ty, structs)?;
@@ -2510,15 +2487,12 @@ fn field_layout(
             }
             Err(CodegenError::new(
                 span,
-                format!("field {:?} does not exist on structure {:?}", field, name),
+                format!("field {field:?} does not exist on structure {name:?}"),
             ))
         }
         _ => Err(CodegenError::new(
             span,
-            format!(
-                "field access requires a vector or struct base, got {:?}",
-                base
-            ),
+            format!("field access requires a vector or struct base, got {base:?}"),
         )),
     }
 }
@@ -2545,8 +2519,9 @@ fn resolve_assignment_target<'a>(
             offset: 0,
             size:   size_of_type(&target.ty, structs)?,
         }),
-        HirExprKind::Value(crate::HirValueRef::Global(name))
-        | HirExprKind::Value(crate::HirValueRef::ConstGlobal(name)) => Ok(AssignmentTarget {
+        HirExprKind::Value(
+            crate::HirValueRef::Global(name) | crate::HirValueRef::ConstGlobal(name),
+        ) => Ok(AssignmentTarget {
             root:   AssignmentTargetRoot::Global(name),
             offset: 0,
             size:   size_of_type(&target.ty, structs)?,
@@ -2586,7 +2561,6 @@ fn format_magic_date(timestamp: SystemTime) -> String {
     let days = i64::try_from(seconds / 86_400).ok().unwrap_or(i64::MAX);
     let (year, month, day) = civil_from_days(days);
     let month_name = match month {
-        1 => "Jan",
         2 => "Feb",
         3 => "Mar",
         4 => "Apr",
@@ -2625,7 +2599,7 @@ fn civil_from_days(days_since_epoch: i64) -> (i32, u32, u32) {
     let mp = (5 * doy + 2) / 153;
     let d = doy - (153 * mp + 2) / 5 + 1;
     let m = mp + if mp < 10 { 3 } else { -9 };
-    let year = y + if m <= 2 { 1 } else { 0 };
+    let year = y + i64::from(m <= 2);
     (
         i32::try_from(year).ok().unwrap_or(i32::MAX),
         u32::try_from(m).ok().unwrap_or(1),
@@ -2838,12 +2812,11 @@ fn debug_type_for_semantic(
                 .iter()
                 .position(|structure| structure.name == *name)
                 .ok_or_else(|| {
-                    CodegenError::new(None, format!("unknown debug structure {:?}", name))
+                    CodegenError::new(None, format!("unknown debug structure {name:?}"))
                 })?;
             NdbType::Struct(index)
         }
-        SemanticType::Vector => NdbType::Unknown,
-        SemanticType::Action => NdbType::Unknown,
+        SemanticType::Vector | SemanticType::Action => NdbType::Unknown,
     })
 }
 
@@ -2857,7 +2830,7 @@ fn engine_structure_index(name: &str, langspec: Option<&LangSpec>) -> Result<u8,
         return u8::try_from(index).map_err(|_error| {
             CodegenError::new(
                 None,
-                format!("engine structure index out of range for {:?}", name),
+                format!("engine structure index out of range for {name:?}"),
             )
         });
     }
@@ -2877,7 +2850,7 @@ fn engine_structure_index(name: &str, langspec: Option<&LangSpec>) -> Result<u8,
         .iter()
         .position(|candidate| candidate.eq_ignore_ascii_case(name))
         .and_then(|index| u8::try_from(index).ok())
-        .ok_or_else(|| CodegenError::new(None, format!("unknown engine structure {:?}", name)))
+        .ok_or_else(|| CodegenError::new(None, format!("unknown engine structure {name:?}")))
 }
 
 fn simple_instruction(opcode: NcsOpcode) -> NcsInstruction {

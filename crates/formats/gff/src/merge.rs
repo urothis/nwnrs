@@ -3,8 +3,8 @@ use crate::{GffField, GffResult, GffRoot, GffStruct, GffValue};
 /// Applies `edited` onto `target` while retaining provenance already present on
 /// matching parsed fields and structures.
 pub fn merge_root_preserving_provenance(target: &mut GffRoot, edited: &GffRoot) -> GffResult<()> {
-    target.file_type = edited.file_type.clone();
-    target.file_version = edited.file_version.clone();
+    target.file_type.clone_from(&edited.file_type);
+    target.file_version.clone_from(&edited.file_version);
     merge_struct_preserving_provenance(&mut target.root, &edited.root);
     Ok(())
 }

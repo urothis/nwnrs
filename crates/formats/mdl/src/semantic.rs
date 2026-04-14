@@ -45,6 +45,7 @@ pub struct SemanticModel {
 impl SemanticModel {
     /// Returns the first lowered geometry node named `name`,
     /// case-insensitively.
+    #[must_use]
     pub fn node(&self, name: &str) -> Option<&SemanticNode> {
         self.nodes
             .iter()
@@ -52,6 +53,7 @@ impl SemanticModel {
     }
 
     /// Returns the first lowered animation named `name`, case-insensitively.
+    #[must_use]
     pub fn animation(&self, name: &str) -> Option<&SemanticAnimation> {
         self.animations
             .iter()
@@ -410,6 +412,7 @@ pub struct SemanticAnimation {
 impl SemanticAnimation {
     /// Returns the first lowered animation node named `name`,
     /// case-insensitively.
+    #[must_use]
     pub fn node(&self, name: &str) -> Option<&SemanticAnimationNode> {
         self.nodes
             .iter()
@@ -739,7 +742,7 @@ fn lower_binary_node(
             ),
             ambient_only:       i32::try_from(light.ambient_only).ok(),
             n_dynamic_type:     i32::try_from(light.dynamic_type).ok(),
-            is_dynamic:         Some(if light.dynamic_type == 0 { 0 } else { 1 }),
+            is_dynamic:         Some(i32::from(light.dynamic_type != 0)),
             affect_dynamic:     i32::try_from(light.affect_dynamic).ok(),
             negative_light:     None,
             light_priority:     i32::try_from(light.light_priority).ok(),
@@ -1108,18 +1111,17 @@ fn binary_parent_name(
     diagnostics: &mut Vec<ModelDiagnostic>,
 ) -> Option<String> {
     let parent_offset = node.parent_offset.or(node.stored_parent)?;
-    match offset_to_name.get(&parent_offset) {
-        Some(name) => Some(name.clone()),
-        None => {
-            diagnostics.push(ModelDiagnostic {
-                kind:    ModelDiagnosticKind::MissingParent,
-                message: format!(
-                    "compiled node {} references missing parent offset {parent_offset:#x}",
-                    node.name
-                ),
-            });
-            None
-        }
+    if let Some(name) = offset_to_name.get(&parent_offset) {
+        Some(name.clone())
+    } else {
+        diagnostics.push(ModelDiagnostic {
+            kind:    ModelDiagnosticKind::MissingParent,
+            message: format!(
+                "compiled node {} references missing parent offset {parent_offset:#x}",
+                node.name
+            ),
+        });
+        None
     }
 }
 
@@ -1211,12 +1213,13 @@ fn binary_vec3_keys(
         .values
         .iter()
         .enumerate()
-        .filter_map(|(index, value)| match value.as_slice() {
-            [x, y, z, ..] => Some(Vec3Key {
-                time:  controller.time_keys.get(index).copied().unwrap_or(0.0),
-                value: [*x, *y, *z],
-            }),
-            _ => {
+        .filter_map(|(index, value)| {
+            if let [x, y, z, ..] = value.as_slice() {
+                Some(Vec3Key {
+                    time:  controller.time_keys.get(index).copied().unwrap_or(0.0),
+                    value: [*x, *y, *z],
+                })
+            } else {
                 diagnostics.push(ModelDiagnostic {
                     kind:    ModelDiagnosticKind::MalformedPayloadRow,
                     message: format!(
@@ -1296,6 +1299,7 @@ fn binary_controller(node: &BinaryNode, controller_type: i32) -> Option<&BinaryC
         .find(|controller| controller.type_id == controller_type)
 }
 
+#[allow(clippy::many_single_char_names)]
 fn quaternion_row_to_axis_angle(
     row: &[f32],
     node_name: &str,
@@ -1440,7 +1444,7 @@ fn lower_header(model: &AsciiModel, diagnostics: &mut Vec<ModelDiagnostic>) -> S
                 animation_scale =
                     parse_f32_statement(statement, 0, "setanimationscale", diagnostics);
             }
-            _ => extras.push(element.clone()),
+            AsciiElement::Statement(_) => extras.push(element.clone()),
         }
     }
 
@@ -1883,13 +1887,9 @@ fn lower_special_node_statement(
     diagnostics: &mut Vec<ModelDiagnostic>,
 ) -> bool {
     match node_kind {
-        NodeKind::Skin => {
-            if statement.keyword_is("weights") {
-                mesh.weights = parse_skin_weights(statement, diagnostics);
-                true
-            } else {
-                false
-            }
+        NodeKind::Skin if statement.keyword_is("weights") => {
+            mesh.weights = parse_skin_weights(statement, diagnostics);
+            true
         }
         NodeKind::Light => lower_light_statement(statement, light, diagnostics),
         NodeKind::Emitter => lower_emitter_statement(statement, emitter),
@@ -2286,25 +2286,21 @@ fn parse_faces(
                 let tv0 = u32::try_from(values[4]).ok();
                 let tv1 = u32::try_from(values[5]).ok();
                 let tv2 = u32::try_from(values[6]).ok();
-                match (v0, v1, v2, tv0, tv1, tv2) {
-                    (Some(v0), Some(v1), Some(v2), Some(tv0), Some(tv1), Some(tv2)) => {
-                        Some(SemanticFace {
-                            vertex_indices: [v0, v1, v2],
-                            group:          values[3],
-                            uv_indices:     [tv0, tv1, tv2],
-                            material_index: values[7],
-                        })
-                    }
-                    _ => {
-                        diagnostics.push(ModelDiagnostic {
-                            kind:    ModelDiagnosticKind::MalformedPayloadRow,
-                            message: format!(
-                                "faces row {} contains negative indices",
-                                row_index + 1
-                            ),
-                        });
-                        None
-                    }
+                if let (Some(v0), Some(v1), Some(v2), Some(tv0), Some(tv1), Some(tv2)) =
+                    (v0, v1, v2, tv0, tv1, tv2)
+                {
+                    Some(SemanticFace {
+                        vertex_indices: [v0, v1, v2],
+                        group:          values[3],
+                        uv_indices:     [tv0, tv1, tv2],
+                        material_index: values[7],
+                    })
+                } else {
+                    diagnostics.push(ModelDiagnostic {
+                        kind:    ModelDiagnosticKind::MalformedPayloadRow,
+                        message: format!("faces row {} contains negative indices", row_index + 1),
+                    });
+                    None
                 }
             })
         })
@@ -2323,19 +2319,18 @@ fn parse_float_rows(
         .filter_map(|(row_index, row)| {
             let mut parsed = Vec::with_capacity(row.len());
             for value in row {
-                match value.parse::<f32>() {
-                    Ok(value) => parsed.push(value),
-                    Err(_) => {
-                        diagnostics.push(ModelDiagnostic {
-                            kind:    ModelDiagnosticKind::MalformedPayloadRow,
-                            message: format!(
-                                "{keyword} row {} contains non-float token {}",
-                                row_index + 1,
-                                value
-                            ),
-                        });
-                        return None;
-                    }
+                if let Ok(value) = value.parse::<f32>() {
+                    parsed.push(value);
+                } else {
+                    diagnostics.push(ModelDiagnostic {
+                        kind:    ModelDiagnosticKind::MalformedPayloadRow,
+                        message: format!(
+                            "{keyword} row {} contains non-float token {}",
+                            row_index + 1,
+                            value
+                        ),
+                    });
+                    return None;
                 }
             }
             Some(parsed)
@@ -2421,24 +2416,22 @@ fn parse_f32_arg(
     keyword: &str,
     diagnostics: &mut Vec<ModelDiagnostic>,
 ) -> Option<f32> {
-    match value {
-        Some(value) => match value.parse::<f32>() {
-            Ok(value) => Some(value),
-            Err(_) => {
-                diagnostics.push(ModelDiagnostic {
-                    kind:    ModelDiagnosticKind::MalformedValue,
-                    message: format!("{keyword} expects a float, got {value}"),
-                });
-                None
-            }
-        },
-        None => {
+    if let Some(value) = value {
+        if let Ok(value) = value.parse::<f32>() {
+            Some(value)
+        } else {
             diagnostics.push(ModelDiagnostic {
                 kind:    ModelDiagnosticKind::MalformedValue,
-                message: format!("{keyword} is missing a value"),
+                message: format!("{keyword} expects a float, got {value}"),
             });
             None
         }
+    } else {
+        diagnostics.push(ModelDiagnostic {
+            kind:    ModelDiagnosticKind::MalformedValue,
+            message: format!("{keyword} is missing a value"),
+        });
+        None
     }
 }
 
@@ -2447,24 +2440,22 @@ fn parse_i32_arg(
     keyword: &str,
     diagnostics: &mut Vec<ModelDiagnostic>,
 ) -> Option<i32> {
-    match value {
-        Some(value) => match value.parse::<i32>() {
-            Ok(value) => Some(value),
-            Err(_) => {
-                diagnostics.push(ModelDiagnostic {
-                    kind:    ModelDiagnosticKind::MalformedValue,
-                    message: format!("{keyword} expects an integer, got {value}"),
-                });
-                None
-            }
-        },
-        None => {
+    if let Some(value) = value {
+        if let Ok(value) = value.parse::<i32>() {
+            Some(value)
+        } else {
             diagnostics.push(ModelDiagnostic {
                 kind:    ModelDiagnosticKind::MalformedValue,
-                message: format!("{keyword} is missing a value"),
+                message: format!("{keyword} expects an integer, got {value}"),
             });
             None
         }
+    } else {
+        diagnostics.push(ModelDiagnostic {
+            kind:    ModelDiagnosticKind::MalformedValue,
+            message: format!("{keyword} is missing a value"),
+        });
+        None
     }
 }
 

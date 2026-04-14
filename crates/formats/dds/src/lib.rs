@@ -74,6 +74,7 @@ pub enum DdsFormat {
 
 impl DdsFormat {
     /// Returns the number of bytes per encoded 4x4 block.
+    #[must_use]
     pub fn bytes_per_block(self) -> usize {
         match self {
             Self::Dxt1 => 8,
@@ -82,6 +83,7 @@ impl DdsFormat {
     }
 
     /// Returns the effective bits per pixel for the packed format.
+    #[must_use]
     pub fn bits_per_pixel(self) -> usize {
         match self {
             Self::Dxt1 => 4,
@@ -154,6 +156,7 @@ pub struct DdsTexture {
 
 impl DdsTexture {
     /// Returns the number of mip levels.
+    #[must_use]
     pub fn mip_count(&self) -> usize {
         self.mip_levels.len()
     }
@@ -533,8 +536,8 @@ fn downsample_rgba8(
             let mut sum = [0_u32; 4];
             let mut samples = 0_u32;
             let src_x0 = dst_x * 2;
-            let src_y0 = dst_y * 2;
-            for y in src_y0..(src_y0 + 2).min(src_height) {
+            let src_y_base = dst_y * 2;
+            for y in src_y_base..(src_y_base + 2).min(src_height) {
                 for x in src_x0..(src_x0 + 2).min(src_width) {
                     let pixel = rgba_pixel(src, src_width, x, y)?;
                     sum[0] += u32::from(pixel[0]);
@@ -556,6 +559,7 @@ fn downsample_rgba8(
     Ok(dst)
 }
 
+#[allow(clippy::cast_precision_loss)]
 fn alpha_mean_rgba8(rgba: &[u8]) -> DdsResult<f32> {
     let pixel_count = rgba
         .len()
@@ -730,7 +734,7 @@ fn decode_dxt5_block_into(
                 .map_err(|_error| DdsError::msg("DDS DXT5 color selector bytes missing"))
         })?;
     let alpha_values = decode_dxt5_alpha_values(alpha0, alpha1);
-    let colors = decode_dxt_colors(color0, color1, false);
+    let color_table = decode_dxt_colors(color0, color1, false);
 
     blit_block_rgba8(mip, block_x, block_y, rgba, |x, y| {
         let selector_index = y * 4 + x;
@@ -743,10 +747,10 @@ fn decode_dxt5_block_into(
         };
         let color_selector = (row >> (x * 2)) & 0x03;
         let [r, g, b, _a] = match color_selector {
-            0 => colors[0],
-            1 => colors[1],
-            2 => colors[2],
-            _ => colors[3],
+            0 => color_table[0],
+            1 => color_table[1],
+            2 => color_table[2],
+            _ => color_table[3],
         };
         let alpha = match alpha_selector {
             0 => alpha_values[0],
@@ -837,9 +841,9 @@ fn decode_dxt_colors(color0: u16, color1: u16, allow_transparency: bool) -> [[u8
             c0,
             c1,
             [
-                narrow_u16_to_u8((u16::from(c0[0]) + u16::from(c1[0])) / 2),
-                narrow_u16_to_u8((u16::from(c0[1]) + u16::from(c1[1])) / 2),
-                narrow_u16_to_u8((u16::from(c0[2]) + u16::from(c1[2])) / 2),
+                narrow_u16_to_u8(u16::midpoint(u16::from(c0[0]), u16::from(c1[0]))),
+                narrow_u16_to_u8(u16::midpoint(u16::from(c0[1]), u16::from(c1[1]))),
+                narrow_u16_to_u8(u16::midpoint(u16::from(c0[2]), u16::from(c1[2]))),
                 255,
             ],
             [0, 0, 0, 0],
@@ -849,9 +853,9 @@ fn decode_dxt_colors(color0: u16, color1: u16, allow_transparency: bool) -> [[u8
             c0,
             c1,
             [
-                narrow_u16_to_u8((u16::from(c0[0]) + u16::from(c1[0])) / 2),
-                narrow_u16_to_u8((u16::from(c0[1]) + u16::from(c1[1])) / 2),
-                narrow_u16_to_u8((u16::from(c0[2]) + u16::from(c1[2])) / 2),
+                narrow_u16_to_u8(u16::midpoint(u16::from(c0[0]), u16::from(c1[0]))),
+                narrow_u16_to_u8(u16::midpoint(u16::from(c0[1]), u16::from(c1[1]))),
+                narrow_u16_to_u8(u16::midpoint(u16::from(c0[2]), u16::from(c1[2]))),
                 255,
             ],
             [0, 0, 0, 255],
@@ -901,16 +905,8 @@ fn dxt5_selector(selectors: &[u8], selector_index: u32) -> u8 {
     let bit_index = selector_index * 3;
     let byte_index = usize::try_from(bit_index >> 3).unwrap_or(0);
     let bit_offset = bit_index & 7;
-    let low = selectors
-        .get(byte_index)
-        .copied()
-        .map(u16::from)
-        .unwrap_or(0);
-    let high = selectors
-        .get(byte_index + 1)
-        .copied()
-        .map(u16::from)
-        .unwrap_or(0);
+    let low = selectors.get(byte_index).copied().map_or(0, u16::from);
+    let high = selectors.get(byte_index + 1).copied().map_or(0, u16::from);
     narrow_u16_to_u8((low | (high << 8)) >> bit_offset) & 0x07
 }
 

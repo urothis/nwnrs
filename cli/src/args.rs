@@ -22,7 +22,7 @@ pub(crate) enum Command {
 
 #[derive(FromArgs)]
 #[argh(subcommand, name = "compile")]
-/// compile one NWScript source file to NCS and optional NDB output
+/// compile one `NWScript` source file to NCS and optional NDB output
 pub(crate) struct CompileCmd {
     #[argh(switch, short = 'f')]
     /// overwrite existing output files
@@ -81,6 +81,11 @@ pub(crate) struct ConvertCmd {
 #[derive(FromArgs)]
 #[argh(subcommand, name = "inspect")]
 /// inspect a single NWN resource file by extension
+// This struct has 8 bool fields, exceeding clippy::pedantic's threshold of 3.
+// They cannot be collapsed into enums or a state machine because argh requires
+// bool fields for `#[argh(switch)]`, and each flag is an independent CLI option
+// with no mutual exclusivity
+#[allow(clippy::struct_excessive_bools)]
 pub(crate) struct InspectCmd {
     #[argh(switch)]
     /// for .ncs input, render internal opcode/aux names instead of canonical
@@ -188,7 +193,7 @@ pub(crate) struct PackCmd {
     pub(crate) language: Option<String>,
 
     #[argh(positional)]
-    /// explicit pack mode: INPUT OUTPUT; package mode: KEY_NAME OUTPUT_DIR
+    /// explicit pack mode: INPUT OUTPUT; package mode: `KEY_NAME` `OUTPUT_DIR`
     pub(crate) paths: Vec<PathBuf>,
 }
 
@@ -267,7 +272,7 @@ pub(crate) struct NwsyncPruneCmd {
 
 #[derive(FromArgs)]
 #[argh(subcommand, name = "write")]
-/// generate a serverside NWSync manifest from directory
+/// generate a serverside `NWSync` manifest from directory
 pub(crate) struct NwsyncWriteCmd {
     #[argh(positional)]
     /// input directory containing NWN resources

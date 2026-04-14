@@ -5,7 +5,7 @@ use crate::source::Span;
 /// Maximum token payload length used by the upstream compiler.
 pub const MAX_TOKEN_LENGTH: usize = 65_536;
 
-/// One NWScript keyword or builtin token recognized during lexing.
+/// One `NWScript` keyword or builtin token recognized during lexing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Keyword {
     /// `if`
@@ -88,6 +88,7 @@ pub enum Keyword {
 
 impl Keyword {
     /// Returns the canonical source text for this keyword.
+    #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::If => "if",
@@ -132,6 +133,7 @@ impl Keyword {
     }
 
     /// Returns the upstream token code from `scriptinternal.h`.
+    #[must_use]
     pub const fn upstream_token_code(self) -> u16 {
         match self {
             Self::If => 17,
@@ -176,6 +178,7 @@ impl Keyword {
     }
 
     /// Resolves a keyword from its exact source spelling.
+    #[must_use]
     pub fn from_lexeme(input: &str) -> Option<Self> {
         match input {
             "if" => Some(Self::If),
@@ -224,7 +227,7 @@ impl Keyword {
     }
 }
 
-/// One lexical token in NWScript source.
+/// One lexical token in `NWScript` source.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum TokenKind {
     /// End of file.

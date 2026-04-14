@@ -82,12 +82,13 @@ pub struct NcsInstruction {
 
 impl NcsInstruction {
     /// Returns the full encoded byte length of this instruction.
+    #[must_use]
     pub fn encoded_len(&self) -> usize {
         NCS_OPERATION_BASE_SIZE + self.extra.len()
     }
 }
 
-/// One NWScript VM opcode.
+/// One `NWScript` VM opcode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum NcsOpcode {
@@ -185,6 +186,7 @@ pub enum NcsOpcode {
 
 impl NcsOpcode {
     /// Returns the canonical mnemonic used by the upstream assembler helper.
+    #[must_use]
     pub fn canonical_name(self) -> &'static str {
         match self {
             Self::Assignment => "CPDOWNSP",
@@ -242,7 +244,7 @@ impl fmt::Display for NcsOpcode {
     }
 }
 
-/// One NWScript VM aux code.
+/// One `NWScript` VM aux code.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum NcsAuxCode {
@@ -329,6 +331,7 @@ pub enum NcsAuxCode {
 impl NcsAuxCode {
     /// Returns the canonical short suffix used by the upstream assembler
     /// helper.
+    #[must_use]
     pub fn canonical_name(self) -> Option<&'static str> {
         match self {
             Self::None
@@ -591,18 +594,23 @@ fn instruction_extra_size(opcode: NcsOpcode, auxcode: NcsAuxCode, bytes: &[u8]) 
             }
             _ => 0,
         },
-        NcsOpcode::Jmp | NcsOpcode::Jsr | NcsOpcode::Jz | NcsOpcode::Jnz => 4,
-        NcsOpcode::StoreState => 8,
-        NcsOpcode::ModifyStackPointer => 4,
-        NcsOpcode::ExecuteCommand => 3,
-        NcsOpcode::RunstackCopy | NcsOpcode::RunstackCopyBase => 6,
-        NcsOpcode::Assignment | NcsOpcode::AssignmentBase => 6,
-        NcsOpcode::Decrement
+        NcsOpcode::Jmp
+        | NcsOpcode::Jsr
+        | NcsOpcode::Jz
+        | NcsOpcode::Jnz
+        | NcsOpcode::ModifyStackPointer
+        | NcsOpcode::Decrement
         | NcsOpcode::Increment
         | NcsOpcode::DecrementBase
         | NcsOpcode::IncrementBase => 4,
+        NcsOpcode::StoreState => 8,
+        NcsOpcode::ExecuteCommand => 3,
+        NcsOpcode::RunstackCopy
+        | NcsOpcode::RunstackCopyBase
+        | NcsOpcode::Assignment
+        | NcsOpcode::AssignmentBase
+        | NcsOpcode::DeStruct => 6,
         NcsOpcode::Equal | NcsOpcode::NotEqual if auxcode == NcsAuxCode::TypeTypeStructStruct => 2,
-        NcsOpcode::DeStruct => 6,
         _ => 0,
     }
 }

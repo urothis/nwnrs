@@ -14,6 +14,7 @@ pub struct Model {
 
 impl Model {
     /// Creates a model from raw bytes.
+    #[must_use]
     pub fn new(bytes: Vec<u8>) -> Self {
         Self {
             bytes,
@@ -28,11 +29,13 @@ impl Model {
     }
 
     /// Returns the raw model bytes.
+    #[must_use]
     pub fn bytes(&self) -> &[u8] {
         &self.bytes
     }
 
     /// Returns the size of the payload in bytes.
+    #[must_use]
     pub fn byte_len(&self) -> usize {
         self.bytes.len()
     }
@@ -43,6 +46,7 @@ impl Model {
     }
 
     /// Consumes the model and returns the raw payload.
+    #[must_use]
     pub fn into_bytes(self) -> Vec<u8> {
         self.bytes
     }

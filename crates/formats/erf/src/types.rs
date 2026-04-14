@@ -144,26 +144,31 @@ pub struct Erf {
 
 impl Erf {
     /// Returns the display filename associated with this archive.
+    #[must_use]
     pub fn filename(&self) -> &str {
         &self.filename
     }
 
     /// Returns the localized strings stored in the archive header.
+    #[must_use]
     pub fn loc_strings(&self) -> &BTreeMap<i32, String> {
         &self.loc_strings
     }
 
     /// Returns the archive entries in stored order.
+    #[must_use]
     pub fn entries(&self) -> &IndexMap<ResRef, Res, RandomState> {
         &self.entries
     }
 
     /// Returns the enhanced-edition archive OID when present.
+    #[must_use]
     pub fn oid(&self) -> Option<&str> {
         self.oid.as_deref()
     }
 
     /// Returns the preserved padding between the key list and resource list.
+    #[must_use]
     pub fn resource_list_padding(&self) -> u64 {
         self.resource_list_padding
     }

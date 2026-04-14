@@ -1,10 +1,10 @@
 # nwnrs-resnwsync
 
-Access to NWSync repositories as resource containers.
+Access to `NWSync` repositories as resource containers.
 
 ## Scope
 
-- open the SQLite-backed NWSync repository layout
+- open the SQLite-backed `NWSync` repository layout
 - map manifest hashes to shard payloads
 - expose individual manifests as `nwnrs-resman::ResContainer` values
 
@@ -13,7 +13,7 @@ materialize a specific manifest as a container.
 
 ## Non-goals
 
-- define the NWSync manifest file format itself
+- define the `NWSync` manifest file format itself
 - act as a general-purpose network sync client
 
 ## See also
