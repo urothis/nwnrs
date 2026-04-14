@@ -4,10 +4,10 @@ The command-line interface for inspecting, converting, packing, unpacking, and m
 
 ## Quick Start
 
-Install from crates.io:
+Install from the repository:
 
 ```bash
-cargo install nwnrs-cli
+cargo install --git https://github.com/urothis/nwn-rs --bin nwnrs-cli
 ```
 
 Build or run the CLI from the workspace root:
