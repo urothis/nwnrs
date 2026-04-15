@@ -1,4 +1,4 @@
-# `nwnrs-tga`
+# nwnrs-tga
 
 Typed Neverwinter Nights `TGA` support.
 
