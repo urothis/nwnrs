@@ -11,3 +11,10 @@ Single-file `nwnrs-resman::ResContainer` implementation.
 
 - infer complex directory or archive structure from a lone file
 - parse the payload contents directly
+
+## See also
+
+- [`nwnrs-resman`](https://docs.rs/nwnrs-resman), which defines the
+  `ResContainer` abstraction this crate implements
+- [`nwnrs-resdir`](https://docs.rs/nwnrs-resdir), which provides the
+  directory-backed equivalent for scanning multiple files
