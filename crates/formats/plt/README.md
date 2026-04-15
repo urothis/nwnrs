@@ -1,4 +1,4 @@
-# `nwnrs-plt`
+# nwnrs-plt
 
 Typed Neverwinter Nights `PLT` support.
 
