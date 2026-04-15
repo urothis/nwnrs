@@ -38,6 +38,11 @@ Stream helpers for size-prefixed binary formats.
 - if a format couples framing tightly to domain meaning, the higher crate should
   own it
 
+## See also
+
+- [`nwnrs-io`](https://docs.rs/nwnrs-io), which provides the broader set of
+  binary-read helpers this crate extends
+
 ## Why This Crate Exists
 
 Size-prefixed framing patterns recur across older binary formats. This crate
