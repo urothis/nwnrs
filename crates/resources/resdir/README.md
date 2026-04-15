@@ -12,3 +12,10 @@ Directory-backed `nwnrs-resman::ResContainer` implementation.
 
 - define precedence policy across multiple directories
 - parse the contents of the resolved resources
+
+## See also
+
+- [`nwnrs-resman`](https://docs.rs/nwnrs-resman), which defines the
+  `ResContainer` abstraction this crate implements
+- [`nwnrs-install`](https://docs.rs/nwnrs-install), which adds directory
+  containers to the layered resource manager
