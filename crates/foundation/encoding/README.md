@@ -14,6 +14,7 @@ The central operations are [`to_nwnrs_encoding`], [`from_nwnrs_encoding`],
 
 ## Public Surface
 
+<<<<<<< HEAD
 ### Error vocabulary
 
 - `EncodingConversionError`
@@ -53,3 +54,13 @@ The central operations are [`to_nwnrs_encoding`], [`from_nwnrs_encoding`],
 Reverse-engineered text handling tends to drift if every format crate decodes
 bytes on its own. This crate prevents that by forcing the policy question to
 have one answer.
+=======
+- provide a complete transcoding framework for arbitrary encodings
+- own higher-level localization semantics
+
+## See also
+
+- [`nwnrs-localization`](https://docs.rs/nwnrs-localization), which defines
+  the language and string-reference vocabulary built on top of this encoding
+  layer
+>>>>>>> 3e75963 (docs(encoding): add "See also" section with references to related crates)
