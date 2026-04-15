@@ -1,6 +1,6 @@
 # nwnrs-mdl
 
-`nwnrs-mdl` provides the model-facing portion of the workspace.
+`nwnrs-mdl` provides the model-facing portion of the workspace: reading, writing, lowering, and exporting Neverwinter Nights `MDL` model assets.
 
 ## Scope
 
