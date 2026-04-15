@@ -86,6 +86,13 @@ alphamean 0.75
 - resolve texture assets or renderer policy implied by TXI settings
 - normalize every directive into a fully semantic material representation
 
+## See also
+
+- [`nwnrs-mdl`](https://docs.rs/nwnrs-mdl), which consumes `TXI` sidecar
+  metadata during model material resolution
+- [`nwnrs-mtr`](https://docs.rs/nwnrs-mtr), which parses material descriptors
+  often used alongside texture info files
+
 ## Why This Crate Exists
 
 The common failure mode with sidecar text formats is over-normalization.
