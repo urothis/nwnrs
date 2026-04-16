@@ -1,0 +1,14 @@
+[book]
+title = "nwnrs Book"
+authors = ["urothis"]
+language = "en"
+src = "docs/book/src"
+
+[build]
+build-dir = "docs/book/html"
+
+[output.html]
+git-repository-url = "https://github.com/urothis/nwnrs"
+default-theme = "navy"
+preferred-dark-theme = "navy"
+additional-css = ["docs/book/theme/nwnrs.css"]

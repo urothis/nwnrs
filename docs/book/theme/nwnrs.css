@@ -1,0 +1,59 @@
+:root {
+    --mono-font: "Iosevka Term", "SFMono-Regular", Consolas, "Ubuntu Mono", Menlo, "DejaVu Sans Mono", monospace;
+}
+
+.navy {
+    --bg: #090912;
+    --fg: #e8ebff;
+
+    --sidebar-bg: #282d3f;
+    --sidebar-fg: #e8ebff;
+    --sidebar-non-existant: #6f7397;
+    --sidebar-active: #c8c5ff;
+    --sidebar-spacer: #1d2147;
+
+    --scrollbar: #a7abd7;
+
+    --icons: #a7abd7;
+    --icons-hover: #e8ebff;
+
+    --links: #8f8cff;
+
+    --inline-code-color: #c8c5ff;
+
+    --theme-popup-bg: #0f1222;
+    --theme-popup-border: rgba(154, 151, 255, 0.26);
+    --theme-hover: #151935;
+
+    --quote-bg: #101327;
+    --quote-border: #1d2147;
+
+    --warning-border: #e55111;
+
+    --table-border-color: #20254a;
+    --table-header-bg: #1d2147;
+    --table-alternate-bg: #101327;
+
+    --searchbar-border-color: rgba(154, 151, 255, 0.26);
+    --searchbar-bg: #0f1222;
+    --searchbar-fg: #e8ebff;
+    --searchbar-shadow-color: rgba(143, 140, 255, 0.25);
+    --searchresults-header-fg: #a7abd7;
+    --searchresults-border-color: #20254a;
+    --searchresults-li-bg: #101327;
+    --search-mark-bg: #5751b6;
+
+    --color-scheme: dark;
+
+    --footnote-highlight: #5751b6;
+
+    --overlay-bg: rgba(9, 9, 18, 0.55);
+
+    --blockquote-note-color: #8f8cff;
+    --blockquote-tip-color: #4fb36b;
+    --blockquote-important-color: #c8c5ff;
+    --blockquote-warning-color: #e5a311;
+    --blockquote-caution-color: #e55111;
+
+    --sidebar-header-border-color: #8f8cff;
+}
