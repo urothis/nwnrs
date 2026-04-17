@@ -191,7 +191,7 @@ ci/cd:
 dependencies:
   - changed-files:
       - any-glob-to-any-file:
-          ["Cargo.toml", "cli/Cargo.toml", "crates/*/*/Cargo.toml"]
+          ["Cargo.toml", "Cargo.lock", "cli/Cargo.toml", "crates/*/*/Cargo.toml", "wasm/Cargo.toml"]
 
 # Tests
 tests:
