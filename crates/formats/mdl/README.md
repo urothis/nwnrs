@@ -147,3 +147,7 @@ binary MDL ----------+
   referenced by MDL materials
 - [`nwnrs-txi`](https://docs.rs/nwnrs-txi), which parses texture sidecar
   metadata often consumed with MDL assets
+- [`nwnrs-plt`](https://docs.rs/nwnrs-plt), which stores the recolorable
+  palette-layer textures used for creature appearance overrides
+- [`nwnrs-resman`](https://docs.rs/nwnrs-resman), which provides the resource
+  layer used by install-backed model and texture resolution
