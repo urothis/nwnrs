@@ -24,3 +24,11 @@ Shared EXO-level constants and enums.
 
 - parse full EXO-backed containers on its own
 - provide a general binary-protocol abstraction
+
+## See also
+
+- [`nwnrs-compressedbuf`](https://docs.rs/nwnrs-compressedbuf), which uses
+  these constants for compressed-buffer framing
+- [`nwnrs-erf`](https://docs.rs/nwnrs-erf) and
+  [`nwnrs-key`](https://docs.rs/nwnrs-key), which use these constants for `E1`
+  compression metadata
