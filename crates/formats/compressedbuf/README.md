@@ -99,6 +99,15 @@ Conceptually:
 - infer the semantic type of the wrapped payload
 - replace higher-level crates that parse the decompressed content
 
+## See also
+
+- [`nwnrs-erf`](https://docs.rs/nwnrs-erf), which uses this wrapper for `E1`
+  per-entry compression
+- [`nwnrs-key`](https://docs.rs/nwnrs-key), which uses this wrapper for `E1`
+  BIF payload compression
+- [`nwnrs-exo`](https://docs.rs/nwnrs-exo), which defines the shared EXO-level
+  magic and algorithm constants
+
 ## Why This Crate Exists
 
 Compression framing shows up inside other formats, but that does not mean it
