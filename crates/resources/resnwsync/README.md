@@ -16,13 +16,6 @@ materialize a specific manifest as a container.
 - define the `NWSync` manifest file format itself
 - act as a general-purpose network sync client
 
-## Why This Crate Exists
-
-NWSync repositories are not flat file trees. The shard layout and
-manifest-to-hash mapping require a non-trivial access layer. This crate absorbs
-that complexity so callers can treat a NWSync repository as any other
-`ResContainer` without knowing the underlying SQLite layout.
-
 ## See also
 
 - [`nwnrs-nwsync`](https://docs.rs/nwnrs-nwsync), which defines the manifest
