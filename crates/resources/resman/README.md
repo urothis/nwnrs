@@ -91,10 +91,13 @@ directories, KEY/BIF sets, ERFs, and manifests.
 
 ## See also
 
-- [`nwnrs-resdir`](https://docs.rs/nwnrs-resdir),
-  [`nwnrs-resfile`](https://docs.rs/nwnrs-resfile),
-  [`nwnrs-resmemfile`](https://docs.rs/nwnrs-resmemfile), and
-  [`nwnrs-resnwsync`](https://docs.rs/nwnrs-resnwsync) for concrete container
-  implementations
+- [`nwnrs-resdir`](https://docs.rs/nwnrs-resdir), the directory-backed
+  `ResContainer` implementation
+- [`nwnrs-resfile`](https://docs.rs/nwnrs-resfile), the single-file
+  `ResContainer` implementation
+- [`nwnrs-resmemfile`](https://docs.rs/nwnrs-resmemfile), the in-memory
+  `ResContainer` implementation
+- [`nwnrs-resnwsync`](https://docs.rs/nwnrs-resnwsync), the `NWSync`-backed
+  `ResContainer` implementation
 - [`nwnrs-install`](https://docs.rs/nwnrs-install), which assembles a
   conventional install-backed manager

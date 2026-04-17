@@ -40,6 +40,18 @@ The principal entry points are [`secure_hash`], [`parse_secure_hash`], and
 - `EMPTY_SECURE_HASH` exists as a concrete sentinel where a digest slot is
   structurally required even when no meaningful hash is known
 
+## Non-goals
+
+- provide a general cryptography toolkit
+- define repository or asset policy built on top of those digests
+
+## See also
+
+- [`nwnrs-nwsync`](https://docs.rs/nwnrs-nwsync), which uses SHA-1 digests to
+  identify manifest entries
+- [`nwnrs-resnwsync`](https://docs.rs/nwnrs-resnwsync), which maps manifest
+  hashes to shard payloads in the repository layout
+
 ## Why This Crate Exists
 
 This crate prevents digest handling from degrading into ad hoc strings and byte

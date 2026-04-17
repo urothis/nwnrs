@@ -274,7 +274,7 @@ pub(crate) struct NwsyncPrintCmd {
 
 #[derive(FromArgs)]
 #[argh(subcommand, name = "fetch")]
-/// synchronize a manifest server-to-server with aria2c
+/// download a manifest and its resources from a remote nwsync server
 pub(crate) struct NwsyncFetchCmd {
     #[argh(positional)]
     /// remote manifest URL to fetch

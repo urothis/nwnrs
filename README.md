@@ -1,12 +1,10 @@
-<h1 align="center">
-  <img src="assets/logo/icon.svg" width="150" alt="nwnrs logo"/><br>
-  nwnrs
-</h1>
-<div align="center">
-  Rust tools and libraries for Neverwinter Nights
-</div>
+# nwnrs
 
-## What Is This?
+![nwnrs logo](assets/logo/icon.svg)
+
+Rust tools and libraries for Neverwinter Nights
+
+## Why This Exists
 
 `nwnrs` is a workspace for reading, writing, inspecting, and converting NWN
 data.

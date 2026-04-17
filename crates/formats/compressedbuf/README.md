@@ -4,7 +4,7 @@ Reader and writer for the EXO compressed-buffer wrapper.
 
 ## Scope
 
-- parse the wrapper header, compression algorithm tag, and declared output size
+- parse the wrapper header, compression algorithm tag, and declared uncompressed output size
 - decompress wrapped payloads from byte slices or generic readers
 - compress payloads back into the same wrapper format
 
@@ -98,6 +98,15 @@ Conceptually:
 
 - infer the semantic type of the wrapped payload
 - replace higher-level crates that parse the decompressed content
+
+## See also
+
+- [`nwnrs-erf`](https://docs.rs/nwnrs-erf), which uses this wrapper for `E1`
+  per-entry compression
+- [`nwnrs-key`](https://docs.rs/nwnrs-key), which uses this wrapper for `E1`
+  BIF payload compression
+- [`nwnrs-exo`](https://docs.rs/nwnrs-exo), which defines the shared EXO-level
+  magic and algorithm constants
 
 ## Why This Crate Exists
 

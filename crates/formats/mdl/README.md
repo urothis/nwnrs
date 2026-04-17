@@ -1,6 +1,14 @@
 # nwnrs-mdl
 
-`nwnrs-mdl` provides the model-facing portion of the workspace.
+`nwnrs-mdl` provides the model-facing portion of the workspace: reading, writing, lowering, and exporting Neverwinter Nights `MDL` model assets.
+
+## Why This Crate Exists
+
+NWN ships two physically different MDL encodings — ASCII and compiled binary —
+and tooling needs both. A single-layer parser forces every consumer to either
+pick one encoding or carry its own lowering logic. This crate provides a layered
+pipeline from raw bytes through semantic and scene representations so tools can
+choose the fidelity they need without reimplementing each other's lowering.
 
 ## Scope
 
@@ -147,3 +155,7 @@ binary MDL ----------+
   referenced by MDL materials
 - [`nwnrs-txi`](https://docs.rs/nwnrs-txi), which parses texture sidecar
   metadata often consumed with MDL assets
+- [`nwnrs-plt`](https://docs.rs/nwnrs-plt), which stores the recolorable
+  palette-layer textures used for creature appearance overrides
+- [`nwnrs-resman`](https://docs.rs/nwnrs-resman), which provides the resource
+  layer used by install-backed model and texture resolution

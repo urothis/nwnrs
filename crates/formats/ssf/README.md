@@ -88,6 +88,13 @@ Conceptually:
 - interpret gameplay meaning beyond the SSF slot structure itself
 - resolve the referenced audio payloads or dialog strings
 
+## See also
+
+- [`nwnrs-tlk`](https://docs.rs/nwnrs-tlk), which resolves the string
+  references stored in SSF slot entries
+- [`nwnrs-localization`](https://docs.rs/nwnrs-localization), which defines
+  `StrRef` and the language vocabulary used across TLK and SSF
+
 ## Why This Crate Exists
 
 `SSF` is a reminder that small file formats can still justify dedicated typed

@@ -24,6 +24,13 @@ rather than item count alone.
 - the crate intentionally does not model persistence, sharding, invalidation
   policy, or distributed behavior
 
+## See also
+
+- [`nwnrs-resman`](https://docs.rs/nwnrs-resman), which uses this cache for
+  weighted resource payload eviction
+- [`nwnrs-tlk`](https://docs.rs/nwnrs-tlk), which uses this cache for lazy
+  stream-backed dialog-table entries
+
 ## Why This Crate Exists
 
 `ResMan` and other consumers need cheap bounded caching, but "N items" is a bad

@@ -2,12 +2,18 @@
 
 The command-line interface for inspecting, converting, packing, unpacking, and managing NWN resources.
 
+## Why This Exists
+
+This tool exposes the most common operations — inspect, compile, convert, pack, unpack, and nwsync — behind a single executable so contributors and modders can work with NWN assets from a terminal without writing any code.
+pack, unpack, and nwsync — behind a single executable so contributors and
+modders can work with NWN assets from a terminal without writing any code.
+
 ## Quick Start
 
-Install from crates.io:
+Install from the repository:
 
 ```bash
-cargo install nwnrs-cli
+cargo install --git https://github.com/urothis/nwnrs --bin nwnrs-cli
 ```
 
 Build or run the CLI from the workspace root:
@@ -25,6 +31,10 @@ cargo run -p nwnrs-cli -- unpack path/to/script.ncs -d out/
 cargo run -p nwnrs-cli -- pack out/ rebuilt.ncs
 cargo run -p nwnrs-cli -- pack nwn_base.key docker/data/data
 cargo run -p nwnrs-cli -- nwsync print path/to/repository --manifest <sha1>
+cargo run -p nwnrs-cli -- nwsync fetch https://example.com/manifest/abc123 -o repo/
+cargo run -p nwnrs-cli -- nwsync prune path/to/repository --dry-run
+cargo run -p nwnrs-cli -- nwsync prune path/to/repository
+cargo run -p nwnrs-cli -- nwsync write path/to/resources/ output.manifest
 ```
 
 Useful patterns:
@@ -40,6 +50,8 @@ Useful patterns:
 - open an install with `nwnrs-install`, then query resources through `nwnrs-resman`
 
 ## CLI Behavior and Supported Commands
+
+Each command is implemented in its own source file:
 
 - [`main.rs`](./src/main.rs)
 - [`args.rs`](./src/args.rs)
