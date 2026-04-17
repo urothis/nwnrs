@@ -64,13 +64,41 @@ masterlist:
   - changed-files:
       - any-glob-to-any-file: ["crates/meta/masterlist/**/*"]
 
+prelude:
+  - changed-files:
+      - any-glob-to-any-file: ["crates/meta/prelude/**/*"]
+
 nwscript:
   - changed-files:
       - any-glob-to-any-file: ["crates/language/nwscript/**/*"]
 
+mdl:
+  - changed-files:
+      - any-glob-to-any-file: ["crates/formats/mdl/**/*"]
+
+mtr:
+  - changed-files:
+      - any-glob-to-any-file: ["crates/formats/mtr/**/*"]
+
 nwsync:
   - changed-files:
       - any-glob-to-any-file: ["crates/formats/nwsync/**/*"]
+
+plt:
+  - changed-files:
+      - any-glob-to-any-file: ["crates/formats/plt/**/*"]
+
+set:
+  - changed-files:
+      - any-glob-to-any-file: ["crates/formats/set/**/*"]
+
+tga:
+  - changed-files:
+      - any-glob-to-any-file: ["crates/formats/tga/**/*"]
+
+txi:
+  - changed-files:
+      - any-glob-to-any-file: ["crates/formats/txi/**/*"]
 
 resdir:
   - changed-files:
