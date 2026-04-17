@@ -167,7 +167,6 @@ documentation:
   - changed-files:
       - any-glob-to-any-file:
           [
-            "**/README.md",
             "docs/**/*",
             "**/*.md",
             "CODE_OF_CONDUCT",
