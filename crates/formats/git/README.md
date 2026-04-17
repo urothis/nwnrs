@@ -28,6 +28,13 @@ and [`GitFile`].
 - resolve blueprints, models, or runtime resources
 - interpret all gameplay semantics attached to raw or not-yet-typed fields
 
+## Why This Crate Exists
+
+Area instance data is deeply nested GFF. Without this crate, every tool that
+wanted to read creature or placeable positions would reimplement the same
+field-path traversal against raw GFF nodes. This crate fixes the schema once
+and exposes it as typed Rust values.
+
 ## See also
 
 - [`nwnrs-gff`](https://docs.rs/nwnrs-gff), the underlying typed GFF container
