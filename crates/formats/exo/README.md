@@ -24,3 +24,10 @@ Shared EXO-level constants and enums.
 
 - parse full EXO-backed containers on its own
 - provide a general binary-protocol abstraction
+
+## Why This Crate Exists
+
+EXO constants appear across multiple formats — ERF, BIF, compressedbuf. Without
+a shared definition crate, each format crate would define its own magic values
+and risk silent divergence. This crate is the single source of truth for the
+EXO wire vocabulary.
