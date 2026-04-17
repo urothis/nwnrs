@@ -4,8 +4,7 @@ The command-line interface for inspecting, converting, packing, unpacking, and m
 
 ## Why This Exists
 
-Without a CLI, every NWN workflow requires a Rust binary or a full IDE
-setup. This tool exposes the most common operations — inspect, compile, convert,
+This tool exposes the most common operations — inspect, compile, convert, pack, unpack, and nwsync — behind a single executable so contributors and modders can work with NWN assets from a terminal without writing any code.
 pack, unpack, and nwsync — behind a single executable so contributors and
 modders can work with NWN assets from a terminal without writing any code.
 
