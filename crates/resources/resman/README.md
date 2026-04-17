@@ -22,12 +22,72 @@ let resman = ResMan::new(64);
 assert!(resman.contents().is_empty());
 ```
 
-## Non-goals
+## Public Surface
 
-- parse NWN file formats
-- prescribe one on-disk storage layout
-- replace container-specific crates such as `nwnrs-erf`, `nwnrs-key`, or
-  `nwnrs-resdir`
+### Core aliases and constants
+
+- `MEMORY_CACHE_THRESHOLD`
+- `ReadSeek`
+- `SharedReadSeek`
+- `ResIoSpawner`
+
+### Cache behavior
+
+- `CachePolicy`
+
+### Error and result vocabulary
+
+- `ResManError`
+- `ResManResult`
+
+### Resource identity and provenance
+
+- `ResOrigin`
+- `new_res_origin`
+- `shared_stream`
+
+### Resource payload model
+
+- `Res`
+
+### Container abstraction
+
+- `ResContainer`
+
+### Manager
+
+- `ResMan`
+
+### Important `ResMan` operations
+
+- `ResMan::new`
+- `ResMan::contains`
+- `ResMan::demand`
+- `ResMan::contents`
+- `ResMan::get_resolved`
+- `ResMan::get`
+- `ResMan::add`
+- `ResMan::containers`
+- `ResMan::remove`
+- `ResMan::remove_at`
+- `ResMan::cache`
+
+## Logical Edges
+
+- precedence order is front-to-back; newly added containers shadow older ones
+- `contains` and `demand` can consult or bypass the manager cache according to
+  `CachePolicy`
+- `Res` is lazy and owns decompression metadata as part of the resource model
+- small decoded payloads may be memoized inside `Res::read_all`
+- `ResOrigin` is provenance for diagnostics, not identity
+- the `ResContainer` trait is intentionally abstract so different storage forms
+  can plug into the same lookup model
+
+## Why This Crate Exists
+
+This crate is the core of install-backed and archive-backed tooling. Without it,
+every workflow would need to hard-code its own precedence policy across
+directories, KEY/BIF sets, ERFs, and manifests.
 
 ## See also
 

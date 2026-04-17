@@ -8,8 +8,8 @@ workspace.
 - locate a Neverwinter Nights installation and user directory
 - resolve the conventional language-root and KEY/BIF layout
 - build a ready-to-query [`nwnrs_resman::ResMan`] from the discovered install
-- add optional override directories, ERFs, and `NWSync` manifests to that layered
-  resource view
+- add optional override directories, ERFs, and `NWSync` manifests to that
+  layered resource view
 
 Discovery is ordered and deterministic: explicit overrides win, then built-in
 platform heuristics are consulted in a fixed order.
@@ -25,6 +25,25 @@ The primary entry points are [`find_nwnrs_root`], [`find_user_root`], and
 Both are lower priority than explicit function arguments such as `--root` and
 `--userdirectory`, but higher priority than Steam, Beamdog, or platform-default
 heuristics.
+
+## Public Surface
+
+### Constants and result vocabulary
+
+- `DEFAULT_KEYFILES`
+- `GFF_EXTENSIONS`
+- `InstallError`
+- `InstallResult`
+
+### Discovery operations
+
+- `find_nwnrs_root`
+- `find_user_root`
+- `resolve_language_root`
+
+### Assembly operation
+
+- `new_default_resman`
 
 ## Example
 
@@ -56,6 +75,19 @@ let _resman = new_default_resman(
 )?;
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
+
+## Logical Edges
+
+- discovery order is explicit: for user roots, explicit override, `NWN_HOME`,
+  then platform defaults; for install roots, explicit override, `NWN_ROOT`,
+  Steam heuristics, then Beamdog heuristics
+- the crate is deterministic; it does not search randomly until something looks
+  plausible
+- `resolve_language_root` accepts both long-form names and known aliases, but
+  does not guess beyond the alias table
+- a missing `databuild.txt` on an otherwise plausible install root is treated
+  as a warning rather than a hard failure
+- `new_default_resman` is where install semantics become actual layered lookup
 
 ## Non-goals
 

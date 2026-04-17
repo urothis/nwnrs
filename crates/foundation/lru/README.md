@@ -11,7 +11,20 @@ Minimal weighted least-recently-used cache.
 Use [`WeightedLru`] when eviction should be based on approximate byte size
 rather than item count alone.
 
-## Non-goals
+## Public Surface
 
-- provide a general-purpose caching framework
-- model persistence, sharding, or distributed cache behavior
+- `Weight`
+- `WeightedLru`
+
+## Logical Edges
+
+- the cache is weight-driven, not item-count driven
+- it exists to support workloads where a small number of large items can
+  dominate memory pressure
+- the crate intentionally does not model persistence, sharding, invalidation
+  policy, or distributed behavior
+
+## Why This Crate Exists
+
+`ResMan` and other consumers need cheap bounded caching, but "N items" is a bad
+policy for variable-sized binary payloads.

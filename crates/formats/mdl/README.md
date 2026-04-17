@@ -7,7 +7,7 @@
 - read and write Neverwinter Nights `MDL` payloads
 - expose syntax-faithful ASCII and compiled-model parsing
 - lower models into richer semantic and scene-oriented representations
-- rewrite appearance-token slots before texture/model resolution
+- rewrite appearance-token slots before texture and model resolution
 - resolve equipped player-creature part attachments into composed scene trees
 - export scenes or composed scene trees as flattened Wavefront `OBJ`
 - write semantic and scene-oriented representations back as canonical ASCII
@@ -16,6 +16,100 @@
 
 Choose the entry point that matches the fidelity you need rather than treating
 `MDL` as a single monolithic parser.
+
+## Layered Public Surface
+
+### Authored ASCII layer
+
+- `AsciiModel`
+- `AsciiAnimation`
+- `AsciiNode`
+- `AsciiStatement`
+- `AsciiElement`
+- `AsciiBodyItem`
+- `AsciiPayloadKind`
+- `parse_ascii_model`
+- `read_ascii_model`
+- `write_ascii_model`
+
+### Compiled binary layer
+
+- `BinaryModel`
+- `BinaryHeader`
+- `BinaryNode`
+- `BinaryNodeContent`
+- `BinaryMesh`
+- `BinarySkin`
+- `BinaryAnimMesh`
+- `BinaryDangly`
+- `BinaryEmitter`
+- `BinaryEmitterFlags`
+- `BinaryLight`
+- `BinaryAnimation`
+- `BinaryController`
+- `BinaryReference`
+- `BinaryFace`
+- `BinaryUvSet`
+- `BinaryAabb`
+- `BinaryAabbEntry`
+- `BinaryArrayDefinition`
+- `UnknownBinaryBlock`
+- `parse_binary_model_bytes`
+- `read_binary_model`
+- `write_binary_model`
+
+### Semantic and scene layers
+
+- `SemanticModel`
+- `SemanticNode`
+- `SemanticAnimation`
+- `NwnScene`
+- `NwnSceneNode`
+- `NwnPrimitive`
+- `NwnAnimation`
+- `lower_semantic_model_to_scene`
+- `parse_scene_model`
+- `read_scene_model`
+- `write_scene_model`
+
+### Composition and export
+
+- `NwnAppearanceOverrides`
+- `collect_appearance_slots`
+- `apply_appearance_overrides`
+- `resolve_scene_textures`
+- `NwnComposedScene`
+- `compose_player_creature_from_resman`
+- `compose_player_creature_from_utc`
+- `write_scene_obj`
+- `write_composed_scene_obj`
+
+### Cross-layer entry points
+
+- `Model`
+- `ParsedModel`
+- `ModelEncoding`
+- `ModelClassification`
+- `MODEL_RES_TYPE`
+- `detect_model_encoding`
+- `parse_model_bytes`
+- `read_model`
+- `write_model`
+- `compile_ascii_model`
+- `lower_ascii_model`
+- `lower_binary_model_to_ascii`
+
+## Representation Pipeline
+
+```text
+ASCII MDL -----------+
+                     |
+                     v
+                semantic model ------> scene model ------> composed scene -----> OBJ
+                     ^
+                     |
+binary MDL ----------+
+```
 
 ## Invariants
 
@@ -26,6 +120,8 @@ Choose the entry point that matches the fidelity you need rather than treating
   concepts where the corresponding layer supports them
 - higher-level writers canonicalize through ASCII and do not preserve original
   authored formatting or compiled bytes
+- ASCII, binary, semantic, scene, composed-scene, and `OBJ` export preserve
+  different information on purpose
 
 ## Non-goals
 
@@ -43,7 +139,7 @@ Choose the entry point that matches the fidelity you need rather than treating
 - `appearance`: appearance-slot discovery and override application
 - `compose`: install-backed player-creature composition helpers
 - `obj`: flattened Wavefront OBJ export
-- `io` and `types`: typed read/write entry points and shared vocabulary
+- `io` and `types`: typed read and write entry points and shared vocabulary
 
 ## See also
 

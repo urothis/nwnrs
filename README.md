@@ -8,13 +8,29 @@
 
 ## What Is This?
 
-`nwnrs` is a workspace for reading, writing, inspecting, and converting NWN data.
+`nwnrs` is a workspace for reading, writing, inspecting, and converting NWN
+data.
 
 It includes:
 
-- a CLI for common workflows
-- Rust crates for formats like `GFF`, `2DA`, `TLK`, `SSF`, `ERF`, `KEY/BIF`, `MDL`, `TGA`, `DDS`, `PLT`, and `NWSync`
-- wasm bindings for browser and JS apps
+- Rust crates for formats like `GFF`, `2DA`, `TLK`, `SSF`, `ERF`, `KEY/BIF`,
+  `MDL`, `TGA`, `DDS`, `PLT`, and `NWSync`
+- a CLI for operational workflows such as inspection, compilation, conversion,
+  packing, and unpacking
+- wasm bindings for browser and JavaScript applications
+
+## Start Here
+
+The canonical guided documentation now lives in the `nwnrs` umbrella crate
+docs:
+
+- [`nwnrs` rustdoc](https://docs.rs/nwnrs/latest/nwnrs/)
+- [`crates/meta/prelude/README.md`](./crates/meta/prelude/README.md)
+
+Operational and interface-specific docs live here:
+
+- [`cli/README.md`](./cli/README.md)
+- [`wasm/README.md`](./wasm/README.md)
 
 ## Quick Start
 
@@ -29,35 +45,15 @@ cargo install --git https://github.com/urothis/nwnrs --bin nwnrs-cli
 Use:
 
 ```bash
-# inspect a file
 nwnrs-cli inspect path/to/file.utc
-
-# compile NWScript
 nwnrs-cli compile --debug path/to/script.nss
-
-# convert textures
 nwnrs-cli convert input.png output.tga
-
-# convert MDL between compiled and canonical ascii
 nwnrs-cli convert path/to/model.mdl out/model_ascii.mdl
 nwnrs-cli convert out/model_ascii.mdl rebuilt/model.mdl
-
-# export one MDL scene to OBJ
 nwnrs-cli convert path/to/model.mdl out/model.obj
-
-# export an equipped creature blueprint to OBJ using installed resources
-nwnrs-cli convert --root /path/to/Neverwinter\ Nights --user /path/to/Neverwinter\ Nights out/player.utc out/player.obj
-
-# unpack and repack archives
 nwnrs-cli unpack path/to/module.mod -d out/
 nwnrs-cli pack out/ rebuilt.mod
-
-# unpack raw NCS to asm text and assemble it back
-nwnrs-cli unpack path/to/script.ncs -d out/
-nwnrs-cli pack out/ rebuilt.ncs
 ```
-
-More CLI details: [`cli/README.md`](./cli/README.md)
 
 ### Rust
 
@@ -88,35 +84,21 @@ table.set_columns(vec!["Label".to_string()])?;
 wasm-pack build wasm --target bundler --out-dir pkg
 ```
 
-The wasm package exposes helpers like:
-
-- `read_gff_from_bytes`
-- `write_gff_to_bytes`
-- `read_twoda_from_bytes`
-- `write_twoda_to_bytes`
-- `read_mdl_from_bytes`
-- `write_mdl_to_bytes`
-
-More wasm details: [`wasm/README.md`](./wasm/README.md)
+The wasm package exposes helpers such as `read_gff_from_bytes`,
+`write_gff_to_bytes`, `read_twoda_from_bytes`, `write_twoda_to_bytes`,
+`read_mdl_from_bytes`, and `write_mdl_to_bytes`.
 
 ## Main Parts
 
-- [`nwnrs`](./crates/meta/prelude/README.md): the simple umbrella crate
-- [`nwnrs-resman`](./crates/resources/resman/README.md): shared resource loading
-- [`nwnrs-install`](./crates/resources/install/README.md): find and open game installs
-- [`nwnrs-nwscript`](./crates/language/nwscript/README.md): NWScript frontend and compiler
-- [`nwnrs-mdl`](./crates/formats/mdl/README.md): MDL parsing and lowering
-
-## Supported Work
-
-- inspect NWN files
-- parse and write common NWN formats
-- compile NWScript to `NCS` and `NDB`
-- disassemble `NCS` to asm text and assemble `.ncs.asm` back to bytecode
-- convert textures between `png`, `jpg`, `tga`, `dds`, and `webp`
-- export `mdl` scenes or equipped `utc` player creatures to flattened `obj`
-- load resources from installs, directories, archives, and manifests
-- lower compiled MDL into canonical ASCII
+- [`nwnrs`](./crates/meta/prelude/README.md): umbrella crate and guided entry
+  point
+- [`nwnrs-resman`](./crates/resources/resman/README.md): shared resource lookup
+- [`nwnrs-install`](./crates/resources/install/README.md): install discovery and
+  conventional layered resource assembly
+- [`nwnrs-nwscript`](./crates/language/nwscript/README.md): NWScript frontend
+  and compiler
+- [`nwnrs-mdl`](./crates/formats/mdl/README.md): MDL parsing, lowering,
+  composition, and export
 
 ## Development
 
