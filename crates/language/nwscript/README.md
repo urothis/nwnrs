@@ -226,6 +226,13 @@ and compiler toolchain.
 - act as a runtime or VM for executing compiled scripts
 - define editor or IDE behavior on its own
 
+## See also
+
+- [`nwnrs-resman`](https://docs.rs/nwnrs-resman), which provides the resource
+  layer through which source and compiled script files are typically loaded
+- [`nwnrs-install`](https://docs.rs/nwnrs-install), which resolves the install
+  root and language root needed to locate `nwscript.nss` for compilation
+
 ## Why This Crate Exists
 
 The point of `nwnrs-nwscript` is to make the language subsystem inspectable and
