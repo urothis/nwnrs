@@ -85,6 +85,13 @@ Each mip level is stored as packed DXT blocks:
 - act as a general-purpose desktop DDS crate
 - define engine-level material or asset-loading policy
 
+## See also
+
+- [`nwnrs-tga`](https://docs.rs/nwnrs-tga), the other primary NWN texture
+  format
+- [`nwnrs-txi`](https://docs.rs/nwnrs-txi), which provides texture sidecar
+  metadata that accompanies DDS assets
+
 ## Why This Crate Exists
 
 There is a difference between "I can display this texture" and "I can model the
