@@ -117,6 +117,13 @@ Cell encoding rules:
 - normalize tables into a database-like relational model
 - replace higher-level crates that add domain meaning on top of `2DA`
 
+## See also
+
+- [`nwnrs-resman`](https://docs.rs/nwnrs-resman), the resource layer through
+  which `2DA` files are typically loaded by name
+- [`nwnrs-install`](https://docs.rs/nwnrs-install), which assembles the
+  install-backed resource view containing the base-game `2DA` tables
+
 ## Why This Crate Exists
 
 `2DA` is a good example of a format that is textual but still deserves a real
