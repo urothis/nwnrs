@@ -152,6 +152,16 @@ test-support:
   - changed-files:
       - any-glob-to-any-file: ["crates/foundation/test-support/**/*"]
 
+# Assets
+assets:
+  - changed-files:
+      - any-glob-to-any-file: ["assets/**/*"]
+
+# WASM bindings
+wasm:
+  - changed-files:
+      - any-glob-to-any-file: ["wasm/**/*"]
+
 # Documentation
 documentation:
   - changed-files:
@@ -161,6 +171,9 @@ documentation:
             "cli/README.md",
             "docs/**/*",
             "**/*.md",
+            "CODE_OF_CONDUCT",
+            "LICENSE",
+            "CODEOWNERS",
           ]
 
 # CI/CD and GitHub Actions
