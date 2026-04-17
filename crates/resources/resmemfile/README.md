@@ -2,6 +2,14 @@
 
 In-memory `nwnrs-resman::ResContainer` implementation.
 
+## Why This Crate Exists
+
+Downloaded or synthetically generated payloads need to enter the resource
+lookup chain without touching the filesystem. Without an in-memory container,
+callers would need to write bytes to a temporary file just to create a
+`ResFile`. This crate lets any byte buffer participate in a `ResMan` lookup
+chain directly.
+
 ## Scope
 
 - wrap a byte buffer as a single resource entry

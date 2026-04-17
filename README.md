@@ -4,7 +4,7 @@
 
 Rust tools and libraries for Neverwinter Nights
 
-## What Is This?
+## Why This Exists
 
 `nwnrs` is a workspace for reading, writing, inspecting, and converting NWN
 data.

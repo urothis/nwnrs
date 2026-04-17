@@ -10,6 +10,14 @@ The model is intentionally simple:
 
 In other words, the wasm crate is a thin ABI layer over the Rust format crates. Unchanged DTO roundtrips are byte-exact for every supported format, and edited DTO writes are only enabled where the native codec can preserve untouched representation details.
 
+## Why This Crate Exists
+
+The Rust format crates are transport-agnostic and have no JavaScript surface.
+Without a wasm layer, browser and Node.js tooling would need to reimplement NWN
+parsing in JavaScript or call a server-side process. This crate provides a thin
+`bytes <-> DTO` ABI over the Rust codecs so JavaScript applications can read and
+write NWN formats natively in the browser without duplicating format logic.
+
 ## Supported Formats
 
 - `GFF` (`.gff`, `.bic`, `.dlg`, `.itp`, `.utc`, `.utd`, `.ute`, `.uti`, `.utm`, `.utp`, `.uts`, `.utt`, `.utw`)

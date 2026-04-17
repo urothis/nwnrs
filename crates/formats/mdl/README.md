@@ -2,6 +2,14 @@
 
 `nwnrs-mdl` provides the model-facing portion of the workspace: reading, writing, lowering, and exporting Neverwinter Nights `MDL` model assets.
 
+## Why This Crate Exists
+
+NWN ships two physically different MDL encodings — ASCII and compiled binary —
+and tooling needs both. A single-layer parser forces every consumer to either
+pick one encoding or carry its own lowering logic. This crate provides a layered
+pipeline from raw bytes through semantic and scene representations so tools can
+choose the fidelity they need without reimplementing each other's lowering.
+
 ## Scope
 
 - read and write Neverwinter Nights `MDL` payloads

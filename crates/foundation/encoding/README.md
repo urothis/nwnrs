@@ -2,6 +2,14 @@
 
 `nwnrs-encoding` is the workspace policy boundary for text encoding.
 
+## Why This Crate Exists
+
+NWN stores text in a non-UTF-8 encoding that varies by platform and language.
+Without a central policy boundary, every format crate would embed its own
+encoding assumptions and diverge silently. This crate makes the workspace
+encoding policy explicit and gives all format crates a single place to
+transcode NWN byte storage to and from Rust `String` values.
+
 ## Scope
 
 - define the default NWN text encoding

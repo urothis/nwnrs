@@ -3,6 +3,15 @@
 `nwnrs-install` is the installation-facing orchestration layer of the
 workspace.
 
+## Why This Crate Exists
+
+Every NWN tool that reads game data needs to find the installation first.
+Platform heuristics differ across Steam, Beamdog, and native installs, and the
+KEY/BIF layering order is not obvious. Without this crate, every tool would
+reimplement discovery and assemble its own layered resource view. This crate
+centralizes that logic so tools get a ready-to-query `ResMan` from a single
+call.
+
 ## Scope
 
 - locate a Neverwinter Nights installation and user directory

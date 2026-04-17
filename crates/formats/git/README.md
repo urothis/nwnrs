@@ -2,6 +2,14 @@
 
 Typed parser for Neverwinter Nights area instance (`GIT`) resources.
 
+## Why This Crate Exists
+
+`GFF` is a general-purpose container; `GIT` is domain-specific. The raw GFF
+layer has no knowledge of placed instances, instance types, or area geometry.
+This crate lifts raw GFF structs into typed Rust collections so area tooling
+can work with creatures, doors, placeables, and waypoints directly instead of
+navigating untyped field maps.
+
 ## Scope
 
 - parse `GIT` payloads into typed instance collections such as creatures,
