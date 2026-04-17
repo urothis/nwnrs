@@ -129,6 +129,13 @@ Conceptually:
 - instantiate tile models or runtime area scenes
 - infer missing tileset semantics beyond what the source data expresses
 
+## See also
+
+- [`nwnrs-git`](https://docs.rs/nwnrs-git), which models the area instance data
+  that references tileset resources
+- [`nwnrs-mdl`](https://docs.rs/nwnrs-mdl), which handles the model assets that
+  tileset tile entries point to
+
 ## Why This Crate Exists
 
 `SET` is one of the clearest examples in the workspace of "catalog structure is
