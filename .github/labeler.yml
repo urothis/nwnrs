@@ -148,6 +148,10 @@ io:
   - changed-files:
       - any-glob-to-any-file: ["crates/foundation/io/**/*"]
 
+test-support:
+  - changed-files:
+      - any-glob-to-any-file: ["crates/foundation/test-support/**/*"]
+
 # Documentation
 documentation:
   - changed-files:
