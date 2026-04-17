@@ -60,7 +60,7 @@ encoding_rs = { version = "0.8.35", default-features = false, features = [
 flate2 = { version = "1.1.9", default-features = false, features = [
     "rust_backend",
 ] }
-image = { version = "0.25.8", default-features = false, features = [
+image = { version = "0.25.10", default-features = false, features = [
     "jpeg",
     "png",
     "tga",
@@ -83,12 +83,12 @@ tracing = { version = "0.1.44", default-features = false, features = [
     "std",
 ] }
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt"] }
-tokio = { version = "1.51.1", features = ["full"] }
+tokio = { version = "1.52.1", features = ["full"] }
 texpresso = { version = "2.0.2", default-features = false }
-wasm-bindgen = { version = "0.2.117", default-features = false, features = [
+wasm-bindgen = { version = "0.2.118", default-features = false, features = [
     "std",
 ] }
-wasm-bindgen-test = { version = "0.3.50" }
+wasm-bindgen-test = { version = "0.3.68" }
 zstd = { version = "0.13.3", default-features = false, features = [
     "arrays",
     "legacy",

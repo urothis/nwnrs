@@ -9,10 +9,36 @@ their conventional file extensions.
 - provide a typed representation for resource kinds
 - allow additional mappings where a project needs custom resource types
 
-## Non-goals
+## Public Surface
 
-- resolve resources from storage
-- parse the payload format associated with a resource type
+### Core type
+
+- `ResType`
+
+### Registry operations
+
+- `get_res_ext`
+- `get_res_type`
+- `lookup_res_ext`
+- `lookup_res_type`
+- `register_custom_res_type`
+- `res_ext_registered`
+- `res_type_registered`
+- `RegisterResTypeError`
+
+## Logical Edges
+
+- `ResType` is a typed numeric identifier, not just a filename extension
+  wrapper
+- the registry is bi-directional: type-to-extension and extension-to-type
+- custom registration exists because the ecosystem is not closed
+- this crate does not resolve storage, and it does not imply anything about
+  payload semantics
+
+## Why This Crate Exists
+
+Without a single registry layer, every container and parser would end up
+inventing its own extension and type mapping logic.
 
 ## See also
 
