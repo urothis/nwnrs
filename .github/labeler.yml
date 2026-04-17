@@ -40,6 +40,14 @@ gff:
   - changed-files:
       - any-glob-to-any-file: ["crates/formats/gff/**/*"]
 
+dds:
+  - changed-files:
+      - any-glob-to-any-file: ["crates/formats/dds/**/*"]
+
+git:
+  - changed-files:
+      - any-glob-to-any-file: ["crates/formats/git/**/*"]
+
 gffjson:
   - changed-files:
       - any-glob-to-any-file: ["crates/formats/gffjson/**/*"]
