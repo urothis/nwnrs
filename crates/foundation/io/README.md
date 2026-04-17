@@ -41,6 +41,11 @@ The most important items are [`read_bytes_or_err`], [`read_fixed_count_seq`],
 - if a parser needs to know what a field means, that behavior does not belong
   here
 
+## See also
+
+- [`nwnrs-streamext`](https://docs.rs/nwnrs-streamext), which adds
+  size-prefixed binary framing helpers on top of this crate
+
 ## Why This Crate Exists
 
 Without `nwnrs-io`, every codec would grow its own slightly different

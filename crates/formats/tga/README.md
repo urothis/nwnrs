@@ -1,4 +1,4 @@
-# `nwnrs-tga`
+# nwnrs-tga
 
 Typed Neverwinter Nights `TGA` support.
 
@@ -95,6 +95,15 @@ Footer semantics:
 
 - act as a general-purpose image-processing crate
 - define higher-level material or asset-loading policy
+
+## See also
+
+- [`nwnrs-dds`](https://docs.rs/nwnrs-dds), the other primary NWN texture
+  format
+- [`nwnrs-plt`](https://docs.rs/nwnrs-plt), which stores recolorable
+  palette-layer textures alongside standard TGA assets
+- [`nwnrs-txi`](https://docs.rs/nwnrs-txi), which provides texture sidecar
+  metadata that accompanies TGA assets
 
 ## Why This Crate Exists
 

@@ -2,6 +2,13 @@
 
 Shared EXO-level constants and enums.
 
+## Why This Crate Exists
+
+EXO magic values and compression markers appear independently in `nwnrs-erf`,
+`nwnrs-key`, and `nwnrs-compressedbuf`. Without a shared home they would be
+copy-pasted across crates, making wire-level corrections error-prone. This
+crate is the single source of truth for those constants.
+
 ## Scope
 
 - define the small set of magic values and compression markers shared by
@@ -24,3 +31,11 @@ Shared EXO-level constants and enums.
 
 - parse full EXO-backed containers on its own
 - provide a general binary-protocol abstraction
+
+## See also
+
+- [`nwnrs-compressedbuf`](https://docs.rs/nwnrs-compressedbuf), which uses
+  these constants for compressed-buffer framing
+- [`nwnrs-erf`](https://docs.rs/nwnrs-erf) and
+  [`nwnrs-key`](https://docs.rs/nwnrs-key), which use these constants for `E1`
+  compression metadata

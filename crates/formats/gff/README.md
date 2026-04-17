@@ -67,7 +67,7 @@ The crate models `GFF V3.2`.
 0x08  struct_offset         u32
 0x0C  struct_count          u32
 0x10  field_offset          u32
-0x14  field_count          u32
+0x14  field_count           u32
 0x18  label_offset          u32
 0x1C  label_count           u32
 0x20  field_data_offset     u32

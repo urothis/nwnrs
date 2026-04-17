@@ -10,6 +10,14 @@ The model is intentionally simple:
 
 In other words, the wasm crate is a thin ABI layer over the Rust format crates. Unchanged DTO roundtrips are byte-exact for every supported format, and edited DTO writes are only enabled where the native codec can preserve untouched representation details.
 
+## Why This Crate Exists
+
+The Rust format crates are transport-agnostic and have no JavaScript surface.
+Without a wasm layer, browser and Node.js tooling would need to reimplement NWN
+parsing in JavaScript or call a server-side process. This crate provides a thin
+`bytes <-> DTO` ABI over the Rust codecs so JavaScript applications can read and
+write NWN formats natively in the browser without duplicating format logic.
+
 ## Supported Formats
 
 - `GFF` (`.gff`, `.bic`, `.dlg`, `.itp`, `.utc`, `.utd`, `.ute`, `.uti`, `.utm`, `.utp`, `.uts`, `.utt`, `.utw`)
@@ -24,13 +32,13 @@ Each format has a pair of functions:
 - `read_*_from_bytes(bytes) -> object`
 - `write_*_to_bytes(value) -> Uint8Array`
 
+ERF is an exception: `read_erf_from_bytes` takes `(bytes, filename)` because the archive context depends on the source filename. See [ERF](#erf) below.
+
 The returned objects are DTOs serialized with `serde_wasm_bindgen`. In JavaScript terms, they behave like ordinary objects, arrays, strings, numbers, and byte arrays.
 
 For every supported format, the read API also carries hidden provenance metadata in the top-level DTO. If you read bytes and write the DTO back unchanged, the original bytes are returned exactly.
 
 Edited DTO writes are supported for `GFF`, `2DA`, `TLK`, `SSF`, `ERF`, and ASCII `MDL`. The wasm layer delegates preservation behavior to the native crates instead of maintaining a second set of format rules.
-
-## Installation
 
 ## Building
 

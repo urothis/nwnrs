@@ -1,4 +1,4 @@
-# cargo-deny configuration for nwn-rs
+# cargo-deny configuration for nwnrs
 # See https://embarkstudios.github.io/cargo-deny/ for more information
 
 [bans]

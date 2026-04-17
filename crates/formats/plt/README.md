@@ -1,4 +1,4 @@
-# `nwnrs-plt`
+# nwnrs-plt
 
 Typed Neverwinter Nights `PLT` support.
 
@@ -81,6 +81,13 @@ layer_id
 
 - resolve final colors from game palette tables
 - render PLT data into a final material or image by itself
+
+## See also
+
+- [`nwnrs-tga`](https://docs.rs/nwnrs-tga), which stores the palette bitmaps
+  that `PLT` layers index into at render time
+- [`nwnrs-mdl`](https://docs.rs/nwnrs-mdl), whose model materials reference
+  `PLT` textures for creature appearance overrides
 
 ## Why This Crate Exists
 

@@ -71,6 +71,13 @@ Conceptually:
 - resolve the final texture assets referenced by a material
 - implement runtime shading or renderer integration
 
+## See also
+
+- [`nwnrs-mdl`](https://docs.rs/nwnrs-mdl), which references `MTR` descriptors
+  for model material resolution
+- [`nwnrs-txi`](https://docs.rs/nwnrs-txi), which provides texture sidecar
+  metadata often used alongside material descriptors
+
 ## Why This Crate Exists
 
 `MTR` is where text format and semantic descriptor overlap. The important thing

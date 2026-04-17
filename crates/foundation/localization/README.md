@@ -43,6 +43,17 @@ The relevant entry points are [`Language`], [`StrRef`], and
 - `resolve_language` and `FromStr` form the normalization boundary between user
   input, install directory naming, and the typed language enum
 
+## See also
+
+- [`nwnrs-tlk`](https://docs.rs/nwnrs-tlk), which uses `Language`, `Gender`,
+  and `StrRef` for dialog-table lookup
+- [`nwnrs-gff`](https://docs.rs/nwnrs-gff), which uses `StrRef` and `Language`
+  for localized string fields
+- [`nwnrs-ssf`](https://docs.rs/nwnrs-ssf), which stores `StrRef` values in
+  soundset slot entries
+- [`nwnrs-encoding`](https://docs.rs/nwnrs-encoding), which provides the
+  byte-level text encoding that this crate builds on
+
 ## Why This Crate Exists
 
 Without a single localization vocabulary, every crate that touched `TLK` or
