@@ -40,6 +40,14 @@ gff:
   - changed-files:
       - any-glob-to-any-file: ["crates/formats/gff/**/*"]
 
+dds:
+  - changed-files:
+      - any-glob-to-any-file: ["crates/formats/dds/**/*"]
+
+git:
+  - changed-files:
+      - any-glob-to-any-file: ["crates/formats/git/**/*"]
+
 gffjson:
   - changed-files:
       - any-glob-to-any-file: ["crates/formats/gffjson/**/*"]
@@ -56,13 +64,41 @@ masterlist:
   - changed-files:
       - any-glob-to-any-file: ["crates/meta/masterlist/**/*"]
 
+prelude:
+  - changed-files:
+      - any-glob-to-any-file: ["crates/meta/prelude/**/*"]
+
 nwscript:
   - changed-files:
       - any-glob-to-any-file: ["crates/language/nwscript/**/*"]
 
+mdl:
+  - changed-files:
+      - any-glob-to-any-file: ["crates/formats/mdl/**/*"]
+
+mtr:
+  - changed-files:
+      - any-glob-to-any-file: ["crates/formats/mtr/**/*"]
+
 nwsync:
   - changed-files:
       - any-glob-to-any-file: ["crates/formats/nwsync/**/*"]
+
+plt:
+  - changed-files:
+      - any-glob-to-any-file: ["crates/formats/plt/**/*"]
+
+set:
+  - changed-files:
+      - any-glob-to-any-file: ["crates/formats/set/**/*"]
+
+tga:
+  - changed-files:
+      - any-glob-to-any-file: ["crates/formats/tga/**/*"]
+
+txi:
+  - changed-files:
+      - any-glob-to-any-file: ["crates/formats/txi/**/*"]
 
 resdir:
   - changed-files:
@@ -112,15 +148,30 @@ io:
   - changed-files:
       - any-glob-to-any-file: ["crates/foundation/io/**/*"]
 
+test-support:
+  - changed-files:
+      - any-glob-to-any-file: ["crates/foundation/test-support/**/*"]
+
+# Assets
+assets:
+  - changed-files:
+      - any-glob-to-any-file: ["assets/**/*"]
+
+# WASM bindings
+wasm:
+  - changed-files:
+      - any-glob-to-any-file: ["wasm/**/*"]
+
 # Documentation
 documentation:
   - changed-files:
       - any-glob-to-any-file:
           [
-            "README.md",
-            "cli/README.md",
             "docs/**/*",
             "**/*.md",
+            "CODE_OF_CONDUCT",
+            "LICENSE",
+            "CODEOWNERS",
           ]
 
 # CI/CD and GitHub Actions
@@ -138,7 +189,7 @@ ci/cd:
 dependencies:
   - changed-files:
       - any-glob-to-any-file:
-          ["Cargo.toml", "cli/Cargo.toml", "crates/*/*/Cargo.toml"]
+          ["Cargo.toml", "Cargo.lock", "cli/Cargo.toml", "crates/*/*/Cargo.toml", "wasm/Cargo.toml"]
 
 # Tests
 tests:
@@ -149,7 +200,7 @@ tests:
 config:
   - changed-files:
       - any-glob-to-any-file:
-          [".gitignore", "rustfmt.toml", "clippy.toml", "deny.toml"]
+          [".gitignore", "rustfmt.toml", "clippy.toml", "deny.toml", "rust-toolchain.toml"]
 
 # Breaking changes (files that might indicate breaking changes)
 breaking:
