@@ -563,12 +563,12 @@ fn resolve_equipped_paperdoll(
                     Some("it_glove") => {
                         equipped.gloves = equipped_symmetric_part_visual_from_item(
                             resman, &item_root, family, "HAND",
-                        )?;
+                        );
                     }
                     Some("it_bracer") => {
                         equipped.bracers = equipped_symmetric_part_visual_from_item(
                             resman, &item_root, family, "FORE",
-                        )?;
+                        );
                     }
                     _ => {}
                 }
@@ -583,19 +583,19 @@ fn resolve_equipped_paperdoll(
             }
             INVENTORY_SLOT_MASK_LEFT_RING => {
                 equipped.left_ring =
-                    equipped_single_part_visual_from_item(resman, &item_root, family, "HANDL")?;
+                    equipped_single_part_visual_from_item(resman, &item_root, family, "HANDL");
             }
             INVENTORY_SLOT_MASK_RIGHT_RING => {
                 equipped.right_ring =
-                    equipped_single_part_visual_from_item(resman, &item_root, family, "HANDR")?;
+                    equipped_single_part_visual_from_item(resman, &item_root, family, "HANDR");
             }
             INVENTORY_SLOT_MASK_NECK => {
                 equipped.neck =
-                    equipped_family_accessory_visual_from_item(resman, &item_root, family, "neck")?;
+                    equipped_family_accessory_visual_from_item(resman, &item_root, family, "neck");
             }
             INVENTORY_SLOT_MASK_BELT => {
                 equipped.belt =
-                    equipped_family_accessory_visual_from_item(resman, &item_root, family, "belt")?;
+                    equipped_family_accessory_visual_from_item(resman, &item_root, family, "belt");
             }
             _ => {}
         }
@@ -649,7 +649,7 @@ fn equipped_held_item_visual_from_item(
     let Some(base_item_info) = base_item_info(resman, base_item as usize)? else {
         return Ok(None);
     };
-    let Some(model_name) = held_item_model_name(resman, root, &base_item_info)? else {
+    let Some(model_name) = held_item_model_name(resman, root, &base_item_info) else {
         return Ok(None);
     };
     Ok(Some(EquippedItemVisual {
@@ -697,17 +697,15 @@ fn equipped_symmetric_part_visual_from_item(
     root: &GffRoot,
     family: &PlayerCreatureFamily,
     stem_prefix: &str,
-) -> ModelResult<Option<EquippedPartVisual>> {
-    let Some(model_number) = item_model_part(root, "ModelPart1") else {
-        return Ok(None);
-    };
+) -> Option<EquippedPartVisual> {
+    let model_number = item_model_part(root, "ModelPart1")?;
     if !player_part_model_exists(resman, family, &format!("{stem_prefix}R"), model_number) {
-        return Ok(None);
+        return None;
     }
-    Ok(Some(EquippedPartVisual {
+    Some(EquippedPartVisual {
         model_number,
         appearance_overrides: item_plt_appearance_overrides(&root.root),
-    }))
+    })
 }
 
 fn equipped_single_part_visual_from_item(
@@ -715,17 +713,15 @@ fn equipped_single_part_visual_from_item(
     root: &GffRoot,
     family: &PlayerCreatureFamily,
     stem: &str,
-) -> ModelResult<Option<EquippedPartVisual>> {
-    let Some(model_number) = item_model_part(root, "ModelPart1") else {
-        return Ok(None);
-    };
+) -> Option<EquippedPartVisual> {
+    let model_number = item_model_part(root, "ModelPart1")?;
     if !player_part_model_exists(resman, family, stem, model_number) {
-        return Ok(None);
+        return None;
     }
-    Ok(Some(EquippedPartVisual {
+    Some(EquippedPartVisual {
         model_number,
         appearance_overrides: item_plt_appearance_overrides(&root.root),
-    }))
+    })
 }
 
 fn equipped_family_accessory_visual_from_item(
@@ -733,18 +729,16 @@ fn equipped_family_accessory_visual_from_item(
     root: &GffRoot,
     family: &PlayerCreatureFamily,
     stem: &str,
-) -> ModelResult<Option<EquippedItemVisual>> {
-    let Some(model_part) = item_model_part(root, "ModelPart1") else {
-        return Ok(None);
-    };
+) -> Option<EquippedItemVisual> {
+    let model_part = item_model_part(root, "ModelPart1")?;
     let model_name = format!("{}_{stem}{model_part:03}", family.model_prefix);
     if first_existing_model_candidate(resman, std::slice::from_ref(&model_name)).is_none() {
-        return Ok(None);
+        return None;
     }
-    Ok(Some(EquippedItemVisual {
+    Some(EquippedItemVisual {
         model_name,
         appearance_overrides: item_plt_appearance_overrides(&root.root),
-    }))
+    })
 }
 
 fn equipped_cloak_visual_from_item(
@@ -960,15 +954,10 @@ fn held_item_model_name(
     resman: &mut ResMan,
     root: &GffRoot,
     base_item_info: &BaseItemInfo,
-) -> ModelResult<Option<String>> {
-    let Some(model_part) = gff_u32(root.root.get_field("ModelPart1").map(nwnrs_gff::GffField::value))
-        .filter(|value| *value > 0)
-    else {
-        return Ok(None);
-    };
-    let Some(item_class) = base_item_info.item_class.as_deref() else {
-        return Ok(None);
-    };
+) -> Option<String> {
+    let model_part = gff_u32(root.root.get_field("ModelPart1").map(nwnrs_gff::GffField::value))
+        .filter(|value| *value > 0)?;
+    let item_class = base_item_info.item_class.as_deref()?;
     let model_candidates = match base_item_info.model_type {
         Some(1) => vec![format!("helm_{model_part:03}")],
         Some(2) => vec![
@@ -986,7 +975,7 @@ fn held_item_model_name(
         _ => Vec::new(),
     };
 
-    Ok(first_existing_model_candidate(resman, &model_candidates))
+    first_existing_model_candidate(resman, &model_candidates)
 }
 
 fn first_existing_model_candidate(resman: &mut ResMan, candidates: &[String]) -> Option<String> {
