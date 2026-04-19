@@ -1157,8 +1157,7 @@ fn gff_u32_any(value: &GffStruct, fields: &[&str]) -> Option<u32> {
 
 fn gff_string(value: Option<&GffValue>) -> Option<String> {
     match value? {
-        GffValue::CExoString(value) => Some(value.clone()),
-        GffValue::ResRef(value) => Some(value.clone()),
+        GffValue::CExoString(value) | GffValue::ResRef(value) => Some(value.clone()),
         _ => None,
     }
 }
