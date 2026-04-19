@@ -740,9 +740,7 @@ fn equipped_family_accessory_visual_from_item(
 ) -> Option<EquippedItemVisual> {
     let model_part = item_model_part(root, "ModelPart1")?;
     let model_name = format!("{}_{stem}{model_part:03}", family.model_prefix);
-    if first_existing_model_candidate(resman, std::slice::from_ref(&model_name)).is_none() {
-        return None;
-    }
+    first_existing_model_candidate(resman, std::slice::from_ref(&model_name))?;
     Some(EquippedItemVisual {
         model_name,
         appearance_overrides: item_plt_appearance_overrides(&root.root),

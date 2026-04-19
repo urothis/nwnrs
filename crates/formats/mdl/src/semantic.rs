@@ -1289,7 +1289,7 @@ fn binary_axis_angle_keys(
 fn binary_scalar_keys(
     node: &BinaryNode,
     controller_type: i32,
-    _diagnostics: &mut Vec<ModelDiagnostic>,
+    _diagnostics: &mut [ModelDiagnostic],
 ) -> Vec<ScalarKey> {
     let Some(controller) = binary_controller(node, controller_type) else {
         return Vec::new();
