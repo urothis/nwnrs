@@ -29,7 +29,7 @@ If you only care about one problem area:
   [`nwsync`]
 - install-backed resource loading: start with [`restype`], [`resref`],
   [`resman`], and [`install`]
-- NWScript compilation: jump to [`nwscript`]
+- `NWScript` compilation: jump to [`nwscript`]
 - the operational entry points: see the
   [`nwnrs-cli` README](https://github.com/urothis/nwnrs/blob/main/cli/README.md)
   and the
