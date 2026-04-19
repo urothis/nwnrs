@@ -384,27 +384,27 @@ impl Mat4 {
     }
 
     fn inverse_affine(self) -> Option<Self> {
-        let a = self.cols[0][0];
-        let b = self.cols[1][0];
-        let c = self.cols[2][0];
-        let d = self.cols[0][1];
-        let e = self.cols[1][1];
-        let f = self.cols[2][1];
-        let g = self.cols[0][2];
-        let h = self.cols[1][2];
-        let i = self.cols[2][2];
+        let m00 = self.cols[0][0];
+        let m10 = self.cols[1][0];
+        let m20 = self.cols[2][0];
+        let m01 = self.cols[0][1];
+        let m11 = self.cols[1][1];
+        let m21 = self.cols[2][1];
+        let m02 = self.cols[0][2];
+        let m12 = self.cols[1][2];
+        let m22 = self.cols[2][2];
 
-        let cofactor00 = e * i - f * h;
-        let cofactor01 = -(d * i - f * g);
-        let cofactor02 = d * h - e * g;
-        let cofactor10 = -(b * i - c * h);
-        let cofactor11 = a * i - c * g;
-        let cofactor12 = -(a * h - b * g);
-        let cofactor20 = b * f - c * e;
-        let cofactor21 = -(a * f - c * d);
-        let cofactor22 = a * e - b * d;
+        let cofactor00 = m11 * m22 - m21 * m12;
+        let cofactor01 = -(m01 * m22 - m21 * m02);
+        let cofactor02 = m01 * m12 - m11 * m02;
+        let cofactor10 = -(m10 * m22 - m20 * m12);
+        let cofactor11 = m00 * m22 - m20 * m02;
+        let cofactor12 = -(m00 * m12 - m10 * m02);
+        let cofactor20 = m10 * m21 - m20 * m11;
+        let cofactor21 = -(m00 * m21 - m20 * m01);
+        let cofactor22 = m00 * m11 - m10 * m01;
 
-        let determinant = a * cofactor00 + b * cofactor01 + c * cofactor02;
+        let determinant = m00 * cofactor00 + m10 * cofactor01 + m20 * cofactor02;
         if determinant.abs() <= f32::EPSILON {
             return None;
         }
