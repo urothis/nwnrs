@@ -325,8 +325,7 @@ fn build_player_creature_part_attachments(
     let armor_overrides = equipped
         .armor
         .as_ref()
-        .map(|armor| merged_appearance_overrides(creature_overrides, &armor.appearance_overrides))
-        .unwrap_or_else(|| creature_overrides.clone());
+        .map_or_else(|| creature_overrides.clone(), |armor| merged_appearance_overrides(creature_overrides, &armor.appearance_overrides));
     let equipped_part_overrides = equipped_player_part_overrides(equipped);
     let capart = load_twoda(resman, "capart")?;
     for row in 0..capart.len() {

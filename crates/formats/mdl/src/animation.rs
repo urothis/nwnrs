@@ -312,8 +312,7 @@ fn sample_vec3_frames(
     if current == next {
         return samples
             .get(current)
-            .map(|sample| sample.values.clone())
-            .unwrap_or_else(|| fallback.to_vec());
+            .map_or_else(|| fallback.to_vec(), |sample| sample.values.clone());
     }
 
     let Some(current_sample) = samples.get(current) else {
@@ -352,8 +351,7 @@ fn sample_vec2_frames(
     if current == next {
         return samples
             .get(current)
-            .map(|sample| sample.values.clone())
-            .unwrap_or_else(|| fallback.to_vec());
+            .map_or_else(|| fallback.to_vec(), |sample| sample.values.clone());
     }
 
     let Some(current_sample) = samples.get(current) else {
