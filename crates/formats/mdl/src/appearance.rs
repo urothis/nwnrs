@@ -53,6 +53,7 @@ pub struct NwnAppearanceSlot {
 
 /// Collects appearance slots from a lowered model scene by scanning model-like
 /// bitmap tokens and matching installed part-model candidates.
+#[must_use]
 pub fn collect_appearance_slots(scene: &NwnScene, resman: &ResMan) -> Vec<NwnAppearanceSlot> {
     let installed_models = resman
         .contents()
