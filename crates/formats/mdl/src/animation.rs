@@ -374,7 +374,6 @@ fn sample_vec2_frames(
         .collect()
 }
 
-#[allow(clippy::cast_precision_loss)]
 fn sample_frame_indices(
     sample_count: usize,
     sample_period: Option<f32>,
@@ -385,11 +384,12 @@ fn sample_frame_indices(
         0 => None,
         1 => Some((0, 0, 0.0)),
         _ => {
+            let count_f32 = f32::from(u16::try_from(sample_count).ok()?);
             let phase_time = normalize_animation_time(animation_length, elapsed);
             let derived_period = sample_period
                 .filter(|period| *period > f32::EPSILON)
-                .unwrap_or_else(|| (animation_length / sample_count as f32).max(f32::EPSILON));
-            let cycle_duration = derived_period * sample_count as f32;
+                .unwrap_or_else(|| (animation_length / count_f32).max(f32::EPSILON));
+            let cycle_duration = derived_period * count_f32;
             let cycle_time = if cycle_duration > f32::EPSILON {
                 phase_time.rem_euclid(cycle_duration)
             } else {
@@ -402,7 +402,7 @@ fn sample_frame_indices(
                 next_boundary += derived_period;
             }
             let next = (current + 1) % sample_count;
-            let current_start = current as f32 * derived_period;
+            let current_start = f32::from(u16::try_from(current).ok()?) * derived_period;
             let factor = ((cycle_time - current_start) / derived_period).clamp(0.0, 1.0);
             Some((current, next, factor))
         }
