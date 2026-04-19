@@ -275,7 +275,7 @@ fn player_creature_family_from_blueprint(
     let Some(race_letter) = race_token
         .chars()
         .next()
-        .filter(|ch| ch.is_ascii_alphabetic())
+        .filter(char::is_ascii_alphabetic)
     else {
         return Ok(None);
     };
@@ -515,14 +515,14 @@ fn resolve_equipped_paperdoll(
     let Some(entries) = root
         .root
         .get_field("Equip_ItemList")
-        .map(|field| field.value())
+        .map(nwnrs_gff::GffField::value)
         .and_then(gff_list)
     else {
         return Ok(equipped);
     };
 
     for entry in entries {
-        let Some(resref) = gff_string(entry.get_field("EquippedRes").map(|field| field.value()))
+        let Some(resref) = gff_string(entry.get_field("EquippedRes").map(nwnrs_gff::GffField::value))
         else {
             continue;
         };
@@ -552,7 +552,7 @@ fn resolve_equipped_paperdoll(
                     item_root
                         .root
                         .get_field("BaseItem")
-                        .map(|field| field.value()),
+                        .map(nwnrs_gff::GffField::value),
                 ) else {
                     continue;
                 };
@@ -608,7 +608,7 @@ fn equipped_armor_visual_from_item(
     resman: &mut ResMan,
     root: &GffRoot,
 ) -> ModelResult<Option<EquippedArmorVisual>> {
-    let Some(base_item) = gff_u32(root.root.get_field("BaseItem").map(|field| field.value()))
+    let Some(base_item) = gff_u32(root.root.get_field("BaseItem").map(nwnrs_gff::GffField::value))
     else {
         return Ok(None);
     };
@@ -642,7 +642,7 @@ fn equipped_held_item_visual_from_item(
     resman: &mut ResMan,
     root: &GffRoot,
 ) -> ModelResult<Option<EquippedItemVisual>> {
-    let Some(base_item) = gff_u32(root.root.get_field("BaseItem").map(|field| field.value()))
+    let Some(base_item) = gff_u32(root.root.get_field("BaseItem").map(nwnrs_gff::GffField::value))
     else {
         return Ok(None);
     };
@@ -663,7 +663,7 @@ fn equipped_boot_visual_from_item(
     root: &GffRoot,
     family: &PlayerCreatureFamily,
 ) -> ModelResult<Option<EquippedBootVisual>> {
-    let Some(base_item) = gff_u32(root.root.get_field("BaseItem").map(|field| field.value()))
+    let Some(base_item) = gff_u32(root.root.get_field("BaseItem").map(nwnrs_gff::GffField::value))
     else {
         return Ok(None);
     };
@@ -820,7 +820,7 @@ fn twoda_truthy_cell(table: &TwoDa, row: usize, column: &str) -> bool {
 }
 
 fn item_model_part(root: &GffRoot, field: &str) -> Option<u32> {
-    gff_u32(root.root.get_field(field).map(|entry| entry.value())).filter(|value| *value > 0)
+    gff_u32(root.root.get_field(field).map(nwnrs_gff::GffField::value)).filter(|value| *value > 0)
 }
 
 fn player_part_model_exists(
@@ -936,7 +936,7 @@ fn insert_plt_row_override(
 ) {
     if let Some(row) = fields
         .iter()
-        .find_map(|field| gff_u8(value.get_field(field).map(|entry| entry.value())))
+        .find_map(|field| gff_u8(value.get_field(field).map(nwnrs_gff::GffField::value)))
     {
         overrides.plt_rows.insert(layer_id, row);
     }
@@ -961,7 +961,7 @@ fn held_item_model_name(
     root: &GffRoot,
     base_item_info: &BaseItemInfo,
 ) -> ModelResult<Option<String>> {
-    let Some(model_part) = gff_u32(root.root.get_field("ModelPart1").map(|field| field.value()))
+    let Some(model_part) = gff_u32(root.root.get_field("ModelPart1").map(nwnrs_gff::GffField::value))
         .filter(|value| *value > 0)
     else {
         return Ok(None);
@@ -1042,7 +1042,7 @@ fn appearance_model_name_from_named_twoda(
 fn creature_body_part_model_number(value: &GffStruct, fields: &[&str]) -> Option<u32> {
     fields
         .iter()
-        .find_map(|field| gff_u32(value.get_field(field).map(|entry| entry.value())))
+        .find_map(|field| gff_u32(value.get_field(field).map(nwnrs_gff::GffField::value)))
 }
 
 fn creature_body_part_field_aliases(model_stem: &str) -> &'static [&'static str] {
@@ -1151,7 +1151,7 @@ fn gff_u32(value: Option<&GffValue>) -> Option<u32> {
 fn gff_u32_any(value: &GffStruct, fields: &[&str]) -> Option<u32> {
     fields
         .iter()
-        .find_map(|field| gff_u32(value.get_field(field).map(|entry| entry.value())))
+        .find_map(|field| gff_u32(value.get_field(field).map(nwnrs_gff::GffField::value)))
 }
 
 fn gff_string(value: Option<&GffValue>) -> Option<String> {
