@@ -374,6 +374,7 @@ fn sample_vec2_frames(
         .collect()
 }
 
+#[allow(clippy::cast_precision_loss)]
 fn sample_frame_indices(
     sample_count: usize,
     sample_period: Option<f32>,
