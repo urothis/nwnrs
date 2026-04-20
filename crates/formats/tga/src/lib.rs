@@ -42,8 +42,8 @@ impl TgaError {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
-    /// let _ = nwnrs_tga::TgaError::msg;
+    /// ```rust
+    /// let err = nwnrs_tga::TgaError::msg("something went wrong");
     /// ```
     pub fn msg(message: impl Into<String>) -> Self {
         Self::Message(message.into())
@@ -416,7 +416,7 @@ impl TgaTexture {
     /// # Examples
     ///
     /// ```rust,no_run
-    /// let _ = nwnrs_tga::TgaTexture::from_file;
+    /// let texture = nwnrs_tga::TgaTexture::from_file("texture.tga");
     /// ```
     pub fn from_file(path: impl AsRef<Path>) -> TgaResult<Self> {
         let mut file = File::open(path.as_ref())?;
@@ -458,7 +458,8 @@ impl TgaTexture {
 /// # Examples
 ///
 /// ```rust,no_run
-/// let _ = nwnrs_tga::read_tga;
+/// let mut reader = std::io::Cursor::new(vec![]);
+/// let texture = nwnrs_tga::read_tga(&mut reader);
 /// ```
 #[instrument(level = "debug", skip_all, err)]
 pub fn read_tga<R: Read>(reader: &mut R) -> TgaResult<TgaTexture> {
@@ -476,7 +477,9 @@ pub fn read_tga<R: Read>(reader: &mut R) -> TgaResult<TgaTexture> {
 /// # Examples
 ///
 /// ```rust,no_run
-/// let _ = nwnrs_tga::write_tga;
+/// let mut writer = std::io::Cursor::new(vec![]);
+/// let texture = nwnrs_tga::TgaTexture::from_file("texture.tga").unwrap();
+/// nwnrs_tga::write_tga(&mut writer, &texture).unwrap();
 /// ```
 #[instrument(
     level = "debug",
