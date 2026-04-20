@@ -335,6 +335,10 @@ impl KeyTable {
     ///
     /// Calling this may lazily open referenced BIF files through the configured
     /// resolver.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`KeyError`] if any referenced BIF file cannot be loaded.
     pub fn bif_contents(&self) -> KeyResult<Vec<KeyBifContents>> {
         let mut by_bif = Vec::with_capacity(self.bifs.len());
 

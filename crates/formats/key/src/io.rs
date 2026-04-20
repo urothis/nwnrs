@@ -38,6 +38,10 @@ where
 
 /// Opens a KEY file from disk and resolves BIF paths relative to the KEY
 /// directory.
+///
+/// # Errors
+///
+/// Returns [`KeyError`] if the file cannot be opened or parsed.
 #[instrument(level = "debug", skip_all, err, fields(path = %path.as_ref().display()))]
 pub fn read_key_table_from_file(path: impl AsRef<Path>) -> KeyResult<KeyTable> {
     let path = path.as_ref();
