@@ -423,7 +423,9 @@ pub fn read_dds<R: Read>(reader: &mut R) -> DdsResult<DdsTexture> {
 /// # Examples
 ///
 /// ```rust,no_run
-/// let _ = nwnrs_dds::write_dds;
+/// let mut writer = std::io::Cursor::new(vec![]);
+/// let dds = nwnrs_dds::DdsTexture::from_file("texture.dds").unwrap();
+/// nwnrs_dds::write_dds(&mut writer, &dds).unwrap();
 /// ```
 #[instrument(
     level = "debug",
