@@ -94,12 +94,20 @@ impl MtrMaterial {
     }
 
     /// Reads a typed MTR material from disk.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MtrError`] if the file cannot be opened or parsed.
     pub fn from_file(path: impl AsRef<Path>) -> MtrResult<Self> {
         let mut file = File::open(path.as_ref())?;
         read_mtr(&mut file)
     }
 
     /// Reads a typed MTR material from a [`Res`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MtrError`] if the resource is not an MTR type or the bytes cannot be parsed.
     pub fn from_res(res: &Res, cache_policy: CachePolicy) -> MtrResult<Self> {
         if res.resref().res_type() != MTR_RES_TYPE {
             return Err(MtrError::msg(format!(
@@ -116,6 +124,10 @@ impl MtrMaterial {
 }
 
 /// Reads a typed MTR material from `reader`.
+///
+/// # Errors
+///
+/// Returns [`MtrError`] if the data cannot be read or parsed.
 #[instrument(level = "debug", skip_all, err)]
 pub fn read_mtr<R: Read>(reader: &mut R) -> MtrResult<MtrMaterial> {
     let mut text = String::new();
@@ -192,6 +204,10 @@ pub fn parse_mtr(text: &str) -> MtrResult<MtrMaterial> {
 }
 
 /// Writes a typed MTR material to `writer`.
+///
+/// # Errors
+///
+/// Returns [`MtrError`] if the write fails.
 #[instrument(level = "debug", skip_all, err)]
 pub fn write_mtr<W: Write>(writer: &mut W, material: &MtrMaterial) -> MtrResult<()> {
     if let Some(shader) = &material.custom_shader_vs {

@@ -23,6 +23,10 @@ use crate::{
 ///
 /// The returned [`Erf`] contains lazily readable [`nwnrs_resman::Res`] entries
 /// backed by the supplied stream.
+///
+/// # Errors
+///
+/// Returns [`ErfError`] if the data cannot be read or does not conform to an ERF-family format.
 #[instrument(level = "debug", skip_all, err)]
 pub fn read_erf<R>(reader: R, filename: impl Into<String>) -> ErfResult<Erf>
 where
