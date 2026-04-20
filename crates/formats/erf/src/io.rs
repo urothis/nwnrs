@@ -36,6 +36,10 @@ where
 }
 
 /// Opens a file from disk and reads it as an ERF-family archive.
+///
+/// # Errors
+///
+/// Returns [`ErfError`] if the file cannot be opened or parsed.
 #[instrument(level = "debug", skip_all, err, fields(path = %path.as_ref().display()))]
 pub fn read_erf_from_file(path: impl AsRef<Path>) -> ErfResult<Erf> {
     let path = path.as_ref();
@@ -47,6 +51,10 @@ pub fn read_erf_from_file(path: impl AsRef<Path>) -> ErfResult<Erf> {
 ///
 /// This is the most direct constructor when the caller already manages stream
 /// sharing.
+///
+/// # Errors
+///
+/// Returns [`ErfError`] if the data cannot be read or does not conform to an ERF-family format.
 #[instrument(level = "debug", skip_all, err, fields(path = %filename))]
 pub fn read_erf_shared(stream: SharedReadSeek, filename: String) -> ErfResult<Erf> {
     let mut io = stream
