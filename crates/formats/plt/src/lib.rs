@@ -41,8 +41,8 @@ impl PltError {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
-    /// let _ = nwnrs_plt::PltError::msg;
+    /// ```rust
+    /// let err = nwnrs_plt::PltError::msg("something went wrong");
     /// ```
     pub fn msg(message: impl Into<String>) -> Self {
         Self::Message(message.into())
@@ -397,7 +397,7 @@ impl PltTexture {
     /// # Examples
     ///
     /// ```rust,no_run
-    /// let _ = nwnrs_plt::PltTexture::from_file;
+    /// let texture = nwnrs_plt::PltTexture::from_file("texture.plt");
     /// ```
     pub fn from_file(path: impl AsRef<Path>) -> PltResult<Self> {
         let mut file = File::open(path.as_ref())?;
@@ -439,7 +439,8 @@ impl PltTexture {
 /// # Examples
 ///
 /// ```rust,no_run
-/// let _ = nwnrs_plt::read_plt;
+/// let mut reader = std::io::Cursor::new(vec![]);
+/// let texture = nwnrs_plt::read_plt(&mut reader);
 /// ```
 #[instrument(level = "debug", skip_all, err)]
 pub fn read_plt<R: Read>(reader: &mut R) -> PltResult<PltTexture> {
@@ -457,7 +458,9 @@ pub fn read_plt<R: Read>(reader: &mut R) -> PltResult<PltTexture> {
 /// # Examples
 ///
 /// ```rust,no_run
-/// let _ = nwnrs_plt::write_plt;
+/// let mut writer = std::io::Cursor::new(vec![]);
+/// let texture = nwnrs_plt::PltTexture::from_file("texture.plt").unwrap();
+/// nwnrs_plt::write_plt(&mut writer, &texture).unwrap();
 /// ```
 #[instrument(
     level = "debug",
