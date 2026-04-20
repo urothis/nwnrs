@@ -38,8 +38,8 @@ impl MtrError {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
-    /// let _ = nwnrs_mtr::MtrError::msg;
+    /// ```rust
+    /// let err = nwnrs_mtr::MtrError::msg("something went wrong");
     /// ```
     pub fn msg(message: impl Into<String>) -> Self {
         Self::Message(message.into())
@@ -132,7 +132,7 @@ impl MtrMaterial {
     /// # Examples
     ///
     /// ```rust,no_run
-    /// let _ = nwnrs_mtr::MtrMaterial::from_file;
+    /// let material = nwnrs_mtr::MtrMaterial::from_file("material.mtr");
     /// ```
     pub fn from_file(path: impl AsRef<Path>) -> MtrResult<Self> {
         let mut file = File::open(path.as_ref())?;
@@ -175,7 +175,8 @@ impl MtrMaterial {
 /// # Examples
 ///
 /// ```rust,no_run
-/// let _ = nwnrs_mtr::read_mtr;
+/// let mut reader = std::io::Cursor::new(vec![]);
+/// let material = nwnrs_mtr::read_mtr(&mut reader);
 /// ```
 #[instrument(level = "debug", skip_all, err)]
 pub fn read_mtr<R: Read>(reader: &mut R) -> MtrResult<MtrMaterial> {
@@ -271,7 +272,9 @@ pub fn parse_mtr(text: &str) -> MtrResult<MtrMaterial> {
 /// # Examples
 ///
 /// ```rust,no_run
-/// let _ = nwnrs_mtr::write_mtr;
+/// let mut writer = std::io::Cursor::new(vec![]);
+/// let material = nwnrs_mtr::MtrMaterial::from_file("material.mtr").unwrap();
+/// nwnrs_mtr::write_mtr(&mut writer, &material).unwrap();
 /// ```
 #[instrument(level = "debug", skip_all, err)]
 pub fn write_mtr<W: Write>(writer: &mut W, material: &MtrMaterial) -> MtrResult<()> {
