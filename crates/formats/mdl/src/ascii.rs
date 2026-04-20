@@ -302,12 +302,20 @@ impl AsciiModel {
     }
 
     /// Reads an ASCII MDL model from disk.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError`] if the file cannot be opened or parsed.
     pub fn from_file(path: impl AsRef<Path>) -> ModelResult<Self> {
         let mut file = File::open(path.as_ref())?;
         read_ascii_model(&mut file)
     }
 
     /// Reads an ASCII MDL model from a [`Res`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError`] if the resource is not an MDL type or parsing fails.
     pub fn from_res(res: &Res, cache_policy: CachePolicy) -> ModelResult<Self> {
         if res.resref().res_type() != MODEL_RES_TYPE {
             return Err(ModelError::msg(format!(
@@ -323,17 +331,29 @@ impl AsciiModel {
 
 impl Model {
     /// Parses the raw payload as an ASCII MDL model using Latin-1 byte mapping.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError`] if the bytes cannot be parsed as ASCII MDL.
     pub fn parse_ascii(&self) -> ModelResult<AsciiModel> {
         parse_ascii_model_bytes(self.bytes())
     }
 }
 
 /// Parses an ASCII MDL model from raw text.
+///
+/// # Errors
+///
+/// Returns [`ModelError`] if the text cannot be parsed as a valid ASCII MDL model.
 pub fn parse_ascii_model(text: &str) -> ModelResult<AsciiModel> {
     Parser::new(text).parse_model()
 }
 
 /// Lowers a compiled binary model into canonical ASCII MDL.
+///
+/// # Errors
+///
+/// Returns [`ModelError`] if the binary model cannot be lowered.
 pub fn lower_binary_model_to_ascii(model: &crate::BinaryModel) -> ModelResult<AsciiModel> {
     let semantic = crate::lower_binary_model(model)?;
     Ok(lower_semantic_model_to_ascii(
@@ -347,6 +367,10 @@ pub fn lower_binary_model_to_ascii(model: &crate::BinaryModel) -> ModelResult<As
 /// This currently supports canonical ASCII produced by
 /// [`lower_binary_model_to_ascii`], which embeds reversible compiled source
 /// metadata in prefix comments.
+///
+/// # Errors
+///
+/// Returns [`ModelError`] if the model has no embedded compiled source bytes.
 pub fn compile_ascii_model(model: &AsciiModel) -> ModelResult<Model> {
     let bytes = decode_compiled_source_bytes(&model.prefix).ok_or_else(|| {
         ModelError::msg(
@@ -363,6 +387,10 @@ fn parse_ascii_model_bytes(bytes: &[u8]) -> ModelResult<AsciiModel> {
 }
 
 /// Reads an ASCII MDL model from `reader`.
+///
+/// # Errors
+///
+/// Returns [`ModelError`] if the data cannot be read or parsed as ASCII MDL.
 #[instrument(level = "debug", skip_all, err)]
 pub fn read_ascii_model<R: Read>(reader: &mut R) -> ModelResult<AsciiModel> {
     let mut bytes = Vec::new();
@@ -371,6 +399,10 @@ pub fn read_ascii_model<R: Read>(reader: &mut R) -> ModelResult<AsciiModel> {
 }
 
 /// Writes a parsed ASCII MDL model using canonical indentation.
+///
+/// # Errors
+///
+/// Returns [`ModelError`] if the write fails.
 #[instrument(level = "debug", skip_all, err, fields(geometry_name = %model.geometry_name))]
 pub fn write_ascii_model<W: Write>(writer: &mut W, model: &AsciiModel) -> ModelResult<()> {
     writer.write_all(model.to_text().as_bytes())?;

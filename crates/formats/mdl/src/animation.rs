@@ -61,6 +61,10 @@ pub fn sample_scene_animation(
 
 /// Samples one scene at `time` seconds using the default animation selection
 /// policy.
+///
+/// # Errors
+///
+/// Returns [`ModelError`] if no default animation can be selected or sampling fails.
 pub fn sample_scene_default_animation(scene: &NwnScene, time: f32) -> ModelResult<NwnScene> {
     let animation = default_scene_animation(scene).ok_or_else(|| {
         ModelError::msg(format!(
