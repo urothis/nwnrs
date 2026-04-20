@@ -38,8 +38,8 @@ impl TxiError {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
-    /// let _ = nwnrs_txi::TxiError::msg;
+    /// ```rust
+    /// let err = nwnrs_txi::TxiError::msg("something went wrong");
     /// ```
     pub fn msg(message: impl Into<String>) -> Self {
         Self::Message(message.into())
@@ -143,7 +143,7 @@ impl TxiFile {
     /// # Examples
     ///
     /// ```rust,no_run
-    /// let _ = nwnrs_txi::TxiFile::from_file;
+    /// let txi = nwnrs_txi::TxiFile::from_file("texture.txi");
     /// ```
     pub fn from_file(path: impl AsRef<Path>) -> TxiResult<Self> {
         let mut file = File::open(path.as_ref())?;
@@ -411,7 +411,9 @@ pub fn build_txi_text(txi_file: &TxiFile) -> TxiResult<String> {
 /// # Examples
 ///
 /// ```rust,no_run
-/// let _ = nwnrs_txi::write_txi;
+/// let mut writer = std::io::Cursor::new(vec![]);
+/// let txi = nwnrs_txi::TxiFile::from_file("texture.txi").unwrap();
+/// nwnrs_txi::write_txi(&mut writer, &txi).unwrap();
 /// ```
 pub fn write_txi<W: Write>(writer: &mut W, txi_file: &TxiFile) -> TxiResult<()> {
     let text = build_txi_text(txi_file)?;
