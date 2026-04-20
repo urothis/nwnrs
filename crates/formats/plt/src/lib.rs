@@ -216,6 +216,10 @@ pub struct PltTexture {
 
 impl PltTexture {
     /// Returns the total number of pixels declared by the image dimensions.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PltError`] if the pixel count overflows `usize`.
     pub fn pixel_count(&self) -> PltResult<usize> {
         usize::try_from(self.width)
             .ok()
@@ -228,6 +232,10 @@ impl PltTexture {
     }
 
     /// Returns the pixel entry at `(x, y)`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PltError`] if the coordinates are out of bounds.
     pub fn pixel_at(&self, x: u32, y: u32) -> PltResult<PltPixel> {
         if x >= self.width || y >= self.height {
             return Err(PltError::msg(format!(
@@ -251,11 +259,19 @@ impl PltTexture {
     }
 
     /// Parses a typed PLT texture directly from raw bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PltError`] if the bytes do not conform to the PLT format.
     pub fn read_from_texture_bytes(bytes: &[u8]) -> PltResult<Self> {
         parse_plt_bytes(bytes)
     }
 
     /// Renders the PLT into RGBA8 pixels using the provided render spec.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PltError`] if the pixel buffer does not match the declared dimensions.
     pub fn render_rgba8(&self, spec: &PltRenderSpec) -> PltResult<Vec<u8>> {
         let expected_pixels = self.pixel_count()?;
         if self.pixels.len() != expected_pixels {
@@ -281,12 +297,20 @@ impl PltTexture {
     }
 
     /// Reads a typed PLT texture from disk.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PltError`] if the file cannot be opened or parsed.
     pub fn from_file(path: impl AsRef<Path>) -> PltResult<Self> {
         let mut file = File::open(path.as_ref())?;
         read_plt(&mut file)
     }
 
     /// Reads a typed PLT texture from a [`Res`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PltError`] if the resource is not a PLT type or the bytes cannot be parsed.
     pub fn from_res(res: &Res, cache_policy: CachePolicy) -> PltResult<Self> {
         if res.resref().res_type() != PLT_RES_TYPE {
             return Err(PltError::msg(format!(
@@ -301,6 +325,10 @@ impl PltTexture {
 }
 
 /// Reads a typed PLT texture from `reader`.
+///
+/// # Errors
+///
+/// Returns [`PltError`] if the data cannot be read or does not conform to the PLT format.
 #[instrument(level = "debug", skip_all, err)]
 pub fn read_plt<R: Read>(reader: &mut R) -> PltResult<PltTexture> {
     let mut bytes = Vec::new();
@@ -309,6 +337,10 @@ pub fn read_plt<R: Read>(reader: &mut R) -> PltResult<PltTexture> {
 }
 
 /// Writes a typed PLT texture to `writer`.
+///
+/// # Errors
+///
+/// Returns [`PltError`] if the PLT data is invalid or the write fails.
 #[instrument(
     level = "debug",
     skip_all,
