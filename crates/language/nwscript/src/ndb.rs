@@ -194,6 +194,10 @@ impl From<ExpectationError> for NdbError {
 }
 
 /// Parses `NDB V1.0` from a buffered reader.
+///
+/// # Errors
+///
+/// Returns [`NdbError`] if the header is invalid or a record is malformed.
 pub fn read_ndb<R: BufRead>(reader: &mut R) -> Result<Ndb, NdbError> {
     let mut header = String::new();
     reader.read_line(&mut header)?;
@@ -382,12 +386,20 @@ pub fn read_ndb<R: BufRead>(reader: &mut R) -> Result<Ndb, NdbError> {
 }
 
 /// Parses `NDB V1.0` from a string slice.
+///
+/// # Errors
+///
+/// Returns [`NdbError`] if the header is invalid or a record is malformed.
 pub fn parse_ndb_str(input: &str) -> Result<Ndb, NdbError> {
     let mut reader = io::Cursor::new(input.as_bytes());
     read_ndb(&mut reader)
 }
 
 /// Writes an `NDB V1.0` file in upstream-compatible textual form.
+///
+/// # Errors
+///
+/// Returns [`NdbError`] if the write fails.
 pub fn write_ndb<W: Write>(writer: &mut W, ndb: &Ndb) -> Result<(), NdbError> {
     writeln!(writer, "NDB V1.0")?;
     writeln!(

@@ -60,6 +60,10 @@ impl<'a> Lexer<'a> {
     }
 
     /// Lexes the entire input into a token vector ending with `Eof`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LexerError`] if an unrecognized token is encountered.
     pub fn lex_all(&mut self) -> Result<Vec<Token>, LexerError> {
         let mut tokens = Vec::new();
         loop {
@@ -663,16 +667,28 @@ impl<'a> Lexer<'a> {
 }
 
 /// Lexes the contents of one source file.
+///
+/// # Errors
+///
+/// Returns [`LexerError`] if an unrecognized token is encountered.
 pub fn lex_source(source: &SourceFile) -> Result<Vec<Token>, LexerError> {
     Lexer::new(source.id, source.bytes()).lex_all()
 }
 
 /// Lexes a byte buffer associated with `source_id`.
+///
+/// # Errors
+///
+/// Returns [`LexerError`] if an unrecognized token is encountered.
 pub fn lex_bytes(source_id: SourceId, input: &[u8]) -> Result<Vec<Token>, LexerError> {
     Lexer::new(source_id, input).lex_all()
 }
 
 /// Lexes a string slice associated with `source_id`.
+///
+/// # Errors
+///
+/// Returns [`LexerError`] if an unrecognized token is encountered.
 pub fn lex_text(source_id: SourceId, input: &str) -> Result<Vec<Token>, LexerError> {
     lex_bytes(source_id, input.as_bytes())
 }

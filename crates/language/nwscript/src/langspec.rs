@@ -174,11 +174,19 @@ pub fn load_langspec<R: ScriptResolver + ?Sized>(
 }
 
 /// Parses builtin declarations from one already-loaded source file.
+///
+/// # Errors
+///
+/// Returns [`LangSpecError`] if parsing fails.
 pub fn parse_langspec(source_name: &str, input: &str) -> Result<LangSpec, LangSpecError> {
     parse_langspec_bytes(source_name, input.as_bytes())
 }
 
 /// Parses builtin declarations from one already-loaded byte buffer.
+///
+/// # Errors
+///
+/// Returns [`LangSpecError`] if parsing fails.
 pub fn parse_langspec_bytes(source_name: &str, input: &[u8]) -> Result<LangSpec, LangSpecError> {
     let mut source_map = SourceMap::new();
     let root_id = source_map.add_file(source_name, input);
