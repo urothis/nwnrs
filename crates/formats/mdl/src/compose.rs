@@ -282,11 +282,7 @@ fn player_creature_family_from_blueprint(
         _ => 'm',
     };
     let race_token = race_token.trim().to_ascii_lowercase();
-    let Some(race_letter) = race_token
-        .chars()
-        .next()
-        .filter(|ch| ch.is_ascii_alphabetic())
-    else {
+    let Some(race_letter) = race_token.chars().next().filter(char::is_ascii_alphabetic) else {
         return Ok(None);
     };
     let phenotype = gff_u32_any(&root.root, &["Phenotype"]).unwrap_or(0);
@@ -332,11 +328,10 @@ fn build_player_creature_part_attachments(
     equipped: &EquippedPaperdoll,
 ) -> ModelResult<Vec<CreaturePartAttachment>> {
     let mut attachments = Vec::new();
-    let armor_overrides = equipped
-        .armor
-        .as_ref()
-        .map(|armor| merged_appearance_overrides(creature_overrides, &armor.appearance_overrides))
-        .unwrap_or_else(|| creature_overrides.clone());
+    let armor_overrides = equipped.armor.as_ref().map_or_else(
+        || creature_overrides.clone(),
+        |armor| merged_appearance_overrides(creature_overrides, &armor.appearance_overrides),
+    );
     let equipped_part_overrides = equipped_player_part_overrides(equipped);
     let capart = load_twoda(resman, "capart")?;
     for row in 0..capart.len() {
@@ -526,15 +521,18 @@ fn resolve_equipped_paperdoll(
     let Some(entries) = root
         .root
         .get_field("Equip_ItemList")
-        .map(|field| field.value())
+        .map(nwnrs_gff::GffField::value)
         .and_then(gff_list)
     else {
         return Ok(equipped);
     };
 
     for entry in entries {
-        let Some(resref) = gff_string(entry.get_field("EquippedRes").map(|field| field.value()))
-        else {
+        let Some(resref) = gff_string(
+            entry
+                .get_field("EquippedRes")
+                .map(nwnrs_gff::GffField::value),
+        ) else {
             continue;
         };
         let Some(item_root) = load_gff_root_from_resman(resman, resref.as_str(), "uti")? else {
@@ -563,7 +561,7 @@ fn resolve_equipped_paperdoll(
                     item_root
                         .root
                         .get_field("BaseItem")
-                        .map(|field| field.value()),
+                        .map(nwnrs_gff::GffField::value),
                 ) else {
                     continue;
                 };
@@ -574,12 +572,12 @@ fn resolve_equipped_paperdoll(
                     Some("it_glove") => {
                         equipped.gloves = equipped_symmetric_part_visual_from_item(
                             resman, &item_root, family, "HAND",
-                        )?;
+                        );
                     }
                     Some("it_bracer") => {
                         equipped.bracers = equipped_symmetric_part_visual_from_item(
                             resman, &item_root, family, "FORE",
-                        )?;
+                        );
                     }
                     _ => {}
                 }
@@ -594,19 +592,19 @@ fn resolve_equipped_paperdoll(
             }
             INVENTORY_SLOT_MASK_LEFT_RING => {
                 equipped.left_ring =
-                    equipped_single_part_visual_from_item(resman, &item_root, family, "HANDL")?;
+                    equipped_single_part_visual_from_item(resman, &item_root, family, "HANDL");
             }
             INVENTORY_SLOT_MASK_RIGHT_RING => {
                 equipped.right_ring =
-                    equipped_single_part_visual_from_item(resman, &item_root, family, "HANDR")?;
+                    equipped_single_part_visual_from_item(resman, &item_root, family, "HANDR");
             }
             INVENTORY_SLOT_MASK_NECK => {
                 equipped.neck =
-                    equipped_family_accessory_visual_from_item(resman, &item_root, family, "neck")?;
+                    equipped_family_accessory_visual_from_item(resman, &item_root, family, "neck");
             }
             INVENTORY_SLOT_MASK_BELT => {
                 equipped.belt =
-                    equipped_family_accessory_visual_from_item(resman, &item_root, family, "belt")?;
+                    equipped_family_accessory_visual_from_item(resman, &item_root, family, "belt");
             }
             _ => {}
         }
@@ -619,8 +617,11 @@ fn equipped_armor_visual_from_item(
     resman: &mut ResMan,
     root: &GffRoot,
 ) -> ModelResult<Option<EquippedArmorVisual>> {
-    let Some(base_item) = gff_u32(root.root.get_field("BaseItem").map(|field| field.value()))
-    else {
+    let Some(base_item) = gff_u32(
+        root.root
+            .get_field("BaseItem")
+            .map(nwnrs_gff::GffField::value),
+    ) else {
         return Ok(None);
     };
     if base_item_info(resman, base_item as usize)?.and_then(|info| info.model_type) != Some(3) {
@@ -653,14 +654,17 @@ fn equipped_held_item_visual_from_item(
     resman: &mut ResMan,
     root: &GffRoot,
 ) -> ModelResult<Option<EquippedItemVisual>> {
-    let Some(base_item) = gff_u32(root.root.get_field("BaseItem").map(|field| field.value()))
-    else {
+    let Some(base_item) = gff_u32(
+        root.root
+            .get_field("BaseItem")
+            .map(nwnrs_gff::GffField::value),
+    ) else {
         return Ok(None);
     };
     let Some(base_item_info) = base_item_info(resman, base_item as usize)? else {
         return Ok(None);
     };
-    let Some(model_name) = held_item_model_name(resman, root, &base_item_info)? else {
+    let Some(model_name) = held_item_model_name(resman, root, &base_item_info) else {
         return Ok(None);
     };
     Ok(Some(EquippedItemVisual {
@@ -674,8 +678,11 @@ fn equipped_boot_visual_from_item(
     root: &GffRoot,
     family: &PlayerCreatureFamily,
 ) -> ModelResult<Option<EquippedBootVisual>> {
-    let Some(base_item) = gff_u32(root.root.get_field("BaseItem").map(|field| field.value()))
-    else {
+    let Some(base_item) = gff_u32(
+        root.root
+            .get_field("BaseItem")
+            .map(nwnrs_gff::GffField::value),
+    ) else {
         return Ok(None);
     };
     let Some(base_item_info) = base_item_info(resman, base_item as usize)? else {
@@ -708,17 +715,15 @@ fn equipped_symmetric_part_visual_from_item(
     root: &GffRoot,
     family: &PlayerCreatureFamily,
     stem_prefix: &str,
-) -> ModelResult<Option<EquippedPartVisual>> {
-    let Some(model_number) = item_model_part(root, "ModelPart1") else {
-        return Ok(None);
-    };
+) -> Option<EquippedPartVisual> {
+    let model_number = item_model_part(root, "ModelPart1")?;
     if !player_part_model_exists(resman, family, &format!("{stem_prefix}R"), model_number) {
-        return Ok(None);
+        return None;
     }
-    Ok(Some(EquippedPartVisual {
+    Some(EquippedPartVisual {
         model_number,
         appearance_overrides: item_plt_appearance_overrides(&root.root),
-    }))
+    })
 }
 
 fn equipped_single_part_visual_from_item(
@@ -726,17 +731,15 @@ fn equipped_single_part_visual_from_item(
     root: &GffRoot,
     family: &PlayerCreatureFamily,
     stem: &str,
-) -> ModelResult<Option<EquippedPartVisual>> {
-    let Some(model_number) = item_model_part(root, "ModelPart1") else {
-        return Ok(None);
-    };
+) -> Option<EquippedPartVisual> {
+    let model_number = item_model_part(root, "ModelPart1")?;
     if !player_part_model_exists(resman, family, stem, model_number) {
-        return Ok(None);
+        return None;
     }
-    Ok(Some(EquippedPartVisual {
+    Some(EquippedPartVisual {
         model_number,
         appearance_overrides: item_plt_appearance_overrides(&root.root),
-    }))
+    })
 }
 
 fn equipped_family_accessory_visual_from_item(
@@ -744,18 +747,14 @@ fn equipped_family_accessory_visual_from_item(
     root: &GffRoot,
     family: &PlayerCreatureFamily,
     stem: &str,
-) -> ModelResult<Option<EquippedItemVisual>> {
-    let Some(model_part) = item_model_part(root, "ModelPart1") else {
-        return Ok(None);
-    };
+) -> Option<EquippedItemVisual> {
+    let model_part = item_model_part(root, "ModelPart1")?;
     let model_name = format!("{}_{stem}{model_part:03}", family.model_prefix);
-    if first_existing_model_candidate(resman, std::slice::from_ref(&model_name)).is_none() {
-        return Ok(None);
-    }
-    Ok(Some(EquippedItemVisual {
+    first_existing_model_candidate(resman, std::slice::from_ref(&model_name))?;
+    Some(EquippedItemVisual {
         model_name,
         appearance_overrides: item_plt_appearance_overrides(&root.root),
-    }))
+    })
 }
 
 fn equipped_cloak_visual_from_item(
@@ -831,7 +830,7 @@ fn twoda_truthy_cell(table: &TwoDa, row: usize, column: &str) -> bool {
 }
 
 fn item_model_part(root: &GffRoot, field: &str) -> Option<u32> {
-    gff_u32(root.root.get_field(field).map(|entry| entry.value())).filter(|value| *value > 0)
+    gff_u32(root.root.get_field(field).map(nwnrs_gff::GffField::value)).filter(|value| *value > 0)
 }
 
 fn player_part_model_exists(
@@ -947,7 +946,7 @@ fn insert_plt_row_override(
 ) {
     if let Some(row) = fields
         .iter()
-        .find_map(|field| gff_u8(value.get_field(field).map(|entry| entry.value())))
+        .find_map(|field| gff_u8(value.get_field(field).map(nwnrs_gff::GffField::value)))
     {
         overrides.plt_rows.insert(layer_id, row);
     }
@@ -971,15 +970,14 @@ fn held_item_model_name(
     resman: &mut ResMan,
     root: &GffRoot,
     base_item_info: &BaseItemInfo,
-) -> ModelResult<Option<String>> {
-    let Some(model_part) = gff_u32(root.root.get_field("ModelPart1").map(|field| field.value()))
-        .filter(|value| *value > 0)
-    else {
-        return Ok(None);
-    };
-    let Some(item_class) = base_item_info.item_class.as_deref() else {
-        return Ok(None);
-    };
+) -> Option<String> {
+    let model_part = gff_u32(
+        root.root
+            .get_field("ModelPart1")
+            .map(nwnrs_gff::GffField::value),
+    )
+    .filter(|value| *value > 0)?;
+    let item_class = base_item_info.item_class.as_deref()?;
     let model_candidates = match base_item_info.model_type {
         Some(1) => vec![format!("helm_{model_part:03}")],
         Some(2) => vec![
@@ -997,7 +995,7 @@ fn held_item_model_name(
         _ => Vec::new(),
     };
 
-    Ok(first_existing_model_candidate(resman, &model_candidates))
+    first_existing_model_candidate(resman, &model_candidates)
 }
 
 fn first_existing_model_candidate(resman: &mut ResMan, candidates: &[String]) -> Option<String> {
@@ -1053,7 +1051,7 @@ fn appearance_model_name_from_named_twoda(
 fn creature_body_part_model_number(value: &GffStruct, fields: &[&str]) -> Option<u32> {
     fields
         .iter()
-        .find_map(|field| gff_u32(value.get_field(field).map(|entry| entry.value())))
+        .find_map(|field| gff_u32(value.get_field(field).map(nwnrs_gff::GffField::value)))
 }
 
 fn creature_body_part_field_aliases(model_stem: &str) -> &'static [&'static str] {
@@ -1162,13 +1160,12 @@ fn gff_u32(value: Option<&GffValue>) -> Option<u32> {
 fn gff_u32_any(value: &GffStruct, fields: &[&str]) -> Option<u32> {
     fields
         .iter()
-        .find_map(|field| gff_u32(value.get_field(field).map(|entry| entry.value())))
+        .find_map(|field| gff_u32(value.get_field(field).map(nwnrs_gff::GffField::value)))
 }
 
 fn gff_string(value: Option<&GffValue>) -> Option<String> {
     match value? {
-        GffValue::CExoString(value) => Some(value.clone()),
-        GffValue::ResRef(value) => Some(value.clone()),
+        GffValue::CExoString(value) | GffValue::ResRef(value) => Some(value.clone()),
         _ => None,
     }
 }

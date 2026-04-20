@@ -286,10 +286,10 @@ fn build_install_resman(cmd: &ConvertCmd) -> Result<resman::ResMan, String> {
         &[],
         &[],
     )
-    .map_err(|error| install_context_error(&root, &user, error.to_string()))
+    .map_err(|error| install_context_error(&root, &user, &error.to_string()))
 }
 
-fn install_context_error(root: &Path, user: &Path, message: String) -> String {
+fn install_context_error(root: &Path, user: &Path, message: &str) -> String {
     format!(
         "failed to build install resource manager (root={}, user={}): {message}",
         root.display(),
