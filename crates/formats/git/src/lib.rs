@@ -41,8 +41,8 @@ impl GitError {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
-    /// let _ = nwnrs_git::GitError::msg;
+    /// ```rust
+    /// let err = nwnrs_git::GitError::msg("something went wrong");
     /// ```
     pub fn msg(message: impl Into<String>) -> Self {
         Self::Message(message.into())
@@ -130,7 +130,7 @@ impl GitFile {
     /// # Examples
     ///
     /// ```rust,no_run
-    /// let _ = nwnrs_git::GitFile::from_file;
+    /// let git = nwnrs_git::GitFile::from_file("area.git");
     /// ```
     pub fn from_file(path: impl AsRef<Path>) -> GitResult<Self> {
         let mut file = File::open(path.as_ref())?;
@@ -488,7 +488,8 @@ pub struct GitPlaceable {
 /// # Examples
 ///
 /// ```rust,no_run
-/// let _ = nwnrs_git::read_git;
+/// let mut reader = std::io::Cursor::new(vec![]);
+/// let git = nwnrs_git::read_git(&mut reader);
 /// ```
 #[instrument(level = "debug", skip_all, err)]
 pub fn read_git<R: Read + Seek>(reader: &mut R) -> GitResult<GitFile> {
@@ -632,7 +633,9 @@ pub fn build_git_root(git: &GitFile) -> GitResult<GffRoot> {
 /// # Examples
 ///
 /// ```rust,no_run
-/// let _ = nwnrs_git::write_git;
+/// let mut writer = std::io::Cursor::new(vec![]);
+/// let git = nwnrs_git::GitFile::from_file("area.git").unwrap();
+/// nwnrs_git::write_git(&mut writer, &git).unwrap();
 /// ```
 #[instrument(level = "debug", skip_all, err)]
 pub fn write_git<W: Write + Seek>(writer: &mut W, git: &GitFile) -> GitResult<()> {
