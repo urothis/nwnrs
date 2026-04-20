@@ -274,7 +274,7 @@ fn read_compressed_buf_algorithm<R: Read + Seek + ?Sized>(
 ///
 /// # Errors
 ///
-/// Returns [`ErfResult`] if the write fails.
+/// Returns [`ErfError`] if the write fails.
 #[instrument(
     level = "debug",
     skip_all,
@@ -384,7 +384,7 @@ mod tests {
 ///
 /// # Errors
 ///
-/// Returns [`ErfResult`] if the write fails.
+/// Returns [`ErfError`] if the write fails.
 #[allow(clippy::too_many_arguments)]
 pub fn write_erf_with_options<W, F>(
     writer: &mut W,
@@ -428,7 +428,7 @@ where
 ///
 /// # Errors
 ///
-/// Returns [`ErfResult`] if the write fails.
+/// Returns [`ErfError`] if the write fails.
 #[allow(clippy::too_many_arguments)]
 pub fn write_erf_archive<W>(writer: &mut W, value: &Erf) -> ErfResult<()>
 where
