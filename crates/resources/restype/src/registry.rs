@@ -118,7 +118,8 @@ macro_rules! builtin_res_types {
 ///
 /// # Errors
 ///
-/// Returns [`RegisterResTypeError`] if the extension is invalid or already registered.
+/// Returns [`RegisterResTypeError`] if the extension is invalid or already
+/// registered.
 #[instrument(
     level = "debug",
     skip_all,

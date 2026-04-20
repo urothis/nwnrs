@@ -363,7 +363,8 @@ pub trait ScriptResolver {
     ///
     /// # Errors
     ///
-    /// Returns [`SourceError`] if the underlying resource lookup or UTF-8 decoding fails.
+    /// Returns [`SourceError`] if the underlying resource lookup or UTF-8
+    /// decoding fails.
     fn resolve_script(
         &self,
         script_name: &str,

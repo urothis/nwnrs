@@ -160,7 +160,8 @@ impl From<CodegenError> for CompileError {
 ///
 /// # Errors
 ///
-/// Returns [`CompileError`] if semantic analysis, HIR lowering, or NCS emission fails.
+/// Returns [`CompileError`] if semantic analysis, HIR lowering, or NCS emission
+/// fails.
 pub fn compile_script(
     script: &Script,
     langspec: Option<&LangSpec>,

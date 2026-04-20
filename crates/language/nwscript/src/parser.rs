@@ -175,7 +175,8 @@ pub fn parse_source_bundle(
 ///
 /// # Errors
 ///
-/// Returns [`ResolvedParseError`] if resolution, preprocessing, or parsing fails.
+/// Returns [`ResolvedParseError`] if resolution, preprocessing, or parsing
+/// fails.
 pub fn parse_resolved_script<R: crate::ScriptResolver + ?Sized>(
     resolver: &R,
     root_name: &str,
