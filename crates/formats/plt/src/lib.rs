@@ -21,6 +21,12 @@ pub const PLT_HEADER_SIZE: usize = 24;
 
 #[derive(Debug)]
 /// Errors returned while reading or writing PLT payloads.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let _ = std::mem::size_of::<nwnrs_plt::PltError>();
+/// ```
 pub enum PltError {
     /// An underlying IO operation failed.
     Io(io::Error),
@@ -32,6 +38,12 @@ pub enum PltError {
 
 impl PltError {
     /// Creates a free-form PLT error message.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// let _ = nwnrs_plt::PltError::msg;
+    /// ```
     pub fn msg(message: impl Into<String>) -> Self {
         Self::Message(message.into())
     }
@@ -67,6 +79,12 @@ pub type PltResult<T> = Result<T, PltError>;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 /// Known PLT material layer ids.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let _ = std::mem::size_of::<nwnrs_plt::PltLayer>();
+/// ```
 pub enum PltLayer {
     /// Skin region.
     Skin = 0,
@@ -92,6 +110,12 @@ pub enum PltLayer {
 
 impl PltLayer {
     /// Resolves a known PLT layer id.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// let _ = nwnrs_plt::PltLayer::from_id;
+    /// ```
     #[must_use]
     pub fn from_id(value: u8) -> Option<Self> {
         match value {
@@ -110,12 +134,24 @@ impl PltLayer {
     }
 
     /// Returns the on-disk layer id.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// let _ = nwnrs_plt::PltLayer::id;
+    /// ```
     #[must_use]
     pub fn id(self) -> u8 {
         self as u8
     }
 
     /// Returns a stable display label for the layer.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// let _ = nwnrs_plt::PltLayer::label;
+    /// ```
     #[must_use]
     pub fn label(self) -> &'static str {
         match self {
@@ -135,6 +171,12 @@ impl PltLayer {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 /// One typed PLT pixel entry.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let _ = std::mem::size_of::<nwnrs_plt::PltPixel>();
+/// ```
 pub struct PltPixel {
     /// Per-pixel value byte from the file.
     pub value:    u8,
@@ -144,6 +186,12 @@ pub struct PltPixel {
 
 impl PltPixel {
     /// Resolves the pixel's layer id to a known PLT layer when possible.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// let _ = nwnrs_plt::PltPixel::layer;
+    /// ```
     #[must_use]
     pub fn layer(self) -> Option<PltLayer> {
         PltLayer::from_id(self.layer_id)
@@ -152,6 +200,13 @@ impl PltPixel {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 /// Simple RGBA color policy for rendering a PLT into a final bitmap.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let spec = nwnrs_plt::PltRenderSpec::default();
+/// assert_eq!(spec.unknown_layer_color, [255, 0, 255, 255]);
+/// ```
 pub struct PltRenderSpec {
     /// RGBA colors keyed by known [`PltLayer`] id.
     pub layer_colors:        [[u8; 4]; 10],
@@ -181,6 +236,12 @@ impl Default for PltRenderSpec {
 
 impl PltRenderSpec {
     /// Returns the base RGBA color for one PLT layer id.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// let _ = nwnrs_plt::PltRenderSpec::color_for_layer_id;
+    /// ```
     #[must_use]
     pub fn color_for_layer_id(&self, layer_id: u8) -> [u8; 4] {
         self.layer_colors
@@ -192,6 +253,12 @@ impl PltRenderSpec {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 /// Parsed PLT texture payload.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let _ = std::mem::size_of::<nwnrs_plt::PltTexture>();
+/// ```
 pub struct PltTexture {
     /// Four-byte file type tag, typically `PLT `.
     pub file_type:     [u8; 4],
@@ -220,6 +287,12 @@ impl PltTexture {
     /// # Errors
     ///
     /// Returns [`PltError`] if the pixel count overflows `usize`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// let _ = nwnrs_plt::PltTexture::pixel_count;
+    /// ```
     pub fn pixel_count(&self) -> PltResult<usize> {
         usize::try_from(self.width)
             .ok()
@@ -236,6 +309,12 @@ impl PltTexture {
     /// # Errors
     ///
     /// Returns [`PltError`] if the coordinates are out of bounds.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// let _ = nwnrs_plt::PltTexture::pixel_at;
+    /// ```
     pub fn pixel_at(&self, x: u32, y: u32) -> PltResult<PltPixel> {
         if x >= self.width || y >= self.height {
             return Err(PltError::msg(format!(
@@ -263,6 +342,12 @@ impl PltTexture {
     /// # Errors
     ///
     /// Returns [`PltError`] if the bytes do not conform to the PLT format.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// let _ = nwnrs_plt::PltTexture::read_from_texture_bytes;
+    /// ```
     pub fn read_from_texture_bytes(bytes: &[u8]) -> PltResult<Self> {
         parse_plt_bytes(bytes)
     }
@@ -273,6 +358,12 @@ impl PltTexture {
     ///
     /// Returns [`PltError`] if the pixel buffer does not match the declared
     /// dimensions.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// let _ = nwnrs_plt::PltTexture::render_rgba8;
+    /// ```
     pub fn render_rgba8(&self, spec: &PltRenderSpec) -> PltResult<Vec<u8>> {
         let expected_pixels = self.pixel_count()?;
         if self.pixels.len() != expected_pixels {
@@ -302,6 +393,12 @@ impl PltTexture {
     /// # Errors
     ///
     /// Returns [`PltError`] if the file cannot be opened or parsed.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// let _ = nwnrs_plt::PltTexture::from_file;
+    /// ```
     pub fn from_file(path: impl AsRef<Path>) -> PltResult<Self> {
         let mut file = File::open(path.as_ref())?;
         read_plt(&mut file)
@@ -313,6 +410,12 @@ impl PltTexture {
     ///
     /// Returns [`PltError`] if the resource is not a PLT type or the bytes
     /// cannot be parsed.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// let _ = nwnrs_plt::PltTexture::from_res;
+    /// ```
     pub fn from_res(res: &Res, cache_policy: CachePolicy) -> PltResult<Self> {
         if res.resref().res_type() != PLT_RES_TYPE {
             return Err(PltError::msg(format!(
@@ -332,6 +435,12 @@ impl PltTexture {
 ///
 /// Returns [`PltError`] if the data cannot be read or does not conform to the
 /// PLT format.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let _ = nwnrs_plt::read_plt;
+/// ```
 #[instrument(level = "debug", skip_all, err)]
 pub fn read_plt<R: Read>(reader: &mut R) -> PltResult<PltTexture> {
     let mut bytes = Vec::new();
@@ -344,6 +453,12 @@ pub fn read_plt<R: Read>(reader: &mut R) -> PltResult<PltTexture> {
 /// # Errors
 ///
 /// Returns [`PltError`] if the PLT data is invalid or the write fails.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let _ = nwnrs_plt::write_plt;
+/// ```
 #[instrument(
     level = "debug",
     skip_all,

@@ -18,6 +18,12 @@ use tracing::instrument;
 pub const GIT_RES_TYPE: ResType = ResType(2023);
 
 /// Errors returned while reading or parsing `GIT` payloads.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let _ = std::mem::size_of::<nwnrs_git::GitError>();
+/// ```
 #[derive(Debug)]
 pub enum GitError {
     /// An underlying IO operation failed.
@@ -32,6 +38,12 @@ pub enum GitError {
 
 impl GitError {
     /// Creates a free-form `GIT` error message.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// let _ = nwnrs_git::GitError::msg;
+    /// ```
     pub fn msg(message: impl Into<String>) -> Self {
         Self::Message(message.into())
     }
@@ -77,6 +89,13 @@ pub type GitResult<T> = Result<T, GitError>;
 /// category. Where typed coverage is incomplete, the underlying raw GFF
 /// structures remain available on the typed entries or through
 /// [`GitFile::legacy_list`].
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let git = nwnrs_git::GitFile::default();
+/// assert!(git.creatures.is_empty());
+/// ```
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct GitFile {
     /// Optional ambient/music settings for the area.
@@ -107,6 +126,12 @@ impl GitFile {
     /// # Errors
     ///
     /// Returns [`GitError`] if the file cannot be opened or parsed.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// let _ = nwnrs_git::GitFile::from_file;
+    /// ```
     pub fn from_file(path: impl AsRef<Path>) -> GitResult<Self> {
         let mut file = File::open(path.as_ref())?;
         read_git(&mut file)
@@ -118,6 +143,12 @@ impl GitFile {
     ///
     /// Returns [`GitError`] if the resource is not a GIT type or the bytes
     /// cannot be parsed.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// let _ = nwnrs_git::GitFile::from_res;
+    /// ```
     pub fn from_res(res: &Res, cache_policy: CachePolicy) -> GitResult<Self> {
         if res.resref().res_type() != GIT_RES_TYPE {
             return Err(GitError::msg(format!(
@@ -136,6 +167,12 @@ impl GitFile {
     /// # Errors
     ///
     /// Returns [`GitError`] if the resource cannot be found or parsed.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// let _ = nwnrs_git::GitFile::from_resman;
+    /// ```
     pub fn from_resman(
         resman: &mut ResMan,
         area_name: &str,
@@ -151,6 +188,12 @@ impl GitFile {
 }
 
 /// Parsed `AreaProperties` block.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let _ = std::mem::size_of::<nwnrs_git::GitAreaProperties>();
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct GitAreaProperties {
     /// Original raw GFF structure.
@@ -176,6 +219,13 @@ pub struct GitAreaProperties {
 }
 
 /// A world transform extracted from a GIT instance.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let transform = nwnrs_git::GitTransform::default();
+/// assert!(transform.x.is_none());
+/// ```
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct GitTransform {
     /// World X position.
@@ -193,6 +243,13 @@ pub struct GitTransform {
 }
 
 /// A geometry point used by triggers or encounters.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let point = nwnrs_git::GitPoint::default();
+/// assert!(point.x.is_none());
+/// ```
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct GitPoint {
     /// Point X coordinate.
@@ -204,6 +261,12 @@ pub struct GitPoint {
 }
 
 /// A placed creature entry.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let _ = std::mem::size_of::<nwnrs_git::GitCreature>();
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct GitCreature {
     /// Original raw GFF structure.
@@ -221,6 +284,12 @@ pub struct GitCreature {
 }
 
 /// A placed door entry.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let _ = std::mem::size_of::<nwnrs_git::GitDoor>();
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct GitDoor {
     /// Original raw GFF structure.
@@ -244,6 +313,12 @@ pub struct GitDoor {
 }
 
 /// An encounter volume entry.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let _ = std::mem::size_of::<nwnrs_git::GitEncounter>();
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct GitEncounter {
     /// Original raw GFF structure.
@@ -259,6 +334,13 @@ pub struct GitEncounter {
 }
 
 /// A single sound reference within a sound object.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let sound_ref = nwnrs_git::GitSoundRef::default();
+/// assert!(sound_ref.sound.is_none());
+/// ```
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct GitSoundRef {
     /// Referenced sound resource name.
@@ -266,6 +348,12 @@ pub struct GitSoundRef {
 }
 
 /// A sound emitter entry.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let _ = std::mem::size_of::<nwnrs_git::GitSound>();
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct GitSound {
     /// Original raw GFF structure.
@@ -291,6 +379,12 @@ pub struct GitSound {
 }
 
 /// A placed store entry.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let _ = std::mem::size_of::<nwnrs_git::GitStore>();
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct GitStore {
     /// Original raw GFF structure.
@@ -306,6 +400,12 @@ pub struct GitStore {
 }
 
 /// A trigger volume entry.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let _ = std::mem::size_of::<nwnrs_git::GitTrigger>();
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct GitTrigger {
     /// Original raw GFF structure.
@@ -321,6 +421,12 @@ pub struct GitTrigger {
 }
 
 /// A placed waypoint entry.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let _ = std::mem::size_of::<nwnrs_git::GitWaypoint>();
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct GitWaypoint {
     /// Original raw GFF structure.
@@ -342,6 +448,12 @@ pub struct GitWaypoint {
 }
 
 /// A placed placeable entry.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let _ = std::mem::size_of::<nwnrs_git::GitPlaceable>();
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct GitPlaceable {
     /// Original raw GFF structure.
@@ -372,6 +484,12 @@ pub struct GitPlaceable {
 ///
 /// Returns [`GitError`] if the data cannot be read or does not conform to the
 /// GIT format.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let _ = nwnrs_git::read_git;
+/// ```
 #[instrument(level = "debug", skip_all, err)]
 pub fn read_git<R: Read + Seek>(reader: &mut R) -> GitResult<GitFile> {
     let root = read_gff_root(reader)?;
@@ -383,6 +501,12 @@ pub fn read_git<R: Read + Seek>(reader: &mut R) -> GitResult<GitFile> {
 /// # Errors
 ///
 /// Returns [`GitError`] if the root file type is not `GIT `.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let _ = nwnrs_git::parse_git_root;
+/// ```
 pub fn parse_git_root(root: &GffRoot) -> GitResult<GitFile> {
     if root.file_type != "GIT " {
         return Err(GitError::msg(format!(
@@ -446,6 +570,12 @@ pub fn parse_git_root(root: &GffRoot) -> GitResult<GitFile> {
 /// # Errors
 ///
 /// Returns [`GitError`] if any GFF field label is invalid.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let _ = nwnrs_git::build_git_root;
+/// ```
 pub fn build_git_root(git: &GitFile) -> GitResult<GffRoot> {
     let mut root = GffRoot::new("GIT ");
 
@@ -498,6 +628,12 @@ pub fn build_git_root(git: &GitFile) -> GitResult<GffRoot> {
 /// # Errors
 ///
 /// Returns [`GitError`] if building or writing the GFF root fails.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let _ = nwnrs_git::write_git;
+/// ```
 #[instrument(level = "debug", skip_all, err)]
 pub fn write_git<W: Write + Seek>(writer: &mut W, git: &GitFile) -> GitResult<()> {
     let root = build_git_root(git)?;

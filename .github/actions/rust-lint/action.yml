@@ -1,5 +1,5 @@
 name: "Rust Lint"
-description: "Run rustfmt and clippy"
+description: "Run rustfmt, clippy, and rustdoc checks"
 
 inputs:
   workspace:
@@ -12,6 +12,10 @@ inputs:
     default: "true"
   clippy:
     description: "Run clippy"
+    required: false
+    default: "true"
+  doc:
+    description: "Run rustdoc lint checks"
     required: false
     default: "true"
 
@@ -31,4 +35,29 @@ runs:
           cargo clippy --workspace -- -D warnings
         else
           cargo clippy -- -D warnings
+        fi
+
+    - name: Run rustdoc checks
+      if: inputs.doc == 'true'
+      shell: bash
+      env:
+        RUSTDOCFLAGS: >-
+          -D warnings
+          -D rustdoc::broken_intra_doc_links
+          -D rustdoc::private_intra_doc_links
+          -D rustdoc::missing_crate_level_docs
+          -D rustdoc::private_doc_tests
+          -D rustdoc::invalid_codeblock_attributes
+          -D rustdoc::invalid_html_tags
+          -D rustdoc::invalid_rust_codeblocks
+          -D rustdoc::bare_urls
+          -D rustdoc::unescaped_backticks
+          -D rustdoc::redundant_explicit_links
+          -Zcrate-attr=feature(rustdoc_missing_doc_code_examples)
+          -D rustdoc::missing_doc_code_examples
+      run: |
+        if [ "${{ inputs.workspace }}" = "true" ]; then
+          cargo doc --workspace --no-deps
+        else
+          cargo doc --no-deps
         fi

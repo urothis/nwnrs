@@ -22,6 +22,12 @@ const TGA_FOOTER_SIGNATURE: &[u8; 18] = b"TRUEVISION-XFILE.\0";
 
 #[derive(Debug)]
 /// Errors returned while reading, decoding, or writing TGA textures.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let _ = std::mem::size_of::<nwnrs_tga::TgaError>();
+/// ```
 pub enum TgaError {
     /// An underlying IO operation failed.
     Io(io::Error),
@@ -33,6 +39,12 @@ pub enum TgaError {
 
 impl TgaError {
     /// Creates a free-form TGA error message.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// let _ = nwnrs_tga::TgaError::msg;
+    /// ```
     pub fn msg(message: impl Into<String>) -> Self {
         Self::Message(message.into())
     }
@@ -67,6 +79,12 @@ pub type TgaResult<T> = Result<T, TgaError>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 /// TGA image storage mode.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let _ = std::mem::size_of::<nwnrs_tga::TgaImageType>();
+/// ```
 pub enum TgaImageType {
     /// No image data is present.
     NoImage,
@@ -101,6 +119,12 @@ impl TgaImageType {
     }
 
     /// Returns `true` when the TGA image data uses RLE packets.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// let _ = nwnrs_tga::TgaImageType::is_rle;
+    /// ```
     #[must_use]
     pub fn is_rle(self) -> bool {
         matches!(
@@ -110,6 +134,12 @@ impl TgaImageType {
     }
 
     /// Returns `true` when the TGA image data references a color map.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// let _ = nwnrs_tga::TgaImageType::uses_color_map;
+    /// ```
     #[must_use]
     pub fn uses_color_map(self) -> bool {
         matches!(self, Self::ColorMapped | Self::RleColorMapped)
@@ -118,6 +148,12 @@ impl TgaImageType {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 /// Optional TGA 2.0 footer descriptor.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let _ = std::mem::size_of::<nwnrs_tga::TgaFooter>();
+/// ```
 pub struct TgaFooter {
     /// Offset to the extension area, when present.
     pub extension_area_offset:      u32,
@@ -127,6 +163,12 @@ pub struct TgaFooter {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 /// Parsed TGA texture payload.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let _ = std::mem::size_of::<nwnrs_tga::TgaTexture>();
+/// ```
 pub struct TgaTexture {
     /// Length of the optional image ID section.
     pub id_length: u8,
@@ -171,6 +213,12 @@ impl TgaTexture {
     ///
     /// Returns [`TgaError`] if `rgba` does not match the expected length for
     /// the given dimensions.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// let _ = nwnrs_tga::TgaTexture::encode_rgba8;
+    /// ```
     pub fn encode_rgba8(width: u16, height: u16, rgba: &[u8]) -> TgaResult<Self> {
         let expected_len = rgba_len(width, height)?;
         if rgba.len() != expected_len {
@@ -213,6 +261,12 @@ impl TgaTexture {
     /// # Errors
     ///
     /// Returns [`TgaError`] if the pixel count overflows `usize`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// let _ = nwnrs_tga::TgaTexture::pixel_count;
+    /// ```
     pub fn pixel_count(&self) -> TgaResult<usize> {
         usize::from(self.width)
             .checked_mul(usize::from(self.height))
@@ -220,18 +274,36 @@ impl TgaTexture {
     }
 
     /// Returns `true` when the origin bit marks rows as top-to-bottom.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// let _ = nwnrs_tga::TgaTexture::top_to_bottom;
+    /// ```
     #[must_use]
     pub fn top_to_bottom(&self) -> bool {
         self.image_descriptor & 0x20 != 0
     }
 
     /// Returns `true` when the origin bit marks pixels as right-to-left.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// let _ = nwnrs_tga::TgaTexture::right_to_left;
+    /// ```
     #[must_use]
     pub fn right_to_left(&self) -> bool {
         self.image_descriptor & 0x10 != 0
     }
 
     /// Returns the number of attribute bits declared in the descriptor.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// let _ = nwnrs_tga::TgaTexture::attribute_bits;
+    /// ```
     #[must_use]
     pub fn attribute_bits(&self) -> u8 {
         self.image_descriptor & 0x0f
@@ -243,6 +315,12 @@ impl TgaTexture {
     ///
     /// Returns [`TgaError`] if the pixel depth is unsupported or the image data
     /// is malformed.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// let _ = nwnrs_tga::TgaTexture::expanded_image_data;
+    /// ```
     pub fn expanded_image_data(&self) -> TgaResult<Vec<u8>> {
         let bytes_per_pixel = pixel_size_bytes(self.pixel_depth)?;
         let pixel_count = self.pixel_count()?;
@@ -268,6 +346,12 @@ impl TgaTexture {
     ///
     /// Returns [`TgaError`] if the image type is unsupported or the pixel data
     /// is malformed.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// let _ = nwnrs_tga::TgaTexture::decode_rgba8;
+    /// ```
     #[allow(clippy::many_single_char_names)]
     pub fn decode_rgba8(&self) -> TgaResult<Vec<u8>> {
         if self.image_type.uses_color_map() {
@@ -328,6 +412,12 @@ impl TgaTexture {
     /// # Errors
     ///
     /// Returns [`TgaError`] if the file cannot be opened or parsed.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// let _ = nwnrs_tga::TgaTexture::from_file;
+    /// ```
     pub fn from_file(path: impl AsRef<Path>) -> TgaResult<Self> {
         let mut file = File::open(path.as_ref())?;
         read_tga(&mut file)
@@ -339,6 +429,12 @@ impl TgaTexture {
     ///
     /// Returns [`TgaError`] if the resource is not a TGA type or the bytes
     /// cannot be parsed.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// let _ = nwnrs_tga::TgaTexture::from_res;
+    /// ```
     pub fn from_res(res: &Res, cache_policy: CachePolicy) -> TgaResult<Self> {
         if res.resref().res_type() != TGA_RES_TYPE {
             return Err(TgaError::msg(format!(
@@ -358,6 +454,12 @@ impl TgaTexture {
 ///
 /// Returns [`TgaError`] if the data cannot be read or does not conform to the
 /// TGA format.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let _ = nwnrs_tga::read_tga;
+/// ```
 #[instrument(level = "debug", skip_all, err)]
 pub fn read_tga<R: Read>(reader: &mut R) -> TgaResult<TgaTexture> {
     let mut bytes = Vec::new();
@@ -370,6 +472,12 @@ pub fn read_tga<R: Read>(reader: &mut R) -> TgaResult<TgaTexture> {
 /// # Errors
 ///
 /// Returns [`io::Error`] if the write fails.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let _ = nwnrs_tga::write_tga;
+/// ```
 #[instrument(
     level = "debug",
     skip_all,

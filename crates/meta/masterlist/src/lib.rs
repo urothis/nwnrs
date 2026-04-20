@@ -16,6 +16,13 @@ pub mod prelude {
 }
 
 /// A single required or optional `NWSync` manifest entry.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let manifest = nwnrs_masterlist::Manifest::default();
+/// assert!(!manifest.required);
+/// ```
 #[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Manifest {
@@ -26,6 +33,13 @@ pub struct Manifest {
 }
 
 /// `NWSync` metadata advertised by a masterlist server entry.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let nwsync = nwnrs_masterlist::Nwsync::default();
+/// assert!(nwsync.manifests.is_empty());
+/// ```
 #[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Nwsync {
@@ -36,6 +50,13 @@ pub struct Nwsync {
 }
 
 /// A single Beamdog masterlist server entry.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let server = nwnrs_masterlist::Server::default();
+/// assert_eq!(server.current_players, 0);
+/// ```
 #[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[allow(clippy::struct_excessive_bools)]
@@ -113,6 +134,13 @@ pub struct Server {
 }
 
 /// The `/me` response payload.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let me = nwnrs_masterlist::Me::default();
+/// assert!(me.servers.is_empty());
+/// ```
 #[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Me {
@@ -137,6 +165,12 @@ where
 ///
 /// Returns [`reqwest::Error`] if the request fails or the response cannot be
 /// deserialized.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let _ = nwnrs_masterlist::get_my_servers;
+/// ```
 #[instrument(level = "info", err)]
 pub async fn get_my_servers() -> Result<Me, reqwest::Error> {
     info!("fetching current caller masterlist servers");
@@ -149,6 +183,12 @@ pub async fn get_my_servers() -> Result<Me, reqwest::Error> {
 ///
 /// Returns [`reqwest::Error`] if the request fails or the response cannot be
 /// deserialized.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let _ = nwnrs_masterlist::get_servers;
+/// ```
 #[instrument(level = "info", err)]
 pub async fn get_servers() -> Result<Vec<Server>, reqwest::Error> {
     info!("fetching full masterlist server list");
@@ -161,6 +201,12 @@ pub async fn get_servers() -> Result<Vec<Server>, reqwest::Error> {
 ///
 /// Returns [`reqwest::Error`] if the request fails or the response cannot be
 /// deserialized.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let _ = nwnrs_masterlist::get_servers_by_public_key;
+/// ```
 #[instrument(level = "info", skip_all, err, fields(public_key = %public_key))]
 pub async fn get_servers_by_public_key(public_key: String) -> Result<Vec<Server>, reqwest::Error> {
     info!("fetching masterlist servers by public key");
@@ -173,6 +219,12 @@ pub async fn get_servers_by_public_key(public_key: String) -> Result<Vec<Server>
 ///
 /// Returns [`reqwest::Error`] if the request fails or the response cannot be
 /// deserialized.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let _ = nwnrs_masterlist::get_servers_by_ip_and_port;
+/// ```
 #[instrument(level = "info", skip_all, err, fields(ip = %ip, port))]
 pub async fn get_servers_by_ip_and_port(
     ip: String,

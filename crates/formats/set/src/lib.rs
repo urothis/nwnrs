@@ -18,6 +18,12 @@ use tracing::instrument;
 pub const SET_RES_TYPE: ResType = ResType(2013);
 
 /// Errors returned while reading or parsing `SET` payloads.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let _ = std::mem::size_of::<nwnrs_set::SetError>();
+/// ```
 #[derive(Debug)]
 pub enum SetError {
     /// An underlying IO operation failed.
@@ -30,6 +36,12 @@ pub enum SetError {
 
 impl SetError {
     /// Creates a free-form `SET` error message.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// let _ = nwnrs_set::SetError::msg;
+    /// ```
     pub fn msg(message: impl Into<String>) -> Self {
         Self::Message(message.into())
     }
@@ -68,6 +80,13 @@ pub type SetResult<T> = Result<T, SetError>;
 /// top-level metadata, terrain and crosser catalogs, primary rules, tiles,
 /// tile-door metadata, and groups remain distinct keyed collections rather than
 /// being flattened into one generic map.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let set_file = nwnrs_set::SetFile::default();
+/// assert!(set_file.tiles.is_empty());
+/// ```
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct SetFile {
     /// Top-level `[GENERAL]` metadata.
@@ -94,6 +113,12 @@ impl SetFile {
     /// # Errors
     ///
     /// Returns [`SetError`] if the file cannot be opened or parsed.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// let _ = nwnrs_set::SetFile::from_file;
+    /// ```
     pub fn from_file(path: impl AsRef<Path>) -> SetResult<Self> {
         let mut file = File::open(path.as_ref())?;
         read_set(&mut file)
@@ -105,6 +130,12 @@ impl SetFile {
     ///
     /// Returns [`SetError`] if the resource is not a SET type or the bytes
     /// cannot be parsed.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// let _ = nwnrs_set::SetFile::from_res;
+    /// ```
     pub fn from_res(res: &Res, cache_policy: CachePolicy) -> SetResult<Self> {
         if res.resref().res_type() != SET_RES_TYPE {
             return Err(SetError::msg(format!(
@@ -120,6 +151,12 @@ impl SetFile {
     }
 
     /// Reads a typed `SET` file from a [`ResMan`] by tileset name.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// let _ = nwnrs_set::SetFile::from_resman;
+    /// ```
     pub fn from_resman(
         resman: &mut ResMan,
         set_name: &str,
@@ -135,6 +172,13 @@ impl SetFile {
 }
 
 /// Parsed `[GENERAL]` section.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let general = nwnrs_set::SetGeneral::default();
+/// assert!(general.name.is_none());
+/// ```
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct SetGeneral {
     /// Internal tileset name.
@@ -166,6 +210,13 @@ pub struct SetGeneral {
 }
 
 /// Parsed `[GRASS]` section.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let grass = nwnrs_set::SetGrass::default();
+/// assert!(grass.texture_name.is_none());
+/// ```
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct SetGrass {
     /// Whether grass rendering is enabled.
@@ -183,6 +234,13 @@ pub struct SetGrass {
 }
 
 /// Named tileset catalog entry such as `[TERRAIN0]` or `[CROSSER0]`.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let named = nwnrs_set::SetNamedType::default();
+/// assert_eq!(named.id, 0);
+/// ```
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SetNamedType {
     /// Entry id from the section suffix.
@@ -194,6 +252,13 @@ pub struct SetNamedType {
 }
 
 /// One terrain corner annotation on a tile.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let corner = nwnrs_set::SetTileCorner::default();
+/// assert!(corner.terrain.is_none());
+/// ```
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SetTileCorner {
     /// Terrain tag for this corner.
@@ -203,6 +268,13 @@ pub struct SetTileCorner {
 }
 
 /// One set of edge crosser tags on a tile.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let edges = nwnrs_set::SetTileEdges::default();
+/// assert!(edges.top.is_none());
+/// ```
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SetTileEdges {
     /// Crosser tag on the top edge.
@@ -216,6 +288,13 @@ pub struct SetTileEdges {
 }
 
 /// Parsed `[TILEN]` section.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let tile = nwnrs_set::SetTile::default();
+/// assert_eq!(tile.id, 0);
+/// ```
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SetTile {
     /// Tile id from the section suffix.
@@ -269,6 +348,13 @@ pub struct SetTile {
 }
 
 /// Parsed `[TILENDOORK]` section.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let door = nwnrs_set::SetTileDoor::default();
+/// assert_eq!(door.tile_id, 0);
+/// ```
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct SetTileDoor {
     /// Tile id from the section prefix.
@@ -288,6 +374,13 @@ pub struct SetTileDoor {
 }
 
 /// Parsed `[GROUPN]` section.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let group = nwnrs_set::SetGroup::default();
+/// assert!(group.tiles.is_empty());
+/// ```
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SetGroup {
     /// Group id from the section suffix.
@@ -305,6 +398,13 @@ pub struct SetGroup {
 }
 
 /// Parsed `[PRIMARY RULEN]` section.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let rule = nwnrs_set::SetPrimaryRule::default();
+/// assert_eq!(rule.id, 0);
+/// ```
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SetPrimaryRule {
     /// Rule id from the section suffix.
@@ -329,6 +429,12 @@ pub struct SetPrimaryRule {
 ///
 /// Returns [`SetError`] if the data cannot be read or does not conform to the
 /// SET format.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let _ = nwnrs_set::read_set;
+/// ```
 #[instrument(level = "debug", skip_all, err)]
 pub fn read_set<R: Read>(reader: &mut R) -> SetResult<SetFile> {
     let mut text = String::new();
@@ -341,6 +447,12 @@ pub fn read_set<R: Read>(reader: &mut R) -> SetResult<SetFile> {
 /// # Errors
 ///
 /// Returns [`SetError`] if the text contains no tile definitions.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let _ = nwnrs_set::parse_set;
+/// ```
 pub fn parse_set(text: &str) -> SetResult<SetFile> {
     let mut builder = SetFile::default();
     let mut current_section = String::new();
@@ -390,6 +502,12 @@ pub fn parse_set(text: &str) -> SetResult<SetFile> {
 /// # Errors
 ///
 /// Returns [`SetError`] if the file contains no tile definitions.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let _ = nwnrs_set::build_set_text;
+/// ```
 pub fn build_set_text(set_file: &SetFile) -> SetResult<String> {
     if set_file.tiles.is_empty() {
         return Err(SetError::msg(
@@ -453,6 +571,12 @@ pub fn build_set_text(set_file: &SetFile) -> SetResult<String> {
 ///
 /// Returns [`SetError`] if the file contains no tile definitions or the write
 /// fails.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let _ = nwnrs_set::write_set;
+/// ```
 pub fn write_set<W: Write>(writer: &mut W, set_file: &SetFile) -> SetResult<()> {
     let text = build_set_text(set_file)?;
     writer.write_all(text.as_bytes())?;

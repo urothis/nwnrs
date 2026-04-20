@@ -17,6 +17,12 @@ use tracing::instrument;
 pub const TXI_RES_TYPE: ResType = ResType(2022);
 
 /// Errors returned while reading or parsing `TXI` payloads.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let _ = std::mem::size_of::<nwnrs_txi::TxiError>();
+/// ```
 #[derive(Debug)]
 pub enum TxiError {
     /// An underlying IO operation failed.
@@ -29,6 +35,12 @@ pub enum TxiError {
 
 impl TxiError {
     /// Creates a free-form `TXI` error message.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// let _ = nwnrs_txi::TxiError::msg;
+    /// ```
     pub fn msg(message: impl Into<String>) -> Self {
         Self::Message(message.into())
     }
@@ -68,6 +80,13 @@ pub type TxiResult<T> = Result<T, TxiError>;
 /// they do not replace the original directive list. Serialization therefore
 /// treats [`TxiFile::directives`] as the authoritative representation when it
 /// is non-empty.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let txi = nwnrs_txi::TxiFile::default();
+/// assert!(txi.directives.is_empty());
+/// ```
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct TxiFile {
     /// Parsed directives in source order.
@@ -102,6 +121,12 @@ pub struct TxiFile {
 
 impl TxiFile {
     /// Returns the first directive named `name`, case-insensitively.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// let _ = nwnrs_txi::TxiFile::directive;
+    /// ```
     #[must_use]
     pub fn directive(&self, name: &str) -> Option<&TxiDirective> {
         self.directives
@@ -114,6 +139,12 @@ impl TxiFile {
     /// # Errors
     ///
     /// Returns [`TxiError`] if the file cannot be opened or parsed.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// let _ = nwnrs_txi::TxiFile::from_file;
+    /// ```
     pub fn from_file(path: impl AsRef<Path>) -> TxiResult<Self> {
         let mut file = File::open(path.as_ref())?;
         read_txi(&mut file)
@@ -125,6 +156,12 @@ impl TxiFile {
     ///
     /// Returns [`TxiError`] if the resource is not a TXI type or the bytes
     /// cannot be parsed.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// let _ = nwnrs_txi::TxiFile::from_res;
+    /// ```
     pub fn from_res(res: &Res, cache_policy: CachePolicy) -> TxiResult<Self> {
         if res.resref().res_type() != TXI_RES_TYPE {
             return Err(TxiError::msg(format!(
@@ -144,6 +181,12 @@ impl TxiFile {
     ///
     /// Returns [`TxiError`] if the resref is invalid, the resource is not
     /// found, or parsing fails.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// let _ = nwnrs_txi::TxiFile::from_resman;
+    /// ```
     pub fn from_resman(
         resman: &mut ResMan,
         name: &str,
@@ -162,6 +205,12 @@ impl TxiFile {
     /// # Errors
     ///
     /// Returns [`TxiError`] if the resref is invalid or parsing fails.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// let _ = nwnrs_txi::TxiFile::optional_from_resman;
+    /// ```
     pub fn optional_from_resman(
         resman: &mut ResMan,
         name: &str,
@@ -177,6 +226,13 @@ impl TxiFile {
 }
 
 /// One parsed TXI directive.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let directive = nwnrs_txi::TxiDirective::default();
+/// assert!(directive.arguments.is_empty());
+/// ```
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TxiDirective {
     /// Directive keyword as authored.
@@ -189,11 +245,23 @@ pub struct TxiDirective {
 
 impl TxiDirective {
     /// Returns the first argument when present.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// let _ = nwnrs_txi::TxiDirective::first_argument;
+    /// ```
     pub fn first_argument(&self) -> Option<&str> {
         self.arguments.first().map(String::as_str)
     }
 
     /// Parses the directive as a counted float block like `channeltranslate 4`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// let _ = nwnrs_txi::TxiDirective::counted_f32_values;
+    /// ```
     #[must_use]
     pub fn counted_f32_values(&self) -> Option<Vec<f32>> {
         let count = self.first_argument()?.parse::<usize>().ok()?;
@@ -214,6 +282,12 @@ impl TxiDirective {
 /// # Errors
 ///
 /// Returns [`TxiError`] if the data cannot be read or parsed.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let _ = nwnrs_txi::read_txi;
+/// ```
 #[instrument(level = "debug", skip_all, err)]
 pub fn read_txi(reader: &mut dyn Read) -> TxiResult<TxiFile> {
     let mut text = String::new();
@@ -226,6 +300,12 @@ pub fn read_txi(reader: &mut dyn Read) -> TxiResult<TxiFile> {
 /// # Errors
 ///
 /// Returns [`TxiError`] if a continuation line appears before any directive.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let _ = nwnrs_txi::parse_txi;
+/// ```
 pub fn parse_txi(text: &str) -> TxiResult<TxiFile> {
     let mut directives = Vec::new();
     for (line_index, line) in text.lines().enumerate() {
@@ -289,6 +369,12 @@ pub fn parse_txi(text: &str) -> TxiResult<TxiFile> {
 ///
 /// This function currently always succeeds but returns [`TxiResult`] for
 /// forward compatibility.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let _ = nwnrs_txi::build_txi_text;
+/// ```
 pub fn build_txi_text(txi_file: &TxiFile) -> TxiResult<String> {
     let directives = if txi_file.directives.is_empty() {
         synthesize_directives(txi_file)
@@ -321,6 +407,12 @@ pub fn build_txi_text(txi_file: &TxiFile) -> TxiResult<String> {
 /// # Errors
 ///
 /// Returns [`TxiError`] if the write fails.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let _ = nwnrs_txi::write_txi;
+/// ```
 pub fn write_txi<W: Write>(writer: &mut W, txi_file: &TxiFile) -> TxiResult<()> {
     let text = build_txi_text(txi_file)?;
     writer.write_all(text.as_bytes())?;

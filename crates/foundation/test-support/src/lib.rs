@@ -26,6 +26,12 @@ struct InstallContext {
 }
 
 /// Errors returned by install-backed test resource helpers.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let _ = std::mem::size_of::<nwnrs_test_support::TestResourceError>();
+/// ```
 #[derive(Debug)]
 pub enum TestResourceError {
     /// The local Neverwinter Nights install or user directory could not be
@@ -95,6 +101,12 @@ impl From<ResRefError> for TestResourceError {
 }
 
 /// Marker error used to convert unavailable game resources into skipped tests.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let _ = std::mem::size_of::<nwnrs_test_support::SkippedTestError>();
+/// ```
 #[derive(Debug)]
 pub struct SkippedTestError {
     message: String,
@@ -110,11 +122,23 @@ impl Error for SkippedTestError {}
 
 /// Returns `true` when `error` indicates that install-backed game resources are
 /// unavailable in the current environment.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let _ = nwnrs_test_support::game_resources_unavailable;
+/// ```
 pub fn game_resources_unavailable(error: &(dyn Error + 'static)) -> bool {
     error.downcast_ref::<SkippedTestError>().is_some()
 }
 
 /// Converts an unavailable-game-resources error into a cleanly skipped test.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let _ = nwnrs_test_support::skip_if_game_resources_unavailable;
+/// ```
 pub fn skip_if_game_resources_unavailable(error: Box<dyn Error>) -> Result<(), Box<dyn Error>> {
     if game_resources_unavailable(error.as_ref()) {
         tracing::warn!("skipping install-backed test: {error}");
@@ -125,6 +149,12 @@ pub fn skip_if_game_resources_unavailable(error: Box<dyn Error>) -> Result<(), B
 }
 
 /// Demands one shipped resource from the cached install-backed [`ResMan`].
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let _ = nwnrs_test_support::demand_resource;
+/// ```
 pub fn demand_resource(resref: &str, res_type: ResType) -> Result<Res, TestResourceError> {
     let context = install_context()?;
     let rr = ResRef::new(resref.to_string(), res_type)?;
@@ -138,6 +168,12 @@ pub fn demand_resource(resref: &str, res_type: ResType) -> Result<Res, TestResou
 
 /// Reads the raw bytes for one shipped resource from the cached install-backed
 /// [`ResMan`].
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let _ = nwnrs_test_support::read_resource_bytes;
+/// ```
 pub fn read_resource_bytes(resref: &str, res_type: ResType) -> Result<Vec<u8>, TestResourceError> {
     demand_resource(resref, res_type)?
         .read_all(CachePolicy::Bypass)
@@ -146,6 +182,12 @@ pub fn read_resource_bytes(resref: &str, res_type: ResType) -> Result<Vec<u8>, T
 
 /// Materializes one shipped resource to a temporary file using its registered
 /// extension.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let _ = nwnrs_test_support::materialize_resource_to_temp_file;
+/// ```
 pub fn materialize_resource_to_temp_file(
     resref: &str,
     res_type: ResType,
@@ -160,6 +202,12 @@ pub fn materialize_resource_to_temp_file(
 }
 
 /// Writes `bytes` to a uniquely named file under the process temp directory.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let _ = nwnrs_test_support::materialize_bytes_to_temp_file;
+/// ```
 pub fn materialize_bytes_to_temp_file(
     bytes: &[u8],
     filename: &str,
@@ -170,6 +218,12 @@ pub fn materialize_bytes_to_temp_file(
 }
 
 /// Finds a deterministic shipped archive path by extension.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let _ = nwnrs_test_support::find_shipped_archive;
+/// ```
 pub fn find_shipped_archive(extension: &str) -> Result<PathBuf, TestResourceError> {
     let context = install_context()?;
     find_shipped_archive_in_roots(&context.root, &context.user, extension)
@@ -177,6 +231,12 @@ pub fn find_shipped_archive(extension: &str) -> Result<PathBuf, TestResourceErro
 
 /// Converts unavailable install-backed resources into a boxed skip marker while
 /// preserving all other errors.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let _ = nwnrs_test_support::require_game_resource::<()>;
+/// ```
 pub fn require_game_resource<T>(result: Result<T, TestResourceError>) -> Result<T, Box<dyn Error>> {
     result.map_err(|error| match error {
         TestResourceError::InstallUnavailable(message)

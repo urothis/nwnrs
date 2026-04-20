@@ -18,6 +18,12 @@ pub const MTR_RES_TYPE: ResType = ResType(2072);
 
 #[derive(Debug)]
 /// Errors returned while reading or writing MTR payloads.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let _ = std::mem::size_of::<nwnrs_mtr::MtrError>();
+/// ```
 pub enum MtrError {
     /// An underlying IO operation failed.
     Io(io::Error),
@@ -29,6 +35,12 @@ pub enum MtrError {
 
 impl MtrError {
     /// Creates a free-form MTR error message.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// let _ = nwnrs_mtr::MtrError::msg;
+    /// ```
     pub fn msg(message: impl Into<String>) -> Self {
         Self::Message(message.into())
     }
@@ -63,6 +75,12 @@ pub type MtrResult<T> = Result<T, MtrError>;
 
 #[derive(Debug, Clone, PartialEq)]
 /// One typed MTR parameter row.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let _ = std::mem::size_of::<nwnrs_mtr::MtrParameter>();
+/// ```
 pub struct MtrParameter {
     /// Parameter type token, usually `int` or `float`.
     pub param_type: String,
@@ -72,6 +90,12 @@ pub struct MtrParameter {
 
 #[derive(Debug, Clone, PartialEq)]
 /// Parsed MTR material payload.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let _ = std::mem::size_of::<nwnrs_mtr::MtrMaterial>();
+/// ```
 pub struct MtrMaterial {
     /// Optional `renderhint`.
     pub render_hint:      Option<String>,
@@ -89,6 +113,12 @@ pub struct MtrMaterial {
 
 impl MtrMaterial {
     /// Returns `texture0` when present.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// let _ = nwnrs_mtr::MtrMaterial::texture0;
+    /// ```
     pub fn texture0(&self) -> Option<&str> {
         self.textures.get(&0).map(String::as_str)
     }
@@ -98,6 +128,12 @@ impl MtrMaterial {
     /// # Errors
     ///
     /// Returns [`MtrError`] if the file cannot be opened or parsed.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// let _ = nwnrs_mtr::MtrMaterial::from_file;
+    /// ```
     pub fn from_file(path: impl AsRef<Path>) -> MtrResult<Self> {
         let mut file = File::open(path.as_ref())?;
         read_mtr(&mut file)
@@ -109,6 +145,12 @@ impl MtrMaterial {
     ///
     /// Returns [`MtrError`] if the resource is not an MTR type or the bytes
     /// cannot be parsed.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// let _ = nwnrs_mtr::MtrMaterial::from_res;
+    /// ```
     pub fn from_res(res: &Res, cache_policy: CachePolicy) -> MtrResult<Self> {
         if res.resref().res_type() != MTR_RES_TYPE {
             return Err(MtrError::msg(format!(
@@ -129,6 +171,12 @@ impl MtrMaterial {
 /// # Errors
 ///
 /// Returns [`MtrError`] if the data cannot be read or parsed.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let _ = nwnrs_mtr::read_mtr;
+/// ```
 #[instrument(level = "debug", skip_all, err)]
 pub fn read_mtr<R: Read>(reader: &mut R) -> MtrResult<MtrMaterial> {
     let mut text = String::new();
@@ -141,6 +189,12 @@ pub fn read_mtr<R: Read>(reader: &mut R) -> MtrResult<MtrMaterial> {
 /// # Errors
 ///
 /// Returns [`MtrError`] if parsing fails.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let _ = nwnrs_mtr::parse_mtr;
+/// ```
 pub fn parse_mtr(text: &str) -> MtrResult<MtrMaterial> {
     let mut material = MtrMaterial {
         render_hint:      None,
@@ -213,6 +267,12 @@ pub fn parse_mtr(text: &str) -> MtrResult<MtrMaterial> {
 /// # Errors
 ///
 /// Returns [`MtrError`] if the write fails.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let _ = nwnrs_mtr::write_mtr;
+/// ```
 #[instrument(level = "debug", skip_all, err)]
 pub fn write_mtr<W: Write>(writer: &mut W, material: &MtrMaterial) -> MtrResult<()> {
     if let Some(shader) = &material.custom_shader_vs {

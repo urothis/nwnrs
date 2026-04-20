@@ -20,6 +20,12 @@ pub const NWN_DDS_HEADER_SIZE: usize = 20;
 
 #[derive(Debug)]
 /// Errors returned while reading DDS payloads.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let _ = std::mem::size_of::<nwnrs_dds::DdsError>();
+/// ```
 pub enum DdsError {
     /// An underlying IO operation failed.
     Io(io::Error),
@@ -31,6 +37,12 @@ pub enum DdsError {
 
 impl DdsError {
     /// Creates a free-form DDS error message.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// let _ = nwnrs_dds::DdsError::msg;
+    /// ```
     pub fn msg(message: impl Into<String>) -> Self {
         Self::Message(message.into())
     }
@@ -65,6 +77,12 @@ pub type DdsResult<T> = Result<T, DdsError>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 /// Packed NWN DDS pixel format.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let _ = std::mem::size_of::<nwnrs_dds::DdsFormat>();
+/// ```
 pub enum DdsFormat {
     /// DXT1 block compression.
     Dxt1,
@@ -74,6 +92,12 @@ pub enum DdsFormat {
 
 impl DdsFormat {
     /// Returns the number of bytes per encoded 4x4 block.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// let _ = nwnrs_dds::DdsFormat::bytes_per_block;
+    /// ```
     #[must_use]
     pub fn bytes_per_block(self) -> usize {
         match self {
@@ -83,6 +107,12 @@ impl DdsFormat {
     }
 
     /// Returns the effective bits per pixel for the packed format.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// let _ = nwnrs_dds::DdsFormat::bits_per_pixel;
+    /// ```
     #[must_use]
     pub fn bits_per_pixel(self) -> usize {
         match self {
@@ -94,6 +124,12 @@ impl DdsFormat {
 
 #[derive(Debug, Clone, PartialEq)]
 /// NWN compact DDS header.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let _ = std::mem::size_of::<nwnrs_dds::NwnDdsHeader>();
+/// ```
 pub struct NwnDdsHeader {
     /// Width in pixels.
     pub width:       u32,
@@ -109,6 +145,12 @@ pub struct NwnDdsHeader {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 /// One encoded mip level.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let _ = std::mem::size_of::<nwnrs_dds::DdsMipLevel>();
+/// ```
 pub struct DdsMipLevel {
     /// Mip level index, zero-based.
     pub level:  usize,
@@ -126,6 +168,12 @@ impl DdsMipLevel {
     /// # Errors
     ///
     /// Returns [`DdsError`] if the pixel count overflows `usize`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// let _ = nwnrs_dds::DdsMipLevel::pixel_count;
+    /// ```
     pub fn pixel_count(&self) -> DdsResult<usize> {
         usize::try_from(self.width)
             .ok()
@@ -143,6 +191,12 @@ impl DdsMipLevel {
     ///
     /// Returns [`DdsError`] if the format is unsupported or the pixel data is
     /// malformed.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// let _ = nwnrs_dds::DdsMipLevel::decode_rgba8;
+    /// ```
     pub fn decode_rgba8(&self, format: DdsFormat) -> DdsResult<Vec<u8>> {
         decode_mip_rgba8(self, format)
     }
@@ -150,6 +204,12 @@ impl DdsMipLevel {
 
 #[derive(Debug, Clone, PartialEq)]
 /// Parsed NWN DDS texture.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let _ = std::mem::size_of::<nwnrs_dds::DdsTexture>();
+/// ```
 pub struct DdsTexture {
     /// Packed pixel format.
     pub format:     DdsFormat,
@@ -165,6 +225,12 @@ pub struct DdsTexture {
 
 impl DdsTexture {
     /// Returns the number of mip levels.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// let _ = nwnrs_dds::DdsTexture::mip_count;
+    /// ```
     #[must_use]
     pub fn mip_count(&self) -> usize {
         self.mip_levels.len()
@@ -175,6 +241,12 @@ impl DdsTexture {
     /// # Errors
     ///
     /// Returns [`DdsError`] if the bytes do not conform to the NWN DDS format.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// let _ = nwnrs_dds::DdsTexture::read_from_texture_bytes;
+    /// ```
     pub fn read_from_texture_bytes(bytes: &[u8]) -> DdsResult<Self> {
         parse_dds_bytes(bytes)
     }
@@ -186,6 +258,12 @@ impl DdsTexture {
     ///
     /// Returns [`DdsError`] if `rgba` does not match the expected length or
     /// encoding fails.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// let _ = nwnrs_dds::DdsTexture::encode_rgba8;
+    /// ```
     pub fn encode_rgba8(
         width: u32,
         height: u32,
@@ -244,6 +322,12 @@ impl DdsTexture {
     /// # Errors
     ///
     /// Returns [`DdsError`] if the texture has no mip levels or decoding fails.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// let _ = nwnrs_dds::DdsTexture::decode_rgba8;
+    /// ```
     pub fn decode_rgba8(&self) -> DdsResult<Vec<u8>> {
         self.mip_levels
             .first()
@@ -256,6 +340,12 @@ impl DdsTexture {
     /// # Errors
     ///
     /// Returns [`DdsError`] if `level` is out of range or decoding fails.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// let _ = nwnrs_dds::DdsTexture::decode_mip_rgba8;
+    /// ```
     pub fn decode_mip_rgba8(&self, level: usize) -> DdsResult<Vec<u8>> {
         self.mip_levels
             .get(level)
@@ -268,6 +358,12 @@ impl DdsTexture {
     /// # Errors
     ///
     /// Returns [`DdsError`] if the file cannot be opened or parsed.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// let _ = nwnrs_dds::DdsTexture::from_file;
+    /// ```
     pub fn from_file(path: impl AsRef<Path>) -> DdsResult<Self> {
         let mut file = File::open(path.as_ref())?;
         read_dds(&mut file)
@@ -279,6 +375,12 @@ impl DdsTexture {
     ///
     /// Returns [`DdsError`] if the resource is not a DDS type or the bytes
     /// cannot be parsed.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// let _ = nwnrs_dds::DdsTexture::from_res;
+    /// ```
     pub fn from_res(res: &Res, cache_policy: CachePolicy) -> DdsResult<Self> {
         if res.resref().res_type() != DDS_RES_TYPE {
             return Err(DdsError::msg(format!(
@@ -298,6 +400,12 @@ impl DdsTexture {
 ///
 /// Returns [`DdsError`] if the data cannot be read or does not conform to the
 /// NWN DDS format.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let _ = nwnrs_dds::read_dds;
+/// ```
 #[instrument(level = "debug", skip_all, err)]
 pub fn read_dds<R: Read>(reader: &mut R) -> DdsResult<DdsTexture> {
     let mut bytes = Vec::new();
@@ -310,6 +418,12 @@ pub fn read_dds<R: Read>(reader: &mut R) -> DdsResult<DdsTexture> {
 /// # Errors
 ///
 /// Returns [`DdsError`] if the DDS data is invalid or the write fails.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let _ = nwnrs_dds::write_dds;
+/// ```
 #[instrument(
     level = "debug",
     skip_all,
