@@ -136,6 +136,10 @@ pub fn read_mtr<R: Read>(reader: &mut R) -> MtrResult<MtrMaterial> {
 }
 
 /// Parses a typed MTR material from ASCII text.
+///
+/// # Errors
+///
+/// Returns [`MtrError`] if parsing fails.
 pub fn parse_mtr(text: &str) -> MtrResult<MtrMaterial> {
     let mut material = MtrMaterial {
         render_hint:      None,

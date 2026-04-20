@@ -266,6 +266,10 @@ impl NWSync {
     }
 
     /// Deletes payload blobs by SHA-1 and returns the number of deleted rows.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ResNWSyncError`] if the database operation fails.
     pub fn delete_resref_data(&mut self, sha1s: &[ResRefSha1]) -> ResNWSyncResult<usize> {
         let mut grouped = HashMap::<ShardId, Vec<ResRefSha1>>::new();
         for sha1 in sha1s {
