@@ -281,7 +281,7 @@ pub(crate) fn read_bif(
 ///
 /// # Errors
 ///
-/// Returns [`KeyResult`] if the write fails.
+/// Returns [`KeyError`] if the write fails.
 #[instrument(
     level = "debug",
     skip_all,
@@ -540,7 +540,7 @@ where
 ///
 /// # Errors
 ///
-/// Returns [`KeyResult`] if the write fails.
+/// Returns [`KeyError`] if the write fails.
 pub fn write_key_table_archive(
     value: &KeyTable,
     dest_dir: impl AsRef<Path>,
