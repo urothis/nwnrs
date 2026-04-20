@@ -16,6 +16,10 @@ use crate::prelude::*;
 /// The resulting manager may include, in precedence order, additional
 /// directories, override directories, `NWSync` manifests, additional ERFs, and
 /// the selected KEY/BIF sets.
+///
+/// # Errors
+///
+/// Returns [`InstallError`] if any resource container cannot be opened.
 #[instrument(
     level = "info",
     skip(

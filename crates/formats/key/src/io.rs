@@ -278,6 +278,10 @@ pub(crate) fn read_bif(
 /// `bifs` controls both the emitted BIF set and their resource order. For each
 /// resource, `writer` must write the raw payload bytes and return the
 /// uncompressed size together with the payload SHA-1.
+///
+/// # Errors
+///
+/// Returns [`KeyResult`] if the write fails.
 #[instrument(
     level = "debug",
     skip_all,
@@ -533,6 +537,10 @@ where
 
 /// Writes a KEY/BIF resource set using provenance preserved on a loaded
 /// [`KeyTable`].
+///
+/// # Errors
+///
+/// Returns [`KeyResult`] if the write fails.
 pub fn write_key_table_archive(
     value: &KeyTable,
     dest_dir: impl AsRef<Path>,

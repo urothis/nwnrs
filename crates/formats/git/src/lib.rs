@@ -132,6 +132,10 @@ impl GitFile {
     }
 
     /// Reads a typed `GIT` file from a [`ResMan`] by area name.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GitError`] if the resource cannot be found or parsed.
     pub fn from_resman(
         resman: &mut ResMan,
         area_name: &str,

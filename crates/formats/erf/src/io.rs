@@ -271,6 +271,10 @@ fn read_compressed_buf_algorithm<R: Read + Seek + ?Sized>(
 /// `entries` defines the archive order. For each entry, `entry_writer` must
 /// write the raw payload bytes and return the uncompressed byte length together
 /// with the payload SHA-1.
+///
+/// # Errors
+///
+/// Returns [`ErfResult`] if the write fails.
 #[instrument(
     level = "debug",
     skip_all,
@@ -376,8 +380,12 @@ mod tests {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 /// Writes an ERF-family archive with explicit preserved-layout options.
+///
+/// # Errors
+///
+/// Returns [`ErfResult`] if the write fails.
+#[allow(clippy::too_many_arguments)]
 pub fn write_erf_with_options<W, F>(
     writer: &mut W,
     file_type: &str,

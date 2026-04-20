@@ -158,6 +158,10 @@ pub fn scene_texture_resolution_names(
 
 /// Resolves one texture reference through `resman`, including scene-aware
 /// appearance fallbacks.
+///
+/// # Errors
+///
+/// Returns [`UnresolvedTexture`] if the texture cannot be found.
 pub fn resolve_scene_texture_ref(
     scene: &NwnScene,
     material: &NwnMaterial,

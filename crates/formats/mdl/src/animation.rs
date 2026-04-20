@@ -78,6 +78,10 @@ pub fn sample_scene_default_animation(scene: &NwnScene, time: f32) -> ModelResul
 
 /// Samples one composed scene tree at `time` seconds on the named animation.
 /// Child scenes that do not contain the animation remain in their base pose.
+///
+/// # Errors
+///
+/// Returns [`ModelError`] if sampling fails.
 pub fn sample_composed_scene_animation(
     scene: &NwnComposedScene,
     animation_name: &str,
