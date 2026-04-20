@@ -269,6 +269,10 @@ impl GffStruct {
     }
 
     /// Inserts or replaces a labeled field.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GffError`] if `label` is not a valid GFF label.
     pub fn put_field(&mut self, label: impl Into<String>, field: GffField) -> GffResult<()> {
         let label = label.into();
         ensure_label(&label)?;
@@ -283,6 +287,10 @@ impl GffStruct {
     }
 
     /// Inserts or replaces a labeled value.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GffError`] if `label` is not a valid GFF label.
     pub fn put_value(&mut self, label: impl Into<String>, value: GffValue) -> GffResult<()> {
         self.put_field(label, GffField::new(value))
     }
@@ -349,6 +357,10 @@ impl GffRoot {
     }
 
     /// Inserts or replaces a labeled value on the root structure.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GffError`] if `label` is not a valid GFF label.
     pub fn put_value(&mut self, label: impl Into<String>, value: GffValue) -> GffResult<()> {
         self.root.put_value(label, value)
     }
