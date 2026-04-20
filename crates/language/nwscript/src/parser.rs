@@ -131,6 +131,10 @@ pub fn parse_source(
 }
 
 /// Lexes and parses a byte buffer associated with `source_id`.
+///
+/// # Errors
+///
+/// Returns [`ParseError`] if lexing or parsing fails.
 pub fn parse_bytes(
     source_id: SourceId,
     input: &[u8],
@@ -141,6 +145,10 @@ pub fn parse_bytes(
 }
 
 /// Lexes and parses a text buffer associated with `source_id`.
+///
+/// # Errors
+///
+/// Returns [`ParseError`] if lexing or parsing fails.
 pub fn parse_text(
     source_id: SourceId,
     input: &str,
@@ -164,6 +172,10 @@ pub fn parse_source_bundle(
 }
 
 /// Resolves, preprocesses, and parses one named root script.
+///
+/// # Errors
+///
+/// Returns [`ResolvedParseError`] if resolution, preprocessing, or parsing fails.
 pub fn parse_resolved_script<R: crate::ScriptResolver + ?Sized>(
     resolver: &R,
     root_name: &str,

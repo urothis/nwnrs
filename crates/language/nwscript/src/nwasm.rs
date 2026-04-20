@@ -257,6 +257,10 @@ impl NcsInstruction {
 }
 
 /// Decodes a full `NCS` stream into instruction-shaped disassembly lines.
+///
+/// # Errors
+///
+/// Returns [`NcsAsmError`] if the stream cannot be decoded.
 pub fn disassemble_ncs(
     bytes: &[u8],
     langspec: Option<&LangSpec>,
@@ -308,6 +312,10 @@ fn decode_asm_lines(
 }
 
 /// Renders a full `NCS` stream into stable human-readable disassembly text.
+///
+/// # Errors
+///
+/// Returns [`NcsAsmError`] if decoding or rendering fails.
 pub fn render_ncs_disassembly(
     bytes: &[u8],
     langspec: Option<&LangSpec>,
@@ -321,6 +329,10 @@ pub fn render_ncs_disassembly(
 }
 
 /// Renders a full `NCS` stream into NDB-aware disassembly text.
+///
+/// # Errors
+///
+/// Returns [`NcsAsmError`] if decoding or rendering fails.
 pub fn render_ncs_disassembly_with_ndb(
     bytes: &[u8],
     langspec: Option<&LangSpec>,

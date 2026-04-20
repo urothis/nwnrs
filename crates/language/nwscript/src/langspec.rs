@@ -160,6 +160,10 @@ impl From<LexerError> for LangSpecError {
 
 /// Loads `nwscript.nss` through a source resolver and parses the builtin
 /// declarations.
+///
+/// # Errors
+///
+/// Returns [`LangSpecError`] if the source cannot be loaded or parsed.
 pub fn load_langspec<R: ScriptResolver + ?Sized>(
     resolver: &R,
     script_name: &str,
