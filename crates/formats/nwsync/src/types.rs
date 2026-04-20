@@ -153,6 +153,10 @@ impl Manifest {
     }
 
     /// Returns the configured hash tree depth.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ManifestError`] if the manifest version is not supported.
     pub fn hash_tree_depth(&self) -> ManifestResult<usize> {
         match self.version {
             VERSION => Ok(self.hash_tree_depth as usize),
@@ -162,6 +166,10 @@ impl Manifest {
     }
 
     /// Returns the manifest hashing algorithm label.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ManifestError`] if the manifest version is not supported.
     pub fn algorithm(&self) -> ManifestResult<&'static str> {
         if self.version == VERSION {
             Ok("SHA1")

@@ -27,6 +27,11 @@ pub struct TlkLayerWriteTarget<'a> {
 }
 
 /// Reads a single-language TLK table from a reader.
+///
+/// # Errors
+///
+/// Returns [`TlkError`] if the data cannot be read or does not conform to the
+/// TLK format.
 #[instrument(level = "debug", skip_all, err, fields(cache_policy = ?cache_policy))]
 pub fn read_single_tlk<R>(mut reader: R, cache_policy: CachePolicy) -> TlkResult<SingleTlk>
 where
@@ -73,6 +78,10 @@ where
 ///
 /// Missing string references up to [`SingleTlk::highest`] are emitted as empty
 /// entries.
+///
+/// # Errors
+///
+/// Returns [`TlkError`] if the TLK data is invalid or the write fails.
 #[instrument(level = "debug", skip_all, err, fields(language = ?tlk.language))]
 pub fn write_single_tlk<W: Write + Seek>(writer: &mut W, tlk: &mut SingleTlk) -> TlkResult<()> {
     if tlk.static_entries.is_empty()
@@ -157,6 +166,11 @@ pub fn write_single_tlk<W: Write + Seek>(writer: &mut W, tlk: &mut SingleTlk) ->
 }
 
 /// Writes a layered TLK chain to explicit male/female layer targets.
+///
+/// # Errors
+///
+/// Returns [`TlkError`] if the number of targets does not match the chain
+/// length or any write fails.
 #[instrument(level = "debug", skip_all, err, fields(layer_count = tlk.chain.len()))]
 pub fn write_tlk_chain(targets: &mut [TlkLayerWriteTarget<'_>], tlk: &mut Tlk) -> TlkResult<()> {
     if targets.len() != tlk.chain.len() {

@@ -5,6 +5,10 @@ use tracing::instrument;
 use crate::ExpectationError;
 
 /// Reads exactly `size` bytes or returns the underlying IO error.
+///
+/// # Errors
+///
+/// Returns an [`io::Error`] if the reader cannot supply exactly `size` bytes.
 #[instrument(level = "debug", skip_all, err, fields(size))]
 pub fn read_bytes_or_err<R: Read + ?Sized>(reader: &mut R, size: usize) -> io::Result<Vec<u8>> {
     let mut bytes = vec![0_u8; size];
@@ -13,6 +17,11 @@ pub fn read_bytes_or_err<R: Read + ?Sized>(reader: &mut R, size: usize) -> io::R
 }
 
 /// Reads exactly `size` bytes and decodes them as UTF-8.
+///
+/// # Errors
+///
+/// Returns an [`io::Error`] if the reader cannot supply exactly `size` bytes or
+/// the bytes are not valid UTF-8.
 #[instrument(level = "debug", skip_all, err, fields(size))]
 pub fn read_str_or_err<R: Read + ?Sized>(reader: &mut R, size: usize) -> io::Result<String> {
     let bytes = read_bytes_or_err(reader, size)?;
@@ -20,6 +29,10 @@ pub fn read_str_or_err<R: Read + ?Sized>(reader: &mut R, size: usize) -> io::Res
 }
 
 /// Reads exactly `count` items, passing each zero-based index to `item_reader`.
+///
+/// # Errors
+///
+/// Returns an [`io::Error`] if `item_reader` fails for any item.
 #[instrument(level = "debug", skip_all, err, fields(count))]
 pub fn read_fixed_count_seq<R, T, F>(
     reader: &mut R,
@@ -39,6 +52,10 @@ where
 
 /// Returns `Ok(())` when `condition` is true, otherwise an
 /// [`ExpectationError`].
+///
+/// # Errors
+///
+/// Returns [`ExpectationError`] if `condition` is false.
 pub fn expect(condition: bool, message: impl Into<String>) -> Result<(), ExpectationError> {
     if condition {
         Ok(())

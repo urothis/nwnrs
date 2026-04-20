@@ -19,6 +19,10 @@ use crate::{
 };
 
 /// Returns the integer magic for `NSYC` compressed buffers.
+///
+/// # Errors
+///
+/// Returns [`ResNWSyncError`] if the magic string cannot be encoded.
 #[instrument(level = "debug", skip_all, err)]
 pub fn nwsync_compressed_buf_magic() -> ResNWSyncResult<u32> {
     make_magic(NWSYNC_COMPRESSED_BUF_MAGIC_STR)
@@ -26,6 +30,11 @@ pub fn nwsync_compressed_buf_magic() -> ResNWSyncResult<u32> {
 }
 
 /// Opens an `NWSync` repository rooted at `path`.
+///
+/// # Errors
+///
+/// Returns [`ResNWSyncError`] if the meta database is missing, a shard database
+/// is not found, or any SQL query fails.
 #[instrument(level = "debug", skip_all, err, fields(path = %path.as_ref().display()))]
 pub fn open_nwsync(path: impl AsRef<Path>) -> ResNWSyncResult<NWSync> {
     let root = path.as_ref().to_path_buf();
@@ -88,6 +97,11 @@ pub fn open_nwsync(path: impl AsRef<Path>) -> ResNWSyncResult<NWSync> {
 
 /// Opens an `NWSync` repository, creating the minimal `SQLite` layout when
 /// needed.
+///
+/// # Errors
+///
+/// Returns [`ResNWSyncError`] if the directory cannot be created or the
+/// database cannot be initialized.
 #[instrument(level = "debug", skip_all, err, fields(path = %path.as_ref().display()))]
 pub fn open_or_create_nwsync(path: impl AsRef<Path>) -> ResNWSyncResult<NWSync> {
     let root = path.as_ref();
@@ -110,6 +124,10 @@ pub fn open_or_create_nwsync(path: impl AsRef<Path>) -> ResNWSyncResult<NWSync> 
 }
 
 /// Exposes a single manifest row as a resource container.
+///
+/// # Errors
+///
+/// Returns [`ResNWSyncError`] if the manifest cannot be read from the database.
 #[instrument(level = "debug", skip_all, err, fields(manifest_sha1 = %manifest_sha1))]
 pub fn new_resnwsync_manifest(
     nwsync: &NWSync,

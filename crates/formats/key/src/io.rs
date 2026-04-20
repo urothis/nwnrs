@@ -20,6 +20,11 @@ use crate::prelude::*;
 ///
 /// The resolver is stored for lazy BIF loading and is only invoked when a
 /// referenced resource is actually demanded.
+///
+/// # Errors
+///
+/// Returns [`KeyError`] if the data cannot be read or does not conform to the
+/// KEY format.
 #[instrument(level = "debug", skip_all, err)]
 pub fn read_key_table<R>(
     reader: R,
@@ -34,6 +39,10 @@ where
 
 /// Opens a KEY file from disk and resolves BIF paths relative to the KEY
 /// directory.
+///
+/// # Errors
+///
+/// Returns [`KeyError`] if the file cannot be opened or parsed.
 #[instrument(level = "debug", skip_all, err, fields(path = %path.as_ref().display()))]
 pub fn read_key_table_from_file(path: impl AsRef<Path>) -> KeyResult<KeyTable> {
     let path = path.as_ref();
@@ -269,6 +278,10 @@ pub(crate) fn read_bif(
 /// `bifs` controls both the emitted BIF set and their resource order. For each
 /// resource, `writer` must write the raw payload bytes and return the
 /// uncompressed size together with the payload SHA-1.
+///
+/// # Errors
+///
+/// Returns [`KeyError`] if the write fails.
 #[instrument(
     level = "debug",
     skip_all,
@@ -524,6 +537,10 @@ where
 
 /// Writes a KEY/BIF resource set using provenance preserved on a loaded
 /// [`KeyTable`].
+///
+/// # Errors
+///
+/// Returns [`KeyError`] if the write fails.
 pub fn write_key_table_archive(
     value: &KeyTable,
     dest_dir: impl AsRef<Path>,

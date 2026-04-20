@@ -66,6 +66,10 @@ impl NwnScene {
     }
 
     /// Reads and lowers an engine-neutral scene from disk.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError`] if the file cannot be opened or parsed.
     pub fn from_file(path: impl AsRef<Path>) -> ModelResult<Self> {
         let mut file = File::open(path.as_ref())?;
         read_scene_model(&mut file)
@@ -73,12 +77,21 @@ impl NwnScene {
 
     /// Reads and lowers an engine-neutral scene from disk using automatic
     /// ASCII/compiled dispatch.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError`] if the file cannot be opened or parsed.
     pub fn from_auto_file(path: impl AsRef<Path>) -> ModelResult<Self> {
         let mut file = File::open(path.as_ref())?;
         read_scene_model_auto(&mut file)
     }
 
     /// Reads and lowers an engine-neutral scene from a [`Res`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError`] if the resource is not an MDL type or lowering
+    /// fails.
     pub fn from_res(res: &Res, cache_policy: CachePolicy) -> ModelResult<Self> {
         if res.resref().res_type() != MODEL_RES_TYPE {
             return Err(ModelError::msg(format!(
@@ -93,6 +106,11 @@ impl NwnScene {
 
     /// Reads and lowers an engine-neutral scene from a [`Res`] using automatic
     /// ASCII/compiled dispatch.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError`] if the resource is not an MDL type or lowering
+    /// fails.
     pub fn from_auto_res(res: &Res, cache_policy: CachePolicy) -> ModelResult<Self> {
         if res.resref().res_type() != MODEL_RES_TYPE {
             return Err(ModelError::msg(format!(
@@ -466,29 +484,49 @@ type SceneWriteOwnership = (Vec<Option<usize>>, Vec<Option<usize>>);
 
 impl Model {
     /// Parses and lowers the raw payload into an engine-neutral NWN scene.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError`] if parsing or lowering fails.
     pub fn parse_scene(&self) -> ModelResult<NwnScene> {
         lower_semantic_model_to_scene(&self.parse_semantic()?)
     }
 
     /// Parses and lowers the raw payload into an engine-neutral NWN scene
     /// using automatic ASCII/compiled dispatch.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError`] if parsing or lowering fails.
     pub fn parse_scene_auto(&self) -> ModelResult<NwnScene> {
         lower_semantic_model_to_scene(&self.parse_semantic_auto()?)
     }
 }
 
 /// Parses and lowers an engine-neutral scene from ASCII MDL text.
+///
+/// # Errors
+///
+/// Returns [`ModelError`] if the text cannot be parsed or lowered.
 pub fn parse_scene_model(text: &str) -> ModelResult<NwnScene> {
     lower_semantic_model_to_scene(&parse_semantic_model(text)?)
 }
 
 /// Parses and lowers an engine-neutral scene from raw MDL bytes using
 /// automatic ASCII/compiled dispatch.
+///
+/// # Errors
+///
+/// Returns [`ModelError`] if the bytes cannot be parsed or lowered.
 pub fn parse_scene_model_auto(bytes: &[u8]) -> ModelResult<NwnScene> {
     lower_semantic_model_to_scene(&parse_semantic_model_auto(bytes)?)
 }
 
 /// Reads and lowers an engine-neutral scene from `reader`.
+///
+/// # Errors
+///
+/// Returns [`ModelError`] if the data cannot be read or lowered.
 #[instrument(level = "debug", skip_all, err)]
 pub fn read_scene_model<R: Read>(reader: &mut R) -> ModelResult<NwnScene> {
     let semantic = read_semantic_model(reader)?;
@@ -497,6 +535,10 @@ pub fn read_scene_model<R: Read>(reader: &mut R) -> ModelResult<NwnScene> {
 
 /// Reads and lowers an engine-neutral scene from `reader` using automatic
 /// ASCII/compiled dispatch.
+///
+/// # Errors
+///
+/// Returns [`ModelError`] if the data cannot be read or lowered.
 #[instrument(level = "debug", skip_all, err)]
 pub fn read_scene_model_auto<R: Read>(reader: &mut R) -> ModelResult<NwnScene> {
     let semantic = read_semantic_model_auto(reader)?;
@@ -504,6 +546,10 @@ pub fn read_scene_model_auto<R: Read>(reader: &mut R) -> ModelResult<NwnScene> {
 }
 
 /// Writes an engine-neutral scene as canonical ASCII MDL.
+///
+/// # Errors
+///
+/// Returns [`ModelError`] if raising the scene or writing fails.
 #[instrument(level = "debug", skip_all, err, fields(model_name = %scene.name))]
 pub fn write_scene_model<W: Write>(writer: &mut W, scene: &NwnScene) -> ModelResult<()> {
     let semantic = raise_scene_to_semantic(scene)?;
@@ -1171,6 +1217,10 @@ fn validate_uniform_scale(scale: &[f32; 3], context: &str) -> ModelResult<f32> {
 }
 
 /// Lowers a semantic MDL model into an engine-neutral scene representation.
+///
+/// # Errors
+///
+/// Returns [`ModelError`] if the semantic model cannot be lowered into a scene.
 pub fn lower_semantic_model_to_scene(model: &SemanticModel) -> ModelResult<NwnScene> {
     let mut diagnostics = model.diagnostics.clone();
 

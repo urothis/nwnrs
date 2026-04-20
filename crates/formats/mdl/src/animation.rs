@@ -61,6 +61,11 @@ pub fn sample_scene_animation(
 
 /// Samples one scene at `time` seconds using the default animation selection
 /// policy.
+///
+/// # Errors
+///
+/// Returns [`ModelError`] if no default animation can be selected or sampling
+/// fails.
 pub fn sample_scene_default_animation(scene: &NwnScene, time: f32) -> ModelResult<NwnScene> {
     let animation = default_scene_animation(scene).ok_or_else(|| {
         ModelError::msg(format!(
@@ -73,6 +78,10 @@ pub fn sample_scene_default_animation(scene: &NwnScene, time: f32) -> ModelResul
 
 /// Samples one composed scene tree at `time` seconds on the named animation.
 /// Child scenes that do not contain the animation remain in their base pose.
+///
+/// # Errors
+///
+/// Returns [`ModelError`] if sampling fails.
 pub fn sample_composed_scene_animation(
     scene: &NwnComposedScene,
     animation_name: &str,
@@ -90,6 +99,10 @@ pub fn sample_composed_scene_animation(
 
 /// Samples one composed scene tree at `time` seconds using the root scene's
 /// default animation selection policy.
+///
+/// # Errors
+///
+/// Returns [`ModelError`] if no default animation exists or sampling fails.
 pub fn sample_composed_scene_default_animation(
     scene: &NwnComposedScene,
     time: f32,

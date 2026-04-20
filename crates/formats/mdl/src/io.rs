@@ -5,6 +5,10 @@ use tracing::instrument;
 use crate::{Model, ModelResult};
 
 /// Reads an `MDL` payload from `reader`.
+///
+/// # Errors
+///
+/// Returns [`ModelError`] if the data cannot be read.
 #[instrument(level = "debug", skip_all, err)]
 pub fn read_model<R: Read>(reader: &mut R) -> ModelResult<Model> {
     let mut bytes = Vec::new();
@@ -13,6 +17,10 @@ pub fn read_model<R: Read>(reader: &mut R) -> ModelResult<Model> {
 }
 
 /// Writes an `MDL` payload to `writer`.
+///
+/// # Errors
+///
+/// Returns [`ModelError`] if the write fails.
 #[instrument(level = "debug", skip_all, err, fields(byte_len = model.byte_len()))]
 pub fn write_model<W: Write>(writer: &mut W, model: &Model) -> ModelResult<()> {
     writer.write_all(model.bytes())?;

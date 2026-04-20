@@ -206,6 +206,11 @@ impl TwoDa {
     }
 
     /// Sets the cell at `row` and `column`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TwoDaError`] if `row` is out of bounds or `column` does not
+    /// exist.
     pub fn set_cell(&mut self, row: usize, column: &str, value: Cell) -> TwoDaResult<()> {
         if row >= self.rows.len() {
             return Err(TwoDaError::msg("Row out of bounds"));
@@ -274,6 +279,10 @@ impl TwoDa {
     }
 
     /// Replaces the stored row label.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TwoDaError`] if `row` is out of bounds.
     pub fn set_row_label(&mut self, row: usize, label: impl Into<String>) -> TwoDaResult<()> {
         let slot = self
             .row_labels
@@ -284,6 +293,11 @@ impl TwoDa {
     }
 
     /// Replaces all rows and row labels at once.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TwoDaError`] if `rows` and `row_labels` have different
+    /// lengths.
     pub fn replace_rows(&mut self, rows: Vec<Row>, row_labels: Vec<String>) -> TwoDaResult<()> {
         if rows.len() != row_labels.len() {
             return Err(TwoDaError::msg("row data and row labels length mismatch"));
@@ -302,6 +316,10 @@ impl TwoDa {
     /// Replaces the column list.
     ///
     /// Column lookups are case-insensitive.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TwoDaError`] if any column name is blank.
     pub fn set_columns(&mut self, columns: Vec<String>) -> TwoDaResult<()> {
         for column in &columns {
             if column.trim().is_empty() {

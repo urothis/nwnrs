@@ -88,6 +88,10 @@ impl From<LexerError> for PreprocessError {
 }
 
 /// Loads a root script and recursively discovers its `#include` dependencies.
+///
+/// # Errors
+///
+/// Returns [`PreprocessError`] if any script cannot be resolved or loaded.
 pub fn load_source_bundle<R: ScriptResolver + ?Sized>(
     resolver: &R,
     root_name: &str,
@@ -104,6 +108,10 @@ pub fn load_source_bundle<R: ScriptResolver + ?Sized>(
 }
 
 /// Preprocesses one already-loaded source bundle into a token stream.
+///
+/// # Errors
+///
+/// Returns [`PreprocessError`] if macro expansion or include resolution fails.
 pub fn preprocess_source_bundle(
     bundle: &SourceBundle,
 ) -> Result<PreprocessedSource, PreprocessError> {

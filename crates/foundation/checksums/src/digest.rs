@@ -13,6 +13,11 @@ pub fn secure_hash(data: impl AsRef<[u8]>) -> SecureHash {
 }
 
 /// Parses a lowercase or uppercase hexadecimal SHA-1 digest.
+///
+/// # Errors
+///
+/// Returns [`ParseSecureHashError`] if the input is not a valid 40-character
+/// hex SHA-1 string.
 #[instrument(level = "debug", skip_all, err, fields(input_len = input.len()))]
 pub fn parse_secure_hash(input: &str) -> Result<SecureHash, ParseSecureHashError> {
     if input.len() != SECURE_HASH_HEX_LEN {

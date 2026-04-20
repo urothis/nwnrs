@@ -247,12 +247,20 @@ impl NcsInstruction {
 
     /// Renders the decoded operand payload using upstream `nwasm` formatting
     /// rules.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`NcsAsmError`] if formatting the operand fails.
     pub fn extra_string(&self, max_string_length: usize) -> Result<String, NcsAsmError> {
         extra_string_for_instruction(self, 0, None, &BTreeMap::new(), max_string_length)
     }
 }
 
 /// Decodes a full `NCS` stream into instruction-shaped disassembly lines.
+///
+/// # Errors
+///
+/// Returns [`NcsAsmError`] if the stream cannot be decoded.
 pub fn disassemble_ncs(
     bytes: &[u8],
     langspec: Option<&LangSpec>,
@@ -304,6 +312,10 @@ fn decode_asm_lines(
 }
 
 /// Renders a full `NCS` stream into stable human-readable disassembly text.
+///
+/// # Errors
+///
+/// Returns [`NcsAsmError`] if decoding or rendering fails.
 pub fn render_ncs_disassembly(
     bytes: &[u8],
     langspec: Option<&LangSpec>,
@@ -317,6 +329,10 @@ pub fn render_ncs_disassembly(
 }
 
 /// Renders a full `NCS` stream into NDB-aware disassembly text.
+///
+/// # Errors
+///
+/// Returns [`NcsAsmError`] if decoding or rendering fails.
 pub fn render_ncs_disassembly_with_ndb(
     bytes: &[u8],
     langspec: Option<&LangSpec>,
@@ -334,6 +350,10 @@ pub fn render_ncs_disassembly_with_ndb(
 }
 
 /// Parses assembleable NCS asm text into decoded instructions.
+///
+/// # Errors
+///
+/// Returns [`NcsAsmError`] if parsing fails.
 pub fn assemble_ncs_text(
     text: &str,
     langspec: Option<&LangSpec>,
@@ -429,6 +449,10 @@ pub fn assemble_ncs_text(
 
 /// Parses assembleable NCS asm text and encodes it into bytecode without the
 /// fixed NCS file header.
+///
+/// # Errors
+///
+/// Returns [`NcsAsmError`] if parsing or encoding fails.
 pub fn assemble_ncs_bytes(text: &str, langspec: Option<&LangSpec>) -> Result<Vec<u8>, NcsAsmError> {
     Ok(crate::encode_ncs_instructions(&assemble_ncs_text(
         text, langspec,

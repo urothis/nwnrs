@@ -160,6 +160,10 @@ impl From<LexerError> for LangSpecError {
 
 /// Loads `nwscript.nss` through a source resolver and parses the builtin
 /// declarations.
+///
+/// # Errors
+///
+/// Returns [`LangSpecError`] if the source cannot be loaded or parsed.
 pub fn load_langspec<R: ScriptResolver + ?Sized>(
     resolver: &R,
     script_name: &str,
@@ -174,11 +178,19 @@ pub fn load_langspec<R: ScriptResolver + ?Sized>(
 }
 
 /// Parses builtin declarations from one already-loaded source file.
+///
+/// # Errors
+///
+/// Returns [`LangSpecError`] if parsing fails.
 pub fn parse_langspec(source_name: &str, input: &str) -> Result<LangSpec, LangSpecError> {
     parse_langspec_bytes(source_name, input.as_bytes())
 }
 
 /// Parses builtin declarations from one already-loaded byte buffer.
+///
+/// # Errors
+///
+/// Returns [`LangSpecError`] if parsing fails.
 pub fn parse_langspec_bytes(source_name: &str, input: &[u8]) -> Result<LangSpec, LangSpecError> {
     let mut source_map = SourceMap::new();
     let root_id = source_map.add_file(source_name, input);
@@ -186,6 +198,10 @@ pub fn parse_langspec_bytes(source_name: &str, input: &[u8]) -> Result<LangSpec,
 }
 
 /// Parses builtin declarations from `root_id` in `source_map`.
+///
+/// # Errors
+///
+/// Returns [`LangSpecError`] if parsing fails.
 pub fn parse_langspec_from_source_map(
     source_map: &SourceMap,
     root_id: crate::SourceId,

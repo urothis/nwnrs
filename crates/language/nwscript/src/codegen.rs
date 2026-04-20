@@ -157,6 +157,11 @@ impl From<CodegenError> for CompileError {
 
 /// Compiles one parsed script through semantic analysis, HIR lowering, and `O0`
 /// NCS emission.
+///
+/// # Errors
+///
+/// Returns [`CompileError`] if semantic analysis, HIR lowering, or NCS emission
+/// fails.
 pub fn compile_script(
     script: &Script,
     langspec: Option<&LangSpec>,
@@ -166,6 +171,10 @@ pub fn compile_script(
 }
 
 /// Compiles one parsed script and emits `NDB` when a source map is available.
+///
+/// # Errors
+///
+/// Returns [`CompileError`] if compilation fails.
 pub fn compile_script_with_source_map(
     script: &Script,
     source_map: &SourceMap,
@@ -177,6 +186,10 @@ pub fn compile_script_with_source_map(
 }
 
 /// Parses and compiles one already-loaded source bundle with `NDB` output.
+///
+/// # Errors
+///
+/// Returns [`CompileError`] if parsing or compilation fails.
 pub fn compile_source_bundle(
     bundle: &SourceBundle,
     langspec: Option<&LangSpec>,
@@ -232,6 +245,10 @@ fn compile_script_with_debug(
 }
 
 /// Compiles one lowered HIR module to `NCS`.
+///
+/// # Errors
+///
+/// Returns [`CodegenError`] if code generation fails.
 pub fn compile_hir_to_ncs(
     hir: &HirModule,
     langspec: Option<&LangSpec>,

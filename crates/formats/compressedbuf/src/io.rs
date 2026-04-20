@@ -11,6 +11,10 @@ use crate::{
 
 /// Encodes a four-byte ASCII magic string into the packed integer form used by
 /// the format.
+///
+/// # Errors
+///
+/// Returns [`ExpectationError`] if `magic` is not exactly 4 bytes.
 pub fn make_magic(magic: &str) -> Result<u32, ExpectationError> {
     expect(magic.len() == 4, "magic needs to be 4 bytes exactly")?;
     let bytes: [u8; 4] = magic
@@ -21,12 +25,22 @@ pub fn make_magic(magic: &str) -> Result<u32, ExpectationError> {
 }
 
 /// Decompresses a complete compressed buffer payload from memory.
+///
+/// # Errors
+///
+/// Returns [`CompressedBufError`] if the bytes are malformed or decompression
+/// fails.
 #[instrument(level = "debug", skip_all, err, fields(expect_magic))]
 pub fn decompress_bytes(bytes: &[u8], expect_magic: u32) -> CompressedBufResult<Vec<u8>> {
     Ok(read_payload_bytes(bytes, expect_magic)?.data)
 }
 
 /// Decompresses a compressed buffer payload from `reader`.
+///
+/// # Errors
+///
+/// Returns [`CompressedBufError`] if the data cannot be read or decompression
+/// fails.
 #[instrument(level = "debug", skip_all, err, fields(expect_magic))]
 pub fn decompress_reader<R: Read>(
     reader: &mut R,
@@ -36,6 +50,11 @@ pub fn decompress_reader<R: Read>(
 }
 
 /// Reads a complete compressed-buffer payload from memory.
+///
+/// # Errors
+///
+/// Returns [`CompressedBufError`] if the bytes are malformed or decompression
+/// fails.
 #[instrument(level = "debug", skip_all, err, fields(expect_magic))]
 pub fn read_payload_bytes(
     bytes: &[u8],
@@ -48,6 +67,11 @@ pub fn read_payload_bytes(
 }
 
 /// Reads a compressed-buffer payload from `reader`.
+///
+/// # Errors
+///
+/// Returns [`CompressedBufError`] if the data cannot be read or does not
+/// conform to the format.
 #[instrument(level = "debug", skip_all, err, fields(expect_magic))]
 pub fn read_payload_reader<R: Read>(
     reader: &mut R,
@@ -135,6 +159,10 @@ pub fn read_payload_reader<R: Read>(
 }
 
 /// Compresses a payload in memory and returns the encoded buffer.
+///
+/// # Errors
+///
+/// Returns [`CompressedBufError`] if compression or encoding fails.
 #[instrument(level = "debug", skip_all, err, fields(algorithm = ?algorithm, magic, input_len = data.len()))]
 pub fn compress_bytes(
     data: &[u8],
@@ -146,6 +174,10 @@ pub fn compress_bytes(
 
 /// Reads all bytes from `reader`, compresses them, and writes the encoded
 /// buffer.
+///
+/// # Errors
+///
+/// Returns [`CompressedBufError`] if reading, compression, or writing fails.
 #[instrument(level = "debug", skip_all, err, fields(algorithm = ?algorithm, magic))]
 pub fn compress_reader<R: Read, W: Write>(
     writer: &mut W,
@@ -159,6 +191,10 @@ pub fn compress_reader<R: Read, W: Write>(
 }
 
 /// Compresses `data` and writes the encoded buffer to `writer`.
+///
+/// # Errors
+///
+/// Returns [`CompressedBufError`] if compression or writing fails.
 #[instrument(level = "debug", skip_all, err, fields(algorithm = ?algorithm, magic, input_len = data.len()))]
 pub fn compress_writer<W: Write + ?Sized>(
     writer: &mut W,
@@ -173,6 +209,10 @@ pub fn compress_writer<W: Write + ?Sized>(
 }
 
 /// Encodes a provenance-rich payload back into memory.
+///
+/// # Errors
+///
+/// Returns [`CompressedBufError`] if compression or encoding fails.
 #[instrument(level = "debug", skip_all, err, fields(algorithm = ?payload.algorithm, magic = payload.magic, input_len = payload.data.len()))]
 pub fn write_payload_bytes(payload: &CompressedBufPayload) -> CompressedBufResult<Vec<u8>> {
     if let Some(original_bytes) = &payload.original_bytes {
@@ -191,6 +231,10 @@ pub fn write_payload_bytes(payload: &CompressedBufPayload) -> CompressedBufResul
 }
 
 /// Encodes a provenance-rich payload to `writer`.
+///
+/// # Errors
+///
+/// Returns [`CompressedBufError`] if compression or writing fails.
 #[instrument(level = "debug", skip_all, err, fields(algorithm = ?payload.algorithm, magic = payload.magic, input_len = payload.data.len()))]
 pub fn write_payload_writer<W: Write + ?Sized>(
     writer: &mut W,

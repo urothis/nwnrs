@@ -48,12 +48,21 @@ pub enum ParsedModel {
 
 impl ParsedModel {
     /// Reads a parsed MDL payload from disk.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError`] if the file cannot be opened or parsed.
     pub fn from_file(path: impl AsRef<Path>) -> ModelResult<Self> {
         let mut file = File::open(path.as_ref())?;
         read_parsed_model(&mut file)
     }
 
     /// Reads a parsed MDL payload from a [`Res`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError`] if the resource is not an MDL type or parsing
+    /// fails.
     pub fn from_res(res: &Res, cache_policy: CachePolicy) -> ModelResult<Self> {
         if res.resref().res_type() != MODEL_RES_TYPE {
             return Err(ModelError::msg(format!(
@@ -132,12 +141,21 @@ pub struct BinaryModel {
 
 impl BinaryModel {
     /// Reads a compiled binary MDL from disk.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError`] if the file cannot be opened or parsed.
     pub fn from_file(path: impl AsRef<Path>) -> ModelResult<Self> {
         let mut file = File::open(path.as_ref())?;
         read_binary_model(&mut file)
     }
 
     /// Reads a compiled binary MDL from a [`Res`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError`] if the resource is not an MDL type or parsing
+    /// fails.
     pub fn from_res(res: &Res, cache_policy: CachePolicy) -> ModelResult<Self> {
         if res.resref().res_type() != MODEL_RES_TYPE {
             return Err(ModelError::msg(format!(
@@ -573,11 +591,20 @@ impl Model {
     }
 
     /// Parses the raw payload into a format-dispatched model.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError`] if the payload cannot be parsed.
     pub fn parse_parsed(&self) -> ModelResult<ParsedModel> {
         parse_model_bytes(self.bytes())
     }
 
     /// Parses the raw payload as a compiled binary model.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError`] if the payload cannot be parsed as a compiled
+    /// binary MDL.
     pub fn parse_binary(&self) -> ModelResult<BinaryModel> {
         parse_binary_model_bytes(self.bytes())
     }
@@ -597,6 +624,11 @@ pub fn detect_model_encoding(bytes: &[u8]) -> ModelEncoding {
 }
 
 /// Parses a raw MDL payload using automatic encoding detection.
+///
+/// # Errors
+///
+/// Returns [`ModelError`] if the payload cannot be parsed as ASCII or compiled
+/// MDL.
 pub fn parse_model_bytes(bytes: &[u8]) -> ModelResult<ParsedModel> {
     match detect_model_encoding(bytes) {
         ModelEncoding::Ascii => {
@@ -610,6 +642,10 @@ pub fn parse_model_bytes(bytes: &[u8]) -> ModelResult<ParsedModel> {
 }
 
 /// Reads a parsed MDL payload from `reader`.
+///
+/// # Errors
+///
+/// Returns [`ModelError`] if the data cannot be read or parsed.
 #[instrument(level = "debug", skip_all, err)]
 pub fn read_parsed_model<R: Read>(reader: &mut R) -> ModelResult<ParsedModel> {
     let mut bytes = Vec::new();
@@ -618,6 +654,10 @@ pub fn read_parsed_model<R: Read>(reader: &mut R) -> ModelResult<ParsedModel> {
 }
 
 /// Writes a parsed MDL payload.
+///
+/// # Errors
+///
+/// Returns [`ModelError`] if the write fails.
 #[instrument(level = "debug", skip_all, err)]
 pub fn write_parsed_model<W: Write>(writer: &mut W, model: &ParsedModel) -> ModelResult<()> {
     match model {
@@ -627,6 +667,11 @@ pub fn write_parsed_model<W: Write>(writer: &mut W, model: &ParsedModel) -> Mode
 }
 
 /// Parses a compiled binary MDL payload from raw bytes.
+///
+/// # Errors
+///
+/// Returns [`ModelError`] if the bytes do not conform to the compiled MDL
+/// format.
 pub fn parse_binary_model_bytes(bytes: &[u8]) -> ModelResult<BinaryModel> {
     let header = parse_binary_header(bytes)?;
     let mut parser = BinaryParser::new(bytes, header.clone());
@@ -634,6 +679,11 @@ pub fn parse_binary_model_bytes(bytes: &[u8]) -> ModelResult<BinaryModel> {
 }
 
 /// Reads a compiled binary MDL from `reader`.
+///
+/// # Errors
+///
+/// Returns [`ModelError`] if the data cannot be read or parsed as a compiled
+/// MDL.
 #[instrument(level = "debug", skip_all, err)]
 pub fn read_binary_model<R: Read>(reader: &mut R) -> ModelResult<BinaryModel> {
     let mut bytes = Vec::new();
@@ -642,6 +692,10 @@ pub fn read_binary_model<R: Read>(reader: &mut R) -> ModelResult<BinaryModel> {
 }
 
 /// Writes a compiled binary MDL back to its original bytes.
+///
+/// # Errors
+///
+/// Returns [`ModelError`] if the write fails.
 #[instrument(level = "debug", skip_all, err, fields(model_name = %model.name))]
 pub fn write_binary_model<W: Write>(writer: &mut W, model: &BinaryModel) -> ModelResult<()> {
     writer.write_all(&model.source_bytes)?;

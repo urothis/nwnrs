@@ -41,6 +41,11 @@ pub fn path_for_entry(
 }
 
 /// Reads a manifest from a stream.
+///
+/// # Errors
+///
+/// Returns [`ManifestError`] if the data cannot be read or does not conform to
+/// the `NWSync` manifest format.
 #[instrument(level = "debug", skip_all, err)]
 pub fn read_manifest<R: Read>(reader: &mut R) -> ManifestResult<Manifest> {
     let magic = read_fixed_string(reader, 4)?;
@@ -127,6 +132,11 @@ pub fn read_manifest<R: Read>(reader: &mut R) -> ManifestResult<Manifest> {
 }
 
 /// Reads a manifest file from disk.
+///
+/// # Errors
+///
+/// Returns [`ManifestError`] if the file cannot be opened or parsed as a valid
+/// manifest.
 #[instrument(level = "debug", skip_all, err, fields(path = %path.as_ref().display()))]
 pub fn read_manifest_file(path: impl AsRef<Path>) -> ManifestResult<Manifest> {
     let file = File::open(path.as_ref())?;
@@ -135,6 +145,10 @@ pub fn read_manifest_file(path: impl AsRef<Path>) -> ManifestResult<Manifest> {
 }
 
 /// Writes a manifest to a stream.
+///
+/// # Errors
+///
+/// Returns [`ManifestError`] if the manifest is invalid or the write fails.
 #[instrument(
     level = "debug",
     skip_all,
@@ -226,6 +240,11 @@ fn compare_manifest_entries(
 }
 
 /// Writes a manifest file to disk.
+///
+/// # Errors
+///
+/// Returns [`ManifestError`] if the file cannot be created or the manifest
+/// cannot be written.
 #[instrument(level = "debug", skip_all, err, fields(path = %path.as_ref().display()))]
 pub fn write_manifest_file(path: impl AsRef<Path>, manifest: &Manifest) -> ManifestResult<()> {
     let file = File::create(path.as_ref())?;

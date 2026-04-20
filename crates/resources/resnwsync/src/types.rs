@@ -134,6 +134,10 @@ impl NWSync {
     }
 
     /// Returns all manifest hashes stored in the repository.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ResNWSyncError`] if the database cannot be queried.
     pub fn get_all_manifests(&self) -> ResNWSyncResult<Vec<ManifestSha1>> {
         let conn = self.meta_connection()?;
         let mut stmt = conn.prepare("select sha1 from manifests")?;
@@ -159,6 +163,11 @@ impl NWSync {
 
     /// Reads a resource payload by hash, decompressing `NSYC` buffers when
     /// needed.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ResNWSyncError`] if the hash is not found or the data cannot
+    /// be read or decompressed.
     pub fn read_resref_data(&self, sha1: ResRefSha1) -> ResNWSyncResult<Vec<u8>> {
         let Some(shard_id) = self.shardmap.get(&sha1).copied() else {
             return Err(ResNWSyncError::msg(format!("not found: {sha1}")));
@@ -200,6 +209,10 @@ impl NWSync {
 
     /// Writes a payload blob to the default shard when it is not already
     /// present.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ResNWSyncError`] if the database write fails.
     pub fn put_resref_data(&mut self, sha1: ResRefSha1, data: &[u8]) -> ResNWSyncResult<bool> {
         if self.shardmap.contains_key(&sha1) {
             return Ok(false);
@@ -254,6 +267,10 @@ impl NWSync {
     }
 
     /// Deletes payload blobs by SHA-1 and returns the number of deleted rows.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ResNWSyncError`] if the database operation fails.
     pub fn delete_resref_data(&mut self, sha1s: &[ResRefSha1]) -> ResNWSyncResult<usize> {
         let mut grouped = HashMap::<ShardId, Vec<ResRefSha1>>::new();
         for sha1 in sha1s {

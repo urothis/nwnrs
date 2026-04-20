@@ -15,6 +15,11 @@ use tracing::{debug, instrument};
 use crate::{ResFile, ResFileError, ResFileResult};
 
 /// Reads a resource file using its filename-derived resource reference.
+///
+/// # Errors
+///
+/// Returns [`ResFileError`] if the filename cannot be resolved or the file
+/// cannot be read.
 #[instrument(level = "debug", skip_all, err, fields(path = %path.as_ref().display()))]
 pub fn read_resfile(path: impl AsRef<Path>) -> ResFileResult<ResFile> {
     let path = path.as_ref();
@@ -27,6 +32,11 @@ pub fn read_resfile(path: impl AsRef<Path>) -> ResFileResult<ResFile> {
 }
 
 /// Reads a resource file with an explicit resource reference override.
+///
+/// # Errors
+///
+/// Returns [`ResFileError`] if the path is not a regular file or metadata
+/// cannot be read.
 #[instrument(level = "debug", skip_all, err, fields(path = %path.as_ref().display(), resref = %resref))]
 pub fn read_resfile_as(path: impl AsRef<Path>, resref: ResRef) -> ResFileResult<ResFile> {
     let path = path.as_ref();

@@ -348,6 +348,10 @@ impl SourceMap {
 pub trait ScriptResolver {
     /// Returns the source bytes for `script_name`, or `None` when it does not
     /// exist.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SourceError`] if the underlying resource lookup fails.
     fn resolve_script_bytes(
         &self,
         script_name: &str,
@@ -356,6 +360,11 @@ pub trait ScriptResolver {
 
     /// Returns the source contents for `script_name`, or `None` when it does
     /// not exist.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SourceError`] if the underlying resource lookup or UTF-8
+    /// decoding fails.
     fn resolve_script(
         &self,
         script_name: &str,

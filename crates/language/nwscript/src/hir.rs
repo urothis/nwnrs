@@ -367,6 +367,10 @@ impl fmt::Display for HirLowerError {
 impl Error for HirLowerError {}
 
 /// Lowers one semantically-valid script into typed HIR.
+///
+/// # Errors
+///
+/// Returns [`HirLowerError`] if the script cannot be lowered.
 pub fn lower_to_hir(
     script: &Script,
     semantic: &SemanticModel,

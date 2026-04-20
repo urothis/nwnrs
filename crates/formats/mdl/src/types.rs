@@ -41,6 +41,10 @@ impl Model {
     }
 
     /// Returns the model as UTF-8 text when valid.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Utf8Error`] if the payload is not valid UTF-8.
     pub fn as_text(&self) -> Result<&str, Utf8Error> {
         std::str::from_utf8(&self.bytes)
     }
@@ -52,12 +56,21 @@ impl Model {
     }
 
     /// Reads an `MDL` payload from disk.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError`] if the file cannot be opened or read.
     pub fn from_file(path: impl AsRef<std::path::Path>) -> ModelResult<Self> {
         let mut file = std::fs::File::open(path.as_ref())?;
         crate::read_model(&mut file)
     }
 
     /// Reads an `MDL` payload from a [`Res`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError`] if the resource is not an MDL type or reading
+    /// fails.
     pub fn from_res(res: &Res, cache_policy: CachePolicy) -> ModelResult<Self> {
         if res.resref().res_type() != MODEL_RES_TYPE {
             return Err(ModelError::msg(format!(

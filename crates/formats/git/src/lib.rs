@@ -103,12 +103,21 @@ pub struct GitFile {
 
 impl GitFile {
     /// Reads a typed `GIT` file from disk.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GitError`] if the file cannot be opened or parsed.
     pub fn from_file(path: impl AsRef<Path>) -> GitResult<Self> {
         let mut file = File::open(path.as_ref())?;
         read_git(&mut file)
     }
 
     /// Reads a typed `GIT` file from a [`Res`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GitError`] if the resource is not a GIT type or the bytes
+    /// cannot be parsed.
     pub fn from_res(res: &Res, cache_policy: CachePolicy) -> GitResult<Self> {
         if res.resref().res_type() != GIT_RES_TYPE {
             return Err(GitError::msg(format!(
@@ -123,6 +132,10 @@ impl GitFile {
     }
 
     /// Reads a typed `GIT` file from a [`ResMan`] by area name.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GitError`] if the resource cannot be found or parsed.
     pub fn from_resman(
         resman: &mut ResMan,
         area_name: &str,
@@ -354,6 +367,11 @@ pub struct GitPlaceable {
 }
 
 /// Reads a typed `GIT` file from `reader`.
+///
+/// # Errors
+///
+/// Returns [`GitError`] if the data cannot be read or does not conform to the
+/// GIT format.
 #[instrument(level = "debug", skip_all, err)]
 pub fn read_git<R: Read + Seek>(reader: &mut R) -> GitResult<GitFile> {
     let root = read_gff_root(reader)?;
@@ -361,6 +379,10 @@ pub fn read_git<R: Read + Seek>(reader: &mut R) -> GitResult<GitFile> {
 }
 
 /// Parses a typed `GIT` file from a decoded [`GffRoot`].
+///
+/// # Errors
+///
+/// Returns [`GitError`] if the root file type is not `GIT `.
 pub fn parse_git_root(root: &GffRoot) -> GitResult<GitFile> {
     if root.file_type != "GIT " {
         return Err(GitError::msg(format!(
@@ -420,6 +442,10 @@ pub fn parse_git_root(root: &GffRoot) -> GitResult<GitFile> {
 ///
 /// Known typed fields are rewritten from the typed model. Unknown fields stored
 /// on per-entry raw structures are preserved.
+///
+/// # Errors
+///
+/// Returns [`GitError`] if any GFF field label is invalid.
 pub fn build_git_root(git: &GitFile) -> GitResult<GffRoot> {
     let mut root = GffRoot::new("GIT ");
 
@@ -468,6 +494,10 @@ pub fn build_git_root(git: &GitFile) -> GitResult<GffRoot> {
 /// Writes a typed `GIT` file to `writer`.
 ///
 /// This is equivalent to [`build_git_root`] followed by [`write_gff_root`].
+///
+/// # Errors
+///
+/// Returns [`GitError`] if building or writing the GFF root fails.
 #[instrument(level = "debug", skip_all, err)]
 pub fn write_git<W: Write + Seek>(writer: &mut W, git: &GitFile) -> GitResult<()> {
     let root = build_git_root(git)?;

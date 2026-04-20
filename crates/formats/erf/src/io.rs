@@ -23,6 +23,11 @@ use crate::{
 ///
 /// The returned [`Erf`] contains lazily readable [`nwnrs_resman::Res`] entries
 /// backed by the supplied stream.
+///
+/// # Errors
+///
+/// Returns [`ErfError`] if the data cannot be read or does not conform to an
+/// ERF-family format.
 #[instrument(level = "debug", skip_all, err)]
 pub fn read_erf<R>(reader: R, filename: impl Into<String>) -> ErfResult<Erf>
 where
@@ -32,6 +37,10 @@ where
 }
 
 /// Opens a file from disk and reads it as an ERF-family archive.
+///
+/// # Errors
+///
+/// Returns [`ErfError`] if the file cannot be opened or parsed.
 #[instrument(level = "debug", skip_all, err, fields(path = %path.as_ref().display()))]
 pub fn read_erf_from_file(path: impl AsRef<Path>) -> ErfResult<Erf> {
     let path = path.as_ref();
@@ -43,6 +52,11 @@ pub fn read_erf_from_file(path: impl AsRef<Path>) -> ErfResult<Erf> {
 ///
 /// This is the most direct constructor when the caller already manages stream
 /// sharing.
+///
+/// # Errors
+///
+/// Returns [`ErfError`] if the data cannot be read or does not conform to an
+/// ERF-family format.
 #[instrument(level = "debug", skip_all, err, fields(path = %filename))]
 pub fn read_erf_shared(stream: SharedReadSeek, filename: String) -> ErfResult<Erf> {
     let mut io = stream
@@ -257,6 +271,10 @@ fn read_compressed_buf_algorithm<R: Read + Seek + ?Sized>(
 /// `entries` defines the archive order. For each entry, `entry_writer` must
 /// write the raw payload bytes and return the uncompressed byte length together
 /// with the payload SHA-1.
+///
+/// # Errors
+///
+/// Returns [`ErfError`] if the write fails.
 #[instrument(
     level = "debug",
     skip_all,
@@ -362,8 +380,12 @@ mod tests {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 /// Writes an ERF-family archive with explicit preserved-layout options.
+///
+/// # Errors
+///
+/// Returns [`ErfError`] if the write fails.
+#[allow(clippy::too_many_arguments)]
 pub fn write_erf_with_options<W, F>(
     writer: &mut W,
     file_type: &str,
@@ -402,8 +424,12 @@ where
     )
 }
 
-#[allow(clippy::too_many_arguments)]
 /// Writes a decoded ERF-family archive back out using its preserved layout.
+///
+/// # Errors
+///
+/// Returns [`ErfError`] if the write fails.
+#[allow(clippy::too_many_arguments)]
 pub fn write_erf_archive<W>(writer: &mut W, value: &Erf) -> ErfResult<()>
 where
     W: Write + Seek,

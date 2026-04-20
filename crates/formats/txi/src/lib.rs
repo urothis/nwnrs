@@ -110,12 +110,21 @@ impl TxiFile {
     }
 
     /// Reads a typed `TXI` payload from disk.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TxiError`] if the file cannot be opened or parsed.
     pub fn from_file(path: impl AsRef<Path>) -> TxiResult<Self> {
         let mut file = File::open(path.as_ref())?;
         read_txi(&mut file)
     }
 
     /// Reads a typed `TXI` payload from a [`Res`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TxiError`] if the resource is not a TXI type or the bytes
+    /// cannot be parsed.
     pub fn from_res(res: &Res, cache_policy: CachePolicy) -> TxiResult<Self> {
         if res.resref().res_type() != TXI_RES_TYPE {
             return Err(TxiError::msg(format!(
@@ -130,6 +139,11 @@ impl TxiFile {
     }
 
     /// Reads a typed `TXI` payload from a [`ResMan`] by texture name.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TxiError`] if the resref is invalid, the resource is not
+    /// found, or parsing fails.
     pub fn from_resman(
         resman: &mut ResMan,
         name: &str,
@@ -144,6 +158,10 @@ impl TxiFile {
     }
 
     /// Reads an optional typed `TXI` payload from a [`ResMan`] by texture name.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TxiError`] if the resref is invalid or parsing fails.
     pub fn optional_from_resman(
         resman: &mut ResMan,
         name: &str,
@@ -192,6 +210,10 @@ impl TxiDirective {
 }
 
 /// Reads a typed `TXI` payload from any reader.
+///
+/// # Errors
+///
+/// Returns [`TxiError`] if the data cannot be read or parsed.
 #[instrument(level = "debug", skip_all, err)]
 pub fn read_txi(reader: &mut dyn Read) -> TxiResult<TxiFile> {
     let mut text = String::new();
@@ -200,6 +222,10 @@ pub fn read_txi(reader: &mut dyn Read) -> TxiResult<TxiFile> {
 }
 
 /// Parses a typed `TXI` payload from text.
+///
+/// # Errors
+///
+/// Returns [`TxiError`] if a continuation line appears before any directive.
 pub fn parse_txi(text: &str) -> TxiResult<TxiFile> {
     let mut directives = Vec::new();
     for (line_index, line) in text.lines().enumerate() {
@@ -258,6 +284,11 @@ pub fn parse_txi(text: &str) -> TxiResult<TxiFile> {
 /// directly in preserved order. When no directives are present, the serializer
 /// synthesizes a directive stream from the recognized typed fields in a stable
 /// order.
+///
+/// # Errors
+///
+/// This function currently always succeeds but returns [`TxiResult`] for
+/// forward compatibility.
 pub fn build_txi_text(txi_file: &TxiFile) -> TxiResult<String> {
     let directives = if txi_file.directives.is_empty() {
         synthesize_directives(txi_file)
@@ -286,6 +317,10 @@ pub fn build_txi_text(txi_file: &TxiFile) -> TxiResult<String> {
 }
 
 /// Writes deterministic `TXI` text to `writer`.
+///
+/// # Errors
+///
+/// Returns [`TxiError`] if the write fails.
 pub fn write_txi<W: Write>(writer: &mut W, txi_file: &TxiFile) -> TxiResult<()> {
     let text = build_txi_text(txi_file)?;
     writer.write_all(text.as_bytes())?;

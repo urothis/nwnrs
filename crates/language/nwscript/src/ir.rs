@@ -233,6 +233,10 @@ impl fmt::Display for IrLowerError {
 impl Error for IrLowerError {}
 
 /// Lowers HIR into the compiler IR used by later codegen work.
+///
+/// # Errors
+///
+/// Returns [`IrLowerError`] if the HIR cannot be lowered.
 pub fn lower_hir_to_ir(
     hir: &HirModule,
     langspec: Option<&LangSpec>,

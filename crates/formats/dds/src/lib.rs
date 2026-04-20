@@ -122,6 +122,10 @@ pub struct DdsMipLevel {
 
 impl DdsMipLevel {
     /// Returns the total number of pixels in this mip level.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DdsError`] if the pixel count overflows `usize`.
     pub fn pixel_count(&self) -> DdsResult<usize> {
         usize::try_from(self.width)
             .ok()
@@ -134,6 +138,11 @@ impl DdsMipLevel {
     }
 
     /// Decodes this mip level into top-left-origin RGBA8 pixels.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DdsError`] if the format is unsupported or the pixel data is
+    /// malformed.
     pub fn decode_rgba8(&self, format: DdsFormat) -> DdsResult<Vec<u8>> {
         decode_mip_rgba8(self, format)
     }
@@ -162,12 +171,21 @@ impl DdsTexture {
     }
 
     /// Parses an NWN DDS texture directly from raw bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DdsError`] if the bytes do not conform to the NWN DDS format.
     pub fn read_from_texture_bytes(bytes: &[u8]) -> DdsResult<Self> {
         parse_dds_bytes(bytes)
     }
 
     /// Encodes top-left-origin RGBA8 pixels into an NWN DDS texture with a full
     /// mip chain.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DdsError`] if `rgba` does not match the expected length or
+    /// encoding fails.
     pub fn encode_rgba8(
         width: u32,
         height: u32,
@@ -222,6 +240,10 @@ impl DdsTexture {
     }
 
     /// Decodes the top-level mip into RGBA8 pixels.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DdsError`] if the texture has no mip levels or decoding fails.
     pub fn decode_rgba8(&self) -> DdsResult<Vec<u8>> {
         self.mip_levels
             .first()
@@ -230,6 +252,10 @@ impl DdsTexture {
     }
 
     /// Decodes a specific mip level into RGBA8 pixels.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DdsError`] if `level` is out of range or decoding fails.
     pub fn decode_mip_rgba8(&self, level: usize) -> DdsResult<Vec<u8>> {
         self.mip_levels
             .get(level)
@@ -238,12 +264,21 @@ impl DdsTexture {
     }
 
     /// Reads a typed DDS texture from disk.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DdsError`] if the file cannot be opened or parsed.
     pub fn from_file(path: impl AsRef<Path>) -> DdsResult<Self> {
         let mut file = File::open(path.as_ref())?;
         read_dds(&mut file)
     }
 
     /// Reads a typed DDS texture from a [`Res`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DdsError`] if the resource is not a DDS type or the bytes
+    /// cannot be parsed.
     pub fn from_res(res: &Res, cache_policy: CachePolicy) -> DdsResult<Self> {
         if res.resref().res_type() != DDS_RES_TYPE {
             return Err(DdsError::msg(format!(
@@ -258,6 +293,11 @@ impl DdsTexture {
 }
 
 /// Reads a typed DDS texture from `reader`.
+///
+/// # Errors
+///
+/// Returns [`DdsError`] if the data cannot be read or does not conform to the
+/// NWN DDS format.
 #[instrument(level = "debug", skip_all, err)]
 pub fn read_dds<R: Read>(reader: &mut R) -> DdsResult<DdsTexture> {
     let mut bytes = Vec::new();
@@ -266,6 +306,10 @@ pub fn read_dds<R: Read>(reader: &mut R) -> DdsResult<DdsTexture> {
 }
 
 /// Writes a typed NWN DDS texture to `writer`.
+///
+/// # Errors
+///
+/// Returns [`DdsError`] if the DDS data is invalid or the write fails.
 #[instrument(
     level = "debug",
     skip_all,
