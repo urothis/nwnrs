@@ -18,7 +18,8 @@ use crate::{ResFile, ResFileError, ResFileResult};
 ///
 /// # Errors
 ///
-/// Returns [`ResFileError`] if the filename cannot be resolved or the file cannot be read.
+/// Returns [`ResFileError`] if the filename cannot be resolved or the file
+/// cannot be read.
 #[instrument(level = "debug", skip_all, err, fields(path = %path.as_ref().display()))]
 pub fn read_resfile(path: impl AsRef<Path>) -> ResFileResult<ResFile> {
     let path = path.as_ref();
@@ -34,7 +35,8 @@ pub fn read_resfile(path: impl AsRef<Path>) -> ResFileResult<ResFile> {
 ///
 /// # Errors
 ///
-/// Returns [`ResFileError`] if the path is not a regular file or metadata cannot be read.
+/// Returns [`ResFileError`] if the path is not a regular file or metadata
+/// cannot be read.
 #[instrument(level = "debug", skip_all, err, fields(path = %path.as_ref().display(), resref = %resref))]
 pub fn read_resfile_as(path: impl AsRef<Path>, resref: ResRef) -> ResFileResult<ResFile> {
     let path = path.as_ref();

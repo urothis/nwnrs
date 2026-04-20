@@ -8,7 +8,8 @@ use crate::prelude::*;
 ///
 /// # Errors
 ///
-/// Returns an [`io::Error`] if the prefix or the subsequent bytes cannot be read, or if the prefix length does not match `expect_fixed_size`.
+/// Returns an [`io::Error`] if the prefix or the subsequent bytes cannot be
+/// read, or if the prefix length does not match `expect_fixed_size`.
 #[instrument(
     level = "debug",
     skip_all,
@@ -76,7 +77,8 @@ pub fn read_bytes<R: Read>(reader: &mut R, size: usize) -> io::Result<Vec<u8>> {
 ///
 /// # Errors
 ///
-/// Returns an [`io::Error`] if the reader cannot supply exactly `size` bytes or the bytes are not valid UTF-8.
+/// Returns an [`io::Error`] if the reader cannot supply exactly `size` bytes or
+/// the bytes are not valid UTF-8.
 #[instrument(level = "debug", skip_all, err, fields(size))]
 pub fn read_string<R: Read>(reader: &mut R, size: usize) -> io::Result<String> {
     let bytes = read_bytes(reader, size)?;
@@ -87,7 +89,8 @@ pub fn read_string<R: Read>(reader: &mut R, size: usize) -> io::Result<String> {
 ///
 /// # Errors
 ///
-/// Returns an [`io::Error`] if the bytes cannot be read or do not match `value`.
+/// Returns an [`io::Error`] if the bytes cannot be read or do not match
+/// `value`.
 #[instrument(level = "debug", skip_all, err, fields(size = value.len()))]
 pub fn read_fixed_value<R: Read>(reader: &mut R, value: &[u8]) -> io::Result<()> {
     let data = read_bytes(reader, value.len())?;
@@ -146,7 +149,8 @@ where
 ///
 /// # Errors
 ///
-/// Returns an [`io::Error`] if the length does not fit the prefix type or the write fails.
+/// Returns an [`io::Error`] if the length does not fit the prefix type or the
+/// write fails.
 #[instrument(level = "debug", skip_all, err, fields(size = value.len()))]
 pub fn write_size_prefixed_bytes<P, W>(writer: &mut W, value: &[u8]) -> io::Result<()>
 where
@@ -167,7 +171,8 @@ where
 ///
 /// # Errors
 ///
-/// Returns an [`io::Error`] if the byte length does not fit the prefix type or the write fails.
+/// Returns an [`io::Error`] if the byte length does not fit the prefix type or
+/// the write fails.
 #[instrument(level = "debug", skip_all, err, fields(size = value.len()))]
 pub fn write_size_prefixed_string<P, W>(writer: &mut W, value: &str) -> io::Result<()>
 where
@@ -181,7 +186,8 @@ where
 ///
 /// # Errors
 ///
-/// Returns an [`io::Error`] if the element count does not fit the prefix type or any write fails.
+/// Returns an [`io::Error`] if the element count does not fit the prefix type
+/// or any write fails.
 #[instrument(level = "debug", skip_all, err, fields(entry_count = elements.len()))]
 pub fn write_size_prefixed_seq<P, W, T, F>(
     writer: &mut W,

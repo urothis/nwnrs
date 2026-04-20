@@ -116,7 +116,8 @@ impl GitFile {
     ///
     /// # Errors
     ///
-    /// Returns [`GitError`] if the resource is not a GIT type or the bytes cannot be parsed.
+    /// Returns [`GitError`] if the resource is not a GIT type or the bytes
+    /// cannot be parsed.
     pub fn from_res(res: &Res, cache_policy: CachePolicy) -> GitResult<Self> {
         if res.resref().res_type() != GIT_RES_TYPE {
             return Err(GitError::msg(format!(
@@ -365,7 +366,8 @@ pub struct GitPlaceable {
 ///
 /// # Errors
 ///
-/// Returns [`GitError`] if the data cannot be read or does not conform to the GIT format.
+/// Returns [`GitError`] if the data cannot be read or does not conform to the
+/// GIT format.
 #[instrument(level = "debug", skip_all, err)]
 pub fn read_git<R: Read + Seek>(reader: &mut R) -> GitResult<GitFile> {
     let root = read_gff_root(reader)?;

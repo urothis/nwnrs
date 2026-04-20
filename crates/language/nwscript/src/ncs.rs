@@ -47,7 +47,8 @@ impl Error for NcsHeaderError {}
 ///
 /// # Errors
 ///
-/// Returns [`NcsHeaderError`] if the bytes are too short or the magic is invalid.
+/// Returns [`NcsHeaderError`] if the bytes are too short or the magic is
+/// invalid.
 pub fn decode_ncs_header(bytes: &[u8]) -> Result<NcsHeader, NcsHeaderError> {
     if bytes.len() < NCS_BINARY_HEADER_SIZE {
         return Err(NcsHeaderError::TooShort(bytes.len()));
@@ -623,7 +624,8 @@ fn instruction_extra_size(opcode: NcsOpcode, auxcode: NcsAuxCode, bytes: &[u8]) 
 ///
 /// # Errors
 ///
-/// Returns [`NcsReadError`] if the header is invalid or an instruction is malformed.
+/// Returns [`NcsReadError`] if the header is invalid or an instruction is
+/// malformed.
 pub fn decode_ncs_instructions(bytes: &[u8]) -> Result<Vec<NcsInstruction>, NcsReadError> {
     let header = decode_ncs_header(bytes)?;
     let mut offset = NCS_BINARY_HEADER_SIZE;

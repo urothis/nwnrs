@@ -166,7 +166,8 @@ impl NWSync {
     ///
     /// # Errors
     ///
-    /// Returns [`ResNWSyncError`] if the hash is not found or the data cannot be read or decompressed.
+    /// Returns [`ResNWSyncError`] if the hash is not found or the data cannot
+    /// be read or decompressed.
     pub fn read_resref_data(&self, sha1: ResRefSha1) -> ResNWSyncResult<Vec<u8>> {
         let Some(shard_id) = self.shardmap.get(&sha1).copied() else {
             return Err(ResNWSyncError::msg(format!("not found: {sha1}")));

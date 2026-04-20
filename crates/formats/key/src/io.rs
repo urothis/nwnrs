@@ -23,7 +23,8 @@ use crate::prelude::*;
 ///
 /// # Errors
 ///
-/// Returns [`KeyError`] if the data cannot be read or does not conform to the KEY format.
+/// Returns [`KeyError`] if the data cannot be read or does not conform to the
+/// KEY format.
 #[instrument(level = "debug", skip_all, err)]
 pub fn read_key_table<R>(
     reader: R,

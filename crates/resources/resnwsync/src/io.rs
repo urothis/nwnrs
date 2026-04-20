@@ -33,7 +33,8 @@ pub fn nwsync_compressed_buf_magic() -> ResNWSyncResult<u32> {
 ///
 /// # Errors
 ///
-/// Returns [`ResNWSyncError`] if the meta database is missing, a shard database is not found, or any SQL query fails.
+/// Returns [`ResNWSyncError`] if the meta database is missing, a shard database
+/// is not found, or any SQL query fails.
 #[instrument(level = "debug", skip_all, err, fields(path = %path.as_ref().display()))]
 pub fn open_nwsync(path: impl AsRef<Path>) -> ResNWSyncResult<NWSync> {
     let root = path.as_ref().to_path_buf();
@@ -99,7 +100,8 @@ pub fn open_nwsync(path: impl AsRef<Path>) -> ResNWSyncResult<NWSync> {
 ///
 /// # Errors
 ///
-/// Returns [`ResNWSyncError`] if the directory cannot be created or the database cannot be initialized.
+/// Returns [`ResNWSyncError`] if the directory cannot be created or the
+/// database cannot be initialized.
 #[instrument(level = "debug", skip_all, err, fields(path = %path.as_ref().display()))]
 pub fn open_or_create_nwsync(path: impl AsRef<Path>) -> ResNWSyncResult<NWSync> {
     let root = path.as_ref();

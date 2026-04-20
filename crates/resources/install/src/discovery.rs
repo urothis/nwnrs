@@ -71,7 +71,8 @@ pub fn find_nwnrs_root(override_dir: &str) -> InstallResult<PathBuf> {
 ///
 /// # Errors
 ///
-/// Returns [`InstallError`] if no matching language directory exists under `root/lang`.
+/// Returns [`InstallError`] if no matching language directory exists under
+/// `root/lang`.
 #[instrument(level = "info", skip_all, err, fields(root = %root.as_ref().display(), language))]
 pub fn resolve_language_root(root: impl AsRef<Path>, language: &str) -> InstallResult<PathBuf> {
     let root = root.as_ref();

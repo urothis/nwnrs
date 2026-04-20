@@ -30,7 +30,8 @@ pub struct TlkLayerWriteTarget<'a> {
 ///
 /// # Errors
 ///
-/// Returns [`TlkError`] if the data cannot be read or does not conform to the TLK format.
+/// Returns [`TlkError`] if the data cannot be read or does not conform to the
+/// TLK format.
 #[instrument(level = "debug", skip_all, err, fields(cache_policy = ?cache_policy))]
 pub fn read_single_tlk<R>(mut reader: R, cache_policy: CachePolicy) -> TlkResult<SingleTlk>
 where
@@ -168,7 +169,8 @@ pub fn write_single_tlk<W: Write + Seek>(writer: &mut W, tlk: &mut SingleTlk) ->
 ///
 /// # Errors
 ///
-/// Returns [`TlkError`] if the number of targets does not match the chain length or any write fails.
+/// Returns [`TlkError`] if the number of targets does not match the chain
+/// length or any write fails.
 #[instrument(level = "debug", skip_all, err, fields(layer_count = tlk.chain.len()))]
 pub fn write_tlk_chain(targets: &mut [TlkLayerWriteTarget<'_>], tlk: &mut Tlk) -> TlkResult<()> {
     if targets.len() != tlk.chain.len() {

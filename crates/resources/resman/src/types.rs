@@ -351,7 +351,8 @@ impl Res {
     ///
     /// # Errors
     ///
-    /// Returns [`ResManError`] if the stream cannot be locked or the seek fails.
+    /// Returns [`ResManError`] if the stream cannot be locked or the seek
+    /// fails.
     #[instrument(level = "debug", skip_all, err, fields(resref = %self.inner.resref))]
     pub fn seek(&self) -> ResManResult<()> {
         self.with_stream(|stream| {
@@ -367,7 +368,8 @@ impl Res {
     ///
     /// # Errors
     ///
-    /// Returns [`ResManError`] if the stream cannot be read or decompression fails.
+    /// Returns [`ResManError`] if the stream cannot be read or decompression
+    /// fails.
     #[instrument(level = "debug", skip_all, err, fields(resref = %self.inner.resref, cache_policy = ?cache_policy))]
     pub fn read_all(&self, cache_policy: CachePolicy) -> ResManResult<Vec<u8>> {
         if cache_policy.uses_cache() {
@@ -401,7 +403,8 @@ impl Res {
     ///
     /// # Errors
     ///
-    /// Returns [`ResManError`] if the payload cannot be read or the state lock is poisoned.
+    /// Returns [`ResManError`] if the payload cannot be read or the state lock
+    /// is poisoned.
     #[instrument(level = "debug", skip_all, err, fields(resref = %self.inner.resref))]
     pub fn sha1(&self) -> ResManResult<SecureHash> {
         {
@@ -424,7 +427,8 @@ impl Res {
     ///
     /// # Errors
     ///
-    /// Returns [`ResManError`] if the stream cannot be locked, spawned, or if `op` fails.
+    /// Returns [`ResManError`] if the stream cannot be locked, spawned, or if
+    /// `op` fails.
     #[instrument(level = "debug", skip_all, err, fields(resref = %self.inner.resref))]
     pub fn with_stream<T, F>(&self, op: F) -> ResManResult<T>
     where
@@ -478,7 +482,8 @@ pub trait ResContainer: fmt::Display + Send + Sync {
     ///
     /// # Errors
     ///
-    /// Returns [`ResManError`] if the resource is not present or cannot be loaded.
+    /// Returns [`ResManError`] if the resource is not present or cannot be
+    /// loaded.
     fn demand(&self, rr: &ResRef) -> ResManResult<Res>;
     /// Returns the number of resources exposed by the container.
     fn count(&self) -> usize;

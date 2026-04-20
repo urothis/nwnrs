@@ -209,7 +209,8 @@ impl TwoDa {
     ///
     /// # Errors
     ///
-    /// Returns [`TwoDaError`] if `row` is out of bounds or `column` does not exist.
+    /// Returns [`TwoDaError`] if `row` is out of bounds or `column` does not
+    /// exist.
     pub fn set_cell(&mut self, row: usize, column: &str, value: Cell) -> TwoDaResult<()> {
         if row >= self.rows.len() {
             return Err(TwoDaError::msg("Row out of bounds"));
@@ -295,7 +296,8 @@ impl TwoDa {
     ///
     /// # Errors
     ///
-    /// Returns [`TwoDaError`] if `rows` and `row_labels` have different lengths.
+    /// Returns [`TwoDaError`] if `rows` and `row_labels` have different
+    /// lengths.
     pub fn replace_rows(&mut self, rows: Vec<Row>, row_labels: Vec<String>) -> TwoDaResult<()> {
         if rows.len() != row_labels.len() {
             return Err(TwoDaError::msg("row data and row labels length mismatch"));

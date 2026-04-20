@@ -67,7 +67,8 @@ impl ResMan {
     ///
     /// # Errors
     ///
-    /// Returns [`ResManError`] if no container provides the requested resource or the demand fails.
+    /// Returns [`ResManError`] if no container provides the requested resource
+    /// or the demand fails.
     #[instrument(level = "debug", skip_all, err, fields(resref = %rr, cache_policy = ?cache_policy))]
     pub fn demand(&mut self, rr: &ResRef, cache_policy: CachePolicy) -> ResManResult<Res> {
         if cache_policy.uses_cache()

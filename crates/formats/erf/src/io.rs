@@ -26,7 +26,8 @@ use crate::{
 ///
 /// # Errors
 ///
-/// Returns [`ErfError`] if the data cannot be read or does not conform to an ERF-family format.
+/// Returns [`ErfError`] if the data cannot be read or does not conform to an
+/// ERF-family format.
 #[instrument(level = "debug", skip_all, err)]
 pub fn read_erf<R>(reader: R, filename: impl Into<String>) -> ErfResult<Erf>
 where
@@ -54,7 +55,8 @@ pub fn read_erf_from_file(path: impl AsRef<Path>) -> ErfResult<Erf> {
 ///
 /// # Errors
 ///
-/// Returns [`ErfError`] if the data cannot be read or does not conform to an ERF-family format.
+/// Returns [`ErfError`] if the data cannot be read or does not conform to an
+/// ERF-family format.
 #[instrument(level = "debug", skip_all, err, fields(path = %filename))]
 pub fn read_erf_shared(stream: SharedReadSeek, filename: String) -> ErfResult<Erf> {
     let mut io = stream

@@ -271,7 +271,8 @@ impl PltTexture {
     ///
     /// # Errors
     ///
-    /// Returns [`PltError`] if the pixel buffer does not match the declared dimensions.
+    /// Returns [`PltError`] if the pixel buffer does not match the declared
+    /// dimensions.
     pub fn render_rgba8(&self, spec: &PltRenderSpec) -> PltResult<Vec<u8>> {
         let expected_pixels = self.pixel_count()?;
         if self.pixels.len() != expected_pixels {
@@ -310,7 +311,8 @@ impl PltTexture {
     ///
     /// # Errors
     ///
-    /// Returns [`PltError`] if the resource is not a PLT type or the bytes cannot be parsed.
+    /// Returns [`PltError`] if the resource is not a PLT type or the bytes
+    /// cannot be parsed.
     pub fn from_res(res: &Res, cache_policy: CachePolicy) -> PltResult<Self> {
         if res.resref().res_type() != PLT_RES_TYPE {
             return Err(PltError::msg(format!(
@@ -328,7 +330,8 @@ impl PltTexture {
 ///
 /// # Errors
 ///
-/// Returns [`PltError`] if the data cannot be read or does not conform to the PLT format.
+/// Returns [`PltError`] if the data cannot be read or does not conform to the
+/// PLT format.
 #[instrument(level = "debug", skip_all, err)]
 pub fn read_plt<R: Read>(reader: &mut R) -> PltResult<PltTexture> {
     let mut bytes = Vec::new();

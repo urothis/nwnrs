@@ -6,7 +6,8 @@ use crate::prelude::*;
 ///
 /// # Errors
 ///
-/// Returns [`ParseLanguageError`] if the input does not match a known language id, shortcode, or name.
+/// Returns [`ParseLanguageError`] if the input does not match a known language
+/// id, shortcode, or name.
 #[instrument(level = "debug", skip_all, err, fields(input = %input))]
 pub fn resolve_language(input: &str) -> Result<Language, ParseLanguageError> {
     if input.chars().all(|ch| ch.is_ascii_digit()) {

@@ -141,7 +141,8 @@ impl DdsMipLevel {
     ///
     /// # Errors
     ///
-    /// Returns [`DdsError`] if the format is unsupported or the pixel data is malformed.
+    /// Returns [`DdsError`] if the format is unsupported or the pixel data is
+    /// malformed.
     pub fn decode_rgba8(&self, format: DdsFormat) -> DdsResult<Vec<u8>> {
         decode_mip_rgba8(self, format)
     }
@@ -183,7 +184,8 @@ impl DdsTexture {
     ///
     /// # Errors
     ///
-    /// Returns [`DdsError`] if `rgba` does not match the expected length or encoding fails.
+    /// Returns [`DdsError`] if `rgba` does not match the expected length or
+    /// encoding fails.
     pub fn encode_rgba8(
         width: u32,
         height: u32,
@@ -275,7 +277,8 @@ impl DdsTexture {
     ///
     /// # Errors
     ///
-    /// Returns [`DdsError`] if the resource is not a DDS type or the bytes cannot be parsed.
+    /// Returns [`DdsError`] if the resource is not a DDS type or the bytes
+    /// cannot be parsed.
     pub fn from_res(res: &Res, cache_policy: CachePolicy) -> DdsResult<Self> {
         if res.resref().res_type() != DDS_RES_TYPE {
             return Err(DdsError::msg(format!(
@@ -293,7 +296,8 @@ impl DdsTexture {
 ///
 /// # Errors
 ///
-/// Returns [`DdsError`] if the data cannot be read or does not conform to the NWN DDS format.
+/// Returns [`DdsError`] if the data cannot be read or does not conform to the
+/// NWN DDS format.
 #[instrument(level = "debug", skip_all, err)]
 pub fn read_dds<R: Read>(reader: &mut R) -> DdsResult<DdsTexture> {
     let mut bytes = Vec::new();

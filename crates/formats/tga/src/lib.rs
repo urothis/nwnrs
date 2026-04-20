@@ -169,7 +169,8 @@ impl TgaTexture {
     ///
     /// # Errors
     ///
-    /// Returns [`TgaError`] if `rgba` does not match the expected length for the given dimensions.
+    /// Returns [`TgaError`] if `rgba` does not match the expected length for
+    /// the given dimensions.
     pub fn encode_rgba8(width: u16, height: u16, rgba: &[u8]) -> TgaResult<Self> {
         let expected_len = rgba_len(width, height)?;
         if rgba.len() != expected_len {
@@ -240,7 +241,8 @@ impl TgaTexture {
     ///
     /// # Errors
     ///
-    /// Returns [`TgaError`] if the pixel depth is unsupported or the image data is malformed.
+    /// Returns [`TgaError`] if the pixel depth is unsupported or the image data
+    /// is malformed.
     pub fn expanded_image_data(&self) -> TgaResult<Vec<u8>> {
         let bytes_per_pixel = pixel_size_bytes(self.pixel_depth)?;
         let pixel_count = self.pixel_count()?;
@@ -264,7 +266,8 @@ impl TgaTexture {
     ///
     /// # Errors
     ///
-    /// Returns [`TgaError`] if the image type is unsupported or the pixel data is malformed.
+    /// Returns [`TgaError`] if the image type is unsupported or the pixel data
+    /// is malformed.
     #[allow(clippy::many_single_char_names)]
     pub fn decode_rgba8(&self) -> TgaResult<Vec<u8>> {
         if self.image_type.uses_color_map() {
@@ -334,7 +337,8 @@ impl TgaTexture {
     ///
     /// # Errors
     ///
-    /// Returns [`TgaError`] if the resource is not a TGA type or the bytes cannot be parsed.
+    /// Returns [`TgaError`] if the resource is not a TGA type or the bytes
+    /// cannot be parsed.
     pub fn from_res(res: &Res, cache_policy: CachePolicy) -> TgaResult<Self> {
         if res.resref().res_type() != TGA_RES_TYPE {
             return Err(TgaError::msg(format!(
@@ -352,7 +356,8 @@ impl TgaTexture {
 ///
 /// # Errors
 ///
-/// Returns [`TgaError`] if the data cannot be read or does not conform to the TGA format.
+/// Returns [`TgaError`] if the data cannot be read or does not conform to the
+/// TGA format.
 #[instrument(level = "debug", skip_all, err)]
 pub fn read_tga<R: Read>(reader: &mut R) -> TgaResult<TgaTexture> {
     let mut bytes = Vec::new();

@@ -13,7 +13,8 @@ use crate::{
 ///
 /// # Errors
 ///
-/// Returns [`TwoDaError`] if the data cannot be read or does not conform to the 2DA V2.0 format.
+/// Returns [`TwoDaError`] if the data cannot be read or does not conform to the
+/// 2DA V2.0 format.
 #[instrument(level = "debug", skip_all, err)]
 pub fn read_twoda<R: Read>(mut reader: R) -> TwoDaResult<TwoDa> {
     let mut bytes = Vec::new();
@@ -140,7 +141,8 @@ pub fn read_twoda<R: Read>(mut reader: R) -> TwoDaResult<TwoDa> {
 ///
 /// # Errors
 ///
-/// Returns [`TwoDaError`] if the table has no columns or a cell value cannot be escaped.
+/// Returns [`TwoDaError`] if the table has no columns or a cell value cannot be
+/// escaped.
 #[instrument(
     level = "debug",
     skip_all,
@@ -266,7 +268,8 @@ pub fn write_twoda<W: Write>(writer: &mut W, twoda: &TwoDa, minify: bool) -> Two
 ///
 /// # Errors
 ///
-/// Returns [`TwoDaError`] if the resource bytes cannot be parsed as a 2DA table.
+/// Returns [`TwoDaError`] if the resource bytes cannot be parsed as a 2DA
+/// table.
 #[instrument(level = "debug", skip_all, err)]
 pub fn as_2da(res: &Res) -> TwoDaResult<TwoDa> {
     read_twoda(std::io::Cursor::new(res.read_all(CachePolicy::Bypass)?))

@@ -25,7 +25,8 @@ pub fn get_nwnrs_encoding_name() -> &'static str {
 ///
 /// # Errors
 ///
-/// Returns [`UnknownEncodingError`] if `label` does not map to a known encoding.
+/// Returns [`UnknownEncodingError`] if `label` does not map to a known
+/// encoding.
 #[instrument(level = "debug", skip_all, err, fields(label = %label))]
 pub fn set_nwnrs_encoding(label: &str) -> Result<(), UnknownEncodingError> {
     let encoding =
@@ -64,7 +65,8 @@ pub fn get_native_encoding_name() -> Result<&'static str, NativeEncodingError> {
 ///
 /// # Errors
 ///
-/// Returns [`UnknownEncodingError`] if `label` does not map to a known encoding.
+/// Returns [`UnknownEncodingError`] if `label` does not map to a known
+/// encoding.
 #[instrument(level = "debug", skip_all, err, fields(label = %label))]
 pub fn set_native_encoding(label: &str) -> Result<(), UnknownEncodingError> {
     let encoding =
@@ -100,7 +102,8 @@ pub fn detect_system_native_encoding() -> Result<&'static Encoding, NativeEncodi
 ///
 /// # Errors
 ///
-/// Returns [`EncodingConversionError`] if the string cannot be represented in the current NWN encoding.
+/// Returns [`EncodingConversionError`] if the string cannot be represented in
+/// the current NWN encoding.
 #[instrument(level = "debug", skip_all, err, fields(input_len = value.len()))]
 pub fn to_nwnrs_encoding(value: &str) -> Result<Vec<u8>, EncodingConversionError> {
     encode_with(get_nwnrs_encoding(), value, "encode text for NWN")
@@ -110,7 +113,8 @@ pub fn to_nwnrs_encoding(value: &str) -> Result<Vec<u8>, EncodingConversionError
 ///
 /// # Errors
 ///
-/// Returns [`EncodingConversionError`] if the bytes cannot be decoded with the current NWN encoding.
+/// Returns [`EncodingConversionError`] if the bytes cannot be decoded with the
+/// current NWN encoding.
 #[instrument(level = "debug", skip_all, err, fields(input_len = bytes.len()))]
 pub fn from_nwnrs_encoding(bytes: &[u8]) -> Result<String, EncodingConversionError> {
     decode_with(get_nwnrs_encoding(), bytes, "decode text from NWN")
@@ -120,7 +124,8 @@ pub fn from_nwnrs_encoding(bytes: &[u8]) -> Result<String, EncodingConversionErr
 ///
 /// # Errors
 ///
-/// Returns [`EncodingConversionError`] if the system encoding cannot be detected or the string cannot be represented in it.
+/// Returns [`EncodingConversionError`] if the system encoding cannot be
+/// detected or the string cannot be represented in it.
 #[instrument(level = "debug", skip_all, err, fields(input_len = value.len()))]
 pub fn to_native_encoding(value: &str) -> Result<Vec<u8>, EncodingConversionError> {
     let encoding = get_native_encoding().map_err(|error| {
@@ -133,7 +138,8 @@ pub fn to_native_encoding(value: &str) -> Result<Vec<u8>, EncodingConversionErro
 ///
 /// # Errors
 ///
-/// Returns [`EncodingConversionError`] if the system encoding cannot be detected or the bytes cannot be decoded with it.
+/// Returns [`EncodingConversionError`] if the system encoding cannot be
+/// detected or the bytes cannot be decoded with it.
 #[instrument(level = "debug", skip_all, err, fields(input_len = bytes.len()))]
 pub fn from_native_encoding(bytes: &[u8]) -> Result<String, EncodingConversionError> {
     let encoding = get_native_encoding().map_err(|error| {

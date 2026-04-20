@@ -19,7 +19,8 @@ use crate::{ResDir, ResDirError, ResDirResult};
 ///
 /// # Errors
 ///
-/// Returns [`ResDirError`] if the path is not a directory or any file metadata cannot be read.
+/// Returns [`ResDirError`] if the path is not a directory or any file metadata
+/// cannot be read.
 #[instrument(level = "debug", skip_all, err, fields(path = %path.as_ref().display()))]
 pub fn read_resdir(path: impl AsRef<Path>) -> ResDirResult<ResDir> {
     let root = path.as_ref();

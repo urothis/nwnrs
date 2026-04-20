@@ -28,7 +28,8 @@ pub fn make_magic(magic: &str) -> Result<u32, ExpectationError> {
 ///
 /// # Errors
 ///
-/// Returns [`CompressedBufError`] if the bytes are malformed or decompression fails.
+/// Returns [`CompressedBufError`] if the bytes are malformed or decompression
+/// fails.
 #[instrument(level = "debug", skip_all, err, fields(expect_magic))]
 pub fn decompress_bytes(bytes: &[u8], expect_magic: u32) -> CompressedBufResult<Vec<u8>> {
     Ok(read_payload_bytes(bytes, expect_magic)?.data)
@@ -38,7 +39,8 @@ pub fn decompress_bytes(bytes: &[u8], expect_magic: u32) -> CompressedBufResult<
 ///
 /// # Errors
 ///
-/// Returns [`CompressedBufError`] if the data cannot be read or decompression fails.
+/// Returns [`CompressedBufError`] if the data cannot be read or decompression
+/// fails.
 #[instrument(level = "debug", skip_all, err, fields(expect_magic))]
 pub fn decompress_reader<R: Read>(
     reader: &mut R,
@@ -51,7 +53,8 @@ pub fn decompress_reader<R: Read>(
 ///
 /// # Errors
 ///
-/// Returns [`CompressedBufError`] if the bytes are malformed or decompression fails.
+/// Returns [`CompressedBufError`] if the bytes are malformed or decompression
+/// fails.
 #[instrument(level = "debug", skip_all, err, fields(expect_magic))]
 pub fn read_payload_bytes(
     bytes: &[u8],
@@ -67,7 +70,8 @@ pub fn read_payload_bytes(
 ///
 /// # Errors
 ///
-/// Returns [`CompressedBufError`] if the data cannot be read or does not conform to the format.
+/// Returns [`CompressedBufError`] if the data cannot be read or does not
+/// conform to the format.
 #[instrument(level = "debug", skip_all, err, fields(expect_magic))]
 pub fn read_payload_reader<R: Read>(
     reader: &mut R,

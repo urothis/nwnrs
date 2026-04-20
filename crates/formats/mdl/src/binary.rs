@@ -61,7 +61,8 @@ impl ParsedModel {
     ///
     /// # Errors
     ///
-    /// Returns [`ModelError`] if the resource is not an MDL type or parsing fails.
+    /// Returns [`ModelError`] if the resource is not an MDL type or parsing
+    /// fails.
     pub fn from_res(res: &Res, cache_policy: CachePolicy) -> ModelResult<Self> {
         if res.resref().res_type() != MODEL_RES_TYPE {
             return Err(ModelError::msg(format!(
@@ -153,7 +154,8 @@ impl BinaryModel {
     ///
     /// # Errors
     ///
-    /// Returns [`ModelError`] if the resource is not an MDL type or parsing fails.
+    /// Returns [`ModelError`] if the resource is not an MDL type or parsing
+    /// fails.
     pub fn from_res(res: &Res, cache_policy: CachePolicy) -> ModelResult<Self> {
         if res.resref().res_type() != MODEL_RES_TYPE {
             return Err(ModelError::msg(format!(
@@ -601,7 +603,8 @@ impl Model {
     ///
     /// # Errors
     ///
-    /// Returns [`ModelError`] if the payload cannot be parsed as a compiled binary MDL.
+    /// Returns [`ModelError`] if the payload cannot be parsed as a compiled
+    /// binary MDL.
     pub fn parse_binary(&self) -> ModelResult<BinaryModel> {
         parse_binary_model_bytes(self.bytes())
     }
@@ -624,7 +627,8 @@ pub fn detect_model_encoding(bytes: &[u8]) -> ModelEncoding {
 ///
 /// # Errors
 ///
-/// Returns [`ModelError`] if the payload cannot be parsed as ASCII or compiled MDL.
+/// Returns [`ModelError`] if the payload cannot be parsed as ASCII or compiled
+/// MDL.
 pub fn parse_model_bytes(bytes: &[u8]) -> ModelResult<ParsedModel> {
     match detect_model_encoding(bytes) {
         ModelEncoding::Ascii => {
@@ -666,7 +670,8 @@ pub fn write_parsed_model<W: Write>(writer: &mut W, model: &ParsedModel) -> Mode
 ///
 /// # Errors
 ///
-/// Returns [`ModelError`] if the bytes do not conform to the compiled MDL format.
+/// Returns [`ModelError`] if the bytes do not conform to the compiled MDL
+/// format.
 pub fn parse_binary_model_bytes(bytes: &[u8]) -> ModelResult<BinaryModel> {
     let header = parse_binary_header(bytes)?;
     let mut parser = BinaryParser::new(bytes, header.clone());
@@ -677,7 +682,8 @@ pub fn parse_binary_model_bytes(bytes: &[u8]) -> ModelResult<BinaryModel> {
 ///
 /// # Errors
 ///
-/// Returns [`ModelError`] if the data cannot be read or parsed as a compiled MDL.
+/// Returns [`ModelError`] if the data cannot be read or parsed as a compiled
+/// MDL.
 #[instrument(level = "debug", skip_all, err)]
 pub fn read_binary_model<R: Read>(reader: &mut R) -> ModelResult<BinaryModel> {
     let mut bytes = Vec::new();

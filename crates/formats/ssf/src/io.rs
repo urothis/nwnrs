@@ -11,7 +11,8 @@ use crate::{
 ///
 /// # Errors
 ///
-/// Returns an [`io::Error`] if the data cannot be read or does not conform to the SSF format.
+/// Returns an [`io::Error`] if the data cannot be read or does not conform to
+/// the SSF format.
 #[instrument(level = "debug", skip_all, err)]
 pub fn read_ssf<R: Read + Seek>(reader: &mut R) -> SsfResult<SsfRoot> {
     let file_type = read_str_or_err(reader, 4)?;
@@ -73,7 +74,8 @@ pub fn read_ssf<R: Read + Seek>(reader: &mut R) -> SsfResult<SsfRoot> {
 ///
 /// # Errors
 ///
-/// Returns an [`io::Error`] if the SSF data cannot be serialized or the write fails.
+/// Returns an [`io::Error`] if the SSF data cannot be serialized or the write
+/// fails.
 #[instrument(level = "debug", skip_all, err, fields(entry_count = ssf.entries.len()))]
 pub fn write_ssf<W: Write>(writer: &mut W, ssf: &SsfRoot) -> SsfResult<()> {
     writer.write_all(HEADER_MAGIC.as_bytes())?;

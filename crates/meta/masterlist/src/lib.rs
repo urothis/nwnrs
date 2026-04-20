@@ -135,7 +135,8 @@ where
 ///
 /// # Errors
 ///
-/// Returns [`reqwest::Error`] if the request fails or the response cannot be deserialized.
+/// Returns [`reqwest::Error`] if the request fails or the response cannot be
+/// deserialized.
 #[instrument(level = "info", err)]
 pub async fn get_my_servers() -> Result<Me, reqwest::Error> {
     info!("fetching current caller masterlist servers");
@@ -146,7 +147,8 @@ pub async fn get_my_servers() -> Result<Me, reqwest::Error> {
 ///
 /// # Errors
 ///
-/// Returns [`reqwest::Error`] if the request fails or the response cannot be deserialized.
+/// Returns [`reqwest::Error`] if the request fails or the response cannot be
+/// deserialized.
 #[instrument(level = "info", err)]
 pub async fn get_servers() -> Result<Vec<Server>, reqwest::Error> {
     info!("fetching full masterlist server list");
@@ -157,7 +159,8 @@ pub async fn get_servers() -> Result<Vec<Server>, reqwest::Error> {
 ///
 /// # Errors
 ///
-/// Returns [`reqwest::Error`] if the request fails or the response cannot be deserialized.
+/// Returns [`reqwest::Error`] if the request fails or the response cannot be
+/// deserialized.
 #[instrument(level = "info", skip_all, err, fields(public_key = %public_key))]
 pub async fn get_servers_by_public_key(public_key: String) -> Result<Vec<Server>, reqwest::Error> {
     info!("fetching masterlist servers by public key");
@@ -168,7 +171,8 @@ pub async fn get_servers_by_public_key(public_key: String) -> Result<Vec<Server>
 ///
 /// # Errors
 ///
-/// Returns [`reqwest::Error`] if the request fails or the response cannot be deserialized.
+/// Returns [`reqwest::Error`] if the request fails or the response cannot be
+/// deserialized.
 #[instrument(level = "info", skip_all, err, fields(ip = %ip, port))]
 pub async fn get_servers_by_ip_and_port(
     ip: String,

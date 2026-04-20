@@ -123,7 +123,8 @@ impl TxiFile {
     ///
     /// # Errors
     ///
-    /// Returns [`TxiError`] if the resource is not a TXI type or the bytes cannot be parsed.
+    /// Returns [`TxiError`] if the resource is not a TXI type or the bytes
+    /// cannot be parsed.
     pub fn from_res(res: &Res, cache_policy: CachePolicy) -> TxiResult<Self> {
         if res.resref().res_type() != TXI_RES_TYPE {
             return Err(TxiError::msg(format!(
@@ -141,7 +142,8 @@ impl TxiFile {
     ///
     /// # Errors
     ///
-    /// Returns [`TxiError`] if the resref is invalid, the resource is not found, or parsing fails.
+    /// Returns [`TxiError`] if the resref is invalid, the resource is not
+    /// found, or parsing fails.
     pub fn from_resman(
         resman: &mut ResMan,
         name: &str,
@@ -285,7 +287,8 @@ pub fn parse_txi(text: &str) -> TxiResult<TxiFile> {
 ///
 /// # Errors
 ///
-/// This function currently always succeeds but returns [`TxiResult`] for forward compatibility.
+/// This function currently always succeeds but returns [`TxiResult`] for
+/// forward compatibility.
 pub fn build_txi_text(txi_file: &TxiFile) -> TxiResult<String> {
     let directives = if txi_file.directives.is_empty() {
         synthesize_directives(txi_file)

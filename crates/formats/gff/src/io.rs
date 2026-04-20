@@ -73,7 +73,8 @@ struct WriteFieldEntry {
 ///
 /// # Errors
 ///
-/// Returns [`GffError`] if the data cannot be read or does not conform to the GFF V3.2 format.
+/// Returns [`GffError`] if the data cannot be read or does not conform to the
+/// GFF V3.2 format.
 #[instrument(level = "debug", skip_all, err)]
 pub fn read_gff_root<R: Read + Seek>(reader: &mut R) -> GffResult<GffRoot> {
     let start = reader.stream_position()?;

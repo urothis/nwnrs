@@ -315,7 +315,8 @@ impl AsciiModel {
     ///
     /// # Errors
     ///
-    /// Returns [`ModelError`] if the resource is not an MDL type or parsing fails.
+    /// Returns [`ModelError`] if the resource is not an MDL type or parsing
+    /// fails.
     pub fn from_res(res: &Res, cache_policy: CachePolicy) -> ModelResult<Self> {
         if res.resref().res_type() != MODEL_RES_TYPE {
             return Err(ModelError::msg(format!(
@@ -344,7 +345,8 @@ impl Model {
 ///
 /// # Errors
 ///
-/// Returns [`ModelError`] if the text cannot be parsed as a valid ASCII MDL model.
+/// Returns [`ModelError`] if the text cannot be parsed as a valid ASCII MDL
+/// model.
 pub fn parse_ascii_model(text: &str) -> ModelResult<AsciiModel> {
     Parser::new(text).parse_model()
 }

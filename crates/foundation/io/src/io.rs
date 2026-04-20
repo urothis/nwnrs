@@ -20,7 +20,8 @@ pub fn read_bytes_or_err<R: Read + ?Sized>(reader: &mut R, size: usize) -> io::R
 ///
 /// # Errors
 ///
-/// Returns an [`io::Error`] if the reader cannot supply exactly `size` bytes or the bytes are not valid UTF-8.
+/// Returns an [`io::Error`] if the reader cannot supply exactly `size` bytes or
+/// the bytes are not valid UTF-8.
 #[instrument(level = "debug", skip_all, err, fields(size))]
 pub fn read_str_or_err<R: Read + ?Sized>(reader: &mut R, size: usize) -> io::Result<String> {
     let bytes = read_bytes_or_err(reader, size)?;

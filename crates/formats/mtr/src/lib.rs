@@ -107,7 +107,8 @@ impl MtrMaterial {
     ///
     /// # Errors
     ///
-    /// Returns [`MtrError`] if the resource is not an MTR type or the bytes cannot be parsed.
+    /// Returns [`MtrError`] if the resource is not an MTR type or the bytes
+    /// cannot be parsed.
     pub fn from_res(res: &Res, cache_policy: CachePolicy) -> MtrResult<Self> {
         if res.resref().res_type() != MTR_RES_TYPE {
             return Err(MtrError::msg(format!(

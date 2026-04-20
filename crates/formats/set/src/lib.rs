@@ -103,7 +103,8 @@ impl SetFile {
     ///
     /// # Errors
     ///
-    /// Returns [`SetError`] if the resource is not a SET type or the bytes cannot be parsed.
+    /// Returns [`SetError`] if the resource is not a SET type or the bytes
+    /// cannot be parsed.
     pub fn from_res(res: &Res, cache_policy: CachePolicy) -> SetResult<Self> {
         if res.resref().res_type() != SET_RES_TYPE {
             return Err(SetError::msg(format!(
@@ -326,7 +327,8 @@ pub struct SetPrimaryRule {
 ///
 /// # Errors
 ///
-/// Returns [`SetError`] if the data cannot be read or does not conform to the SET format.
+/// Returns [`SetError`] if the data cannot be read or does not conform to the
+/// SET format.
 #[instrument(level = "debug", skip_all, err)]
 pub fn read_set<R: Read>(reader: &mut R) -> SetResult<SetFile> {
     let mut text = String::new();
@@ -449,7 +451,8 @@ pub fn build_set_text(set_file: &SetFile) -> SetResult<String> {
 ///
 /// # Errors
 ///
-/// Returns [`SetError`] if the file contains no tile definitions or the write fails.
+/// Returns [`SetError`] if the file contains no tile definitions or the write
+/// fails.
 pub fn write_set<W: Write>(writer: &mut W, set_file: &SetFile) -> SetResult<()> {
     let text = build_set_text(set_file)?;
     writer.write_all(text.as_bytes())?;

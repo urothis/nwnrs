@@ -317,7 +317,8 @@ impl SingleTlk {
     ///
     /// # Errors
     ///
-    /// Returns [`TlkError`] if the resource bytes cannot be parsed as a TLK table.
+    /// Returns [`TlkError`] if the resource bytes cannot be parsed as a TLK
+    /// table.
     pub fn from_res(res: &Res, cache_policy: CachePolicy) -> TlkResult<Self> {
         let bytes = res.read_all(cache_policy)?;
         crate::io::read_single_tlk(Cursor::new(bytes), cache_policy)

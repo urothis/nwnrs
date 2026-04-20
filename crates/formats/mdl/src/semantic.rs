@@ -85,7 +85,8 @@ impl SemanticModel {
     ///
     /// # Errors
     ///
-    /// Returns [`ModelError`] if the resource is not an MDL type or lowering fails.
+    /// Returns [`ModelError`] if the resource is not an MDL type or lowering
+    /// fails.
     pub fn from_res(res: &Res, cache_policy: CachePolicy) -> ModelResult<Self> {
         if res.resref().res_type() != MODEL_RES_TYPE {
             return Err(ModelError::msg(format!(
@@ -103,7 +104,8 @@ impl SemanticModel {
     ///
     /// # Errors
     ///
-    /// Returns [`ModelError`] if the resource is not an MDL type or lowering fails.
+    /// Returns [`ModelError`] if the resource is not an MDL type or lowering
+    /// fails.
     pub fn from_auto_res(res: &Res, cache_policy: CachePolicy) -> ModelResult<Self> {
         if res.resref().res_type() != MODEL_RES_TYPE {
             return Err(ModelError::msg(format!(

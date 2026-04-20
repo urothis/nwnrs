@@ -66,7 +66,8 @@ impl ResRef {
     ///
     /// # Errors
     ///
-    /// Returns [`ResRefError`] if `res_ref` is not a valid resource reference name.
+    /// Returns [`ResRefError`] if `res_ref` is not a valid resource reference
+    /// name.
     pub fn new(res_ref: impl Into<String>, res_type: ResType) -> Result<Self, ResRefError> {
         let res_ref = res_ref.into();
         nwnrs_io::expect(
@@ -147,7 +148,8 @@ impl ResolvedResRef {
     ///
     /// # Errors
     ///
-    /// Returns [`ResRefError`] if `res_ref` is invalid or `res_type` cannot be resolved to a file extension.
+    /// Returns [`ResRefError`] if `res_ref` is invalid or `res_type` cannot be
+    /// resolved to a file extension.
     pub fn new(res_ref: impl Into<String>, res_type: ResType) -> Result<Self, ResRefError> {
         let res_ref = res_ref.into();
         let resolved = ResRef::new(res_ref.clone(), res_type)?
@@ -176,7 +178,8 @@ impl ResolvedResRef {
     ///
     /// # Errors
     ///
-    /// Returns [`ResRefError`] if `filename` cannot be parsed as a resolvable resource reference.
+    /// Returns [`ResRefError`] if `filename` cannot be parsed as a resolvable
+    /// resource reference.
     pub fn from_filename(filename: &str) -> Result<Self, ResRefError> {
         Self::try_from_filename(filename)
             .ok_or_else(|| ResRefError::Message(format!("'{filename}' is not a resolvable resref")))
