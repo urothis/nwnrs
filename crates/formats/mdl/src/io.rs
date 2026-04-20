@@ -8,7 +8,7 @@ use crate::{Model, ModelResult};
 ///
 /// # Errors
 ///
-/// Returns [`ModelError`] if the data cannot be read.
+/// Returns [`crate::ModelError`] if the data cannot be read.
 #[instrument(level = "debug", skip_all, err)]
 pub fn read_model<R: Read>(reader: &mut R) -> ModelResult<Model> {
     let mut bytes = Vec::new();
