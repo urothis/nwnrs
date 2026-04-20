@@ -72,12 +72,20 @@ impl SemanticModel {
 
     /// Reads and lowers a semantic model from disk using automatic
     /// ASCII/compiled dispatch.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError`] if the file cannot be opened or lowered.
     pub fn from_auto_file(path: impl AsRef<Path>) -> ModelResult<Self> {
         let mut file = File::open(path.as_ref())?;
         read_semantic_model_auto(&mut file)
     }
 
     /// Reads and lowers a semantic model from a [`Res`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError`] if the resource is not an MDL type or lowering fails.
     pub fn from_res(res: &Res, cache_policy: CachePolicy) -> ModelResult<Self> {
         if res.resref().res_type() != MODEL_RES_TYPE {
             return Err(ModelError::msg(format!(
@@ -92,6 +100,10 @@ impl SemanticModel {
 
     /// Reads and lowers a semantic model from a [`Res`] using automatic
     /// ASCII/compiled dispatch.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError`] if the resource is not an MDL type or lowering fails.
     pub fn from_auto_res(res: &Res, cache_policy: CachePolicy) -> ModelResult<Self> {
         if res.resref().res_type() != MODEL_RES_TYPE {
             return Err(ModelError::msg(format!(
@@ -541,12 +553,20 @@ pub enum ModelDiagnosticKind {
 
 impl Model {
     /// Parses and lowers the raw payload into a typed semantic model.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError`] if parsing or lowering fails.
     pub fn parse_semantic(&self) -> ModelResult<SemanticModel> {
         lower_ascii_model(&self.parse_ascii()?)
     }
 
     /// Parses and lowers the raw payload into a typed semantic model using
     /// automatic ASCII/compiled dispatch.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError`] if parsing or lowering fails.
     pub fn parse_semantic_auto(&self) -> ModelResult<SemanticModel> {
         match self.parse_parsed()? {
             ParsedModel::Ascii(model) => lower_ascii_model(&model),
@@ -556,12 +576,20 @@ impl Model {
 }
 
 /// Parses and lowers a semantic model from ASCII MDL text.
+///
+/// # Errors
+///
+/// Returns [`ModelError`] if parsing or lowering fails.
 pub fn parse_semantic_model(text: &str) -> ModelResult<SemanticModel> {
     lower_ascii_model(&parse_ascii_model(text)?)
 }
 
 /// Parses and lowers a semantic model from raw MDL bytes using automatic
 /// ASCII/compiled dispatch.
+///
+/// # Errors
+///
+/// Returns [`ModelError`] if parsing or lowering fails.
 pub fn parse_semantic_model_auto(bytes: &[u8]) -> ModelResult<SemanticModel> {
     match crate::parse_model_bytes(bytes)? {
         ParsedModel::Ascii(model) => lower_ascii_model(&model),
@@ -570,6 +598,10 @@ pub fn parse_semantic_model_auto(bytes: &[u8]) -> ModelResult<SemanticModel> {
 }
 
 /// Reads and lowers a semantic model from `reader`.
+///
+/// # Errors
+///
+/// Returns [`ModelError`] if reading or lowering fails.
 #[instrument(level = "debug", skip_all, err)]
 pub fn read_semantic_model<R: Read>(reader: &mut R) -> ModelResult<SemanticModel> {
     let ascii = read_ascii_model(reader)?;
@@ -578,6 +610,10 @@ pub fn read_semantic_model<R: Read>(reader: &mut R) -> ModelResult<SemanticModel
 
 /// Reads and lowers a semantic model from `reader` using automatic
 /// ASCII/compiled dispatch.
+///
+/// # Errors
+///
+/// Returns [`ModelError`] if reading or lowering fails.
 #[instrument(level = "debug", skip_all, err)]
 pub fn read_semantic_model_auto<R: Read>(reader: &mut R) -> ModelResult<SemanticModel> {
     match read_parsed_model(reader)? {
@@ -587,6 +623,10 @@ pub fn read_semantic_model_auto<R: Read>(reader: &mut R) -> ModelResult<Semantic
 }
 
 /// Writes a semantic MDL model as canonical ASCII.
+///
+/// # Errors
+///
+/// Returns [`ModelError`] if the write fails.
 #[instrument(level = "debug", skip_all, err, fields(model_name = %model.geometry_name))]
 pub fn write_semantic_model<W: Write>(writer: &mut W, model: &SemanticModel) -> ModelResult<()> {
     let ascii = crate::ascii::lower_semantic_model_to_ascii(model, None);
@@ -594,6 +634,10 @@ pub fn write_semantic_model<W: Write>(writer: &mut W, model: &SemanticModel) -> 
 }
 
 /// Lowers a source-faithful ASCII MDL model into typed semantic data.
+///
+/// # Errors
+///
+/// Returns [`ModelError`] if lowering fails.
 pub fn lower_ascii_model(model: &AsciiModel) -> ModelResult<SemanticModel> {
     let mut diagnostics = Vec::new();
     let header = lower_header(model, &mut diagnostics);
