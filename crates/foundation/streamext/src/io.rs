@@ -5,6 +5,10 @@ use tracing::instrument;
 use crate::prelude::*;
 
 /// Reads a byte buffer prefixed by a little-endian length.
+///
+/// # Errors
+///
+/// Returns an [`io::Error`] if the prefix or the subsequent bytes cannot be read, or if the prefix length does not match `expect_fixed_size`.
 #[instrument(
     level = "debug",
     skip_all,
@@ -34,6 +38,10 @@ where
 }
 
 /// Reads a UTF-8 string prefixed by a little-endian length.
+///
+/// # Errors
+///
+/// Returns an [`io::Error`] if the bytes cannot be read or are not valid UTF-8.
 #[instrument(
     level = "debug",
     skip_all,
@@ -53,6 +61,10 @@ where
 }
 
 /// Reads exactly `size` bytes.
+///
+/// # Errors
+///
+/// Returns an [`io::Error`] if the reader cannot supply exactly `size` bytes.
 #[instrument(level = "debug", skip_all, err, fields(size))]
 pub fn read_bytes<R: Read>(reader: &mut R, size: usize) -> io::Result<Vec<u8>> {
     let mut bytes = vec![0_u8; size];
@@ -61,6 +73,10 @@ pub fn read_bytes<R: Read>(reader: &mut R, size: usize) -> io::Result<Vec<u8>> {
 }
 
 /// Reads exactly `size` bytes and decodes them as UTF-8.
+///
+/// # Errors
+///
+/// Returns an [`io::Error`] if the reader cannot supply exactly `size` bytes or the bytes are not valid UTF-8.
 #[instrument(level = "debug", skip_all, err, fields(size))]
 pub fn read_string<R: Read>(reader: &mut R, size: usize) -> io::Result<String> {
     let bytes = read_bytes(reader, size)?;
@@ -68,6 +84,10 @@ pub fn read_string<R: Read>(reader: &mut R, size: usize) -> io::Result<String> {
 }
 
 /// Reads and validates a fixed byte sequence.
+///
+/// # Errors
+///
+/// Returns an [`io::Error`] if the bytes cannot be read or do not match `value`.
 #[instrument(level = "debug", skip_all, err, fields(size = value.len()))]
 pub fn read_fixed_value<R: Read>(reader: &mut R, value: &[u8]) -> io::Result<()> {
     let data = read_bytes(reader, value.len())?;
@@ -85,6 +105,10 @@ pub fn read_fixed_value<R: Read>(reader: &mut R, value: &[u8]) -> io::Result<()>
 }
 
 /// Reads exactly `count` elements using `item_reader`.
+///
+/// # Errors
+///
+/// Returns an [`io::Error`] if `item_reader` fails for any element.
 #[instrument(level = "debug", skip_all, err, fields(count))]
 pub fn read_fixed_count_seq<R, T, F>(
     reader: &mut R,
@@ -103,6 +127,10 @@ where
 }
 
 /// Reads a sequence prefixed by an element count.
+///
+/// # Errors
+///
+/// Returns an [`io::Error`] if the prefix or any element cannot be read.
 #[instrument(level = "debug", skip_all, err)]
 pub fn read_size_prefixed_seq<P, R, T, F>(reader: &mut R, item_reader: F) -> io::Result<Vec<T>>
 where
@@ -115,6 +143,10 @@ where
 }
 
 /// Writes a byte buffer prefixed by its length.
+///
+/// # Errors
+///
+/// Returns an [`io::Error`] if the length does not fit the prefix type or the write fails.
 #[instrument(level = "debug", skip_all, err, fields(size = value.len()))]
 pub fn write_size_prefixed_bytes<P, W>(writer: &mut W, value: &[u8]) -> io::Result<()>
 where
@@ -132,6 +164,10 @@ where
 }
 
 /// Writes a UTF-8 string prefixed by its byte length.
+///
+/// # Errors
+///
+/// Returns an [`io::Error`] if the byte length does not fit the prefix type or the write fails.
 #[instrument(level = "debug", skip_all, err, fields(size = value.len()))]
 pub fn write_size_prefixed_string<P, W>(writer: &mut W, value: &str) -> io::Result<()>
 where
@@ -142,6 +178,10 @@ where
 }
 
 /// Writes a sequence prefixed by its element count.
+///
+/// # Errors
+///
+/// Returns an [`io::Error`] if the element count does not fit the prefix type or any write fails.
 #[instrument(level = "debug", skip_all, err, fields(entry_count = elements.len()))]
 pub fn write_size_prefixed_seq<P, W, T, F>(
     writer: &mut W,
@@ -167,6 +207,10 @@ where
 }
 
 /// Reads an array of exactly `N` elements.
+///
+/// # Errors
+///
+/// Returns an [`io::Error`] if `item_reader` fails for any element.
 #[instrument(level = "debug", skip_all, err, fields(count = N))]
 pub fn read_array<const N: usize, R, T, F>(reader: &mut R, mut item_reader: F) -> io::Result<[T; N]>
 where
