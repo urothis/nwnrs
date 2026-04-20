@@ -26,6 +26,10 @@ struct CandidatePath {
 ///
 /// The function returns the first existing directory when possible. If no
 /// candidate exists, it returns an error describing the accepted overrides.
+///
+/// # Errors
+///
+/// Returns [`InstallError`] if no candidate directory exists.
 #[instrument(level = "info", skip_all, err, fields(override_dir))]
 pub fn find_user_root(override_dir: &str) -> InstallResult<PathBuf> {
     find_user_root_impl(
@@ -44,6 +48,10 @@ pub fn find_user_root(override_dir: &str) -> InstallResult<PathBuf> {
 /// The returned path is required to exist as a directory. A missing
 /// `databuild.txt` is treated as a warning rather than a hard failure so local
 /// development layouts remain usable.
+///
+/// # Errors
+///
+/// Returns [`InstallError`] if no valid installation directory can be found.
 #[instrument(level = "info", skip_all, err, fields(override_dir))]
 pub fn find_nwnrs_root(override_dir: &str) -> InstallResult<PathBuf> {
     find_nwnrs_root_impl(
@@ -60,6 +68,10 @@ pub fn find_nwnrs_root(override_dir: &str) -> InstallResult<PathBuf> {
 /// This function does not guess beyond the known alias table. Failure therefore
 /// means the requested language root is genuinely absent under the provided
 /// installation.
+///
+/// # Errors
+///
+/// Returns [`InstallError`] if no matching language directory exists under `root/lang`.
 #[instrument(level = "info", skip_all, err, fields(root = %root.as_ref().display(), language))]
 pub fn resolve_language_root(root: impl AsRef<Path>, language: &str) -> InstallResult<PathBuf> {
     let root = root.as_ref();
