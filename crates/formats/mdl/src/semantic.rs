@@ -61,6 +61,10 @@ impl SemanticModel {
     }
 
     /// Reads and lowers a semantic model from disk.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError`] if the file cannot be opened or lowered.
     pub fn from_file(path: impl AsRef<Path>) -> ModelResult<Self> {
         let mut file = File::open(path.as_ref())?;
         read_semantic_model(&mut file)

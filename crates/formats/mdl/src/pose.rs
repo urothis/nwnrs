@@ -5,12 +5,20 @@ use crate::{
 };
 
 /// Bakes skinned meshes in one scene using the scene's current pose.
+///
+/// # Errors
+///
+/// Returns [`ModelError`] if the scene pose cannot be baked.
 pub fn bake_scene_pose(scene: &NwnScene) -> ModelResult<NwnScene> {
     bake_scene_pose_with_bind_pose(scene, scene)
 }
 
 /// Bakes skinned meshes in one composed scene tree using each scene's current
 /// pose.
+///
+/// # Errors
+///
+/// Returns [`ModelError`] if any scene pose cannot be baked.
 pub fn bake_composed_scene_pose(scene: &NwnComposedScene) -> ModelResult<NwnComposedScene> {
     Ok(NwnComposedScene {
         model_name:            scene.model_name.clone(),

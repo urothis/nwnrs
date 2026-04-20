@@ -9,6 +9,10 @@ use crate::{
 };
 
 /// Writes one scene as a flattened Wavefront OBJ mesh.
+///
+/// # Errors
+///
+/// Returns [`ModelError`] if scene baking or the write fails.
 #[instrument(level = "debug", skip_all, err, fields(scene = %scene.name))]
 pub fn write_scene_obj<W: Write>(writer: &mut W, scene: &NwnScene) -> ModelResult<()> {
     let composed = NwnComposedScene {
