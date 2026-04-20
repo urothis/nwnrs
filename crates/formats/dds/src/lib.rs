@@ -40,8 +40,8 @@ impl DdsError {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
-    /// let _ = nwnrs_dds::DdsError::msg;
+    /// ```rust
+    /// let err = nwnrs_dds::DdsError::msg("something went wrong");
     /// ```
     pub fn msg(message: impl Into<String>) -> Self {
         Self::Message(message.into())
