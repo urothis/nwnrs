@@ -39,8 +39,8 @@ impl SetError {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
-    /// let _ = nwnrs_set::SetError::msg;
+    /// ```rust
+    /// let err = nwnrs_set::SetError::msg("something went wrong");
     /// ```
     pub fn msg(message: impl Into<String>) -> Self {
         Self::Message(message.into())
@@ -117,7 +117,7 @@ impl SetFile {
     /// # Examples
     ///
     /// ```rust,no_run
-    /// let _ = nwnrs_set::SetFile::from_file;
+    /// let set = nwnrs_set::SetFile::from_file("tileset.set");
     /// ```
     pub fn from_file(path: impl AsRef<Path>) -> SetResult<Self> {
         let mut file = File::open(path.as_ref())?;
@@ -433,7 +433,8 @@ pub struct SetPrimaryRule {
 /// # Examples
 ///
 /// ```rust,no_run
-/// let _ = nwnrs_set::read_set;
+/// let mut reader = std::io::Cursor::new(vec![]);
+/// let set = nwnrs_set::read_set(&mut reader);
 /// ```
 #[instrument(level = "debug", skip_all, err)]
 pub fn read_set<R: Read>(reader: &mut R) -> SetResult<SetFile> {
@@ -575,7 +576,9 @@ pub fn build_set_text(set_file: &SetFile) -> SetResult<String> {
 /// # Examples
 ///
 /// ```rust,no_run
-/// let _ = nwnrs_set::write_set;
+/// let mut writer = std::io::Cursor::new(vec![]);
+/// let set = nwnrs_set::SetFile::from_file("tileset.set").unwrap();
+/// nwnrs_set::write_set(&mut writer, &set).unwrap();
 /// ```
 pub fn write_set<W: Write>(writer: &mut W, set_file: &SetFile) -> SetResult<()> {
     let text = build_set_text(set_file)?;
