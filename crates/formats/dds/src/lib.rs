@@ -362,7 +362,7 @@ impl DdsTexture {
     /// # Examples
     ///
     /// ```rust,no_run
-    /// let _ = nwnrs_dds::DdsTexture::from_file;
+    /// let texture = nwnrs_dds::DdsTexture::from_file("texture.dds");
     /// ```
     pub fn from_file(path: impl AsRef<Path>) -> DdsResult<Self> {
         let mut file = File::open(path.as_ref())?;
