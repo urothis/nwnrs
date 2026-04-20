@@ -404,7 +404,8 @@ impl DdsTexture {
 /// # Examples
 ///
 /// ```rust,no_run
-/// let _ = nwnrs_dds::read_dds;
+/// let mut reader = std::io::Cursor::new(vec![]);
+/// let texture = nwnrs_dds::read_dds(&mut reader);
 /// ```
 #[instrument(level = "debug", skip_all, err)]
 pub fn read_dds<R: Read>(reader: &mut R) -> DdsResult<DdsTexture> {
