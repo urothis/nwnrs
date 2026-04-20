@@ -20,6 +20,10 @@ pub enum Algorithm {
 
 impl Algorithm {
     /// Converts a raw numeric marker into a compression algorithm.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CompressedBufError`] if `value` does not correspond to a known algorithm.
     pub fn from_u32(value: u32) -> Result<Self, CompressedBufError> {
         Ok(match value {
             0 => Self::None,
