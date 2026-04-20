@@ -304,12 +304,20 @@ impl SingleTlk {
     }
 
     /// Opens a TLK file from disk.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TlkError`] if the file cannot be opened or parsed.
     pub fn from_file(path: impl AsRef<Path>, cache_policy: CachePolicy) -> TlkResult<Self> {
         let file = File::open(path.as_ref())?;
         crate::io::read_single_tlk(file, cache_policy)
     }
 
     /// Reads a TLK payload from a [`Res`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TlkError`] if the resource bytes cannot be parsed as a TLK table.
     pub fn from_res(res: &Res, cache_policy: CachePolicy) -> TlkResult<Self> {
         let bytes = res.read_all(cache_policy)?;
         crate::io::read_single_tlk(Cursor::new(bytes), cache_policy)
@@ -323,6 +331,10 @@ impl SingleTlk {
     }
 
     /// Returns the entry for `str_ref`, if present.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TlkError`] if the underlying IO read fails.
     pub fn get(&mut self, str_ref: StrRef) -> TlkResult<Option<TlkEntry>> {
         if let Some(entry) = self.static_entries.get(&str_ref) {
             return Ok(Some(entry.clone()));
@@ -420,6 +432,10 @@ impl Tlk {
     }
 
     /// Queries the chain for `str_ref` using the requested gender.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TlkError`] if the underlying IO read fails.
     pub fn get(&mut self, str_ref: StrRef, gender: Gender) -> TlkResult<Option<TlkEntry>> {
         for pair in &mut self.chain {
             let queried = match gender {
