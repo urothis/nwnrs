@@ -348,6 +348,10 @@ impl Res {
     ///
     /// This is mainly useful for callers performing manual reads with
     /// [`with_stream`](Self::with_stream).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ResManError`] if the stream cannot be locked or the seek fails.
     #[instrument(level = "debug", skip_all, err, fields(resref = %self.inner.resref))]
     pub fn seek(&self) -> ResManResult<()> {
         self.with_stream(|stream| {
@@ -360,6 +364,10 @@ impl Res {
     ///
     /// When [`CachePolicy::Use`] is selected, small decoded payloads are
     /// retained in memory.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ResManError`] if the stream cannot be read or decompression fails.
     #[instrument(level = "debug", skip_all, err, fields(resref = %self.inner.resref, cache_policy = ?cache_policy))]
     pub fn read_all(&self, cache_policy: CachePolicy) -> ResManResult<Vec<u8>> {
         if cache_policy.uses_cache() {
@@ -390,6 +398,10 @@ impl Res {
     ///
     /// If the digest was not provided by the container, it is computed lazily
     /// and cached.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ResManError`] if the payload cannot be read or the state lock is poisoned.
     #[instrument(level = "debug", skip_all, err, fields(resref = %self.inner.resref))]
     pub fn sha1(&self) -> ResManResult<SecureHash> {
         {
@@ -409,6 +421,10 @@ impl Res {
     ///
     /// Shared-stream resources lock the stream for the duration of the
     /// callback. Spawned resources create a fresh stream for the call.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ResManError`] if the stream cannot be locked, spawned, or if `op` fails.
     #[instrument(level = "debug", skip_all, err, fields(resref = %self.inner.resref))]
     pub fn with_stream<T, F>(&self, op: F) -> ResManResult<T>
     where
@@ -459,6 +475,10 @@ pub trait ResContainer: fmt::Display + Send + Sync {
     /// Returns whether the container can resolve `rr`.
     fn contains(&self, rr: &ResRef) -> bool;
     /// Returns the resource identified by `rr` or an error when it is absent.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ResManError`] if the resource is not present or cannot be loaded.
     fn demand(&self, rr: &ResRef) -> ResManResult<Res>;
     /// Returns the number of resources exposed by the container.
     fn count(&self) -> usize;
