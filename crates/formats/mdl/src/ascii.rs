@@ -404,7 +404,7 @@ pub fn read_ascii_model<R: Read>(reader: &mut R) -> ModelResult<AsciiModel> {
 ///
 /// # Errors
 ///
-/// Returns [`ModelError`] if the write fails.
+/// Returns [`ModelError`] if writing to the output stream fails.
 #[instrument(level = "debug", skip_all, err, fields(geometry_name = %model.geometry_name))]
 pub fn write_ascii_model<W: Write>(writer: &mut W, model: &AsciiModel) -> ModelResult<()> {
     writer.write_all(model.to_text().as_bytes())?;
