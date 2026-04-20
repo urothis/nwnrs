@@ -3,8 +3,16 @@ use std::io::{self, Read, Write};
 /// A length prefix type used by the size-prefixed helpers in this crate.
 pub trait SizePrefix: Copy + TryFrom<usize> {
     /// Reads a prefix value from `reader` using little-endian encoding.
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`io::Error`] if the reader cannot supply enough bytes.
     fn read_from<R: Read>(reader: &mut R) -> io::Result<Self>;
     /// Writes a prefix value to `writer` using little-endian encoding.
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`io::Error`] if the write fails.
     fn write_to<W: Write>(self, writer: &mut W) -> io::Result<()>;
     /// Converts the prefix value into a `usize`.
     fn as_usize(self) -> usize;
