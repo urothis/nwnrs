@@ -338,6 +338,10 @@ pub fn render_ncs_disassembly_with_ndb(
 }
 
 /// Parses assembleable NCS asm text into decoded instructions.
+///
+/// # Errors
+///
+/// Returns [`NcsAsmError`] if parsing fails.
 pub fn assemble_ncs_text(
     text: &str,
     langspec: Option<&LangSpec>,

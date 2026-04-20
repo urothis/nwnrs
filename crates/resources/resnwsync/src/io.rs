@@ -124,6 +124,10 @@ pub fn open_or_create_nwsync(path: impl AsRef<Path>) -> ResNWSyncResult<NWSync> 
 }
 
 /// Exposes a single manifest row as a resource container.
+///
+/// # Errors
+///
+/// Returns [`ResNWSyncError`] if the manifest cannot be read from the database.
 #[instrument(level = "debug", skip_all, err, fields(manifest_sha1 = %manifest_sha1))]
 pub fn new_resnwsync_manifest(
     nwsync: &NWSync,

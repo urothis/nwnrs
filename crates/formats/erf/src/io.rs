@@ -416,8 +416,12 @@ where
     )
 }
 
-#[allow(clippy::too_many_arguments)]
 /// Writes a decoded ERF-family archive back out using its preserved layout.
+///
+/// # Errors
+///
+/// Returns [`ErfResult`] if the write fails.
+#[allow(clippy::too_many_arguments)]
 pub fn write_erf_archive<W>(writer: &mut W, value: &Erf) -> ErfResult<()>
 where
     W: Write + Seek,

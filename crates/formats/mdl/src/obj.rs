@@ -25,6 +25,10 @@ pub fn write_scene_obj<W: Write>(writer: &mut W, scene: &NwnScene) -> ModelResul
 }
 
 /// Writes one composed scene tree as a flattened Wavefront OBJ mesh.
+///
+/// # Errors
+///
+/// Returns [`ModelError`] if scene baking or the write fails.
 #[instrument(level = "debug", skip_all, err, fields(model = %scene.model_name))]
 pub fn write_composed_scene_obj<W: Write>(
     writer: &mut W,

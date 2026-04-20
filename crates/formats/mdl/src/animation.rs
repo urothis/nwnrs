@@ -95,6 +95,10 @@ pub fn sample_composed_scene_animation(
 
 /// Samples one composed scene tree at `time` seconds using the root scene's
 /// default animation selection policy.
+///
+/// # Errors
+///
+/// Returns [`ModelError`] if no default animation exists or sampling fails.
 pub fn sample_composed_scene_default_animation(
     scene: &NwnComposedScene,
     time: f32,

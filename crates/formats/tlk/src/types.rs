@@ -412,6 +412,10 @@ impl Tlk {
     }
 
     /// Builds a TLK chain from resource pairs.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TlkError`] if any resource pair cannot be read or parsed.
     pub fn from_res_pairs(
         chain: &[(Option<Res>, Option<Res>)],
         cache_policy: CachePolicy,

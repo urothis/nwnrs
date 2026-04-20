@@ -115,6 +115,10 @@ macro_rules! builtin_res_types {
 }
 
 /// Registers a custom resource type and extension mapping.
+///
+/// # Errors
+///
+/// Returns [`RegisterResTypeError`] if the extension is invalid or already registered.
 #[instrument(
     level = "debug",
     skip_all,

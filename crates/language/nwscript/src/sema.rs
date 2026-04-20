@@ -144,6 +144,10 @@ pub struct SemanticModel {
 }
 
 /// Performs semantic analysis on one parsed script.
+///
+/// # Errors
+///
+/// Returns [`SemanticError`] if the script contains semantic violations.
 pub fn analyze_script(
     script: &Script,
     langspec: Option<&LangSpec>,

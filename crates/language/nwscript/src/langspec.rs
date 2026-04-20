@@ -194,6 +194,10 @@ pub fn parse_langspec_bytes(source_name: &str, input: &[u8]) -> Result<LangSpec,
 }
 
 /// Parses builtin declarations from `root_id` in `source_map`.
+///
+/// # Errors
+///
+/// Returns [`LangSpecError`] if parsing fails.
 pub fn parse_langspec_from_source_map(
     source_map: &SourceMap,
     root_id: crate::SourceId,

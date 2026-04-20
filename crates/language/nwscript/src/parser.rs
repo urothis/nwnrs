@@ -106,6 +106,10 @@ impl From<ParserError> for ResolvedParseError {
 }
 
 /// Parses one already-tokenized `NWScript` translation unit.
+///
+/// # Errors
+///
+/// Returns [`ParserError`] if the token stream is syntactically invalid.
 pub fn parse_tokens(
     tokens: Vec<Token>,
     langspec: Option<&LangSpec>,
@@ -114,6 +118,10 @@ pub fn parse_tokens(
 }
 
 /// Lexes and parses one source file.
+///
+/// # Errors
+///
+/// Returns [`ParseError`] if lexing or parsing fails.
 pub fn parse_source(
     source: &SourceFile,
     langspec: Option<&LangSpec>,
@@ -143,6 +151,10 @@ pub fn parse_text(
 
 /// Parses one already-loaded source bundle after include traversal and macro
 /// expansion.
+///
+/// # Errors
+///
+/// Returns [`ResolvedParseError`] if preprocessing or parsing fails.
 pub fn parse_source_bundle(
     bundle: &crate::SourceBundle,
     langspec: Option<&LangSpec>,

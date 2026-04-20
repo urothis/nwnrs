@@ -104,6 +104,10 @@ pub fn load_source_bundle<R: ScriptResolver + ?Sized>(
 }
 
 /// Preprocesses one already-loaded source bundle into a token stream.
+///
+/// # Errors
+///
+/// Returns [`PreprocessError`] if macro expansion or include resolution fails.
 pub fn preprocess_source_bundle(
     bundle: &SourceBundle,
 ) -> Result<PreprocessedSource, PreprocessError> {

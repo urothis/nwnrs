@@ -154,6 +154,10 @@ pub fn load_composed_scene_from_resman(
 
 /// Composes an equipped player creature from one parsed `UTC` blueprint and
 /// resolves all attached model parts into a composed scene tree.
+///
+/// # Errors
+///
+/// Returns [`ModelError`] if the appearance cannot be resolved or a model fails to load.
 pub fn compose_player_creature_from_utc(
     resman: &mut ResMan,
     root: &GffRoot,
@@ -221,6 +225,10 @@ pub fn compose_player_creature_from_utc(
 
 /// Loads a `UTC` blueprint from `resman` by resource name and composes it into
 /// an equipped player-creature scene tree.
+///
+/// # Errors
+///
+/// Returns [`ModelError`] if the blueprint cannot be loaded or the creature cannot be composed.
 pub fn compose_player_creature_from_resman(
     resman: &mut ResMan,
     blueprint_name: &str,
