@@ -45,7 +45,7 @@ pub fn path_for_entry(
 /// # Errors
 ///
 /// Returns [`ManifestError`] if the data cannot be read or does not conform to
-/// the NWSync manifest format.
+/// the `NWSync` manifest format.
 #[instrument(level = "debug", skip_all, err)]
 pub fn read_manifest<R: Read>(reader: &mut R) -> ManifestResult<Manifest> {
     let magic = read_fixed_string(reader, 4)?;

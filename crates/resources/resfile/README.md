@@ -5,7 +5,7 @@ Single-file `nwnrs-resman::ResContainer` implementation.
 ## Why This Crate Exists
 
 Tools occasionally need to inject a single file into a `ResMan` lookup chain —
-for example, a lone NWScript standard library or a standalone blueprint. Without
+for example, a lone `NWScript` standard library or a standalone blueprint. Without
 a single-file `ResContainer`, callers would need a temporary directory or a
 custom container type. This crate provides the minimal wrapper so any file can
 be surfaced through the standard resource interface.
