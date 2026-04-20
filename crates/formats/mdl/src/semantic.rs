@@ -674,6 +674,10 @@ pub fn lower_ascii_model(model: &AsciiModel) -> ModelResult<SemanticModel> {
 }
 
 /// Lowers a compiled binary MDL model into typed semantic data.
+///
+/// # Errors
+///
+/// Returns [`ModelError`] if lowering fails.
 pub fn lower_binary_model(model: &BinaryModel) -> ModelResult<SemanticModel> {
     let mut diagnostics = model.diagnostics.clone();
     let offset_to_name = model
