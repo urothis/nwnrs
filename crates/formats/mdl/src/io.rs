@@ -20,7 +20,7 @@ pub fn read_model<R: Read>(reader: &mut R) -> ModelResult<Model> {
 ///
 /// # Errors
 ///
-/// Returns [`ModelError`] if the write fails.
+/// Returns [`crate::ModelError`] if the write fails.
 #[instrument(level = "debug", skip_all, err, fields(byte_len = model.byte_len()))]
 pub fn write_model<W: Write>(writer: &mut W, model: &Model) -> ModelResult<()> {
     writer.write_all(model.bytes())?;
