@@ -9,6 +9,10 @@ use tracing::{debug, instrument};
 use crate::{ResMemFile, ResMemFileResult};
 
 /// Wraps owned bytes as a one-entry in-memory resource container.
+///
+/// # Errors
+///
+/// Returns [`ResMemFileError`] if the resource reference is invalid.
 #[instrument(level = "debug", skip_all, err)]
 pub fn read_resmemfile(
     label: impl Into<String>,
@@ -43,6 +47,10 @@ pub fn read_resmemfile(
 }
 
 /// Wraps shared bytes as a one-entry in-memory resource container.
+///
+/// # Errors
+///
+/// Returns [`ResMemFileError`] if the resource reference is invalid.
 #[instrument(level = "debug", skip_all, err)]
 pub fn read_resmemfile_arc(
     label: impl Into<String>,
