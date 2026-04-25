@@ -1,0 +1,96 @@
+name: Cut Release
+
+on:
+    workflow_dispatch:
+        inputs:
+            bump:
+                description: Semver component to increment
+                required: true
+                type: choice
+                options:
+                    - patch
+                    - minor
+                    - major
+            commit:
+                description: Commit SHA or ref on the default branch to release from
+                required: true
+                type: string
+
+permissions:
+    contents: read
+
+env:
+    CARGO_TERM_COLOR: always
+
+jobs:
+    cut-release:
+        name: Cut Release
+        runs-on: ubuntu-latest
+        environment: release
+        steps:
+            - uses: actions/checkout@v6.0.2
+              with:
+                  ref: ${{ github.event.repository.default_branch }}
+                  fetch-depth: 0
+                  persist-credentials: false
+
+            - name: Setup Python
+              uses: actions/setup-python@v6
+              with:
+                  python-version: "3.x"
+
+            - name: Resolve and validate release commit
+              env:
+                  TARGET_REF: ${{ inputs.commit }}
+                  DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+              run: |
+                  git fetch --tags origin "${DEFAULT_BRANCH}"
+                  target_sha="$(git rev-parse "${TARGET_REF}^{commit}")"
+                  default_sha="$(git rev-parse "origin/${DEFAULT_BRANCH}^{commit}")"
+
+                  if [ "${target_sha}" != "${default_sha}" ]; then
+                      echo "Requested commit ${target_sha} is not the current tip of ${DEFAULT_BRANCH} (${default_sha})." >&2
+                      echo "This workflow pushes directly back to ${DEFAULT_BRANCH}, so it only supports releasing the current default-branch head." >&2
+                      exit 1
+                  fi
+
+                  git checkout --detach "${target_sha}"
+
+            - name: Setup Rust
+              uses: ./.github/actions/setup-rust
+
+            - name: Determine next version from tags
+              id: version
+              run: |
+                  current_tag="$(python scripts/release.py latest-tag)"
+                  current_version="$(python scripts/release.py latest-version)"
+                  new_version="$(python scripts/release.py next-version "${{ inputs.bump }}")"
+                  cargo update --workspace
+                  echo "current_tag=${current_tag}" >> "${GITHUB_OUTPUT}"
+                  echo "current_version=${current_version}" >> "${GITHUB_OUTPUT}"
+                  echo "new_version=${new_version}" >> "${GITHUB_OUTPUT}"
+
+            - name: Configure git author
+              run: |
+                  git config user.name "github-actions[bot]"
+                  git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+            - name: Commit release version update
+              run: |
+                  git add Cargo.toml Cargo.lock
+                  git commit -m "chore: release v${{ steps.version.outputs.new_version }}"
+                  git tag -a "v${{ steps.version.outputs.new_version }}" -m "Release v${{ steps.version.outputs.new_version }}"
+
+            - name: Push release commit and tag
+              env:
+                  DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+                  RELEASE_PUSH_TOKEN: ${{ secrets.RELEASE_PUSH_TOKEN }}
+              run: |
+                  if [ -z "${RELEASE_PUSH_TOKEN}" ]; then
+                      echo "RELEASE_PUSH_TOKEN secret is required. GITHUB_TOKEN cannot trigger the downstream tag-based publish workflow." >&2
+                      exit 1
+                  fi
+
+                  git remote set-url origin "https://x-access-token:${RELEASE_PUSH_TOKEN}@github.com/${{ github.repository }}.git"
+                  git push origin "HEAD:refs/heads/${DEFAULT_BRANCH}"
+                  git push origin "refs/tags/v${{ steps.version.outputs.new_version }}"
