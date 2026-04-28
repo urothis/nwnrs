@@ -272,7 +272,6 @@ pub(crate) fn read_bif(
     })
 }
 
-#[allow(clippy::too_many_arguments)]
 /// Writes a KEY file together with its referenced BIF files.
 ///
 /// `bifs` controls both the emitted BIF set and their resource order. For each

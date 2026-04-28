@@ -530,7 +530,6 @@ fn language_aliases(language: &str) -> &'static [&'static str] {
     }
 }
 
-#[allow(clippy::panic)]
 #[cfg(test)]
 mod tests {
     use std::{

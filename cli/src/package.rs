@@ -171,7 +171,6 @@ fn is_stub_package_extension(ext: &str) -> bool {
     matches!(ext, "dds" | "tga" | "mdl" | "plt")
 }
 
-#[allow(clippy::panic)]
 #[cfg(test)]
 mod tests {
     use std::{

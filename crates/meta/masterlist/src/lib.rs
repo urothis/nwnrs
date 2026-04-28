@@ -234,7 +234,6 @@ pub async fn get_servers_by_ip_and_port(
     get_json(format!("{URL}/servers/{ip}/{port}")).await
 }
 
-#[allow(clippy::panic)]
 #[cfg(test)]
 mod tests {
     use serde_json::json;

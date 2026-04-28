@@ -393,7 +393,6 @@ impl TestResourceError {
     }
 }
 
-#[allow(clippy::panic)]
 #[cfg(test)]
 mod tests {
     use std::{error::Error, fs, io};

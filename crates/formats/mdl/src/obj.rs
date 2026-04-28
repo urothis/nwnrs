@@ -143,7 +143,6 @@ fn position_from_nwn(position: [f32; 3], coordinate_system: NwnCoordinateSystem)
     }
 }
 
-#[allow(clippy::panic)]
 #[cfg(test)]
 mod tests {
     use crate::{

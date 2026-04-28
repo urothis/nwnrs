@@ -553,7 +553,6 @@ fn normalize_vec3(vector: [f32; 3]) -> Option<[f32; 3]> {
     Some([vector[0] * inv, vector[1] * inv, vector[2] * inv])
 }
 
-#[allow(clippy::panic)]
 #[cfg(test)]
 mod tests {
     use crate::{

@@ -1587,7 +1587,6 @@ fn write_row_line(out: &mut String, indent: usize, row: &[String]) {
     out.push('\n');
 }
 
-#[allow(clippy::panic)]
 #[cfg(test)]
 mod tests {
     use std::{error::Error, io::Cursor};

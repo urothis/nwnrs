@@ -27,7 +27,6 @@ pub fn write_model<W: Write>(writer: &mut W, model: &Model) -> ModelResult<()> {
     Ok(())
 }
 
-#[allow(clippy::panic)]
 #[cfg(test)]
 mod tests {
     use std::io::Cursor;

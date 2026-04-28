@@ -1836,7 +1836,6 @@ fn lower_animation_node(
     lowered
 }
 
-#[allow(clippy::too_many_arguments)]
 fn lower_common_node_statement(
     statement: &AsciiStatement,
     parent: &mut Option<String>,
@@ -2675,7 +2674,6 @@ fn parse_i32_row_array<const N: usize>(
     }
 }
 
-#[allow(clippy::panic)]
 #[cfg(test)]
 mod tests {
     use std::{collections::BTreeMap, error::Error, io::Cursor};

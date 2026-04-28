@@ -125,7 +125,6 @@ fn collect_files(root: &Path, directory: &Path, out: &mut Vec<PathBuf>) -> io::R
     Ok(())
 }
 
-#[allow(clippy::panic)]
 #[cfg(test)]
 mod tests {
     use std::{

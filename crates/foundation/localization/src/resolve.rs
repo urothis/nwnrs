@@ -42,7 +42,6 @@ pub fn resolve_language(input: &str) -> Result<Language, ParseLanguageError> {
     }
 }
 
-#[allow(clippy::panic)]
 #[cfg(test)]
 mod tests {
     use crate::{Language, resolve_language};

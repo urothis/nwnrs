@@ -1807,7 +1807,6 @@ struct BaseMeshLayout {
     uv_count:     usize,
 }
 
-#[allow(clippy::panic)]
 #[cfg(test)]
 mod tests {
     use std::{error::Error, io::Cursor};

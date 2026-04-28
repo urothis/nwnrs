@@ -234,7 +234,6 @@ impl From<&ResolvedResRef> for ResRef {
     }
 }
 
-#[allow(clippy::panic)]
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;

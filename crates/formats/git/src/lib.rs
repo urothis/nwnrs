@@ -1362,7 +1362,6 @@ pub mod prelude {
     };
 }
 
-#[allow(clippy::panic)]
 #[cfg(test)]
 mod tests {
     use std::{io::Cursor, sync::Arc};

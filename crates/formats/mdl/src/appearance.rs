@@ -227,7 +227,6 @@ fn candidate_stem(candidate: &str) -> Option<&str> {
     Some(&normalized[..normalized.len() - digits.len()])
 }
 
-#[allow(clippy::panic)]
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;

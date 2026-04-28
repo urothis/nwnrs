@@ -161,7 +161,6 @@ impl ResMan {
     }
 }
 
-#[allow(clippy::panic)]
 #[cfg(test)]
 mod tests {
     use std::{collections::HashMap, io::Cursor, sync::Arc, time::SystemTime};

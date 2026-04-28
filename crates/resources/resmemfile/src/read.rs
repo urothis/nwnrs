@@ -60,7 +60,6 @@ pub fn read_resmemfile_arc(
     read_resmemfile(label, resref, bytes.as_ref().to_vec())
 }
 
-#[allow(clippy::panic)]
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;

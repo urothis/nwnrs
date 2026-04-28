@@ -9,7 +9,6 @@ use tracing::{debug, info, instrument};
 
 use crate::prelude::*;
 
-#[allow(clippy::too_many_arguments)]
 /// Builds a conventional layered [`nwnrs_resman::ResMan`] for an NWN
 /// installation.
 ///
@@ -133,7 +132,6 @@ pub fn new_default_resman(
     Ok(result)
 }
 
-#[allow(clippy::panic)]
 #[cfg(test)]
 mod tests {
     use std::{fs, time::SystemTime};

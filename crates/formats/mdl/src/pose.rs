@@ -476,7 +476,6 @@ fn mul_mat4_column(
     ]
 }
 
-#[allow(clippy::panic)]
 #[cfg(test)]
 mod tests {
     use super::{bake_scene_pose, bake_scene_pose_with_bind_pose};

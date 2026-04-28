@@ -319,7 +319,6 @@ fn check(condition: bool, message: impl Into<String>) -> ManifestResult<()> {
     }
 }
 
-#[allow(clippy::panic)]
 #[cfg(test)]
 mod tests {
     use nwnrs_checksums::secure_hash;

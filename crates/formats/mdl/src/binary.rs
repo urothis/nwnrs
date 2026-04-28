@@ -2127,7 +2127,6 @@ fn read_f32_slice(bytes: &[u8]) -> Option<f32> {
     Some(f32::from_le_bytes(array))
 }
 
-#[allow(clippy::panic)]
 #[cfg(test)]
 mod tests {
     use std::{error::Error, io::Cursor};

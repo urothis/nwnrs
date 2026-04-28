@@ -492,7 +492,6 @@ fn explicit_texture_candidate(name: &str) -> Option<(TextureResourceKind, Resolv
     Some((kind, resolved))
 }
 
-#[allow(clippy::panic)]
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;

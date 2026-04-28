@@ -79,7 +79,6 @@ pub fn read_resfile_as(path: impl AsRef<Path>, resref: ResRef) -> ResFileResult<
     Ok(result)
 }
 
-#[allow(clippy::panic)]
 #[cfg(test)]
 mod tests {
     use std::{

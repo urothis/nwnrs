@@ -265,7 +265,6 @@ fn read_compressed_buf_algorithm<R: Read + Seek + ?Sized>(
     Ok(Some(algorithm))
 }
 
-#[allow(clippy::too_many_arguments)]
 /// Writes an ERF-family archive.
 ///
 /// `entries` defines the archive order. For each entry, `entry_writer` must
@@ -385,7 +384,6 @@ mod tests {
 /// # Errors
 ///
 /// Returns [`ErfError`] if the write fails.
-#[allow(clippy::too_many_arguments)]
 pub fn write_erf_with_options<W, F>(
     writer: &mut W,
     file_type: &str,
@@ -429,7 +427,6 @@ where
 /// # Errors
 ///
 /// Returns [`ErfError`] if the write fails.
-#[allow(clippy::too_many_arguments)]
 pub fn write_erf_archive<W>(writer: &mut W, value: &Erf) -> ErfResult<()>
 where
     W: Write + Seek,
@@ -476,7 +473,6 @@ where
     )
 }
 
-#[allow(clippy::too_many_arguments)]
 /// Internal ERF-family archive writer with explicit padding control.
 fn write_erf_inner<W, F>(
     writer: &mut W,

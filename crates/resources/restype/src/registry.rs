@@ -226,7 +226,6 @@ fn normalize_extension(extension: &str) -> Result<String, RegisterResTypeError> 
     Ok(normalized)
 }
 
-#[allow(clippy::panic)]
 #[cfg(test)]
 mod tests {
     use crate::{

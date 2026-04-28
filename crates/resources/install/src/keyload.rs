@@ -64,7 +64,6 @@ pub(crate) fn load_key(
     Ok(())
 }
 
-#[allow(clippy::panic)]
 #[cfg(test)]
 mod tests {
     use std::{fs, time::SystemTime};

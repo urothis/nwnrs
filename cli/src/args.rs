@@ -315,7 +315,6 @@ pub(crate) struct NwsyncWriteCmd {
     pub(crate) force: bool,
 }
 
-#[allow(clippy::panic)]
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;

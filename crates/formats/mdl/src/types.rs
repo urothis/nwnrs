@@ -136,7 +136,6 @@ impl From<ResManError> for ModelError {
 /// Result type for model operations.
 pub type ModelResult<T> = Result<T, ModelError>;
 
-#[allow(clippy::panic)]
 #[cfg(test)]
 mod tests {
     use crate::{MODEL_RES_TYPE, Model};

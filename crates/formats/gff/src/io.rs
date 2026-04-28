@@ -284,7 +284,6 @@ pub fn write_gff_root<W: Write + Seek>(writer: &mut W, root: &GffRoot) -> GffRes
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
 fn parse_struct<R: Read + Seek>(
     struct_idx: usize,
     reader: &mut R,
@@ -355,7 +354,6 @@ fn parse_struct<R: Read + Seek>(
     Ok(gff_struct)
 }
 
-#[allow(clippy::too_many_arguments)]
 fn parse_field<R: Read + Seek>(
     raw: &RawFieldEntry,
     reader: &mut R,
@@ -936,7 +934,6 @@ fn write_i32<W: Write>(writer: &mut W, value: i32) -> io::Result<()> {
     writer.write_all(&value.to_le_bytes())
 }
 
-#[allow(clippy::panic)]
 #[cfg(test)]
 mod tests {
     use std::io::Cursor;

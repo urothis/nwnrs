@@ -474,7 +474,6 @@ fn manifest_entry_data_url(
     Ok(url)
 }
 
-#[allow(clippy::panic)]
 #[cfg(test)]
 mod tests {
     use nwnrs::prelude::checksums::parse_secure_hash;

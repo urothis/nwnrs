@@ -181,7 +181,6 @@ impl fmt::Display for Res {
 }
 
 impl Res {
-    #[allow(clippy::too_many_arguments)]
     /// Creates a resource backed by a shared stream handle.
     pub fn new_with_stream(
         origin: ResOrigin,
@@ -209,7 +208,6 @@ impl Res {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
     /// Creates a resource backed by a stream factory.
     ///
     /// This is useful when a caller wants each read to operate on a fresh
@@ -240,7 +238,6 @@ impl Res {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn new(
         origin: ResOrigin,
         resref: ResRef,

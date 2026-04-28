@@ -385,7 +385,6 @@ fn snapshot_composed_scene_for_export(
     }
 }
 
-#[allow(clippy::panic)]
 #[cfg(test)]
 mod tests {
     use std::{

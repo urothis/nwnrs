@@ -125,7 +125,6 @@ fn to_u32(value: usize, what: &str) -> io::Result<u32> {
     u32::try_from(value).map_err(|_error| invalid_message(format!("{what} exceeds 32-bit range")))
 }
 
-#[allow(clippy::panic)]
 #[cfg(test)]
 mod tests {
     use std::io::Cursor;

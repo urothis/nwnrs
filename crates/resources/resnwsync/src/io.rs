@@ -212,7 +212,6 @@ fn initialize_shard_schema(conn: &Connection) -> ResNWSyncResult<()> {
     Ok(())
 }
 
-#[allow(clippy::panic)]
 #[cfg(test)]
 mod tests {
     use std::{

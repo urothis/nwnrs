@@ -15,7 +15,6 @@ pub mod prelude {
     };
 }
 
-#[allow(clippy::panic)]
 #[cfg(test)]
 mod tests {
     use crate::{md5_digest, parse_secure_hash, secure_hash};
