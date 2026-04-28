@@ -221,11 +221,6 @@ and compiler toolchain.
 - `nwasm` is both an artifact boundary and a debugging surface
 - source loading and include handling are operationally significant
 
-## Non-goals
-
-- act as a runtime or VM for executing compiled scripts
-- define editor or IDE behavior on its own
-
 ## See also
 
 - [`nwnrs-resman`](https://docs.rs/nwnrs-resman), which provides the resource

@@ -66,11 +66,6 @@ Conceptually:
 - the crate models the material descriptor, not a renderer-specific material
   object
 
-## Non-goals
-
-- resolve the final texture assets referenced by a material
-- implement runtime shading or renderer integration
-
 ## See also
 
 - [`nwnrs-mdl`](https://docs.rs/nwnrs-mdl), which references `MTR` descriptors

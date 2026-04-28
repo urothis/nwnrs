@@ -94,11 +94,6 @@ Conceptually:
 - `original_bytes` can be replayed when reparsing proves the typed payload is
   identical
 
-## Non-goals
-
-- infer the semantic type of the wrapped payload
-- replace higher-level crates that parse the decompressed content
-
 ## See also
 
 - [`nwnrs-erf`](https://docs.rs/nwnrs-erf), which uses this wrapper for `E1`

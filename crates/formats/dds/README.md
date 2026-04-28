@@ -80,11 +80,6 @@ Each mip level is stored as packed DXT blocks:
 - this is not treated as generic desktop DDS; the NWN compact header is
   first-class
 
-## Non-goals
-
-- act as a general-purpose desktop DDS crate
-- define engine-level material or asset-loading policy
-
 ## See also
 
 - [`nwnrs-tga`](https://docs.rs/nwnrs-tga), the other primary NWN texture

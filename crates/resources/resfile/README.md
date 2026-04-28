@@ -15,11 +15,6 @@ be surfaced through the standard resource interface.
 - wrap one on-disk file as a single resource entry
 - expose that entry through the same `ResContainer` abstraction used elsewhere
 
-## Non-goals
-
-- infer complex directory or archive structure from a lone file
-- parse the payload contents directly
-
 ## See also
 
 - [`nwnrs-resman`](https://docs.rs/nwnrs-resman), which defines the

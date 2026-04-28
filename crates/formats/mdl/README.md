@@ -131,11 +131,6 @@ binary MDL ----------+
 - ASCII, binary, semantic, scene, composed-scene, and `OBJ` export preserve
   different information on purpose
 
-## Non-goals
-
-- define engine-specific rendering policy
-- collapse every authored MDL distinction into one flattened scene structure
-
 ## Internal Structure
 
 - `ascii`: syntax-faithful ASCII parsing and typed source representation

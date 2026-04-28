@@ -91,11 +91,6 @@ Footer semantics:
 - origin bits, storage mode, trailing bytes, and footer metadata remain part of
   the typed texture
 
-## Non-goals
-
-- act as a general-purpose image-processing crate
-- define higher-level material or asset-loading policy
-
 ## See also
 
 - [`nwnrs-dds`](https://docs.rs/nwnrs-dds), the other primary NWN texture

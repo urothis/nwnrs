@@ -124,11 +124,6 @@ Conceptually:
 - deterministic serialization rebuilds the modeled section structure in
   ascending key order
 
-## Non-goals
-
-- instantiate tile models or runtime area scenes
-- infer missing tileset semantics beyond what the source data expresses
-
 ## See also
 
 - [`nwnrs-git`](https://docs.rs/nwnrs-git), which models the area instance data

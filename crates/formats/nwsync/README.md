@@ -106,11 +106,6 @@ for depth `2`.
 - sorting and deduplication during write are part of the manifest's storage
   rules, not generic container policy
 
-## Non-goals
-
-- open or manage an on-disk `NWSync` repository
-- fetch shard payloads or enforce repository precedence
-
 ## See also
 
 - [`nwnrs-resnwsync`](https://docs.rs/nwnrs-resnwsync), which opens the

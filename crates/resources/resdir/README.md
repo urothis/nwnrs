@@ -16,11 +16,6 @@ to a layered resource manager without special-casing them.
 - resolve filenames into typed resource references
 - expose the resulting directory as a `ResContainer`
 
-## Non-goals
-
-- define precedence policy across multiple directories
-- parse the contents of the resolved resources
-
 ## See also
 
 - [`nwnrs-resman`](https://docs.rs/nwnrs-resman), which defines the

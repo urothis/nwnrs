@@ -81,11 +81,6 @@ alphamean 0.75
   and only synthesizes directives from typed fields when the directive stream is
   empty
 
-## Non-goals
-
-- resolve texture assets or renderer policy implied by TXI settings
-- normalize every directive into a fully semantic material representation
-
 ## See also
 
 - [`nwnrs-mdl`](https://docs.rs/nwnrs-mdl), which consumes `TXI` sidecar

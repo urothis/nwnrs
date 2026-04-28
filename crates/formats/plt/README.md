@@ -77,11 +77,6 @@ layer_id
 - `PltRenderSpec` is a convenience policy over stored typed data, not the
   canonical representation
 
-## Non-goals
-
-- resolve final colors from game palette tables
-- render PLT data into a final material or image by itself
-
 ## See also
 
 - [`nwnrs-tga`](https://docs.rs/nwnrs-tga), which stores the palette bitmaps

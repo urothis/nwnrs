@@ -1,36 +1,11 @@
-# cargo-deny configuration for nwnrs
 # See https://embarkstudios.github.io/cargo-deny/ for more information
 
 [bans]
-# The lint level for duplicate dependencies
-#multiple-versions = "deny"
-
-# forbid wildcard version requirements like foo = "*"
+multiple-versions = "warn"
 wildcards = "deny"
-
-# allow path-only workspace-internal crates to omit version constraints
 allow-wildcard-paths = true
 
-skip = [
-    { name = "hashbrown", version = "=0.16.1" },
-    { name = "thiserror", version = "=1.0.69" },      # https://github.com/rustls/rustls-platform-verifier/pull/193
-    { name = "thiserror-impl", version = "=1.0.69" }, # https://github.com/rustls/rustls-platform-verifier/pull/193
-    { name = "windows-sys", version = "=0.45.0" },    # https://github.com/rustls/rustls-platform-verifier/pull/193
-]
-
 [licenses]
-# cargo-deny uses a fuzzy matcher to detect licenses 
-# from license text files (not just SPDX identifiers). 
-# This sets how confident it must be before accepting a match. 
-# Default is 0.8 — making it explicit future-proofs against default changes.
-# The range is 0.0 to 1.0. 
-# A value of 1.0 means that all licenses must be known and allowed.
-confidence-threshold = 0.8
-
-# Skip workspace-internal crates.
-# private = {ignore = true}
-
-# List of explicitly allowed licenses
 allow = [
     "0BSD",
     "Apache-2.0 WITH LLVM-exception",
@@ -47,23 +22,13 @@ allow = [
 ]
 
 [sources]
-# Allow crates from crates.io
-allow-registry = ["https://github.com/rust-lang/crates.io-index"]
-# Block unknown registries
 unknown-registry = "deny"
-# Block git dependencies entirely
 unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []
 
 [advisories]
-# The path to the advisory database. If not set, uses the RustSec
-# advisory database fetched from GitHub.
 db-urls = ["https://github.com/rustsec/advisory-db"]
-
-# Only warn about unmaintained crates if they are workspace members. 
 unmaintained = 'workspace'
-
-# The lint level for security vulnerabilities
 version = 2
-
-# How to handle crates that have been yanked from crates.io
 yanked = "warn"

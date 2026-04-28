@@ -17,7 +17,8 @@ on:
                 type: string
 
 permissions:
-    contents: read
+    contents: write
+    id-token: write
 
 env:
     CARGO_TERM_COLOR: always
@@ -26,13 +27,11 @@ jobs:
     cut-release:
         name: Cut Release
         runs-on: ubuntu-latest
-        environment: release
         steps:
             - uses: actions/checkout@v6.0.2
               with:
                   ref: ${{ github.event.repository.default_branch }}
                   fetch-depth: 0
-                  persist-credentials: false
 
             - name: Setup Python
               uses: actions/setup-python@v6
@@ -84,13 +83,42 @@ jobs:
             - name: Push release commit and tag
               env:
                   DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-                  RELEASE_PUSH_TOKEN: ${{ secrets.RELEASE_PUSH_TOKEN }}
               run: |
-                  if [ -z "${RELEASE_PUSH_TOKEN}" ]; then
-                      echo "RELEASE_PUSH_TOKEN secret is required. GITHUB_TOKEN cannot trigger the downstream tag-based publish workflow." >&2
+                  git push origin "HEAD:refs/heads/${DEFAULT_BRANCH}"
+                  git push origin "refs/tags/v${{ steps.version.outputs.new_version }}"
+
+            - name: Authenticate with crates.io
+              id: auth
+              uses: rust-lang/crates-io-auth-action@v1
+
+            - name: Publish crates
+              env:
+                  CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+              run: |
+                  version="$(python scripts/release.py version)"
+                  expected_tag="v${version}"
+
+                  if [ "${expected_tag}" != "v${{ steps.version.outputs.new_version }}" ]; then
+                      echo "Workspace version ${version} does not match release version ${{ steps.version.outputs.new_version }}." >&2
                       exit 1
                   fi
 
-                  git remote set-url origin "https://x-access-token:${RELEASE_PUSH_TOKEN}@github.com/${{ github.repository }}.git"
-                  git push origin "HEAD:refs/heads/${DEFAULT_BRANCH}"
-                  git push origin "refs/tags/v${{ steps.version.outputs.new_version }}"
+                  python scripts/release.py publish-order > /tmp/publish-order.txt
+
+                  while IFS= read -r crate_name; do
+                      if python scripts/release.py is-published "${crate_name}" "${version}"; then
+                          echo "Skipping ${crate_name} ${version}; already published."
+                          continue
+                      fi
+
+                      attempt=1
+                      until cargo publish -p "${crate_name}" --locked; do
+                          if [ "${attempt}" -ge 10 ]; then
+                              echo "Failed to publish ${crate_name} ${version} after ${attempt} attempts." >&2
+                              exit 1
+                          fi
+
+                          attempt="$((attempt + 1))"
+                          sleep 30
+                      done
+                  done < /tmp/publish-order.txt

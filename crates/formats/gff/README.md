@@ -168,12 +168,6 @@ out-of-line payloads, and recursive references.
 - `merge_root_preserving_provenance` exists because naive merge logic tends to
   destroy stable ordering and untouched raw structure
 
-## Non-goals
-
-- interpret gameplay meaning from raw GFF fields
-- hide unknown higher-level schema behind premature domain types
-- provide a generic, non-NWN object database format
-
 ## See also
 
 - [`nwnrs-git`](https://docs.rs/nwnrs-git), which layers typed area-instance

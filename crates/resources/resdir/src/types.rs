@@ -1,4 +1,5 @@
 use std::{
+    collections::hash_map::RandomState,
     fmt, io,
     path::{Path, PathBuf},
 };
@@ -62,7 +63,7 @@ impl From<nwnrs_resref::ResRefError> for ResDirError {
 pub struct ResDir {
     pub(crate) root:    PathBuf,
     pub(crate) label:   String,
-    pub(crate) entries: IndexMap<ResRef, Res>,
+    pub(crate) entries: IndexMap<ResRef, Res, RandomState>,
 }
 
 impl ResDir {
@@ -80,7 +81,7 @@ impl ResDir {
 
     /// Returns the indexed resource entries.
     #[must_use]
-    pub fn entries(&self) -> &IndexMap<ResRef, Res> {
+    pub fn entries(&self) -> &IndexMap<ResRef, Res, RandomState> {
         &self.entries
     }
 }

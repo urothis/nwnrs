@@ -131,12 +131,6 @@ blob.
   format
 - a typed entry and a rewrite-stable entry are related but not identical goals
 
-## Non-goals
-
-- interpret gameplay-specific meaning for particular string references
-- perform machine translation or localization workflow management
-- replace higher-level installation logic that chooses which TLK layers to load
-
 ## See also
 
 - [`nwnrs-localization`](https://docs.rs/nwnrs-localization), which defines

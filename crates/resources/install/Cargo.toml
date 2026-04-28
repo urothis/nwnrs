@@ -21,12 +21,19 @@ serde_json.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
-nwnrs-checksums.workspace = true
-nwnrs-compressedbuf.workspace = true
-nwnrs-exo.workspace = true
-nwnrs-resref.workspace = true
-nwnrs-restype.workspace = true
+nwnrs-checksums = { path = "../../foundation/checksums" }
+nwnrs-compressedbuf = { path = "../../formats/compressedbuf" }
+nwnrs-exo = { path = "../../formats/exo" }
+nwnrs-resref = { path = "../resref" }
+nwnrs-restype = { path = "../restype" }
 rusqlite.workspace = true
 
 [lints]
 workspace = true
+
+[package.metadata.docs.rs]
+rustdoc-args = [
+    "-Zunstable-options",
+    "--generate-link-to-definition",
+    "--generate-macro-expansion",
+]

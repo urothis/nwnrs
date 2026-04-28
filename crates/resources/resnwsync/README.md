@@ -19,11 +19,6 @@ standard `ResContainer` values that slot into any `ResMan` lookup chain.
 Use [`open_nwsync`] to open a repository and [`new_resnwsync_manifest`] to
 materialize a specific manifest as a container.
 
-## Non-goals
-
-- define the `NWSync` manifest file format itself
-- act as a general-purpose network sync client
-
 ## See also
 
 - [`nwnrs-nwsync`](https://docs.rs/nwnrs-nwsync), which defines the manifest

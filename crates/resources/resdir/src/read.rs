@@ -1,4 +1,5 @@
 use std::{
+    collections::hash_map::RandomState,
     fs::{self, File},
     io,
     path::{Path, PathBuf},
@@ -34,7 +35,7 @@ pub fn read_resdir(path: impl AsRef<Path>) -> ResDirResult<ResDir> {
 
     let label = root.display().to_string();
     let container_name = format!("ResDir:{label}");
-    let mut entries = IndexMap::new();
+    let mut entries = IndexMap::with_hasher(RandomState::new());
 
     let mut files = Vec::new();
     collect_files(root, root, &mut files)?;

@@ -18,7 +18,14 @@ nwnrs-restype.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
-nwnrs-resmemfile.workspace = true
+nwnrs-resmemfile = { path = "../../resources/resmemfile" }
 
 [lints]
 workspace = true
+
+[package.metadata.docs.rs]
+rustdoc-args = [
+    "-Zunstable-options",
+    "--generate-link-to-definition",
+    "--generate-macro-expansion",
+]

@@ -27,11 +27,6 @@ crate is the single source of truth for those constants.
   concept
 - the crate exists for wire vocabulary, not for container parsing
 
-## Non-goals
-
-- parse full EXO-backed containers on its own
-- provide a general binary-protocol abstraction
-
 ## See also
 
 - [`nwnrs-compressedbuf`](https://docs.rs/nwnrs-compressedbuf), which uses

@@ -111,12 +111,6 @@ Cell encoding rules:
 - the same physical table can be consumed positionally, by row label, or by
   case-insensitive column name
 
-## Non-goals
-
-- interpret the semantics of particular `2DA` tables
-- normalize tables into a database-like relational model
-- replace higher-level crates that add domain meaning on top of `2DA`
-
 ## See also
 
 - [`nwnrs-resman`](https://docs.rs/nwnrs-resman), the resource layer through

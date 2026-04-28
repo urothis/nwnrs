@@ -83,11 +83,6 @@ Conceptually:
 - raw resref bytes are preserved when only `strref` changes and the original
   encoded bytes still match the typed name
 
-## Non-goals
-
-- interpret gameplay meaning beyond the SSF slot structure itself
-- resolve the referenced audio payloads or dialog strings
-
 ## See also
 
 - [`nwnrs-tlk`](https://docs.rs/nwnrs-tlk), which resolves the string

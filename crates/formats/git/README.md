@@ -31,11 +31,6 @@ and [`GitFile`].
 - rebuilding a `GIT` payload preserves unknown per-entry raw fields while
   rewriting the typed fields owned by this crate
 
-## Non-goals
-
-- resolve blueprints, models, or runtime resources
-- interpret all gameplay semantics attached to raw or not-yet-typed fields
-
 ## See also
 
 - [`nwnrs-gff`](https://docs.rs/nwnrs-gff), the underlying typed GFF container

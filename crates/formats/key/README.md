@@ -130,11 +130,6 @@ Each variable-resource row records:
 - `BifResolver` exists because the KEY file references BIFs by filename and the
   actual stream-opening policy belongs to the caller
 
-## Non-goals
-
-- choose install-layer precedence across multiple KEY tables
-- hide the distinction between KEY indexing and BIF payload storage
-
 ## See also
 
 - [`nwnrs-resman`](https://docs.rs/nwnrs-resman), which consumes `KeyTable` as a

@@ -112,11 +112,6 @@ Entry-table sizes differ by version:
 - `E1` per-entry compression metadata is physical-storage metadata, not content
   semantics
 
-## Non-goals
-
-- define resource precedence policy across multiple archives
-- replace `nwnrs-resman` as the general lookup layer
-
 ## See also
 
 - [`nwnrs-resman`](https://docs.rs/nwnrs-resman), which layers multiple
