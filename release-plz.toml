@@ -1,2 +1,7 @@
 [workspace]
+dependencies_update = true
+pr_labels = ["release"]
 release_always = false
+
+[changelog]
+protect_breaking_commits = true
