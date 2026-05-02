@@ -2,64 +2,64 @@
 # Labels should match the current workspace crates and a small set of
 # cross-cutting repository areas.
 
-cli:
-    - changed-files:
-          - any-glob-to-any-file:
-                - "crates/nwnrs/**/*"
+nwnrs:
+      - changed-files:
+              - any-glob-to-any-file:
+                      - "crates/nwnrs/**/*"
 
 install:
-    - changed-files:
-          - any-glob-to-any-file:
-                - "crates/types/src/install/**/*"
+      - changed-files:
+              - any-glob-to-any-file:
+                      - "crates/types/src/install/**/*"
 
 nwpkg:
-    - changed-files:
-          - any-glob-to-any-file:
-                - "crates/nwpkg/**/*"
+      - changed-files:
+              - any-glob-to-any-file:
+                      - "crates/nwpkg/**/*"
 
 nwscript:
-    - changed-files:
-          - any-glob-to-any-file:
-                - "crates/nwscript/**/*"
+      - changed-files:
+              - any-glob-to-any-file:
+                      - "crates/nwscript/**/*"
 
 types:
-    - changed-files:
-          - any-glob-to-any-file:
-                - "crates/types/**/*"
+      - changed-files:
+              - any-glob-to-any-file:
+                      - "crates/types/**/*"
 
 documentation:
-    - changed-files:
-          - any-glob-to-any-file:
-                - "**/*.md"
-                - "CODE_OF_CONDUCT"
-                - "CODEOWNERS"
-                - "LICENSE"
+      - changed-files:
+              - any-glob-to-any-file:
+                      - "**/*.md"
+                      - "CODE_OF_CONDUCT"
+                      - "CODEOWNERS"
+                      - "LICENSE"
 
 ci/cd:
-    - changed-files:
-          - any-glob-to-any-file:
-                - ".github/workflows/**/*"
-                - ".github/actions/**/*"
-                - ".github/labeler.yml"
-                - ".github/dependabot.yml"
+      - changed-files:
+              - any-glob-to-any-file:
+                      - ".github/workflows/**/*"
+                      - ".github/actions/**/*"
+                      - ".github/labeler.yml"
+                      - ".github/dependabot.yml"
 
 dependencies:
-    - changed-files:
-          - any-glob-to-any-file:
-                - "Cargo.toml"
-                - "Cargo.lock"
-                - "crates/*/Cargo.toml"
+      - changed-files:
+              - any-glob-to-any-file:
+                      - "Cargo.toml"
+                      - "Cargo.lock"
+                      - "crates/*/Cargo.toml"
 
 tests:
-    - changed-files:
-          - any-glob-to-any-file:
-                - "**/tests/**/*"
+      - changed-files:
+              - any-glob-to-any-file:
+                      - "**/tests/**/*"
 
 config:
-    - changed-files:
-          - any-glob-to-any-file:
-                - ".gitignore"
-                - "rustfmt.toml"
-                - "clippy.toml"
-                - "deny.toml"
-                - "rust-toolchain.toml"
+      - changed-files:
+              - any-glob-to-any-file:
+                      - ".gitignore"
+                      - "rustfmt.toml"
+                      - "clippy.toml"
+                      - "deny.toml"
+                      - "rust-toolchain.toml"
