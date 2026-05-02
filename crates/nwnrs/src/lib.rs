@@ -19,6 +19,12 @@ use args::{Cli, Command, NwsyncCommand};
 use tracing::{error, instrument};
 
 /// Runs the CLI process entrypoint and returns one process exit code.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let _entry: fn() -> std::process::ExitCode = nwnrs::main_entry;
+/// ```
 pub fn main_entry() -> ExitCode {
     logging::init_tracing();
     let cli: Cli = argh::from_env();
