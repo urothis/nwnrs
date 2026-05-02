@@ -7,7 +7,7 @@
 [![Downloads](https://img.shields.io/crates/d/nwnrs.svg)](https://crates.io/crates/nwnrs)
 [![Docs](https://docs.rs/nwnrs/badge.svg)](https://docs.rs/nwnrs/latest/nwnrs/)
 [![CI](https://github.com/urothis/nwnrs/workflows/CI/badge.svg)](https://github.com/urothis/nwnrs/actions)
-[![Discord](https://img.shields.io/discord/691052431525675048.svg?label=&logo=discord&logoColor=ffffff&color=7389D8&labelColor=6A7EC2)](https://discord.gg/GGneSqUYHU)
+[![Discord](https://img.shields.io/discord/721439329079263235.svg?label=&logo=discord&logoColor=ffffff&color=7389D8&labelColor=6A7EC2)](https://discord.gg/GGneSqUYHU)
 
 Rust tools and libraries for Neverwinter Nights
 
