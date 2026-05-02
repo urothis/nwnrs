@@ -1,0 +1,20 @@
+name: Lint
+on:
+    pull_request:
+        branches: [ main ]
+env:
+    CARGO_TERM_COLOR: always
+concurrency:
+    group: ${{ github.workflow }}-${{ github.event.pull_request.head.repo.full_name
+        || github.repository }}-${{ github.head_ref || github.ref_name }}
+    cancel-in-progress: true
+jobs:
+    lint:
+        name: Lint
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v6.0.2
+            - uses: ./.github/actions/setup-rust
+              with:
+                  components: rustfmt, clippy
+            - uses: ./.github/actions/rust-lint

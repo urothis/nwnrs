@@ -46,17 +46,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e5ade012bac4db278517a0132c8c10c6427025868dca16c801087c28d5a411f1"
 
 [[package]]
-name = "async-trait"
-version = "0.1.89"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9035ad2d096bed7955a320ee7e2230574d28fd3c3a0f186cbea1ff3c7eed5dbb"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
-]
-
-[[package]]
 name = "atomic-waker"
 version = "1.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -134,12 +123,6 @@ name = "bytes"
 version = "1.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1e748733b7cbc798e1434b6ac524f0c1ff2ab456fe201501e6497c8417a4fc33"
-
-[[package]]
-name = "cast"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "37b2a672a2cb129a2e41c10b1224bb368f9f37a2b16b612598138befd7b37eb5"
 
 [[package]]
 name = "cc"
@@ -420,15 +403,6 @@ name = "hashbrown"
 version = "0.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4f467dd6dccf739c208452f8014c75c18bb8301b050ad1cfb27153803edb0f51"
-
-[[package]]
-name = "hashlink"
-version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ea0b22561a9c04a7cb1a302c013e0259cd3b4bb619f145b32f72b8b4bcbed230"
-dependencies = [
- "hashbrown 0.16.1",
-]
 
 [[package]]
 name = "http"
@@ -758,9 +732,9 @@ dependencies = [
 
 [[package]]
 name = "js-sys"
-version = "0.3.95"
+version = "0.3.97"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2964e92d1d9dc3364cae4d718d93f227e3abb088e747d92e0395bfdedf1c12ca"
+checksum = "a1840c94c045fbcf8ba2812c95db44499f7c64910a912551aaaa541decebcacf"
 dependencies = [
  "cfg-if",
  "futures-util",
@@ -846,16 +820,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8ca58f447f06ed17d5fc4043ce1b10dd205e060fb3ce5b979b8ed8e59ff3f79"
 
 [[package]]
-name = "minicov"
-version = "0.3.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4869b6a491569605d66d3952bcdf03df789e5b536e5f0cf7758a7f08a55ae24d"
-dependencies = [
- "cc",
- "walkdir",
-]
-
-[[package]]
 name = "miniz_oxide"
 version = "0.8.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -887,475 +851,65 @@ dependencies = [
 ]
 
 [[package]]
-name = "nu-ansi-term"
-version = "0.50.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
-dependencies = [
- "windows-sys 0.61.2",
-]
-
-[[package]]
 name = "num-traits"
 version = "0.2.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "071dfc062690e90b734c0b2273ce72ad0ffa95f0c74596bc250dcfd960262841"
 dependencies = [
  "autocfg",
- "libm",
 ]
 
 [[package]]
 name = "nwnrs"
-version = "0.0.11"
-dependencies = [
- "nwnrs-checksums",
- "nwnrs-compressedbuf",
- "nwnrs-dds",
- "nwnrs-encoding",
- "nwnrs-erf",
- "nwnrs-exo",
- "nwnrs-gff",
- "nwnrs-git",
- "nwnrs-install",
- "nwnrs-io",
- "nwnrs-key",
- "nwnrs-localization",
- "nwnrs-lru",
- "nwnrs-masterlist",
- "nwnrs-mdl",
- "nwnrs-mtr",
- "nwnrs-nwscript",
- "nwnrs-nwsync",
- "nwnrs-plt",
- "nwnrs-resdir",
- "nwnrs-resfile",
- "nwnrs-resman",
- "nwnrs-resmemfile",
- "nwnrs-resnwsync",
- "nwnrs-resref",
- "nwnrs-restype",
- "nwnrs-set",
- "nwnrs-ssf",
- "nwnrs-streamext",
- "nwnrs-tga",
- "nwnrs-tlk",
- "nwnrs-twoda",
- "nwnrs-txi",
-]
-
-[[package]]
-name = "nwnrs-checksums"
-version = "0.0.11"
-dependencies = [
- "md5",
- "sha1",
- "tracing",
-]
-
-[[package]]
-name = "nwnrs-cli"
-version = "0.0.11"
+version = "0.0.1"
 dependencies = [
  "argh",
  "image",
- "nwnrs",
- "nwnrs-test-support",
+ "nwnrs-nwpkg",
+ "nwnrs-nwscript",
+ "nwnrs-types",
  "reqwest",
- "serde",
- "serde_json",
  "tokio",
  "tracing",
  "tracing-subscriber",
 ]
 
 [[package]]
-name = "nwnrs-compressedbuf"
-version = "0.0.11"
+name = "nwnrs-nwpkg"
+version = "0.0.1"
 dependencies = [
- "flate2",
- "nwnrs-io",
- "tracing",
- "zstd",
-]
-
-[[package]]
-name = "nwnrs-dds"
-version = "0.0.11"
-dependencies = [
- "nwnrs-resman",
- "nwnrs-restype",
- "texpresso",
- "tracing",
-]
-
-[[package]]
-name = "nwnrs-encoding"
-version = "0.0.11"
-dependencies = [
- "codepage",
- "encoding_rs",
- "tracing",
-]
-
-[[package]]
-name = "nwnrs-erf"
-version = "0.0.11"
-dependencies = [
- "indexmap",
- "nwnrs-checksums",
- "nwnrs-compressedbuf",
- "nwnrs-encoding",
- "nwnrs-exo",
- "nwnrs-io",
- "nwnrs-resman",
- "nwnrs-resref",
- "nwnrs-restype",
- "tracing",
-]
-
-[[package]]
-name = "nwnrs-exo"
-version = "0.0.11"
-dependencies = [
- "nwnrs-compressedbuf",
- "tracing",
-]
-
-[[package]]
-name = "nwnrs-gff"
-version = "0.0.11"
-dependencies = [
- "nwnrs-encoding",
- "nwnrs-io",
- "nwnrs-localization",
- "tracing",
-]
-
-[[package]]
-name = "nwnrs-git"
-version = "0.0.11"
-dependencies = [
- "nwnrs-gff",
- "nwnrs-resman",
- "nwnrs-resmemfile",
- "nwnrs-resref",
- "nwnrs-restype",
- "tracing",
-]
-
-[[package]]
-name = "nwnrs-install"
-version = "0.0.11"
-dependencies = [
- "nwnrs-checksums",
- "nwnrs-compressedbuf",
- "nwnrs-erf",
- "nwnrs-exo",
- "nwnrs-key",
- "nwnrs-resdir",
- "nwnrs-resman",
- "nwnrs-resnwsync",
- "nwnrs-resref",
- "nwnrs-restype",
- "rusqlite",
+ "nwnrs-types",
  "serde",
  "serde_json",
- "tracing",
-]
-
-[[package]]
-name = "nwnrs-io"
-version = "0.0.11"
-dependencies = [
- "md5",
- "nwnrs-checksums",
- "nwnrs-compressedbuf",
- "nwnrs-erf",
- "nwnrs-exo",
- "nwnrs-gff",
- "nwnrs-ssf",
- "nwnrs-test-support",
- "nwnrs-tlk",
- "nwnrs-twoda",
- "reqwest",
- "serde",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "nwnrs-key"
-version = "0.0.11"
-dependencies = [
- "indexmap",
- "nwnrs-checksums",
- "nwnrs-compressedbuf",
- "nwnrs-exo",
- "nwnrs-io",
- "nwnrs-resman",
- "nwnrs-resref",
- "nwnrs-restype",
- "tracing",
-]
-
-[[package]]
-name = "nwnrs-localization"
-version = "0.0.11"
-dependencies = [
- "tracing",
-]
-
-[[package]]
-name = "nwnrs-lru"
-version = "0.0.11"
-dependencies = [
- "tracing",
-]
-
-[[package]]
-name = "nwnrs-masterlist"
-version = "0.0.11"
-dependencies = [
- "reqwest",
- "serde",
- "serde_json",
- "tracing",
-]
-
-[[package]]
-name = "nwnrs-mdl"
-version = "0.0.11"
-dependencies = [
- "nwnrs-gff",
- "nwnrs-resman",
- "nwnrs-resmemfile",
- "nwnrs-resref",
- "nwnrs-restype",
- "nwnrs-test-support",
- "nwnrs-twoda",
- "tracing",
-]
-
-[[package]]
-name = "nwnrs-mtr"
-version = "0.0.11"
-dependencies = [
- "nwnrs-resman",
- "nwnrs-restype",
- "tracing",
+ "toml",
 ]
 
 [[package]]
 name = "nwnrs-nwscript"
-version = "0.0.11"
+version = "0.0.1"
 dependencies = [
- "nwnrs-io",
- "nwnrs-restype",
- "nwnrs-test-support",
+ "nwnrs-types",
  "serde",
- "serde_json",
- "tracing",
 ]
 
 [[package]]
-name = "nwnrs-nwsync"
-version = "0.0.11"
+name = "nwnrs-types"
+version = "0.0.1"
 dependencies = [
- "nwnrs-checksums",
- "nwnrs-resref",
- "nwnrs-restype",
- "nwnrs-streamext",
- "tracing",
-]
-
-[[package]]
-name = "nwnrs-plt"
-version = "0.0.11"
-dependencies = [
- "nwnrs-resman",
- "nwnrs-restype",
- "nwnrs-test-support",
- "tracing",
-]
-
-[[package]]
-name = "nwnrs-resdir"
-version = "0.0.11"
-dependencies = [
+ "codepage",
+ "encoding_rs",
+ "flate2",
  "indexmap",
- "nwnrs-checksums",
- "nwnrs-exo",
- "nwnrs-resman",
- "nwnrs-resref",
- "nwnrs-restype",
- "tracing",
-]
-
-[[package]]
-name = "nwnrs-resfile"
-version = "0.0.11"
-dependencies = [
- "nwnrs-checksums",
- "nwnrs-exo",
- "nwnrs-resman",
- "nwnrs-resref",
- "nwnrs-restype",
- "tracing",
-]
-
-[[package]]
-name = "nwnrs-resman"
-version = "0.0.11"
-dependencies = [
- "nwnrs-checksums",
- "nwnrs-compressedbuf",
- "nwnrs-exo",
- "nwnrs-io",
- "nwnrs-lru",
- "nwnrs-resref",
- "nwnrs-restype",
- "tracing",
-]
-
-[[package]]
-name = "nwnrs-resmemfile"
-version = "0.0.11"
-dependencies = [
- "nwnrs-checksums",
- "nwnrs-exo",
- "nwnrs-resman",
- "nwnrs-resref",
- "nwnrs-restype",
- "tracing",
-]
-
-[[package]]
-name = "nwnrs-resnwsync"
-version = "0.0.11"
-dependencies = [
- "indexmap",
- "nwnrs-checksums",
- "nwnrs-compressedbuf",
- "nwnrs-exo",
- "nwnrs-nwsync",
- "nwnrs-resman",
- "nwnrs-resref",
- "nwnrs-restype",
+ "md5",
+ "reqwest",
  "rusqlite",
- "tracing",
-]
-
-[[package]]
-name = "nwnrs-resref"
-version = "0.0.11"
-dependencies = [
- "nwnrs-io",
- "nwnrs-restype",
  "serde",
- "tracing",
-]
-
-[[package]]
-name = "nwnrs-restype"
-version = "0.0.11"
-dependencies = [
- "nwnrs-io",
- "serde",
- "tracing",
-]
-
-[[package]]
-name = "nwnrs-set"
-version = "0.0.11"
-dependencies = [
- "nwnrs-resman",
- "nwnrs-resref",
- "nwnrs-restype",
- "tracing",
-]
-
-[[package]]
-name = "nwnrs-ssf"
-version = "0.0.11"
-dependencies = [
- "nwnrs-io",
- "nwnrs-localization",
- "serde",
- "tracing",
-]
-
-[[package]]
-name = "nwnrs-streamext"
-version = "0.0.11"
-dependencies = [
- "tracing",
-]
-
-[[package]]
-name = "nwnrs-test-support"
-version = "0.0.11"
-dependencies = [
- "nwnrs-install",
- "nwnrs-resman",
- "nwnrs-resref",
- "nwnrs-restype",
- "tracing",
-]
-
-[[package]]
-name = "nwnrs-tga"
-version = "0.0.11"
-dependencies = [
- "nwnrs-resman",
- "nwnrs-restype",
- "tracing",
-]
-
-[[package]]
-name = "nwnrs-tlk"
-version = "0.0.11"
-dependencies = [
- "nwnrs-encoding",
- "nwnrs-io",
- "nwnrs-localization",
- "nwnrs-lru",
- "nwnrs-resman",
- "tracing",
-]
-
-[[package]]
-name = "nwnrs-twoda"
-version = "0.0.11"
-dependencies = [
- "nwnrs-encoding",
- "nwnrs-io",
- "nwnrs-resman",
- "tracing",
-]
-
-[[package]]
-name = "nwnrs-txi"
-version = "0.0.11"
-dependencies = [
- "nwnrs-resman",
- "nwnrs-resmemfile",
- "nwnrs-resref",
- "nwnrs-restype",
- "tracing",
-]
-
-[[package]]
-name = "nwnrs-wasm"
-version = "0.0.11"
-dependencies = [
- "nwnrs",
- "nwnrs-test-support",
- "serde",
- "serde-wasm-bindgen",
  "serde_json",
- "wasm-bindgen",
- "wasm-bindgen-test",
+ "sha1",
+ "texpresso",
+ "tokio",
+ "tracing",
+ "zstd",
 ]
 
 [[package]]
@@ -1363,12 +917,6 @@ name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
-
-[[package]]
-name = "oorandom"
-version = "11.1.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d6790f58c7ff633d8771f42965289203411a5e5c68388703c06e14f24770b41e"
 
 [[package]]
 name = "openssl-probe"
@@ -1665,7 +1213,6 @@ dependencies = [
  "bitflags",
  "fallible-iterator",
  "fallible-streaming-iterator",
- "hashlink",
  "libsqlite3-sys",
  "smallvec",
  "sqlite-wasm-rs",
@@ -1688,9 +1235,9 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.39"
+version = "0.23.40"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7c2c118cb077cca2822033836dfb1b975355dfb784b5e8da48f7b6c5db74e60e"
+checksum = "ef86cd5876211988985292b91c96a8f2d298df24e75989a43a3c73f2d4d8168b"
 dependencies = [
  "aws-lc-rs",
  "once_cell",
@@ -1831,17 +1378,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "serde-wasm-bindgen"
-version = "0.6.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8302e169f0eddcc139c70f139d19d6467353af16f9fce27e8c30158036a1e16b"
-dependencies = [
- "js-sys",
- "serde",
- "wasm-bindgen",
-]
-
-[[package]]
 name = "serde_core"
 version = "1.0.228"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1873,6 +1409,15 @@ dependencies = [
  "serde",
  "serde_core",
  "zmij",
+]
+
+[[package]]
+name = "serde_spanned"
+version = "1.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6662b5879511e06e8999a8a235d848113e942c9124f211511b16466ee2995f26"
+dependencies = [
+ "serde_core",
 ]
 
 [[package]]
@@ -2112,6 +1657,45 @@ dependencies = [
 ]
 
 [[package]]
+name = "toml"
+version = "1.1.2+spec-1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "81f3d15e84cbcd896376e6730314d59fb5a87f31e4b038454184435cd57defee"
+dependencies = [
+ "indexmap",
+ "serde_core",
+ "serde_spanned",
+ "toml_datetime",
+ "toml_parser",
+ "toml_writer",
+ "winnow",
+]
+
+[[package]]
+name = "toml_datetime"
+version = "1.1.1+spec-1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3165f65f62e28e0115a00b2ebdd37eb6f3b641855f9d636d3cd4103767159ad7"
+dependencies = [
+ "serde_core",
+]
+
+[[package]]
+name = "toml_parser"
+version = "1.1.2+spec-1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a2abe9b86193656635d2411dc43050282ca48aa31c2451210f4202550afb7526"
+dependencies = [
+ "winnow",
+]
+
+[[package]]
+name = "toml_writer"
+version = "1.1.1+spec-1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "756daf9b1013ebe47a8776667b466417e2d4c5679d441c26230efd9ef78692db"
+
+[[package]]
 name = "tower"
 version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2185,18 +1769,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "db97caf9d906fbde555dd62fa95ddba9eecfd14cb388e4f491a66d74cd5fb79a"
 dependencies = [
  "once_cell",
- "valuable",
-]
-
-[[package]]
-name = "tracing-log"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ee855f1f400bd0e5c02d150ae5de3840039a3f54b025156404e34c23c03f47c3"
-dependencies = [
- "log",
- "once_cell",
- "tracing-core",
 ]
 
 [[package]]
@@ -2206,15 +1778,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cb7f578e5945fb242538965c2d0b04418d38ec25c79d160cd279bf0731c8d319"
 dependencies = [
  "matchers",
- "nu-ansi-term",
  "once_cell",
  "regex-automata",
  "sharded-slab",
- "smallvec",
  "thread_local",
  "tracing",
  "tracing-core",
- "tracing-log",
 ]
 
 [[package]]
@@ -2260,12 +1829,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6c140620e7ffbb22c2dee59cafe6084a59b5ffc27a8859a5f0d494b5d52b6be"
 
 [[package]]
-name = "valuable"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
-
-[[package]]
 name = "vcpkg"
 version = "0.2.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2307,9 +1870,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen"
-version = "0.2.118"
+version = "0.2.120"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0bf938a0bacb0469e83c1e148908bd7d5a6010354cf4fb73279b7447422e3a89"
+checksum = "df52b6d9b87e0c74c9edfa1eb2d9bf85e5d63515474513aa50fa181b3c4f5db1"
 dependencies = [
  "cfg-if",
  "once_cell",
@@ -2320,9 +1883,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-futures"
-version = "0.4.68"
+version = "0.4.70"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f371d383f2fb139252e0bfac3b81b265689bf45b6874af544ffa4c975ac1ebf8"
+checksum = "af934872acec734c2d80e6617bbb5ff4f12b052dd8e6332b0817bce889516084"
 dependencies = [
  "js-sys",
  "wasm-bindgen",
@@ -2330,9 +1893,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-macro"
-version = "0.2.118"
+version = "0.2.120"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eeff24f84126c0ec2db7a449f0c2ec963c6a49efe0698c4242929da037ca28ed"
+checksum = "78b1041f495fb322e64aca85f5756b2172e35cd459376e67f2a6c9dffcedb103"
 dependencies = [
  "quote",
  "wasm-bindgen-macro-support",
@@ -2340,9 +1903,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-macro-support"
-version = "0.2.118"
+version = "0.2.120"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9d08065faf983b2b80a79fd87d8254c409281cf7de75fc4b773019824196c904"
+checksum = "9dcd0ff20416988a18ac686d4d4d0f6aae9ebf08a389ff5d29012b05af2a1b41"
 dependencies = [
  "bumpalo",
  "proc-macro2",
@@ -2353,57 +1916,18 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-shared"
-version = "0.2.118"
+version = "0.2.120"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5fd04d9e306f1907bd13c6361b5c6bfc7b3b3c095ed3f8a9246390f8dbdee129"
+checksum = "49757b3c82ebf16c57d69365a142940b384176c24df52a087fb748e2085359ea"
 dependencies = [
  "unicode-ident",
 ]
 
 [[package]]
-name = "wasm-bindgen-test"
-version = "0.3.68"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6bb55e2540ad1c56eec35fd63e2aea15f83b11ce487fd2de9ad11578dfc047ea"
-dependencies = [
- "async-trait",
- "cast",
- "js-sys",
- "libm",
- "minicov",
- "nu-ansi-term",
- "num-traits",
- "oorandom",
- "serde",
- "serde_json",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "wasm-bindgen-test-macro",
- "wasm-bindgen-test-shared",
-]
-
-[[package]]
-name = "wasm-bindgen-test-macro"
-version = "0.3.68"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "caf0ca1bd612b988616bac1ab34c4e4290ef18f7148a1d8b7f31c150080e9295"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
-]
-
-[[package]]
-name = "wasm-bindgen-test-shared"
-version = "0.2.118"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "23cda5ecc67248c48d3e705d3e03e00af905769b78b9d2a1678b663b8b9d4472"
-
-[[package]]
 name = "web-sys"
-version = "0.3.95"
+version = "0.3.97"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4f2dfbb17949fa2088e5d39408c48368947b86f7834484e87b73de55bc14d97d"
+checksum = "2eadbac71025cd7b0834f20d1fe8472e8495821b4e9801eb0a60bd1f19827602"
 dependencies = [
  "js-sys",
  "wasm-bindgen",
@@ -2598,6 +2122,12 @@ name = "windows_x86_64_msvc"
 version = "0.53.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6bbff5f0aada427a1e5a6da5f1f98158182f26556f345ac9e04d36d0ebed650"
+
+[[package]]
+name = "winnow"
+version = "1.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2ee1708bef14716a11bae175f579062d4554d95be2c6829f518df847b7b3fdd0"
 
 [[package]]
 name = "wit-bindgen"

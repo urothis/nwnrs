@@ -25,7 +25,7 @@ runs:
     - name: Check formatting
       if: inputs.check-format == 'true'
       shell: bash
-      run: cargo +nightly fmt --all -- --check
+      run: cargo fmt --all -- --check
 
     - name: Run clippy
       if: inputs.clippy == 'true'
@@ -57,7 +57,7 @@ runs:
           -D rustdoc::missing_doc_code_examples
       run: |
         if [ "${{ inputs.workspace }}" = "true" ]; then
-          cargo +nightly doc --workspace --no-deps
+          cargo doc --workspace --no-deps
         else
-          cargo +nightly doc --no-deps
+          cargo doc --no-deps
         fi

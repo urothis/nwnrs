@@ -2,14 +2,12 @@
 
 ![nwnrs logo](assets/logo/icon.svg)
 
-[![License](https://img.shields.io/badge/license-MIT%2FApache-blue.svg)](https://github.com/urothis/nwnrs#license)
+[![License](https://img.shields.io/badge/license-GPL--3.0--only-blue.svg)](https://github.com/urothis/nwnrs#license)
 [![Crates.io](https://img.shields.io/crates/v/nwnrs.svg)](https://crates.io/crates/nwnrs)
 [![Downloads](https://img.shields.io/crates/d/nwnrs.svg)](https://crates.io/crates/nwnrs)
-[![Docs](https://docs.rs/nwnrs/badge.svg)](https://docs.rs/urothis/latest/nwnrs/)
+[![Docs](https://docs.rs/nwnrs/badge.svg)](https://docs.rs/nwnrs/latest/nwnrs/)
 [![CI](https://github.com/urothis/nwnrs/workflows/CI/badge.svg)](https://github.com/urothis/nwnrs/actions)
 [![Discord](https://img.shields.io/discord/691052431525675048.svg?label=&logo=discord&logoColor=ffffff&color=7389D8&labelColor=6A7EC2)](https://discord.gg/GGneSqUYHU)
-
-
 
 Rust tools and libraries for Neverwinter Nights
 
@@ -22,22 +20,19 @@ It includes:
 
 - Rust crates for formats like `GFF`, `2DA`, `TLK`, `SSF`, `ERF`, `KEY/BIF`,
   `MDL`, `TGA`, `DDS`, `PLT`, and `NWSync`
-- a CLI for operational workflows such as inspection, compilation, conversion,
+- a CLI for operational workflows such as inspection, NWScript packing/compilation, conversion,
   packing, and unpacking
-- wasm bindings for browser and JavaScript applications
 
 ## Start Here
 
-The canonical guided documentation now lives in the `nwnrs` umbrella crate
-docs:
+The canonical guided documentation now lives in the `nwnrs-types` crate docs:
 
-- [`nwnrs` rustdoc](https://docs.rs/nwnrs/latest/nwnrs/)
-- [`crates/meta/prelude/README.md`](./crates/meta/prelude/README.md)
+- [`nwnrs-types` rustdoc](https://docs.rs/nwnrs-types/latest/nwnrs_types/)
+- [`crates/types/README.md`](./crates/types/README.md)
 
 Operational and interface-specific docs live here:
 
-- [`cli/README.md`](./cli/README.md)
-- [`wasm/README.md`](./wasm/README.md)
+- [`crates/nwnrs/README.md`](./crates/nwnrs/README.md)
 
 ## Quick Start
 
@@ -46,31 +41,32 @@ Operational and interface-specific docs live here:
 Install:
 
 ```bash
-cargo install --git https://github.com/urothis/nwnrs --bin nwnrs-cli
+cargo install --git https://github.com/urothis/nwnrs --bin nwnrs
 ```
 
 Use:
 
 ```bash
-nwnrs-cli inspect path/to/file.utc
-nwnrs-cli compile --debug path/to/script.nss
-nwnrs-cli convert input.png output.tga
-nwnrs-cli convert path/to/model.mdl out/model_ascii.mdl
-nwnrs-cli convert out/model_ascii.mdl rebuilt/model.mdl
-nwnrs-cli convert path/to/model.mdl out/model.obj
-nwnrs-cli unpack path/to/module.mod -d out/
-nwnrs-cli pack out/ rebuilt.mod
+nwnrs new --kind utc my_creature
+nwnrs inspect path/to/file.utc
+nwnrs pack --debug path/to/script.nss out/script.ncs
+nwnrs convert input.png output.tga
+nwnrs convert path/to/model.mdl out/model_ascii.mdl
+nwnrs convert out/model_ascii.mdl rebuilt/model.mdl
+nwnrs convert path/to/model.mdl out/model.obj
+nwnrs unpack path/to/module.mod -d out/
+nwnrs pack out/ rebuilt.mod
 ```
 
 ### Rust
 
 ```toml
 [dependencies]
-nwnrs = { git = "https://github.com/urothis/nwnrs" }
+nwnrs-types = { git = "https://github.com/urothis/nwnrs" }
 ```
 
 ```rust
-use nwnrs::{
+use nwnrs_types::{
     gff::{GffRoot, GffValue},
     twoda::TwoDa,
 };
@@ -85,34 +81,35 @@ table.set_columns(vec!["Label".to_string()])?;
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-### WebAssembly
-
-```bash
-wasm-pack build wasm --target bundler --out-dir pkg
-```
-
-The wasm package exposes helpers such as `read_gff_from_bytes`,
-`write_gff_to_bytes`, `read_twoda_from_bytes`, `write_twoda_to_bytes`,
-`read_mdl_from_bytes`, and `write_mdl_to_bytes`.
-
 ## Main Parts
 
-- [`nwnrs`](./crates/meta/prelude/README.md): umbrella crate and guided entry
+- [`nwnrs-types`](./crates/types/README.md): umbrella crate and guided entry
   point
-- [`nwnrs-resman`](./crates/resources/resman/README.md): shared resource lookup
-- [`nwnrs-install`](./crates/resources/install/README.md): install discovery and
-  conventional layered resource assembly
-- [`nwnrs-nwscript`](./crates/language/nwscript/README.md): NWScript frontend
+- [`nwnrs-types::resman`](./crates/types/src/resman/README.md): shared resource
+  lookup
+- [`nwnrs-types::install`](./crates/types/src/install/README.md): install
+  discovery and conventional layered resource assembly
+- [`nwnrs`](./crates/nwnrs/README.md): command-line inspection, conversion,
+  packing, and unpacking workflows
+- [`nwnrs-nwscript`](./crates/nwscript/README.md): NWScript frontend
   and compiler
-- [`nwnrs-mdl`](./crates/formats/mdl/README.md): MDL parsing, lowering,
-  composition, and export
+- [`nwnrs-types::mdl`](./crates/types/src/mdl/README.md): MDL parsing,
+  lowering, composition, and export
 
 ## Development
+
+Install Rust with [rustup](https://rustup.rs/).
+
+This workspace pins its compiler toolchain through
+[`rust-toolchain.toml`](./rust-toolchain.toml), so a normal `cargo` invocation
+will automatically use the expected nightly once it is installed.
+
+From the repository root, the main validation commands are:
 
 ```bash
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
-cargo fmt --check
+cargo fmt --all -- --check
 ```
 
 ## License

@@ -2,10 +2,6 @@ name: "Setup Rust"
 description: "Setup Rust toolchain and cache dependencies"
 
 inputs:
-  toolchain:
-    description: "Rust toolchain version"
-    required: true
-    default: "stable"
   components:
     description: "Additional components to install"
     required: false
@@ -18,9 +14,20 @@ inputs:
 runs:
   using: "composite"
   steps:
+    - name: Resolve toolchain channel
+      id: toolchain
+      shell: bash
+      run: |
+        channel="$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml | head -n1)"
+        if [ -z "${channel}" ]; then
+          echo "failed to resolve Rust toolchain channel from rust-toolchain.toml" >&2
+          exit 1
+        fi
+        echo "channel=${channel}" >> "${GITHUB_OUTPUT}"
+
     - name: Setup Rust
-      uses: dtolnay/rust-toolchain@stable
+      uses: dtolnay/rust-toolchain@nightly
       with:
-        toolchain: ${{ inputs.toolchain }}
+        toolchain: ${{ steps.toolchain.outputs.channel }}
         components: ${{ inputs.components }}
         targets: ${{ inputs.target }}

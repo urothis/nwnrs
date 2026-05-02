@@ -1,0 +1,56 @@
+name: Release
+
+on:
+    push:
+        branches:
+            - main
+
+env:
+    CARGO_TERM_COLOR: always
+
+jobs:
+    release:
+        name: Release
+        runs-on: ubuntu-latest
+        permissions:
+            contents: write
+            pull-requests: read
+            id-token: write
+        steps:
+            - uses: actions/checkout@v6.0.2
+              with:
+                  fetch-depth: 0
+                  persist-credentials: false
+
+            - uses: ./.github/actions/setup-rust
+
+            - name: Run release-plz
+              uses: release-plz/action@v0.5
+              with:
+                  command: release
+              env:
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    release-pr:
+        name: Release PR
+        runs-on: ubuntu-latest
+        permissions:
+            contents: write
+            pull-requests: write
+        concurrency:
+            group: release-plz-${{ github.ref }}
+            cancel-in-progress: false
+        steps:
+            - uses: actions/checkout@v6.0.2
+              with:
+                  fetch-depth: 0
+                  persist-credentials: false
+
+            - uses: ./.github/actions/setup-rust
+
+            - name: Run release-plz
+              uses: release-plz/action@v0.5
+              with:
+                  command: release-pr
+              env:
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

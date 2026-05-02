@@ -1,0 +1,30 @@
+[package]
+name = "nwnrs-nwscript"
+version = "0.0.1"
+edition.workspace = true
+license.workspace = true
+publish = true
+description = "NWScript frontend, compiler, bytecode, and debug tooling for Neverwinter Nights"
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/nwnrs-nwscript"
+readme = "README.md"
+keywords = ["nwn", "neverwinter-nights", "nwscript", "compiler", "ncs"]
+categories = ["compilers", "parser-implementations", "game-development"]
+
+[dependencies]
+nwnrs-types = { path = "../types", version = "0.0.1", default-features = false, features = ["io", "resman"] }
+serde.workspace = true
+
+[dev-dependencies]
+nwnrs-types = { path = "../types", version = "0.0.1", features = ["install"] }
+
+[lints]
+workspace = true
+
+[package.metadata.docs.rs]
+rustdoc-args = [
+    "-Zunstable-options",
+    "--generate-link-to-definition",
+    "--generate-macro-expansion",
+]

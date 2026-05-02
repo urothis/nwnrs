@@ -16,8 +16,8 @@ assignees: ''
 Please include:
 
 * the Rust version you're using (you can get this by running `cargo --version`)
-  * nwnrs relies on the "latest stable release" of Rust
-  * nightly should generally work, but there are sometimes regressions: please let us know!
+  * nwnrs currently pins the `nightly` toolchain via `rust-toolchain.toml`
+  * if you are using a different nightly than the pinned one, please include that detail
 * the operating system or browser used, including its version
   * e.g. Windows 10, Ubuntu 18.04, iOS 14
 
