@@ -1,6 +1,6 @@
 [package]
 name = "nwnrs-nwscript"
-version = "0.0.1"
+version = "0.0.2"
 edition.workspace = true
 license.workspace = true
 publish = true
@@ -13,11 +13,11 @@ keywords = ["nwn", "neverwinter-nights", "nwscript", "compiler", "ncs"]
 categories = ["compilers", "parser-implementations", "game-development"]
 
 [dependencies]
-nwnrs-types = { path = "../types", version = "0.0.1", default-features = false, features = ["io", "resman"] }
+nwnrs-types = { path = "../types", version = "0.0.2", default-features = false, features = ["io", "resman"] }
 serde.workspace = true
 
 [dev-dependencies]
-nwnrs-types = { path = "../types", version = "0.0.1", features = ["install"] }
+nwnrs-types = { path = "../types", version = "0.0.2", features = ["install"] }
 
 [lints]
 workspace = true
