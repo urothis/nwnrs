@@ -368,30 +368,47 @@ fn steam_root_candidates<H>(platform: Platform, home_dir: &H) -> Vec<PathBuf>
 where
     H: Fn() -> Option<PathBuf>,
 {
-    let Some(home) = home_dir() else {
-        return Vec::new();
-    };
-
     match platform {
-        Platform::MacOs => vec![
-            home.join("Library")
-                .join("Application Support")
-                .join("Steam"),
-        ],
-        Platform::Linux => vec![
-            home.join(".local").join("share").join("Steam"),
-            home.join(".steam").join("steam"),
-            home.join(".var")
-                .join("app")
-                .join("com.valvesoftware.Steam")
-                .join(".local")
-                .join("share")
-                .join("Steam"),
-        ],
-        Platform::Windows => vec![
-            PathBuf::from(r"c:\program files (x86)\steam"),
-            home.join("AppData").join("Local").join("Steam"),
-        ],
+        Platform::MacOs => home_dir().map_or_else(Vec::new, |home| {
+            vec![
+                home.join("Library")
+                    .join("Application Support")
+                    .join("Steam"),
+            ]
+        }),
+        Platform::Linux => home_dir().map_or_else(Vec::new, |home| {
+            vec![
+                home.join(".local").join("share").join("Steam"),
+                home.join(".steam").join("steam"),
+                home.join(".var")
+                    .join("app")
+                    .join("com.valvesoftware.Steam")
+                    .join(".local")
+                    .join("share")
+                    .join("Steam"),
+            ]
+        }),
+        Platform::Windows => {
+            let mut roots = windows_system_steam_roots();
+            if let Some(home) = home_dir() {
+                push_unique_path(&mut roots, home.join("AppData").join("Local").join("Steam"));
+            }
+            roots
+        }
+    }
+}
+
+fn windows_system_steam_roots() -> Vec<PathBuf> {
+    #[cfg(all(target_os = "windows", test))]
+    {
+        // Unit tests inject their own home directory and should not consult the
+        // host machine's global Steam install.
+        Vec::new()
+    }
+
+    #[cfg(not(all(target_os = "windows", test)))]
+    {
+        vec![PathBuf::from(r"c:\program files (x86)\steam")]
     }
 }
 
@@ -670,6 +687,8 @@ mod tests {
         time::{SystemTime, UNIX_EPOCH},
     };
 
+    use serde_json::json;
+
     use super::{
         beamdog_install_candidates, expand_tilde, find_nwnrs_root_impl_with_registry,
         normalize_relative_path, resolve_language_root, windows_legacy_default_paths,
@@ -774,10 +793,7 @@ mod tests {
         if let Err(error) = fs::create_dir_all(settings.parent().unwrap_or(&home)) {
             panic!("create settings dir: {error}");
         }
-        if let Err(error) = fs::write(
-            &settings,
-            format!(r#"{{"folders":["{}"]}}"#, beamdog_root.display()),
-        ) {
+        if let Err(error) = fs::write(&settings, json!({ "folders": [beamdog_root] }).to_string()) {
             panic!("write settings: {error}");
         }
         if let Err(error) = fs::write(install.join("databuild.txt"), "build") {
@@ -973,7 +989,53 @@ mod tests {
     }
 
     #[test]
-    fn windows_game_root_falls_back_to_legacy_registry_location() {
+    fn windows_game_root_prefers_steam_over_legacy_registry_location() {
+        let root = unique_test_dir("windows-steam-over-legacy");
+        let home = root.join("home");
+        let steam_install = root.join("steam-install");
+        let legacy_install = root.join("legacy-install");
+
+        if let Err(error) = fs::create_dir_all(steam_install.join("data")) {
+            panic!("create steam-over-legacy steam data dir: {error}");
+        }
+        if let Err(error) = fs::create_dir_all(steam_install.join("lang")) {
+            panic!("create steam-over-legacy steam lang dir: {error}");
+        }
+        if let Err(error) = fs::write(steam_install.join("steam_appid.txt"), "704450\n") {
+            panic!("write steam-over-legacy steam_appid.txt: {error}");
+        }
+        if let Err(error) = fs::write(steam_install.join("databuild.txt"), "build") {
+            panic!("write steam-over-legacy databuild.txt: {error}");
+        }
+
+        if let Err(error) = fs::create_dir_all(legacy_install.join("data")) {
+            panic!("create steam-over-legacy legacy data dir: {error}");
+        }
+        if let Err(error) = fs::write(legacy_install.join("nwn.ini"), "[Alias]\n") {
+            panic!("write steam-over-legacy legacy nwn.ini: {error}");
+        }
+
+        let resolved = match find_nwnrs_root_impl_with_registry(
+            "",
+            |_key| None,
+            || Some(home.clone()),
+            Platform::Windows,
+            |key, value| {
+                if key == windows_steam_registry_keys()[0] && value == "InstallLocation" {
+                    return Some(steam_install.display().to_string());
+                }
+                (key == windows_legacy_registry_keys()[0] && value == "Location")
+                    .then(|| legacy_install.display().to_string())
+            },
+        ) {
+            Ok(value) => value,
+            Err(error) => panic!("resolve steam-over-legacy install root: {error}"),
+        };
+        assert_eq!(resolved, steam_install);
+    }
+
+    #[test]
+    fn windows_game_root_falls_back_to_legacy_registry_location_when_no_steam_sources_exist() {
         let root = unique_test_dir("windows-legacy-registry");
         let home = root.join("home");
         let install = root.join("legacy-install");
