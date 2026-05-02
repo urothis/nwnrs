@@ -29,7 +29,7 @@ jobs:
               with:
                   command: release
               env:
-                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+                  GITHUB_TOKEN: ${{ secrets.GH_PAT }}
 
     release-pr:
         name: Release PR
@@ -50,7 +50,7 @@ jobs:
             - uses: ./.github/actions/setup-rust
             - name: Close old release PR
               env:
-                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # Use the default GITHUB_TOKEN for gh CLI authentication
               run: |
                   # List all opened PRs which head branch starts with "release-plz-"
                   release_pr=$(gh pr list --state='open' --json number,headRefName --jq '.[] | select(.headRefName | startswith("release-plz-")) | .number')
@@ -66,4 +66,4 @@ jobs:
               with:
                   command: release-pr
               env:
-                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+                  GITHUB_TOKEN: ${{ secrets.GH_PAT }}
