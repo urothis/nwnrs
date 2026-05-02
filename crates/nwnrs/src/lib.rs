@@ -1,5 +1,5 @@
 #![forbid(unsafe_code)]
-//! Library entrypoint for NWNRS command-line tools.
+#![doc = include_str!("../README.md")]
 
 mod args;
 mod compile;
