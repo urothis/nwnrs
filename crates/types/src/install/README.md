@@ -89,9 +89,12 @@ let _resman = new_default_resman(
 
 - discovery order is explicit: for user roots, explicit override, `NWN_HOME`,
   then platform defaults; for install roots, explicit override, `NWN_ROOT`,
-  Steam heuristics, then Beamdog heuristics
+  Steam heuristics, then Beamdog heuristics, then legacy BioWare heuristics
 - the crate is deterministic; it does not search randomly until something looks
   plausible
+- Windows install discovery checks Steam registry entries, Steam library roots,
+  Beamdog client library settings, and the legacy BioWare registry key before
+  falling back to the common 1.69 install directories under `Program Files`
 - `resolve_language_root` accepts both long-form names and known aliases, but
   does not guess beyond the alias table
 - a missing `databuild.txt` on an otherwise plausible install root is treated

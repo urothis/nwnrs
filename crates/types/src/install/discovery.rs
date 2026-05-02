@@ -43,7 +43,8 @@ pub fn find_user_root(override_dir: &str) -> InstallResult<PathBuf> {
 /// Locates the NWN installation root.
 ///
 /// Resolution order is: explicit override, `NWN_ROOT`, Steam install
-/// heuristics, then Beamdog client settings heuristics.
+/// heuristics, Beamdog client settings heuristics, then legacy BioWare 1.69
+/// install heuristics.
 ///
 /// The returned path is required to exist as a directory. A missing
 /// `databuild.txt` is treated as a warning rather than a hard failure so local
@@ -54,11 +55,12 @@ pub fn find_user_root(override_dir: &str) -> InstallResult<PathBuf> {
 /// Returns [`InstallError`] if no valid installation directory can be found.
 #[instrument(level = "info", skip_all, err, fields(override_dir))]
 pub fn find_nwnrs_root(override_dir: &str) -> InstallResult<PathBuf> {
-    find_nwnrs_root_impl(
+    find_nwnrs_root_impl_with_registry(
         override_dir,
         |key| std::env::var(key).ok(),
         current_home_dir,
         current_platform(),
+        read_windows_registry_string,
     )
 }
 
@@ -161,19 +163,21 @@ where
 
 #[instrument(
     level = "info",
-    skip(env_get, home_dir),
+    skip(env_get, home_dir, registry_get),
     err,
     fields(override_dir, platform = ?platform)
 )]
-pub(crate) fn find_nwnrs_root_impl<E, H>(
+fn find_nwnrs_root_impl_with_registry<E, H, R>(
     override_dir: &str,
     env_get: E,
     home_dir: H,
     platform: Platform,
+    registry_get: R,
 ) -> InstallResult<PathBuf>
 where
     E: Fn(&str) -> Option<String>,
     H: Fn() -> Option<PathBuf>,
+    R: Fn(&str, &str) -> Option<String>,
 {
     debug!("resolving install root");
     if let Some(preferred) =
@@ -191,20 +195,14 @@ where
     }
 
     let mut candidates = Vec::new();
-    collect_steam_install_candidates(&mut candidates, platform, &home_dir);
+    collect_steam_install_candidates(&mut candidates, platform, &home_dir, &registry_get);
     collect_beamdog_install_candidates(&mut candidates, platform, &home_dir)?;
+    collect_legacy_install_candidates(&mut candidates, platform, &registry_get);
 
     let result = resolve_existing_dir(
         candidates,
         "Could not locate NWN; try --root",
-        |candidate| match candidate.source {
-            "steam" => {
-                candidate.path.is_dir()
-                    && candidate.path.join("data").is_dir()
-                    && candidate.path.join("steam_appid.txt").is_file()
-            }
-            _ => candidate.path.is_dir(),
-        },
+        |candidate| is_valid_install_candidate(candidate),
     )?;
     validate_install_root(&result);
     Ok(result)
@@ -302,9 +300,11 @@ fn collect_steam_install_candidates<H>(
     candidates: &mut Vec<CandidatePath>,
     platform: Platform,
     home_dir: &H,
+    registry_get: &impl Fn(&str, &str) -> Option<String>,
 ) where
     H: Fn() -> Option<PathBuf>,
 {
+    collect_windows_steam_registry_candidates(candidates, platform, registry_get);
     for steam_root in steam_root_candidates(platform, home_dir) {
         collect_steam_root_candidates(candidates, &steam_root);
     }
@@ -319,11 +319,31 @@ where
     H: Fn() -> Option<PathBuf>,
 {
     for root in beamdog_install_roots(platform, home_dir)? {
-        for torrent_id in ["00829", "00785"] {
-            push_candidate(candidates, root.join(torrent_id), "beamdog");
+        for install in beamdog_install_candidates(&root) {
+            push_candidate(candidates, install, "beamdog");
         }
     }
     Ok(())
+}
+
+fn collect_legacy_install_candidates(
+    candidates: &mut Vec<CandidatePath>,
+    platform: Platform,
+    registry_get: &impl Fn(&str, &str) -> Option<String>,
+) {
+    if platform != Platform::Windows {
+        return;
+    }
+
+    for key in windows_legacy_registry_keys() {
+        if let Some(location) = registry_get(key, "Location") {
+            push_candidate(candidates, PathBuf::from(location), "legacy");
+        }
+    }
+
+    for path in windows_legacy_default_paths() {
+        push_candidate(candidates, path, "legacy");
+    }
 }
 
 fn beamdog_install_roots<H>(platform: Platform, home_dir: &H) -> InstallResult<Vec<PathBuf>>
@@ -415,6 +435,22 @@ fn steam_library_roots(steam_root: &Path) -> Vec<PathBuf> {
     roots
 }
 
+fn collect_windows_steam_registry_candidates(
+    candidates: &mut Vec<CandidatePath>,
+    platform: Platform,
+    registry_get: &impl Fn(&str, &str) -> Option<String>,
+) {
+    if platform != Platform::Windows {
+        return;
+    }
+
+    for key in windows_steam_registry_keys() {
+        if let Some(location) = registry_get(key, "InstallLocation") {
+            push_candidate(candidates, PathBuf::from(location), "steam");
+        }
+    }
+}
+
 fn steam_app_install_dir(steamapps: &Path) -> Option<String> {
     let manifest = steamapps.join("appmanifest_704450.acf");
     let data = fs::read_to_string(manifest).ok()?;
@@ -454,6 +490,102 @@ fn steam_vdf_path_value(value: &str) -> PathBuf {
     #[cfg(not(target_os = "windows"))]
     let value = value.to_string();
     PathBuf::from(value)
+}
+
+fn beamdog_install_candidates(root: &Path) -> Vec<PathBuf> {
+    let mut installs = Vec::new();
+    push_unique_path(&mut installs, root.to_path_buf());
+
+    let Ok(entries) = fs::read_dir(root) else {
+        return installs;
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+
+        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+
+        if name.chars().all(|ch| ch.is_ascii_digit()) {
+            push_unique_path(&mut installs, path);
+        }
+    }
+
+    installs
+}
+
+fn is_valid_install_candidate(candidate: &CandidatePath) -> bool {
+    match candidate.source {
+        "steam" => looks_like_steam_install_root(&candidate.path),
+        "beamdog" | "legacy" => looks_like_nwn_install_root(&candidate.path),
+        _ => candidate.path.is_dir(),
+    }
+}
+
+fn looks_like_steam_install_root(path: &Path) -> bool {
+    looks_like_nwn_install_root(path) && path.join("steam_appid.txt").is_file()
+}
+
+fn looks_like_nwn_install_root(path: &Path) -> bool {
+    if !path.is_dir() {
+        return false;
+    }
+
+    let has_data = path.join("data").is_dir();
+    let has_bin = path.join("bin").is_dir();
+    let has_lang = path.join("lang").is_dir();
+    let has_databuild = path.join("databuild.txt").is_file();
+    let has_nwn_ini = path.join("nwn.ini").is_file();
+    let has_dialog = path.join("dialog.tlk").is_file()
+        || path
+            .join("lang")
+            .join("en")
+            .join("data")
+            .join("dialog.tlk")
+            .is_file();
+
+    has_data && (has_databuild || has_dialog || has_lang || has_bin || has_nwn_ini)
+}
+
+fn windows_steam_registry_keys() -> &'static [&'static str] {
+    &[
+        r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Steam App 704450",
+        r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\Steam App 704450",
+    ]
+}
+
+fn windows_legacy_registry_keys() -> &'static [&'static str] {
+    &[
+        r"SOFTWARE\BioWare\NWN\Neverwinter",
+        r"SOFTWARE\WOW6432Node\BioWare\NWN\Neverwinter",
+    ]
+}
+
+fn windows_legacy_default_paths() -> [PathBuf; 2] {
+    [
+        PathBuf::from(r"c:\program files\neverwinter nights"),
+        PathBuf::from(r"c:\program files (x86)\neverwinter nights"),
+    ]
+}
+
+#[cfg(target_os = "windows")]
+fn read_windows_registry_string(key_path: &str, value_name: &str) -> Option<String> {
+    use winreg::{RegKey, enums::HKEY_LOCAL_MACHINE};
+
+    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+    let key = hklm.open_subkey(key_path).ok()?;
+    let value: String = key.get_value(value_name).ok()?;
+    let value = value.trim();
+    (!value.is_empty()).then(|| value.to_string())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn read_windows_registry_string(_key_path: &str, _value_name: &str) -> Option<String> {
+    None
 }
 
 fn push_unique_path(paths: &mut Vec<PathBuf>, path: PathBuf) {
@@ -538,8 +670,12 @@ mod tests {
         time::{SystemTime, UNIX_EPOCH},
     };
 
-    use super::{expand_tilde, normalize_relative_path, resolve_language_root};
-    use crate::install::{Platform, find_nwnrs_root_impl, find_user_root_impl};
+    use super::{
+        beamdog_install_candidates, expand_tilde, find_nwnrs_root_impl_with_registry,
+        normalize_relative_path, resolve_language_root, windows_legacy_default_paths,
+        windows_legacy_registry_keys, windows_steam_registry_keys,
+    };
+    use crate::install::{Platform, find_user_root_impl};
 
     fn unique_test_dir(prefix: &str) -> PathBuf {
         let nanos = SystemTime::now()
@@ -632,7 +768,7 @@ mod tests {
             .join("Beamdog Client")
             .join("settings.json");
 
-        if let Err(error) = fs::create_dir_all(&install) {
+        if let Err(error) = fs::create_dir_all(install.join("data")) {
             panic!("create install dir: {error}");
         }
         if let Err(error) = fs::create_dir_all(settings.parent().unwrap_or(&home)) {
@@ -648,12 +784,37 @@ mod tests {
             panic!("write databuild: {error}");
         }
 
-        let resolved =
-            match find_nwnrs_root_impl("", |_key| None, || Some(home.clone()), Platform::Linux) {
-                Ok(value) => value,
-                Err(error) => panic!("resolve game root: {error}"),
-            };
+        let resolved = match find_nwnrs_root_impl_with_registry(
+            "",
+            |_key| None,
+            || Some(home.clone()),
+            Platform::Linux,
+            |_key, _value| None,
+        ) {
+            Ok(value) => value,
+            Err(error) => panic!("resolve game root: {error}"),
+        };
         assert_eq!(resolved, install);
+    }
+
+    #[test]
+    fn beamdog_install_candidates_include_unknown_numeric_children() {
+        let root = unique_test_dir("beamdog-candidates");
+        let library = root.join("beamdog");
+        let install = library.join("00832");
+        let other = library.join("notes");
+
+        if let Err(error) = fs::create_dir_all(&install) {
+            panic!("create beamdog numeric dir: {error}");
+        }
+        if let Err(error) = fs::create_dir_all(&other) {
+            panic!("create beamdog non-numeric dir: {error}");
+        }
+
+        let candidates = beamdog_install_candidates(&library);
+        assert!(candidates.contains(&library));
+        assert!(candidates.contains(&install));
+        assert!(!candidates.contains(&other));
     }
 
     #[test]
@@ -719,11 +880,16 @@ mod tests {
             panic!("write databuild.txt: {error}");
         }
 
-        let resolved =
-            match find_nwnrs_root_impl("", |_key| None, || Some(home.clone()), Platform::Linux) {
-                Ok(value) => value,
-                Err(error) => panic!("resolve steam install root: {error}"),
-            };
+        let resolved = match find_nwnrs_root_impl_with_registry(
+            "",
+            |_key| None,
+            || Some(home.clone()),
+            Platform::Linux,
+            |_key, _value| None,
+        ) {
+            Ok(value) => value,
+            Err(error) => panic!("resolve steam install root: {error}"),
+        };
         assert_eq!(resolved, install);
     }
 
@@ -758,12 +924,94 @@ mod tests {
             panic!("write default databuild.txt: {error}");
         }
 
-        let resolved =
-            match find_nwnrs_root_impl("", |_key| None, || Some(home.clone()), Platform::Linux) {
-                Ok(value) => value,
-                Err(error) => panic!("resolve default steam install root: {error}"),
-            };
+        let resolved = match find_nwnrs_root_impl_with_registry(
+            "",
+            |_key| None,
+            || Some(home.clone()),
+            Platform::Linux,
+            |_key, _value| None,
+        ) {
+            Ok(value) => value,
+            Err(error) => panic!("resolve default steam install root: {error}"),
+        };
         assert_eq!(resolved, install);
+    }
+
+    #[test]
+    fn windows_game_root_prefers_steam_registry_install_location() {
+        let root = unique_test_dir("windows-steam-registry");
+        let home = root.join("home");
+        let install = root.join("steam-install");
+
+        if let Err(error) = fs::create_dir_all(install.join("data")) {
+            panic!("create steam registry data dir: {error}");
+        }
+        if let Err(error) = fs::create_dir_all(install.join("lang")) {
+            panic!("create steam registry lang dir: {error}");
+        }
+        if let Err(error) = fs::write(install.join("steam_appid.txt"), "704450\n") {
+            panic!("write steam registry steam_appid.txt: {error}");
+        }
+        if let Err(error) = fs::write(install.join("databuild.txt"), "build") {
+            panic!("write steam registry databuild.txt: {error}");
+        }
+
+        let resolved = match find_nwnrs_root_impl_with_registry(
+            "",
+            |_key| None,
+            || Some(home.clone()),
+            Platform::Windows,
+            |key, value| {
+                (key == windows_steam_registry_keys()[0] && value == "InstallLocation")
+                    .then(|| install.display().to_string())
+            },
+        ) {
+            Ok(value) => value,
+            Err(error) => panic!("resolve steam registry install root: {error}"),
+        };
+        assert_eq!(resolved, install);
+    }
+
+    #[test]
+    fn windows_game_root_falls_back_to_legacy_registry_location() {
+        let root = unique_test_dir("windows-legacy-registry");
+        let home = root.join("home");
+        let install = root.join("legacy-install");
+
+        if let Err(error) = fs::create_dir_all(install.join("data")) {
+            panic!("create legacy registry data dir: {error}");
+        }
+        if let Err(error) = fs::write(install.join("nwn.ini"), "[Alias]\n") {
+            panic!("write legacy registry nwn.ini: {error}");
+        }
+
+        let resolved = match find_nwnrs_root_impl_with_registry(
+            "",
+            |_key| None,
+            || Some(home.clone()),
+            Platform::Windows,
+            |key, value| {
+                (key == windows_legacy_registry_keys()[0] && value == "Location")
+                    .then(|| install.display().to_string())
+            },
+        ) {
+            Ok(value) => value,
+            Err(error) => panic!("resolve legacy registry install root: {error}"),
+        };
+        assert_eq!(resolved, install);
+    }
+
+    #[test]
+    fn windows_legacy_default_paths_include_both_program_files_roots() {
+        let defaults = windows_legacy_default_paths();
+        assert_eq!(
+            defaults[0],
+            PathBuf::from(r"c:\program files\neverwinter nights")
+        );
+        assert_eq!(
+            defaults[1],
+            PathBuf::from(r"c:\program files (x86)\neverwinter nights")
+        );
     }
 
     #[test]
