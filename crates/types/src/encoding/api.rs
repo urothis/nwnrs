@@ -1,4 +1,4 @@
-use std::{cell::Cell, env};
+use std::cell::Cell;
 
 use encoding_rs::{Encoding, WINDOWS_1252};
 use tracing::instrument;
@@ -176,6 +176,8 @@ pub(crate) fn decode_with(
 
 #[cfg(not(windows))]
 fn detect_unix_native_encoding() -> Result<&'static Encoding, NativeEncodingError> {
+    use std::env;
+    
     for key in ["LC_ALL", "LC_CTYPE", "LANG"] {
         if let Ok(value) = env::var(key)
             && let Some(encoding) = parse_locale_encoding(&value)
@@ -217,6 +219,7 @@ fn detect_windows_native_encoding() -> Result<&'static Encoding, NativeEncodingE
     }
 }
 
+#[cfg(not(windows))]
 pub(crate) fn parse_locale_encoding(locale: &str) -> Option<&'static Encoding> {
     let trimmed = locale.trim();
     if trimmed.is_empty() {
