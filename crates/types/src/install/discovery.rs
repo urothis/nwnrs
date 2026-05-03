@@ -200,7 +200,7 @@ where
     let result = resolve_existing_dir(
         candidates,
         "Could not locate NWN; try --root",
-        |candidate| is_valid_install_candidate(candidate),
+        is_valid_install_candidate,
     )?;
     validate_install_root(&result);
     Ok(result)
@@ -936,13 +936,14 @@ mod tests {
             panic!("write steam registry databuild.txt: {error}");
         }
 
+        let primary_steam_key = windows_steam_registry_keys().first().copied().unwrap_or("");
         let resolved = match find_nwnrs_root_impl_with_registry(
             "",
             |_key| None,
             || Some(home.clone()),
             Platform::Windows,
             |key, value| {
-                (key == windows_steam_registry_keys()[0] && value == "InstallPath")
+                (key == primary_steam_key && value == "InstallPath")
                     .then(|| steam_root.display().to_string())
             },
         ) {
@@ -1002,13 +1003,14 @@ mod tests {
             panic!("write steam-over-beamdog beamdog databuild.txt: {error}");
         }
 
+        let primary_steam_key = windows_steam_registry_keys().first().copied().unwrap_or("");
         let resolved = match find_nwnrs_root_impl_with_registry(
             "",
             |_key| None,
             || Some(home.clone()),
             Platform::Windows,
             |key, value| {
-                if key == windows_steam_registry_keys()[0] && value == "InstallPath" {
+                if key == primary_steam_key && value == "InstallPath" {
                     return Some(steam_root.display().to_string());
                 }
                 None

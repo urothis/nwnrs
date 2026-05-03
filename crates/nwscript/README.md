@@ -264,6 +264,134 @@ surface also supports single-step execution plus `step_over`, `step_out`,
 `run_until_offset`, `run_until_function`, and `run_until_line` when attached
 `NDB` metadata is available.
 
+## VM Spec
+
+`nwnrs-nwscript` includes a debugger-oriented `NCS V1.0` VM. It is intended
+for compiler validation, script inspection, action-command testing, and
+host-driven execution. This section documents the behavior implemented in
+[`vm.rs`](./src/vm.rs).
+
+### Runtime Model
+
+- `ip` is a byte offset into the decoded code section, not an instruction
+  index.
+- `sp` and `bp` are measured in stack cells. One cell is one logical 4-byte
+  slot.
+- Scalar runtime values occupy one cell: `int`, `float`, `string`, `object`,
+  and engine structures.
+- Vectors are stored as three adjacent float cells in `x`, `y`, `z` order.
+  They are not represented as a dedicated `VmValue` variant.
+- Engine structures are represented as `VmValue::EngineStructure { index,
+  value }`. The payload is either one opaque `u32` word or one text value.
+- The VM keeps a separate return-frame stack from the value stack.
+- The first `step()` or `run()` call synthesizes one outer halt frame.
+  Returning from that frame halts the script.
+
+### Program Loading And Metadata
+
+- `VmScript::from_bytes` decodes one full `NCS V1.0` stream and assigns each
+  instruction a stable byte offset.
+- Relative branches and call targets are resolved from the current
+  instruction's byte offset.
+- `VmScript::attach_ndb` adds function ranges, source line mappings, and
+  callee stack-shape metadata.
+- Compiled scripts that use user-function calls should normally execute
+  through one of the `*_with_ndb` entry points. `JSR` works without `NDB`, but
+  the VM cannot recover callee argument and return widths for call-frame
+  cleanup.
+
+### Stack And Frame Conventions
+
+- `SAVEBP` pushes the previous base pointer as an integer cell, then repoints
+  `bp` at that saved cell.
+- `RESTOREBP` pops one integer cell and installs it as the new base pointer.
+- `RSADD` pushes one zero/default value selected by auxcode.
+- `CONST` pushes one immediate constant selected by auxcode.
+- `CPTOPSP` and `CPTOPBP` copy one or more cells from a negative,
+  4-byte-aligned offset relative to `sp` or `bp` to the current stack top.
+- `CPDOWNSP` and `CPDOWNBP` copy the current top cells back into an earlier
+  stack window addressed relative to `sp` or `bp`.
+- `MOVSP` with a positive delta grows the stack by pushing zeroed integer
+  cells. `MOVSP` with a negative delta truncates the stack.
+- `INCSP`, `DECSP`, `INCBP`, and `DECBP` mutate one addressed integer cell by
+  `+1` or `-1`.
+- `DESTRUCT` removes part of a struct-shaped stack region and compacts the
+  surviving cells down.
+- `RET` pops one return frame. When `NDB` metadata supplied a callee shape for
+  the matching `JSR`, the VM drops argument cells and preserves only the
+  return-value prefix.
+
+### Instruction Semantics
+
+| Group | Instructions | Behavior |
+| --- | --- | --- |
+| Control flow | `NOP`, `JMP`, `JSR`, `JZ`, `JNZ`, `RET` | Jumps and calls operate on byte offsets. `JZ` and `JNZ` pop one integer condition. |
+| Saved continuations | `STOREIP`, `STORESTATE` | `STOREIP` records one future byte offset. `STORESTATE` also snapshots the leading `(global_bytes + stack_bytes) / 4` stack cells into one `VmSituation`. |
+| Integer and boolean ops | `LOGAND`, `LOGOR`, `INCOR`, `EXCOR`, `BOOLAND`, `NOT`, `COMP`, `SHLEFT`, `SHRIGHT`, `USHRIGHT`, `MOD` | These operate on integer cells. Boolean results are normalized to `0` or `1`. |
+| Arithmetic | `ADD`, `SUB`, `MUL`, `DIV`, `NEG` | Mixed `int`/`float` arithmetic is supported. `ADD` also supports `string + string` and `vector + vector`. `SUB` supports `vector - vector`. `MUL` supports `vector * float` and `float * vector`. `DIV` supports `vector / float`. Integer `ADD`, `SUB`, and `MUL` use wrapping semantics. |
+| Comparison | `EQUAL`, `NEQUAL`, `LT`, `GT`, `LEQ`, `GEQ` | Ordered comparisons are supported for numeric values and strings. Objects support equality only. Vectors, engine structures, and raw struct cell-ranges support equality and inequality only. |
+| Host interop | `ACTION` | Dispatches one registered host command by numeric action id and encoded argument count. |
+
+Unsupported auxcodes, invalid operand type combinations, and unimplemented
+behavior return `VmError::Unsupported` rather than silently approximating
+native behavior. Division or modulus by zero currently also reports
+`VmError::Unsupported`.
+
+### Runtime Values
+
+- `int` values are `i32`.
+- `float` values are `f32`.
+- `string` values are decoded as UTF-8 from `CONST` payloads.
+- `object` values are opaque `u32` ids.
+- Engine-structure defaults come from `Vm::define_engine_structure`, falling
+  back to zeroed words for most indices and empty text for index `7`.
+- Engine-structure equality can be overridden with
+  `Vm::define_engine_structure_comparer`.
+
+### Actions And Abort Semantics
+
+- `ACTION` looks up one handler by numeric command id. Missing handlers produce
+  `VmError::InvalidCommand`.
+- Handlers receive `&mut VmScript`, the command id, and the encoded argument
+  count.
+- A handler may mutate the stack directly, inspect debug state, or request a
+  clean stop through `VmScript::abort()`.
+- Abort requests are consumed at the dispatcher boundary. They clear the return
+  stack and end the run with `VmStepOutcome::Aborted`.
+
+### Saved Situations
+
+- `STORESTATE` captures one resumable `VmSituation`.
+- The saved continuation stores the script label, decoded program, target
+  instruction pointer, current base pointer, saved stack pointer, and a clone
+  of the visible stack prefix.
+- `Vm::run_situation` resumes from that snapshot by rehydrating a fresh
+  `VmScript`.
+
+### Direct Function Invocation
+
+- `Vm::run_function_bytes` and `VmScript::prepare_function_call` can invoke one
+  named user function directly from attached `NDB` metadata.
+- If the script has globals, the VM first bootstraps them by running the entry
+  loader (`main` or `StartingConditional`) until the loader's first
+  instruction is patched to `RET`, then it keeps only the initialized globals
+  frame.
+- Direct calls currently support `int`, `float`, `string`, `object`, and
+  engine-structure arguments and return values.
+- Struct-valued direct-call arguments and returns are rejected during setup.
+
+### Debugger Surface
+
+- `VmTraceHook` fires before each instruction executes and exposes `ip`, `sp`,
+  `bp`, the current byte offset, and the decoded instruction.
+- `step_over` executes through one user-function call and stops when control
+  returns to the caller.
+- `step_out` runs until the current function returns.
+- `run_until_offset`, `run_until_function`, and `run_until_line` provide
+  debugger-style break-on-target behavior.
+- `VmRunOptions::max_instructions` enforces a hard instruction budget and
+  reports `VmError::InstructionLimitExceeded` when the budget is exhausted.
+
 ### Miscellaneous semantic helpers
 
 - `Span`
