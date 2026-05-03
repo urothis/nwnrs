@@ -92,6 +92,9 @@ let _resman = new_default_resman(
   Steam heuristics, then Beamdog heuristics
 - the crate is deterministic; it does not search randomly until something looks
   plausible
+- Windows install discovery checks the Steam client registry key for
+  `InstallPath`, then inspects that Steam root's libraries and manifests before
+  considering Beamdog client library settings
 - `resolve_language_root` accepts both long-form names and known aliases, but
   does not guess beyond the alias table
 - a missing `databuild.txt` on an otherwise plausible install root is treated

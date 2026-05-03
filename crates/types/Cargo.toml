@@ -53,7 +53,15 @@ erf = [
 ]
 exo = []
 gff = ["encoding", "io", "localization", "resman"]
-install = ["checksums", "erf", "key", "nwsync", "resman", "dep:serde", "dep:serde_json"]
+install = [
+    "checksums",
+    "erf",
+    "key",
+    "nwsync",
+    "resman",
+    "dep:serde",
+    "dep:serde_json",
+]
 io = ["dep:serde"]
 key = ["checksums", "compressedbuf", "exo", "resman", "dep:indexmap"]
 localization = []
@@ -61,9 +69,24 @@ lru = []
 masterlist = ["dep:reqwest", "dep:serde", "dep:serde_json"]
 mdl = ["gff", "resman", "twoda"]
 mtr = ["resman"]
-nwsync = ["checksums", "compressedbuf", "exo", "resman", "dep:indexmap", "dep:rusqlite"]
+nwsync = [
+    "checksums",
+    "compressedbuf",
+    "exo",
+    "resman",
+    "dep:indexmap",
+    "dep:rusqlite",
+]
 plt = ["resman"]
-resman = ["checksums", "compressedbuf", "exo", "io", "lru", "dep:indexmap", "dep:serde"]
+resman = [
+    "checksums",
+    "compressedbuf",
+    "exo",
+    "io",
+    "lru",
+    "dep:indexmap",
+    "dep:serde",
+]
 set = ["resman"]
 ssf = ["io", "localization", "dep:serde"]
 streamext = []
@@ -89,6 +112,9 @@ zstd = { workspace = true, optional = true }
 
 [dev-dependencies]
 tokio.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+winreg.workspace = true
 
 [lints]
 workspace = true
