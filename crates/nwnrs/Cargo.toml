@@ -1,6 +1,6 @@
 [package]
 name = "nwnrs"
-version = "0.0.1"
+version = "0.0.2"
 edition.workspace = true
 license.workspace = true
 publish = true
@@ -19,9 +19,9 @@ categories = [
 [dependencies]
 argh.workspace = true
 image.workspace = true
-nwnrs-nwpkg = { package = "nwnrs-nwpkg", path = "../nwpkg", version = "0.0.1" }
-nwnrs-nwscript = { package = "nwnrs-nwscript", path = "../nwscript", version = "0.0.1" }
-nwnrs-types = { package = "nwnrs-types", path = "../types", version = "0.0.1" }
+nwnrs-nwpkg = { package = "nwnrs-nwpkg", path = "../nwpkg", version = "0.0.2" }
+nwnrs-nwscript = { package = "nwnrs-nwscript", path = "../nwscript", version = "0.0.2" }
+nwnrs-types = { package = "nwnrs-types", path = "../types", version = "0.0.2" }
 reqwest.workspace = true
 tokio.workspace = true
 tracing.workspace = true
