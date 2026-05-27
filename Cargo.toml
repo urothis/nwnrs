@@ -31,7 +31,7 @@ reqwest = { version = "0.13", default-features = false, features = [
     "json",
     "rustls",
 ] }
-rusqlite = { version = "0.39", default-features = false, features = [
+rusqlite = { version = "0.40", default-features = false, features = [
     "bundled",
 ] }
 serde = { version = "1.0", default-features = false, features = [
