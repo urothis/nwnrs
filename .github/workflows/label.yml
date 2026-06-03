@@ -16,9 +16,9 @@ jobs:
             contents: read
             pull-requests: write
         steps:
-            - uses: actions/checkout@v6.0.2
+            - uses: actions/checkout@v6.0.3
             - name: Apply labels
-              uses: actions/labeler@v6.0.1
+              uses: actions/labeler@v6.1.0
               with:
                   repo-token: ${{ secrets.GITHUB_TOKEN }}
                   configuration-path: .github/labeler.yml
