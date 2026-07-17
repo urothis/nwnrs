@@ -39,6 +39,15 @@ const MAX_SKIN_INFLUENCES: usize = 4;
 /// Returns [`ModelError`] when the ASCII contains data that cannot be
 /// represented safely in a compiled MDL, or when the authored node trees are
 /// invalid.
+///
+/// # Examples
+///
+/// ```
+/// let ascii = nwnrs_types::mdl::parse_ascii_model("beginmodelgeom demo\nnode dummy demo\nparent null\nendnode\nendmodelgeom demo\ndonemodel demo\n")?;
+/// let binary = nwnrs_types::mdl::compile_ascii_model(&ascii)?;
+/// assert_eq!(binary.name(), "demo");
+/// # Ok::<(), nwnrs_types::mdl::ModelError>(())
+/// ```
 pub fn compile_ascii_model(model: &crate::mdl::AsciiModel) -> ModelResult<BinaryModel> {
     let semantic = lower_ascii_model(model)?;
     reject_lossy_source_diagnostics(&semantic)?;
@@ -62,6 +71,15 @@ pub fn compile_ascii_model(model: &crate::mdl::AsciiModel) -> ModelResult<Binary
 /// metadata (including display flags and redundant animation mesh data) have no
 /// compiled representation and are intentionally ignored. Every other
 /// unsupported statement is rejected.
+///
+/// # Examples
+///
+/// ```
+/// let semantic = nwnrs_types::mdl::parse_semantic_model("beginmodelgeom demo\nnode dummy demo\nparent null\nendnode\nendmodelgeom demo\ndonemodel demo\n")?;
+/// let binary = nwnrs_types::mdl::compile_semantic_model(&semantic)?;
+/// assert_eq!(binary.name(), "demo");
+/// # Ok::<(), nwnrs_types::mdl::ModelError>(())
+/// ```
 pub fn compile_semantic_model(model: &SemanticModel) -> ModelResult<BinaryModel> {
     let bytes = compile_semantic_model_bytes(model)?;
     parse_binary_model_bytes(&bytes)
@@ -73,6 +91,15 @@ pub fn compile_semantic_model(model: &SemanticModel) -> ModelResult<BinaryModel>
 ///
 /// Returns [`ModelError`] under the same conditions as
 /// [`compile_semantic_model`].
+///
+/// # Examples
+///
+/// ```
+/// let semantic = nwnrs_types::mdl::parse_semantic_model("beginmodelgeom demo\nnode dummy demo\nparent null\nendnode\nendmodelgeom demo\ndonemodel demo\n")?;
+/// let bytes = nwnrs_types::mdl::compile_semantic_model_bytes(&semantic)?;
+/// assert_eq!(&bytes[..4], &[0, 0, 0, 0]);
+/// # Ok::<(), nwnrs_types::mdl::ModelError>(())
+/// ```
 pub fn compile_semantic_model_bytes(model: &SemanticModel) -> ModelResult<Vec<u8>> {
     Compiler::new(model)?.compile()
 }
@@ -88,6 +115,14 @@ pub fn compile_semantic_model_bytes(model: &SemanticModel) -> ModelResult<Vec<u8
 ///
 /// Returns [`ModelError`] when the current semantic value is not safely
 /// representable in compiled MDL.
+///
+/// # Examples
+///
+/// ```
+/// let semantic = nwnrs_types::mdl::parse_semantic_model("beginmodelgeom demo\nnode dummy demo\nparent null\nendnode\nendmodelgeom demo\ndonemodel demo\n")?;
+/// nwnrs_types::mdl::validate_semantic_model(&semantic)?;
+/// # Ok::<(), nwnrs_types::mdl::ModelError>(())
+/// ```
 pub fn validate_semantic_model(model: &SemanticModel) -> ModelResult<()> {
     compile_semantic_model_bytes(model).map(|_| ())
 }

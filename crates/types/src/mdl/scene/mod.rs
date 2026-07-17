@@ -31,6 +31,14 @@ use crate::mdl::{
 /// downstream renderers or tools can preserve stable references back to the
 /// source model. This layer makes normalization explicit without erasing NWN
 /// model concepts such as references, helpers, and authored animation names.
+///
+/// # Examples
+///
+/// ```
+/// let scene = nwnrs_types::mdl::parse_scene_model("beginmodelgeom demo\nendmodelgeom demo\ndonemodel demo\n")?;
+/// assert_eq!(scene.name, "demo");
+/// # Ok::<(), nwnrs_types::mdl::ModelError>(())
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct NwnScene {
     /// Model name.
@@ -127,6 +135,13 @@ impl NwnScene {
     /// # Errors
     ///
     /// Returns [`ModelError`] if the file cannot be opened or parsed.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// let scene = nwnrs_types::mdl::NwnScene::from_file("model.mdl")?;
+    /// # Ok::<(), nwnrs_types::mdl::ModelError>(())
+    /// ```
     pub fn from_file(path: impl AsRef<Path>) -> ModelResult<Self> {
         let mut file = File::open(path.as_ref())?;
         read_scene_model(&mut file)
@@ -138,6 +153,13 @@ impl NwnScene {
     /// # Errors
     ///
     /// Returns [`ModelError`] if the file cannot be opened or parsed.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// let scene = nwnrs_types::mdl::NwnScene::from_auto_file("model.mdl")?;
+    /// # Ok::<(), nwnrs_types::mdl::ModelError>(())
+    /// ```
     pub fn from_auto_file(path: impl AsRef<Path>) -> ModelResult<Self> {
         let mut file = File::open(path.as_ref())?;
         read_scene_model_auto(&mut file)
@@ -149,6 +171,15 @@ impl NwnScene {
     ///
     /// Returns [`ModelError`] if the resource is not an MDL type or lowering
     /// fails.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use nwnrs_types::resman::{CachePolicy, Res};
+    /// fn scene(res: &Res) -> nwnrs_types::mdl::ModelResult<nwnrs_types::mdl::NwnScene> {
+    ///     nwnrs_types::mdl::NwnScene::from_res(res, CachePolicy::Use)
+    /// }
+    /// ```
     pub fn from_res(res: &Res, cache_policy: CachePolicy) -> ModelResult<Self> {
         if res.resref().res_type() != MODEL_RES_TYPE {
             return Err(ModelError::msg(format!(
@@ -168,6 +199,15 @@ impl NwnScene {
     ///
     /// Returns [`ModelError`] if the resource is not an MDL type or lowering
     /// fails.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use nwnrs_types::resman::{CachePolicy, Res};
+    /// fn scene(res: &Res) -> nwnrs_types::mdl::ModelResult<nwnrs_types::mdl::NwnScene> {
+    ///     nwnrs_types::mdl::NwnScene::from_auto_res(res, CachePolicy::Use)
+    /// }
+    /// ```
     pub fn from_auto_res(res: &Res, cache_policy: CachePolicy) -> ModelResult<Self> {
         if res.resref().res_type() != MODEL_RES_TYPE {
             return Err(ModelError::msg(format!(
@@ -182,6 +222,13 @@ impl NwnScene {
 }
 
 /// Coordinate system metadata for the lowered scene.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::NwnCoordinateSystem;
+/// assert_eq!(NwnCoordinateSystem::AuroraSource, NwnCoordinateSystem::AuroraSource);
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NwnCoordinateSystem {
     /// Raw Aurora / NWN source-space coordinates and axis-angle rotations.
@@ -189,6 +236,13 @@ pub enum NwnCoordinateSystem {
 }
 
 /// One node in the lowered scene graph.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use nwnrs_types::mdl::NwnSceneNode;
+/// fn node_name(node: &NwnSceneNode) -> &str { &node.name }
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct NwnSceneNode {
     /// Typed node kind.
@@ -228,6 +282,16 @@ pub struct NwnSceneNode {
 }
 
 /// A local transform expressed in Aurora source-space conventions.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::NwnTransform;
+/// let transform = NwnTransform {
+///     translation: [1.0, 2.0, 3.0], rotation_axis_angle: [0.0, 0.0, 1.0, 0.0], scale: [1.0; 3],
+/// };
+/// assert_eq!(transform.translation, [1.0, 2.0, 3.0]);
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct NwnTransform {
     /// Translation vector.
@@ -239,6 +303,14 @@ pub struct NwnTransform {
 }
 
 /// One lowered mesh.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::NwnMesh;
+/// let mesh = NwnMesh { name: "body".into(), source_node: 0, primitives: vec![] };
+/// assert_eq!(mesh.name, "body");
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct NwnMesh {
     /// Mesh name, typically matching the source node name.
@@ -250,6 +322,13 @@ pub struct NwnMesh {
 }
 
 /// One primitive inside a lowered mesh.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use nwnrs_types::mdl::NwnPrimitive;
+/// fn vertex_count(primitive: &NwnPrimitive) -> usize { primitive.positions.len() }
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct NwnPrimitive {
     /// Geometry animmesh sample period in seconds.
@@ -279,6 +358,14 @@ pub struct NwnPrimitive {
 }
 
 /// One named skin-weight influence.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::NwnSkinWeight;
+/// let influence = NwnSkinWeight { bone: "pelvis".into(), weight: 1.0 };
+/// assert_eq!(influence.bone, "pelvis");
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct NwnSkinWeight {
     /// Bone or node name referenced by the source skin row.
@@ -288,6 +375,14 @@ pub struct NwnSkinWeight {
 }
 
 /// One lowered face entry.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::NwnFace;
+/// let face = NwnFace { vertex_indices: [0, 1, 2], group: 1, uv_indices: [0, 1, 2], material_index: 0 };
+/// assert_eq!(face.vertex_indices, [0, 1, 2]);
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NwnFace {
     /// Vertex indices.
@@ -301,6 +396,14 @@ pub struct NwnFace {
 }
 
 /// One UV set.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::NwnUvSet;
+/// let uv = NwnUvSet { index: 0, coordinates: vec![[0.0, 0.0]] };
+/// assert_eq!(uv.coordinates.len(), 1);
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct NwnUvSet {
     /// UV set index.
@@ -310,6 +413,13 @@ pub struct NwnUvSet {
 }
 
 /// One lowered material.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use nwnrs_types::mdl::NwnMaterial;
+/// fn opacity(material: &NwnMaterial) -> f32 { material.alpha }
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct NwnMaterial {
     /// Scene node index that authored this material.
@@ -354,6 +464,14 @@ pub struct NwnMaterial {
 }
 
 /// One typed texture reference.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::{NwnTextureRef, NwnTextureSlot};
+/// let texture = NwnTextureRef { slot: NwnTextureSlot::Bitmap, name: "body01".into() };
+/// assert_eq!(texture.name, "body01");
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NwnTextureRef {
     /// Texture binding slot.
@@ -363,6 +481,13 @@ pub struct NwnTextureRef {
 }
 
 /// Texture binding slots carried by scene materials.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::NwnTextureSlot;
+/// assert_eq!(NwnTextureSlot::Texture(1), NwnTextureSlot::Texture(1));
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NwnTextureSlot {
     /// Primary `bitmap` texture.
@@ -372,6 +497,13 @@ pub enum NwnTextureSlot {
 }
 
 /// One lowered animation.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use nwnrs_types::mdl::NwnAnimation;
+/// fn duration(animation: &NwnAnimation) -> f32 { animation.length }
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct NwnAnimation {
     /// Animation name.
@@ -394,6 +526,13 @@ pub struct NwnAnimation {
 
 impl NwnAnimation {
     /// Returns the first node track named `name`, case-insensitively.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use nwnrs_types::mdl::{NwnAnimation, NwnNodeAnimationTrack};
+    /// fn root(animation: &NwnAnimation) -> Option<&NwnNodeAnimationTrack> { animation.node_track("root") }
+    /// ```
     #[must_use]
     pub fn node_track(&self, name: &str) -> Option<&NwnNodeAnimationTrack> {
         self.node_tracks
@@ -403,6 +542,13 @@ impl NwnAnimation {
 }
 
 /// One lowered node animation track.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use nwnrs_types::mdl::NwnNodeAnimationTrack;
+/// fn target(track: &NwnNodeAnimationTrack) -> &str { &track.target_name }
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct NwnNodeAnimationTrack {
     /// Target node name from the source animation.
@@ -426,6 +572,13 @@ pub struct NwnNodeAnimationTrack {
 }
 
 /// Transform animation channels for one node.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use nwnrs_types::mdl::NwnTransformTrack;
+/// fn key_count(track: &NwnTransformTrack) -> usize { track.translation_keys.len() }
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct NwnTransformTrack {
     /// Translation keys.
@@ -437,6 +590,13 @@ pub struct NwnTransformTrack {
 }
 
 /// Non-transform animation channels for one node.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use nwnrs_types::mdl::NwnMaterialTrack;
+/// fn alpha_key_count(track: &NwnMaterialTrack) -> usize { track.alpha_keys.len() }
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct NwnMaterialTrack {
     /// Color keys.
@@ -456,6 +616,13 @@ pub struct NwnMaterialTrack {
 }
 
 /// Per-animation emitter and danglymesh channels for one node.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use nwnrs_types::mdl::NwnEffectTrack;
+/// fn controller_count(track: &NwnEffectTrack) -> usize { track.emitter_controllers.len() }
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct NwnEffectTrack {
     /// Typed emitter controller curves.
@@ -465,6 +632,13 @@ pub struct NwnEffectTrack {
 }
 
 /// Typed light payload lowered onto a scene node.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use nwnrs_types::mdl::NwnLight;
+/// fn intensity(light: &NwnLight) -> f32 { light.multiplier }
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct NwnLight {
     /// `multiplier`
@@ -502,6 +676,14 @@ pub struct NwnLight {
 }
 
 /// Typed emitter payload lowered onto a scene node.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::NwnEmitter;
+/// let emitter = NwnEmitter { x_size: 1.0, y_size: 2.0, properties: vec![] };
+/// assert_eq!(emitter.y_size, 2.0);
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct NwnEmitter {
     /// `xsize`
@@ -513,6 +695,14 @@ pub struct NwnEmitter {
 }
 
 /// Typed danglymesh physics metadata.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::NwnDangly;
+/// let dangly = NwnDangly { displacement: 0.5, tightness: 0.8, period: 1.0 };
+/// assert_eq!(dangly.period, 1.0);
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct NwnDangly {
     /// Maximum vertex displacement.
@@ -524,6 +714,14 @@ pub struct NwnDangly {
 }
 
 /// One typed emitter controller curve.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::{NwnEmitterController, NwnEmitterControllerTrack};
+/// let track = NwnEmitterControllerTrack { controller: NwnEmitterController::Birthrate, keys: vec![], bezier_keyed: false };
+/// assert_eq!(track.controller.property_name(), "birthrate");
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct NwnEmitterControllerTrack {
     /// Controlled emitter property.
@@ -535,6 +733,14 @@ pub struct NwnEmitterControllerTrack {
 }
 
 /// One scalar or vector emitter-controller sample.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::NwnEmitterKey;
+/// let key = NwnEmitterKey { time: 0.0, values: vec![10.0] };
+/// assert_eq!(key.values, vec![10.0]);
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct NwnEmitterKey {
     /// Key time in animation seconds.
@@ -544,6 +750,14 @@ pub struct NwnEmitterKey {
 }
 
 /// One typed emitter property statement.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::{NwnEmitterProperty, NwnPropertyValue};
+/// let property = NwnEmitterProperty { name: "render".into(), values: vec![NwnPropertyValue::Text("Normal".into())] };
+/// assert_eq!(property.name, "render");
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct NwnEmitterProperty {
     /// Source keyword.
@@ -553,6 +767,13 @@ pub struct NwnEmitterProperty {
 }
 
 /// One typed scalar/string property value.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::NwnPropertyValue;
+/// assert_eq!(NwnPropertyValue::Float(1.0), NwnPropertyValue::Float(1.0));
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub enum NwnPropertyValue {
     /// Boolean token.
@@ -566,6 +787,14 @@ pub enum NwnPropertyValue {
 }
 
 /// Typed reference payload lowered onto a scene node.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::NwnReference;
+/// let reference = NwnReference { model: Some("fx_smoke".into()), reattachable: 1 };
+/// assert_eq!(reference.model.as_deref(), Some("fx_smoke"));
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct NwnReference {
     /// `refmodel`
@@ -575,6 +804,13 @@ pub struct NwnReference {
 }
 
 /// Animmesh payload lowered into sample groups.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use nwnrs_types::mdl::NwnAnimMeshTrack;
+/// fn sample_count(track: &NwnAnimMeshTrack) -> usize { track.vertex_samples.len() }
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct NwnAnimMeshTrack {
     /// Sample period in seconds.
@@ -588,6 +824,14 @@ pub struct NwnAnimMeshTrack {
 }
 
 /// One sampled vector3 frame.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::NwnVec3Sample;
+/// let sample = NwnVec3Sample { values: vec![[1.0, 2.0, 3.0]] };
+/// assert_eq!(sample.values.len(), 1);
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct NwnVec3Sample {
     /// Sampled values.
@@ -595,6 +839,14 @@ pub struct NwnVec3Sample {
 }
 
 /// One sampled vector2 frame.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::NwnVec2Sample;
+/// let sample = NwnVec2Sample { values: vec![[0.0, 1.0]] };
+/// assert_eq!(sample.values[0], [0.0, 1.0]);
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct NwnVec2Sample {
     /// Sampled values.
@@ -668,6 +920,14 @@ pub fn parse_scene_model(text: &str) -> ModelResult<NwnScene> {
 /// # Errors
 ///
 /// Returns [`ModelError`] if the bytes cannot be parsed or lowered.
+///
+/// # Examples
+///
+/// ```
+/// let scene = nwnrs_types::mdl::parse_scene_model_auto(b"beginmodelgeom demo\nendmodelgeom demo\ndonemodel demo\n")?;
+/// assert_eq!(scene.name, "demo");
+/// # Ok::<(), nwnrs_types::mdl::ModelError>(())
+/// ```
 pub fn parse_scene_model_auto(bytes: &[u8]) -> ModelResult<NwnScene> {
     lower_semantic_model_to_scene(&parse_semantic_model_auto(bytes)?)
 }
@@ -677,6 +937,15 @@ pub fn parse_scene_model_auto(bytes: &[u8]) -> ModelResult<NwnScene> {
 /// # Errors
 ///
 /// Returns [`ModelError`] if the data cannot be read or lowered.
+///
+/// # Examples
+///
+/// ```
+/// let mut input = b"beginmodelgeom demo\nendmodelgeom demo\ndonemodel demo\n".as_slice();
+/// let scene = nwnrs_types::mdl::read_scene_model(&mut input)?;
+/// assert_eq!(scene.name, "demo");
+/// # Ok::<(), nwnrs_types::mdl::ModelError>(())
+/// ```
 #[instrument(level = "debug", skip_all, err)]
 pub fn read_scene_model<R: Read>(reader: &mut R) -> ModelResult<NwnScene> {
     let semantic = read_semantic_model(reader)?;
@@ -689,6 +958,15 @@ pub fn read_scene_model<R: Read>(reader: &mut R) -> ModelResult<NwnScene> {
 /// # Errors
 ///
 /// Returns [`ModelError`] if the data cannot be read or lowered.
+///
+/// # Examples
+///
+/// ```
+/// let mut input = b"beginmodelgeom demo\nendmodelgeom demo\ndonemodel demo\n".as_slice();
+/// let scene = nwnrs_types::mdl::read_scene_model_auto(&mut input)?;
+/// assert_eq!(scene.name, "demo");
+/// # Ok::<(), nwnrs_types::mdl::ModelError>(())
+/// ```
 #[instrument(level = "debug", skip_all, err)]
 pub fn read_scene_model_auto<R: Read>(reader: &mut R) -> ModelResult<NwnScene> {
     let semantic = read_semantic_model_auto(reader)?;
@@ -1419,6 +1697,15 @@ fn validate_uniform_scale(scale: &[f32; 3], context: &str) -> ModelResult<f32> {
 /// # Errors
 ///
 /// Returns [`ModelError`] if the semantic model cannot be lowered into a scene.
+///
+/// # Examples
+///
+/// ```
+/// let semantic = nwnrs_types::mdl::parse_semantic_model("beginmodelgeom demo\nendmodelgeom demo\ndonemodel demo\n")?;
+/// let scene = nwnrs_types::mdl::lower_semantic_model_to_scene(&semantic)?;
+/// assert_eq!(scene.name, "demo");
+/// # Ok::<(), nwnrs_types::mdl::ModelError>(())
+/// ```
 pub fn lower_semantic_model_to_scene(model: &SemanticModel) -> ModelResult<NwnScene> {
     let mut diagnostics = model.diagnostics.clone();
 

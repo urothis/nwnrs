@@ -25,6 +25,14 @@ const COMPILED_SOURCE_HEX_PREFIX: &str = "# nwnrs-compiled-source-hex ";
 const HEX_CHUNK_LEN: usize = 120;
 
 /// A non-node item that appears inside a geometry or animation body.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::{AsciiBodyItem, AsciiElement};
+/// let item = AsciiBodyItem::Element(AsciiElement::Comment("# note".into()));
+/// assert!(matches!(item, AsciiBodyItem::Element(_)));
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AsciiBodyItem {
     /// A comment or statement preserved in body order.
@@ -35,6 +43,14 @@ pub enum AsciiBodyItem {
 
 impl AsciiBodyItem {
     /// Returns the item as an [`AsciiElement`] when it is not a node.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use nwnrs_types::mdl::{AsciiBodyItem, AsciiElement};
+    /// let item = AsciiBodyItem::Element(AsciiElement::Comment("# note".into()));
+    /// assert!(item.as_element().is_some());
+    /// ```
     #[must_use]
     pub fn as_element(&self) -> Option<&AsciiElement> {
         match self {
@@ -44,6 +60,16 @@ impl AsciiBodyItem {
     }
 
     /// Returns the item as an [`AsciiNode`] when it is a node.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use nwnrs_types::mdl::{AsciiBodyItem, AsciiNode};
+    /// let item = AsciiBodyItem::Node(AsciiNode {
+    ///     node_type: "dummy".into(), name: "root".into(), entries: vec![],
+    /// });
+    /// assert_eq!(item.as_node().map(|node| node.name.as_str()), Some("root"));
+    /// ```
     #[must_use]
     pub fn as_node(&self) -> Option<&AsciiNode> {
         match self {
@@ -54,6 +80,14 @@ impl AsciiBodyItem {
 }
 
 /// A comment or statement preserved from the ASCII source.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::AsciiElement;
+/// let element = AsciiElement::Comment("# exported by NWMax".into());
+/// assert!(matches!(element, AsciiElement::Comment(_)));
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AsciiElement {
     /// A source comment line, including its original indentation.
@@ -64,6 +98,14 @@ pub enum AsciiElement {
 
 impl AsciiElement {
     /// Returns the element as a parsed statement when applicable.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use nwnrs_types::mdl::{AsciiElement, AsciiStatement};
+    /// let element = AsciiElement::Statement(AsciiStatement::new("parent", vec!["null".into()]));
+    /// assert_eq!(element.as_statement().and_then(|value| value.argument(0)), Some("null"));
+    /// ```
     #[must_use]
     pub fn as_statement(&self) -> Option<&AsciiStatement> {
         match self {
@@ -74,6 +116,14 @@ impl AsciiElement {
 }
 
 /// Payload shape used by a multiline MDL statement.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::AsciiPayloadKind;
+/// let kind = AsciiPayloadKind::EndList;
+/// assert_eq!(kind, AsciiPayloadKind::EndList);
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AsciiPayloadKind {
     /// The statement stores an explicit row count on the header line.
@@ -86,6 +136,14 @@ pub enum AsciiPayloadKind {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 /// One parsed ASCII MDL statement.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::AsciiStatement;
+/// let statement = AsciiStatement::new("parent", vec!["root".into()]);
+/// assert_eq!(statement.keyword, "parent");
+/// ```
 pub struct AsciiStatement {
     /// Statement keyword as authored.
     pub keyword:      String,
@@ -134,18 +192,39 @@ impl AsciiStatement {
     }
 
     /// Returns `true` when this statement has a multiline payload.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let statement = nwnrs_types::mdl::AsciiStatement::new("parent", vec!["null".into()]);
+    /// assert!(!statement.has_payload());
+    /// ```
     #[must_use]
     pub fn has_payload(&self) -> bool {
         self.payload_kind.is_some()
     }
 
     /// Returns `true` when the keyword matches `other`, case-insensitively.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let statement = nwnrs_types::mdl::AsciiStatement::new("Parent", vec!["null".into()]);
+    /// assert!(statement.keyword_is("parent"));
+    /// ```
     #[must_use]
     pub fn keyword_is(&self, other: &str) -> bool {
         self.keyword.eq_ignore_ascii_case(other)
     }
 
     /// Returns argument `index` as `&str` when present.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let statement = nwnrs_types::mdl::AsciiStatement::new("parent", vec!["root".into()]);
+    /// assert_eq!(statement.argument(0), Some("root"));
+    /// ```
     pub fn argument(&self, index: usize) -> Option<&str> {
         self.arguments.get(index).map(String::as_str)
     }
@@ -153,6 +232,14 @@ impl AsciiStatement {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 /// One parsed node block.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::AsciiNode;
+/// let node = AsciiNode { node_type: "dummy".into(), name: "root".into(), entries: vec![] };
+/// assert_eq!(node.name, "root");
+/// ```
 pub struct AsciiNode {
     /// Node type token from `node <type> <name>`.
     pub node_type: String,
@@ -164,6 +251,17 @@ pub struct AsciiNode {
 
 impl AsciiNode {
     /// Returns the first statement with keyword `keyword`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use nwnrs_types::mdl::{AsciiElement, AsciiNode, AsciiStatement};
+    /// let node = AsciiNode {
+    ///     node_type: "dummy".into(), name: "root".into(),
+    ///     entries: vec![AsciiElement::Statement(AsciiStatement::new("parent", vec!["null".into()]))],
+    /// };
+    /// assert!(node.statement("parent").is_some());
+    /// ```
     pub fn statement(&self, keyword: &str) -> Option<&AsciiStatement> {
         self.entries
             .iter()
@@ -174,6 +272,14 @@ impl AsciiNode {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 /// One parsed animation block.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::AsciiAnimation;
+/// let animation = AsciiAnimation { name: "idle".into(), model_name: "demo".into(), body: vec![] };
+/// assert_eq!(animation.name, "idle");
+/// ```
 pub struct AsciiAnimation {
     /// Animation name from `newanim <name> <model>`.
     pub name:       String,
@@ -186,6 +292,16 @@ pub struct AsciiAnimation {
 impl AsciiAnimation {
     /// Returns the first statement with keyword `keyword` from the non-node
     /// body items.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use nwnrs_types::mdl::{AsciiAnimation, AsciiBodyItem, AsciiElement, AsciiStatement};
+    /// let animation = AsciiAnimation { name: "idle".into(), model_name: "demo".into(), body: vec![
+    ///     AsciiBodyItem::Element(AsciiElement::Statement(AsciiStatement::new("length", vec!["1".into()])))
+    /// ] };
+    /// assert!(animation.statement("length").is_some());
+    /// ```
     pub fn statement(&self, keyword: &str) -> Option<&AsciiStatement> {
         self.body
             .iter()
@@ -195,6 +311,16 @@ impl AsciiAnimation {
     }
 
     /// Returns the first node named `name`, case-insensitively.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use nwnrs_types::mdl::{AsciiAnimation, AsciiBodyItem, AsciiNode};
+    /// let animation = AsciiAnimation { name: "idle".into(), model_name: "demo".into(), body: vec![
+    ///     AsciiBodyItem::Node(AsciiNode { node_type: "dummy".into(), name: "root".into(), entries: vec![] })
+    /// ] };
+    /// assert!(animation.node("ROOT").is_some());
+    /// ```
     pub fn node(&self, name: &str) -> Option<&AsciiNode> {
         self.body
             .iter()
@@ -203,6 +329,16 @@ impl AsciiAnimation {
     }
 
     /// Iterates the parsed nodes in body order.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use nwnrs_types::mdl::{AsciiAnimation, AsciiBodyItem, AsciiNode};
+    /// let animation = AsciiAnimation { name: "idle".into(), model_name: "demo".into(), body: vec![
+    ///     AsciiBodyItem::Node(AsciiNode { node_type: "dummy".into(), name: "root".into(), entries: vec![] })
+    /// ] };
+    /// assert_eq!(animation.nodes().count(), 1);
+    /// ```
     pub fn nodes(&self) -> impl Iterator<Item = &AsciiNode> {
         self.body.iter().filter_map(AsciiBodyItem::as_node)
     }
@@ -210,6 +346,14 @@ impl AsciiAnimation {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 /// A syntax-faithful parsed ASCII MDL model.
+///
+/// # Examples
+///
+/// ```
+/// let model = nwnrs_types::mdl::parse_ascii_model("beginmodelgeom demo\nendmodelgeom demo\ndonemodel demo\n")?;
+/// assert_eq!(model.geometry_name, "demo");
+/// # Ok::<(), nwnrs_types::mdl::ModelError>(())
+/// ```
 pub struct AsciiModel {
     /// Elements that appeared before `beginmodelgeom`.
     pub prefix: Vec<AsciiElement>,
@@ -232,6 +376,14 @@ pub struct AsciiModel {
 impl AsciiModel {
     /// Returns the first statement with keyword `keyword` from the prefix
     /// section.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let model = nwnrs_types::mdl::parse_ascii_model("newmodel demo\nbeginmodelgeom demo\nendmodelgeom demo\ndonemodel demo\n")?;
+    /// assert!(model.prefix_statement("newmodel").is_some());
+    /// # Ok::<(), nwnrs_types::mdl::ModelError>(())
+    /// ```
     pub fn prefix_statement(&self, keyword: &str) -> Option<&AsciiStatement> {
         self.prefix
             .iter()
@@ -240,6 +392,14 @@ impl AsciiModel {
     }
 
     /// Returns the first geometry node named `name`, case-insensitively.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let model = nwnrs_types::mdl::parse_ascii_model("beginmodelgeom demo\nnode dummy root\nendnode\nendmodelgeom demo\ndonemodel demo\n")?;
+    /// assert!(model.geometry_node("ROOT").is_some());
+    /// # Ok::<(), nwnrs_types::mdl::ModelError>(())
+    /// ```
     pub fn geometry_node(&self, name: &str) -> Option<&AsciiNode> {
         self.geometry
             .iter()
@@ -248,11 +408,27 @@ impl AsciiModel {
     }
 
     /// Iterates geometry nodes in source order.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let model = nwnrs_types::mdl::parse_ascii_model("beginmodelgeom demo\nnode dummy root\nendnode\nendmodelgeom demo\ndonemodel demo\n")?;
+    /// assert_eq!(model.geometry_nodes().count(), 1);
+    /// # Ok::<(), nwnrs_types::mdl::ModelError>(())
+    /// ```
     pub fn geometry_nodes(&self) -> impl Iterator<Item = &AsciiNode> {
         self.geometry.iter().filter_map(AsciiBodyItem::as_node)
     }
 
     /// Returns the first animation named `name`, case-insensitively.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let model = nwnrs_types::mdl::parse_ascii_model("beginmodelgeom demo\nendmodelgeom demo\nnewanim idle demo\ndoneanim idle demo\ndonemodel demo\n")?;
+    /// assert!(model.animation("IDLE").is_some());
+    /// # Ok::<(), nwnrs_types::mdl::ModelError>(())
+    /// ```
     #[must_use]
     pub fn animation(&self, name: &str) -> Option<&AsciiAnimation> {
         self.animations
@@ -267,6 +443,14 @@ impl AsciiModel {
     /// model input: characters representing original bytes from `0x80` through
     /// `0xff` are encoded differently by ordinary UTF-8 conversion. Use
     /// [`write_ascii_model`] when producing an MDL payload.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let model = nwnrs_types::mdl::parse_ascii_model("beginmodelgeom demo\nendmodelgeom demo\ndonemodel demo\n")?;
+    /// assert!(model.to_text().contains("beginmodelgeom demo"));
+    /// # Ok::<(), nwnrs_types::mdl::ModelError>(())
+    /// ```
     #[must_use]
     pub fn to_text(&self) -> String {
         let mut out = String::new();
@@ -329,6 +513,14 @@ impl AsciiModel {
     /// # Errors
     ///
     /// Returns [`ModelError`] if the file cannot be opened or parsed.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// let model = nwnrs_types::mdl::AsciiModel::from_file("model.mdl")?;
+    /// assert!(!model.geometry_name.is_empty());
+    /// # Ok::<(), nwnrs_types::mdl::ModelError>(())
+    /// ```
     pub fn from_file(path: impl AsRef<Path>) -> ModelResult<Self> {
         let mut file = File::open(path.as_ref())?;
         read_ascii_model(&mut file)
@@ -340,6 +532,15 @@ impl AsciiModel {
     ///
     /// Returns [`ModelError`] if the resource is not an MDL type or parsing
     /// fails.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use nwnrs_types::resman::{CachePolicy, Res};
+    /// fn parse(res: &Res) -> nwnrs_types::mdl::ModelResult<nwnrs_types::mdl::AsciiModel> {
+    ///     nwnrs_types::mdl::AsciiModel::from_res(res, CachePolicy::Use)
+    /// }
+    /// ```
     pub fn from_res(res: &Res, cache_policy: CachePolicy) -> ModelResult<Self> {
         if res.resref().res_type() != MODEL_RES_TYPE {
             return Err(ModelError::msg(format!(
@@ -403,6 +604,13 @@ pub fn parse_ascii_model(text: &str) -> ModelResult<AsciiModel> {
 }
 
 /// Controls compiled-to-ASCII lowering.
+///
+/// # Examples
+///
+/// ```
+/// let options = nwnrs_types::mdl::BinaryToAsciiOptions { embed_original_binary: true };
+/// assert!(options.embed_original_binary);
+/// ```
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct BinaryToAsciiOptions {
     /// Embed the complete original binary payload in ASCII comments so an
@@ -419,6 +627,15 @@ pub struct BinaryToAsciiOptions {
 /// # Errors
 ///
 /// Returns [`ModelError`] if the binary model cannot be lowered.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use nwnrs_types::mdl::{AsciiModel, BinaryModel, ModelResult};
+/// fn lower(model: &BinaryModel) -> ModelResult<AsciiModel> {
+///     nwnrs_types::mdl::lower_binary_model_to_ascii(model)
+/// }
+/// ```
 pub fn lower_binary_model_to_ascii(model: &crate::mdl::BinaryModel) -> ModelResult<AsciiModel> {
     lower_binary_model_to_ascii_with_options(model, BinaryToAsciiOptions::default())
 }
@@ -429,6 +646,17 @@ pub fn lower_binary_model_to_ascii(model: &crate::mdl::BinaryModel) -> ModelResu
 /// # Errors
 ///
 /// Returns [`ModelError`] if the binary model cannot be lowered.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use nwnrs_types::mdl::{AsciiModel, BinaryModel, BinaryToAsciiOptions, ModelResult};
+/// fn lower(model: &BinaryModel) -> ModelResult<AsciiModel> {
+///     nwnrs_types::mdl::lower_binary_model_to_ascii_with_options(
+///         model, BinaryToAsciiOptions { embed_original_binary: true },
+///     )
+/// }
+/// ```
 pub fn lower_binary_model_to_ascii_with_options(
     model: &crate::mdl::BinaryModel,
     options: BinaryToAsciiOptions,
@@ -452,6 +680,15 @@ pub fn lower_binary_model_to_ascii_with_options(
 /// # Errors
 ///
 /// Returns [`ModelError`] if the model has no embedded compiled source bytes.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use nwnrs_types::mdl::{AsciiModel, Model, ModelResult};
+/// fn restore(model: &AsciiModel) -> ModelResult<Model> {
+///     nwnrs_types::mdl::restore_compiled_model(model)
+/// }
+/// ```
 pub fn restore_compiled_model(model: &AsciiModel) -> ModelResult<Model> {
     let bytes = decode_compiled_source_bytes(&model.prefix).ok_or_else(|| {
         ModelError::msg(
@@ -485,6 +722,15 @@ pub(crate) fn parse_ascii_model_bytes(bytes: &[u8]) -> ModelResult<AsciiModel> {
 /// # Errors
 ///
 /// Returns [`ModelError`] if the data cannot be read or parsed as ASCII MDL.
+///
+/// # Examples
+///
+/// ```
+/// let mut source = "beginmodelgeom demo\nendmodelgeom demo\ndonemodel demo\n".as_bytes();
+/// let model = nwnrs_types::mdl::read_ascii_model(&mut source)?;
+/// assert_eq!(model.geometry_name, "demo");
+/// # Ok::<(), nwnrs_types::mdl::ModelError>(())
+/// ```
 #[instrument(level = "debug", skip_all, err)]
 pub fn read_ascii_model<R: Read>(reader: &mut R) -> ModelResult<AsciiModel> {
     let mut bytes = Vec::new();

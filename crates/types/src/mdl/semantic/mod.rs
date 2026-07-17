@@ -31,6 +31,14 @@ use crate::mdl::{
 /// The semantic layer keeps authored ordering and enough source structure to
 /// support further lowering, diagnostics, and stable rewriting without falling
 /// back to raw ASCII parsing.
+///
+/// # Examples
+///
+/// ```
+/// let model = nwnrs_types::mdl::parse_semantic_model("beginmodelgeom demo\nendmodelgeom demo\ndonemodel demo\n")?;
+/// assert_eq!(model.geometry_name, "demo");
+/// # Ok::<(), nwnrs_types::mdl::ModelError>(())
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct SemanticModel {
     /// Parsed model header data.
@@ -56,6 +64,14 @@ pub struct SemanticModel {
 impl SemanticModel {
     /// Returns the first lowered geometry node named `name`,
     /// case-insensitively.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let model = nwnrs_types::mdl::parse_semantic_model("beginmodelgeom demo\nnode dummy root\nendnode\nendmodelgeom demo\ndonemodel demo\n")?;
+    /// assert!(model.node("ROOT").is_some());
+    /// # Ok::<(), nwnrs_types::mdl::ModelError>(())
+    /// ```
     #[must_use]
     pub fn node(&self, name: &str) -> Option<&SemanticNode> {
         self.nodes
@@ -64,6 +80,14 @@ impl SemanticModel {
     }
 
     /// Returns the first lowered animation named `name`, case-insensitively.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let model = nwnrs_types::mdl::parse_semantic_model("beginmodelgeom demo\nendmodelgeom demo\nnewanim idle demo\ndoneanim idle demo\ndonemodel demo\n")?;
+    /// assert!(model.animation("IDLE").is_some());
+    /// # Ok::<(), nwnrs_types::mdl::ModelError>(())
+    /// ```
     #[must_use]
     pub fn animation(&self, name: &str) -> Option<&SemanticAnimation> {
         self.animations
@@ -76,6 +100,13 @@ impl SemanticModel {
     /// # Errors
     ///
     /// Returns [`ModelError`] if the file cannot be opened or lowered.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// let model = nwnrs_types::mdl::SemanticModel::from_file("model.mdl")?;
+    /// # Ok::<(), nwnrs_types::mdl::ModelError>(())
+    /// ```
     pub fn from_file(path: impl AsRef<Path>) -> ModelResult<Self> {
         let mut file = File::open(path.as_ref())?;
         read_semantic_model(&mut file)
@@ -87,6 +118,13 @@ impl SemanticModel {
     /// # Errors
     ///
     /// Returns [`ModelError`] if the file cannot be opened or lowered.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// let model = nwnrs_types::mdl::SemanticModel::from_auto_file("model.mdl")?;
+    /// # Ok::<(), nwnrs_types::mdl::ModelError>(())
+    /// ```
     pub fn from_auto_file(path: impl AsRef<Path>) -> ModelResult<Self> {
         let mut file = File::open(path.as_ref())?;
         read_semantic_model_auto(&mut file)
@@ -98,6 +136,15 @@ impl SemanticModel {
     ///
     /// Returns [`ModelError`] if the resource is not an MDL type or lowering
     /// fails.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use nwnrs_types::resman::{CachePolicy, Res};
+    /// fn parse(res: &Res) -> nwnrs_types::mdl::ModelResult<nwnrs_types::mdl::SemanticModel> {
+    ///     nwnrs_types::mdl::SemanticModel::from_res(res, CachePolicy::Use)
+    /// }
+    /// ```
     pub fn from_res(res: &Res, cache_policy: CachePolicy) -> ModelResult<Self> {
         if res.resref().res_type() != MODEL_RES_TYPE {
             return Err(ModelError::msg(format!(
@@ -117,6 +164,15 @@ impl SemanticModel {
     ///
     /// Returns [`ModelError`] if the resource is not an MDL type or lowering
     /// fails.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use nwnrs_types::resman::{CachePolicy, Res};
+    /// fn parse(res: &Res) -> nwnrs_types::mdl::ModelResult<nwnrs_types::mdl::SemanticModel> {
+    ///     nwnrs_types::mdl::SemanticModel::from_auto_res(res, CachePolicy::Use)
+    /// }
+    /// ```
     pub fn from_auto_res(res: &Res, cache_policy: CachePolicy) -> ModelResult<Self> {
         if res.resref().res_type() != MODEL_RES_TYPE {
             return Err(ModelError::msg(format!(
@@ -131,6 +187,13 @@ impl SemanticModel {
 }
 
 /// Typed model header data lowered from top-level ASCII statements.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use nwnrs_types::mdl::SemanticHeader;
+/// fn model_name(header: &SemanticHeader) -> &str { &header.model_name }
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct SemanticHeader {
     /// Model name from `newmodel`.
@@ -150,6 +213,13 @@ pub struct SemanticHeader {
 }
 
 /// Known model classification values.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::ModelClassification;
+/// assert_eq!(ModelClassification::Character, ModelClassification::Character);
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ModelClassification {
     /// Character or creature model.
@@ -169,6 +239,13 @@ pub enum ModelClassification {
 }
 
 /// Known MDL node kinds.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::NodeKind;
+/// assert_eq!(NodeKind::Trimesh, NodeKind::Trimesh);
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NodeKind {
     /// `dummy`
@@ -198,6 +275,13 @@ pub enum NodeKind {
 }
 
 /// One lowered geometry node.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use nwnrs_types::mdl::SemanticNode;
+/// fn node_name(node: &SemanticNode) -> &str { &node.name }
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct SemanticNode {
     /// Typed node kind.
@@ -247,6 +331,13 @@ pub struct SemanticNode {
 }
 
 /// Material and render state attached to a geometry node.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use nwnrs_types::mdl::SemanticMaterial;
+/// fn bitmap(material: &SemanticMaterial) -> Option<&str> { material.bitmap.as_deref() }
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct SemanticMaterial {
     /// `render`
@@ -288,6 +379,14 @@ pub struct SemanticMaterial {
 }
 
 /// One `textureN` binding.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::SemanticTextureBinding;
+/// let texture = SemanticTextureBinding { index: 1, name: "normal_map".into() };
+/// assert_eq!(texture.index, 1);
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SemanticTextureBinding {
     /// Texture slot index.
@@ -297,6 +396,13 @@ pub struct SemanticTextureBinding {
 }
 
 /// Typed mesh payloads captured from a geometry node.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use nwnrs_types::mdl::SemanticMesh;
+/// fn vertex_count(mesh: &SemanticMesh) -> usize { mesh.vertices.len() }
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct SemanticMesh {
     /// Vertex positions from `verts`.
@@ -322,6 +428,14 @@ pub struct SemanticMesh {
 }
 
 /// One named skin-weight influence.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::SemanticSkinWeight;
+/// let weight = SemanticSkinWeight { bone: "pelvis".into(), weight: 1.0 };
+/// assert_eq!(weight.bone, "pelvis");
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct SemanticSkinWeight {
     /// Bone or node name referenced by the skin row.
@@ -331,6 +445,13 @@ pub struct SemanticSkinWeight {
 }
 
 /// Typed light payloads for `light` nodes.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use nwnrs_types::mdl::SemanticLight;
+/// fn multiplier(light: &SemanticLight) -> Option<f32> { light.multiplier }
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct SemanticLight {
     /// `multiplier`
@@ -368,6 +489,14 @@ pub struct SemanticLight {
 }
 
 /// Typed emitter payloads for `emitter` nodes.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::SemanticEmitter;
+/// let emitter = SemanticEmitter { x_size: Some(1.0), y_size: Some(2.0), properties: vec![] };
+/// assert_eq!(emitter.x_size, Some(1.0));
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct SemanticEmitter {
     /// `xsize`
@@ -379,6 +508,14 @@ pub struct SemanticEmitter {
 }
 
 /// One typed emitter property statement.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::{SemanticEmitterProperty, SemanticPropertyValue};
+/// let property = SemanticEmitterProperty { name: "render".into(), values: vec![SemanticPropertyValue::Text("Normal".into())] };
+/// assert_eq!(property.name, "render");
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct SemanticEmitterProperty {
     /// Source keyword.
@@ -388,6 +525,14 @@ pub struct SemanticEmitterProperty {
 }
 
 /// Typed danglymesh physics metadata.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::SemanticDangly;
+/// let dangly = SemanticDangly { displacement: Some(0.5), tightness: Some(0.8), period: Some(1.0) };
+/// assert_eq!(dangly.period, Some(1.0));
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct SemanticDangly {
     /// Maximum authored vertex displacement.
@@ -399,6 +544,13 @@ pub struct SemanticDangly {
 }
 
 /// One typed scalar/string property value.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::SemanticPropertyValue;
+/// assert_eq!(SemanticPropertyValue::Int(2), SemanticPropertyValue::Int(2));
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub enum SemanticPropertyValue {
     /// Boolean token such as `true` or `0/1` where explicitly parsed as bool.
@@ -412,6 +564,14 @@ pub enum SemanticPropertyValue {
 }
 
 /// Typed reference payloads for `reference` nodes.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::SemanticReference;
+/// let reference = SemanticReference { model: Some("fx_smoke".into()), reattachable: Some(1) };
+/// assert_eq!(reference.model.as_deref(), Some("fx_smoke"));
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct SemanticReference {
     /// `refmodel`
@@ -421,6 +581,14 @@ pub struct SemanticReference {
 }
 
 /// One UV layer.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::SemanticUvLayer;
+/// let layer = SemanticUvLayer { index: 0, coordinates: vec![[0.0, 1.0]] };
+/// assert_eq!(layer.coordinates.len(), 1);
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct SemanticUvLayer {
     /// UV layer index derived from `tverts` or `tvertsN`.
@@ -430,6 +598,14 @@ pub struct SemanticUvLayer {
 }
 
 /// One lowered face row.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::SemanticFace;
+/// let face = SemanticFace { vertex_indices: [0, 1, 2], group: 1, uv_indices: [0, 1, 2], material_index: 0 };
+/// assert_eq!(face.vertex_indices, [0, 1, 2]);
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SemanticFace {
     /// Vertex indices.
@@ -443,6 +619,13 @@ pub struct SemanticFace {
 }
 
 /// One lowered animation block.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use nwnrs_types::mdl::SemanticAnimation;
+/// fn duration(animation: &SemanticAnimation) -> Option<f32> { animation.length }
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct SemanticAnimation {
     /// Animation name.
@@ -468,6 +651,13 @@ pub struct SemanticAnimation {
 impl SemanticAnimation {
     /// Returns the first lowered animation node named `name`,
     /// case-insensitively.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use nwnrs_types::mdl::{SemanticAnimation, SemanticAnimationNode};
+    /// fn root(animation: &SemanticAnimation) -> Option<&SemanticAnimationNode> { animation.node("root") }
+    /// ```
     #[must_use]
     pub fn node(&self, name: &str) -> Option<&SemanticAnimationNode> {
         self.nodes
@@ -477,6 +667,14 @@ impl SemanticAnimation {
 }
 
 /// One animation event.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::AnimationEvent;
+/// let event = AnimationEvent { time: 0.5, name: "hit".into() };
+/// assert_eq!(event.name, "hit");
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct AnimationEvent {
     /// Event time in animation seconds.
@@ -486,6 +684,13 @@ pub struct AnimationEvent {
 }
 
 /// One lowered animation node overlay.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use nwnrs_types::mdl::SemanticAnimationNode;
+/// fn target(node: &SemanticAnimationNode) -> &str { &node.name }
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct SemanticAnimationNode {
     /// Typed node kind.
@@ -561,6 +766,14 @@ pub struct SemanticAnimationNode {
 }
 
 /// A losslessly preserved compiled controller with an unknown engine meaning.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::SemanticController;
+/// let controller = SemanticController { type_id: 999, bezier_keyed: false, keys: vec![] };
+/// assert_eq!(controller.type_id, 999);
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct SemanticController {
     /// Raw compiled controller type identifier.
@@ -572,6 +785,14 @@ pub struct SemanticController {
 }
 
 /// One sample from a losslessly preserved compiled controller.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::SemanticControllerKey;
+/// let key = SemanticControllerKey { time: 0.0, values: vec![1.0] };
+/// assert_eq!(key.values, vec![1.0]);
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct SemanticControllerKey {
     /// Sample time in animation seconds.
@@ -581,6 +802,14 @@ pub struct SemanticControllerKey {
 }
 
 /// One named emitter controller curve from an animation node.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::SemanticEmitterController;
+/// let controller = SemanticEmitterController { name: "birthrate".into(), bezier_keyed: false, keys: vec![] };
+/// assert_eq!(controller.name, "birthrate");
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct SemanticEmitterController {
     /// Controller name without the trailing `key` suffix.
@@ -592,6 +821,14 @@ pub struct SemanticEmitterController {
 }
 
 /// One emitter-controller sample.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::SemanticEmitterKey;
+/// let key = SemanticEmitterKey { time: 0.0, values: vec![10.0] };
+/// assert_eq!(key.values[0], 10.0);
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct SemanticEmitterKey {
     /// Key time in animation seconds.
@@ -601,6 +838,14 @@ pub struct SemanticEmitterKey {
 }
 
 /// One scalar animation key.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::ScalarKey;
+/// let key = ScalarKey { time: 0.5, value: 1.0 };
+/// assert_eq!(key.value, 1.0);
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct ScalarKey {
     /// Key time in animation seconds.
@@ -610,6 +855,14 @@ pub struct ScalarKey {
 }
 
 /// One 3D animation key.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::Vec3Key;
+/// let key = Vec3Key { time: 0.0, value: [1.0, 2.0, 3.0] };
+/// assert_eq!(key.value[2], 3.0);
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct Vec3Key {
     /// Key time in animation seconds.
@@ -619,6 +872,14 @@ pub struct Vec3Key {
 }
 
 /// One 4D animation key.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::Vec4Key;
+/// let key = Vec4Key { time: 0.0, value: [0.0, 0.0, 1.0, 0.5] };
+/// assert_eq!(key.value[3], 0.5);
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct Vec4Key {
     /// Key time in animation seconds.
@@ -628,6 +889,14 @@ pub struct Vec4Key {
 }
 
 /// One non-fatal semantic lowering diagnostic.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::{ModelDiagnostic, ModelDiagnosticKind};
+/// let diagnostic = ModelDiagnostic { kind: ModelDiagnosticKind::MissingParent, message: "missing root".into() };
+/// assert_eq!(diagnostic.kind, ModelDiagnosticKind::MissingParent);
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelDiagnostic {
     /// Diagnostic kind.
@@ -637,6 +906,13 @@ pub struct ModelDiagnostic {
 }
 
 /// Diagnostic categories raised by semantic lowering.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::ModelDiagnosticKind;
+/// assert_eq!(ModelDiagnosticKind::MalformedValue, ModelDiagnosticKind::MalformedValue);
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ModelDiagnosticKind {
     /// Duplicate geometry node name.
@@ -683,6 +959,14 @@ impl Model {
 /// # Errors
 ///
 /// Returns [`ModelError`] if parsing or lowering fails.
+///
+/// # Examples
+///
+/// ```
+/// let model = nwnrs_types::mdl::parse_semantic_model("beginmodelgeom demo\nendmodelgeom demo\ndonemodel demo\n")?;
+/// assert_eq!(model.geometry_name, "demo");
+/// # Ok::<(), nwnrs_types::mdl::ModelError>(())
+/// ```
 pub fn parse_semantic_model(text: &str) -> ModelResult<SemanticModel> {
     lower_ascii_model(&parse_ascii_model(text)?)
 }
@@ -693,6 +977,14 @@ pub fn parse_semantic_model(text: &str) -> ModelResult<SemanticModel> {
 /// # Errors
 ///
 /// Returns [`ModelError`] if parsing or lowering fails.
+///
+/// # Examples
+///
+/// ```
+/// let model = nwnrs_types::mdl::parse_semantic_model_auto(b"beginmodelgeom demo\nendmodelgeom demo\ndonemodel demo\n")?;
+/// assert_eq!(model.geometry_name, "demo");
+/// # Ok::<(), nwnrs_types::mdl::ModelError>(())
+/// ```
 pub fn parse_semantic_model_auto(bytes: &[u8]) -> ModelResult<SemanticModel> {
     match crate::mdl::parse_model_bytes(bytes)? {
         ParsedModel::Ascii(model) => lower_ascii_model(&model),
@@ -705,6 +997,15 @@ pub fn parse_semantic_model_auto(bytes: &[u8]) -> ModelResult<SemanticModel> {
 /// # Errors
 ///
 /// Returns [`ModelError`] if reading or lowering fails.
+///
+/// # Examples
+///
+/// ```
+/// let mut input = b"beginmodelgeom demo\nendmodelgeom demo\ndonemodel demo\n".as_slice();
+/// let model = nwnrs_types::mdl::read_semantic_model(&mut input)?;
+/// assert_eq!(model.geometry_name, "demo");
+/// # Ok::<(), nwnrs_types::mdl::ModelError>(())
+/// ```
 #[instrument(level = "debug", skip_all, err)]
 pub fn read_semantic_model<R: Read>(reader: &mut R) -> ModelResult<SemanticModel> {
     let ascii = read_ascii_model(reader)?;
@@ -717,6 +1018,15 @@ pub fn read_semantic_model<R: Read>(reader: &mut R) -> ModelResult<SemanticModel
 /// # Errors
 ///
 /// Returns [`ModelError`] if reading or lowering fails.
+///
+/// # Examples
+///
+/// ```
+/// let mut input = b"beginmodelgeom demo\nendmodelgeom demo\ndonemodel demo\n".as_slice();
+/// let model = nwnrs_types::mdl::read_semantic_model_auto(&mut input)?;
+/// assert_eq!(model.geometry_name, "demo");
+/// # Ok::<(), nwnrs_types::mdl::ModelError>(())
+/// ```
 #[instrument(level = "debug", skip_all, err)]
 pub fn read_semantic_model_auto<R: Read>(reader: &mut R) -> ModelResult<SemanticModel> {
     match read_parsed_model(reader)? {
@@ -731,6 +1041,16 @@ pub fn read_semantic_model_auto<R: Read>(reader: &mut R) -> ModelResult<Semantic
 ///
 /// Returns [`ModelError`] if the write fails or the semantic model contains
 /// opaque compiled controllers that have no ASCII representation.
+///
+/// # Examples
+///
+/// ```
+/// let model = nwnrs_types::mdl::parse_semantic_model("beginmodelgeom demo\nendmodelgeom demo\ndonemodel demo\n")?;
+/// let mut output = Vec::new();
+/// nwnrs_types::mdl::write_semantic_model(&mut output, &model)?;
+/// assert!(!output.is_empty());
+/// # Ok::<(), nwnrs_types::mdl::ModelError>(())
+/// ```
 #[instrument(level = "debug", skip_all, err, fields(model_name = %model.geometry_name))]
 pub fn write_semantic_model<W: Write>(writer: &mut W, model: &SemanticModel) -> ModelResult<()> {
     let ascii = crate::mdl::ascii::lower_semantic_model_to_ascii(model, None)?;
@@ -770,6 +1090,15 @@ pub(crate) fn ensure_ascii_representable(model: &SemanticModel) -> ModelResult<(
 /// # Errors
 ///
 /// Returns [`ModelError`] if lowering fails.
+///
+/// # Examples
+///
+/// ```
+/// let ascii = nwnrs_types::mdl::parse_ascii_model("beginmodelgeom demo\nnode dummy demo\nparent null\nendnode\nendmodelgeom demo\ndonemodel demo\n")?;
+/// let semantic = nwnrs_types::mdl::lower_ascii_model(&ascii)?;
+/// assert_eq!(semantic.geometry_name, "demo");
+/// # Ok::<(), nwnrs_types::mdl::ModelError>(())
+/// ```
 pub fn lower_ascii_model(model: &AsciiModel) -> ModelResult<SemanticModel> {
     let mut diagnostics = Vec::new();
     let header = lower_header(model, &mut diagnostics);
@@ -810,6 +1139,16 @@ pub fn lower_ascii_model(model: &AsciiModel) -> ModelResult<SemanticModel> {
 /// # Errors
 ///
 /// Returns [`ModelError`] if lowering fails.
+///
+/// # Examples
+///
+/// ```
+/// let ascii = nwnrs_types::mdl::parse_ascii_model("beginmodelgeom demo\nnode dummy demo\nparent null\nendnode\nendmodelgeom demo\ndonemodel demo\n")?;
+/// let binary = nwnrs_types::mdl::compile_ascii_model(&ascii)?;
+/// let semantic = nwnrs_types::mdl::lower_binary_model(&binary)?;
+/// assert_eq!(semantic.geometry_name, "demo");
+/// # Ok::<(), nwnrs_types::mdl::ModelError>(())
+/// ```
 pub fn lower_binary_model(model: &BinaryModel) -> ModelResult<SemanticModel> {
     let mut diagnostics = model.diagnostics.clone();
     let offset_to_name = model

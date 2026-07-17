@@ -28,6 +28,38 @@ choose the fidelity they need without reimplementing each other's lowering.
 Choose the entry point that matches the fidelity you need rather than treating
 `MDL` as a single monolithic parser.
 
+## Quick Start
+
+Parse authored ASCII, compile it to the Enhanced Edition binary layout, and
+lower the immutable binary snapshot into an editable semantic model:
+
+```rust
+use nwnrs_types::mdl::{
+    compile_ascii_model, lower_binary_model, parse_ascii_model,
+};
+
+let ascii = parse_ascii_model(
+    "\
+newmodel demo
+setsupermodel demo null
+classification character
+setanimationscale 1
+beginmodelgeom demo
+node dummy demo
+  parent null
+endnode
+endmodelgeom demo
+donemodel demo
+",
+)?;
+let binary = compile_ascii_model(&ascii)?;
+let semantic = lower_binary_model(&binary)?;
+
+assert_eq!(binary.name(), "demo");
+assert_eq!(semantic.geometry_name, "demo");
+# Ok::<(), nwnrs_types::mdl::ModelError>(())
+```
+
 ## Layered Public Surface
 
 ### Authored ASCII layer
