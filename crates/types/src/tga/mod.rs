@@ -229,9 +229,7 @@ impl TgaTexture {
         }
 
         let mut image_data = Vec::with_capacity(expected_len);
-        for pixel in rgba.chunks_exact(4) {
-            let [r, g, b, a] = <[u8; 4]>::try_from(pixel)
-                .map_err(|_error| TgaError::msg("TGA RGBA pixel slice length mismatch"))?;
+        for &[r, g, b, a] in rgba.as_chunks::<4>().0 {
             image_data.extend_from_slice(&[b, g, r, a]);
         }
 

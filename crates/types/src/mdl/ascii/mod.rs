@@ -1584,10 +1584,7 @@ fn decode_hex(input: &str) -> Result<Vec<u8>, ()> {
     }
 
     let mut bytes = Vec::with_capacity(input.len() / 2);
-    for pair in input.as_bytes().chunks_exact(2) {
-        let [high, low] = *pair else {
-            return Err(());
-        };
+    for &[high, low] in input.as_bytes().as_chunks::<2>().0 {
         let high = decode_hex_nibble(high)?;
         let low = decode_hex_nibble(low)?;
         bytes.push((high << 4) | low);
