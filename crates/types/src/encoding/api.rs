@@ -177,7 +177,7 @@ pub(crate) fn decode_with(
 #[cfg(not(windows))]
 fn detect_unix_native_encoding() -> Result<&'static Encoding, NativeEncodingError> {
     use std::env;
-    
+
     for key in ["LC_ALL", "LC_CTYPE", "LANG"] {
         if let Ok(value) = env::var(key)
             && let Some(encoding) = parse_locale_encoding(&value)

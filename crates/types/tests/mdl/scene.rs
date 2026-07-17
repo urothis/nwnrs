@@ -1,7 +1,3 @@
-#![allow(missing_docs)]
-
-mod support;
-
 use std::{error::Error, io::Cursor};
 
 use nwnrs_types::{
@@ -11,7 +7,8 @@ use nwnrs_types::{
     },
     resman::CachePolicy,
 };
-use support::{demand_resource, require_game_resource, skip_if_game_resources_unavailable};
+
+use super::support::{demand_resource, require_game_resource, skip_if_game_resources_unavailable};
 
 #[test]
 fn fixture_lowers_to_scene_mesh_and_material() -> Result<(), Box<dyn Error>> {

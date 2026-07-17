@@ -1,17 +1,15 @@
-#![allow(missing_docs)]
-
-mod support;
-
 use std::error::Error;
 
 use nwnrs_types::{
     mdl::{
-        AsciiModel, AsciiPayloadKind, BinaryModel, MODEL_RES_TYPE, compile_ascii_model,
-        lower_binary_model_to_ascii, parse_ascii_model, write_ascii_model,
+        AsciiModel, AsciiPayloadKind, BinaryModel, BinaryToAsciiOptions, MODEL_RES_TYPE,
+        lower_binary_model_to_ascii, lower_binary_model_to_ascii_with_options, parse_ascii_model,
+        restore_compiled_model, write_ascii_model,
     },
     resman::CachePolicy,
 };
-use support::{demand_resource, require_game_resource, skip_if_game_resources_unavailable};
+
+use super::support::{demand_resource, require_game_resource, skip_if_game_resources_unavailable};
 
 #[test]
 fn fixture_parses_geometry_and_animation_structure() -> Result<(), Box<dyn Error>> {
@@ -82,21 +80,26 @@ fn canonical_write_roundtrips_through_parse() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
-fn converted_ascii_compiles_back_to_compiled_model() -> Result<(), Box<dyn Error>> {
-    let ascii = match shipped_ascii_fixture() {
+fn converted_ascii_restores_original_compiled_model() -> Result<(), Box<dyn Error>> {
+    let ascii = match shipped_reversible_ascii_fixture() {
         Ok(ascii) => ascii,
         Err(error) => return skip_if_game_resources_unavailable(error),
     };
-    let compiled = compile_ascii_model(&ascii).unwrap_or_else(|error| {
-        panic!("compile canonical ascii: {error}");
+    let compiled = restore_compiled_model(&ascii).unwrap_or_else(|error| {
+        panic!("restore canonical ascii: {error}");
     });
     let parsed = compiled.parse_binary().unwrap_or_else(|error| {
         panic!("parse recompiled model: {error}");
     });
 
-    assert_eq!(parsed.name, "a_ba_casts");
-    assert!(parsed.nodes.len() > 10);
-    assert_eq!(parsed.animations.len(), 19);
+    assert_eq!(parsed.name(), "a_ba_casts");
+    assert!(parsed.nodes().len() > 10);
+    assert_eq!(parsed.animations().len(), 19);
+
+    let mut edited = ascii;
+    edited.geometry_name = "edited".to_string();
+    let error = restore_compiled_model(&edited).unwrap_err();
+    assert!(error.to_string().contains("edited ASCII"));
     Ok(())
 }
 
@@ -104,4 +107,15 @@ fn shipped_ascii_fixture() -> Result<AsciiModel, Box<dyn Error>> {
     let res = require_game_resource(demand_resource("a_ba_casts", MODEL_RES_TYPE))?;
     let binary = BinaryModel::from_res(&res, CachePolicy::Use)?;
     Ok(lower_binary_model_to_ascii(&binary)?)
+}
+
+fn shipped_reversible_ascii_fixture() -> Result<AsciiModel, Box<dyn Error>> {
+    let res = require_game_resource(demand_resource("a_ba_casts", MODEL_RES_TYPE))?;
+    let binary = BinaryModel::from_res(&res, CachePolicy::Use)?;
+    Ok(lower_binary_model_to_ascii_with_options(
+        &binary,
+        BinaryToAsciiOptions {
+            embed_original_binary: true,
+        },
+    )?)
 }

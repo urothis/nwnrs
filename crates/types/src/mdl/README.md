@@ -17,6 +17,9 @@ choose the fidelity they need without reimplementing each other's lowering.
 - lower models into richer semantic and scene-oriented representations
 - rewrite appearance-token slots before texture and model resolution
 - resolve equipped player-creature part attachments into composed scene trees
+- resolve supermodel chains and inherit remapped animation tracks
+- sample transform, material, light, animmesh, emitter, and danglymesh channels
+- assemble renderer-neutral effective materials from MDL, MTR, TXI, and texture resources
 - export scenes or composed scene trees as flattened Wavefront `OBJ`
 - write semantic and scene-oriented representations back as canonical ASCII
 - support inspection at multiple abstraction levels rather than only one
@@ -64,13 +67,21 @@ Choose the entry point that matches the fidelity you need rather than treating
 - `UnknownBinaryBlock`
 - `parse_binary_model_bytes`
 - `read_binary_model`
-- `write_binary_model`
+- `write_original_binary_model`
+
+`BinaryModel` is deliberately a read-only parsed snapshot. Its accessors expose
+the typed payload, while `write_original_binary_model` writes the exact source
+bytes. Edit by lowering to `SemanticModel`, changing that value, and compiling
+it into a new snapshot; mutating parsed binary fields would imply a serializer
+that does not exist.
 
 ### Semantic and scene layers
 
 - `SemanticModel`
 - `SemanticNode`
 - `SemanticAnimation`
+- `SemanticController` and `SemanticControllerKey` for losslessly preserving
+  compiled controllers whose engine meaning is unknown
 - `NwnScene`
 - `NwnSceneNode`
 - `NwnPrimitive`
@@ -86,7 +97,9 @@ Choose the entry point that matches the fidelity you need rather than treating
 - `collect_appearance_slots`
 - `apply_appearance_overrides`
 - `resolve_scene_textures`
+- `resolve_scene_materials`
 - `NwnComposedScene`
+- `inherit_supermodel_animations`
 - `compose_player_creature_from_resman`
 - `compose_player_creature_from_utc`
 - `write_scene_obj`
@@ -104,20 +117,61 @@ Choose the entry point that matches the fidelity you need rather than treating
 - `read_model`
 - `write_model`
 - `compile_ascii_model`
+- `compile_semantic_model`
+- `compile_semantic_model_bytes`
+- `validate_semantic_model`
+- `restore_compiled_model` (restores reversible compiled-source metadata when
+  exact original bytes are preferred over recompilation)
 - `lower_ascii_model`
+- `lower_binary_model`
 - `lower_binary_model_to_ascii`
+- `lower_binary_model_to_ascii_with_options`
 
 ## Representation Pipeline
 
 ```text
-ASCII MDL -----------+
-                     |
-                     v
-                semantic model ------> scene model ------> composed scene -----> OBJ
-                     ^
-                     |
-binary MDL ----------+
+ASCII MDL ------> semantic model --compile--> binary MDL
+                       |
+                       v
+                  scene model ------> composed scene -----> OBJ
+                       ^
+                       |
+binary MDL ------------+
 ```
+
+## Compiler Behavior
+
+The compiled-model writer targets the Enhanced Edition binary format. It rejects
+unknown or unrepresentable semantic input instead of silently discarding it.
+Authored source-only annotations are accepted only where the corresponding
+binary value is derived or has no runtime meaning.
+
+Skin vertices are limited to the four strongest influences and renormalized,
+matching the engine's fixed-width representation. Compilation also enforces the
+EE limits of 64 skin bones, 65,535 generated GPU vertices, and 21,845 faces per
+mesh.
+
+Unknown compiled controller IDs remain available as opaque semantic controller
+rows and can be re-emitted by `compile_semantic_model`. Canonical ASCII has no
+numeric-controller syntax, so `write_semantic_model` and `write_scene_model`
+reject models containing those opaque rows instead of silently dropping them.
+Compiled-to-ASCII lowering applies the same check.
+
+Diagnostics attached while lowering describe source provenance. Direct ASCII
+compilation still rejects lossy parse diagnostics, but after a caller repairs a
+`SemanticModel`, compilation and `validate_semantic_model` validate its current
+fields rather than allowing stale diagnostics to reject the corrected value.
+
+Compiled-to-ASCII lowering does not embed the original binary payload by
+default. Set `BinaryToAsciiOptions::embed_original_binary` when calling
+`lower_binary_model_to_ascii_with_options` if byte-exact restoration through
+`restore_compiled_model` is required. The metadata is intentionally opt-in
+because it can be large and is not meaningful to other MDL tools.
+
+ASCII file and resource readers mirror Cleanmodels' byte-transparent behavior:
+they do not require UTF-8, and arbitrary token/comment bytes survive a
+read/write cycle. The `&str` parser remains available for programmatically
+constructed text.
 
 ## Invariants
 
@@ -128,21 +182,39 @@ binary MDL ----------+
   concepts where the corresponding layer supports them
 - higher-level writers canonicalize through ASCII and do not preserve original
   authored formatting or compiled bytes
+- opaque compiled controllers are binary-only unless and until their controller
+  IDs gain a known ASCII property mapping
 - ASCII, binary, semantic, scene, composed-scene, and `OBJ` export preserve
   different information on purpose
 
-## Internal Structure
+## Module Structure
 
-- `ascii`: syntax-faithful ASCII parsing and typed source representation
-- `binary`: compiled-model parsing for binary MDL payloads
-- `semantic`: validated lowering from authored model syntax into typed NWN model
-  concepts
-- `scene`: engine-neutral scene lowering for rendering or tooling integrations
-- `resolve`: texture and material-reference resolution helpers
-- `appearance`: appearance-slot discovery and override application
-- `compose`: install-backed player-creature composition helpers
-- `obj`: flattened Wavefront OBJ export
-- `io` and `types`: typed read and write entry points and shared vocabulary
+- `mdl::ascii`: syntax-faithful ASCII parsing, writing, and source types
+- `mdl::binary`: read-only compiled-model parsing and snapshot types
+- `mdl::compiler`: validation and EE compiled-model generation
+- `mdl::semantic`: editable typed NWN concepts and representation lowering
+- `mdl::scene`: renderer-neutral scenes, animation sampling, and pose baking
+- `mdl::runtime`: appearance overrides, resource resolution, and composition
+- `mdl::export`: adapters such as flattened Wavefront OBJ output
+- `mdl::raw`: raw payload, encoding detection, and format-dispatched I/O
+
+The layer modules are public so applications can depend on a focused surface.
+The existing flat `mdl::*` re-exports remain available for compatibility and
+the prelude covers common cross-layer workflows. Semantic and scene values stay
+publicly editable because they are the intended interchange representations;
+only the parsed binary snapshot is immutable.
+
+Export adapters operate over `SemanticModel` or `NwnScene`, depending on the
+fidelity they need, without adding destination-specific fields to the core. MDL
+remains one cohesive feature, including its resource-backed resolution and
+composition workflows.
+
+## Tests
+
+The MDL integration-test harness is `crates/types/tests/mdl.rs`, with focused
+modules under `crates/types/tests/mdl/`. The `game_corpus` module uses the
+existing install test support and resource manager to sample shipped game MDLs;
+it does not implement a separate asset loader.
 
 ## See also
 

@@ -9,30 +9,11 @@
 [![CI](https://github.com/urothis/nwnrs/workflows/CI/badge.svg)](https://github.com/urothis/nwnrs/actions)
 [![Discord](https://img.shields.io/discord/721439329079263232.svg?label=&logo=discord&logoColor=ffffff&color=7389D8&labelColor=6A7EC2)](https://discord.gg/GGneSqUYHU)
 
-Rust tools and libraries for Neverwinter Nights
-
-## Why This Exists
-
-`nwnrs` is a workspace for reading, writing, inspecting, and converting NWN
-data.
-
-It includes:
-
-- Rust crates for formats like `GFF`, `2DA`, `TLK`, `SSF`, `ERF`, `KEY/BIF`,
-  `MDL`, `TGA`, `DDS`, `PLT`, and `NWSync`
-- a CLI for operational workflows such as inspection, NWScript packing/compilation, conversion,
-  packing, and unpacking
+Rust tools and libraries for Neverwinter Nights: Enhanced Edition.
 
 ## Start Here
 
-The canonical guided documentation now lives in the `nwnrs-types` crate docs:
-
-- [`nwnrs-types` rustdoc](https://docs.rs/nwnrs-types/latest/nwnrs_types/)
-- [`crates/types/README.md`](./crates/types/README.md)
-
-Operational and interface-specific docs live here:
-
-- [`crates/nwnrs/README.md`](./crates/nwnrs/README.md)
+- [`nwnrs` rustdoc](https://docs.rs/nwnrs/latest/nwnrs/)
 
 ## Quick Start
 
@@ -44,7 +25,7 @@ Install:
 cargo install --git https://github.com/urothis/nwnrs --bin nwnrs
 ```
 
-Use:
+Usage:
 
 ```bash
 nwnrs new --kind utc my_creature
