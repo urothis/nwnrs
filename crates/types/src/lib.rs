@@ -286,7 +286,7 @@ mod tests {
         let _binary_read: fn(&mut Cursor) -> mdl::ModelResult<mdl::BinaryModel> =
             mdl::read_binary_model::<Cursor>;
         let _binary_write: fn(&mut Cursor, &mdl::BinaryModel) -> mdl::ModelResult<()> =
-            mdl::write_binary_model::<Cursor>;
+            mdl::write_original_binary_model::<Cursor>;
         let _semantic_read: fn(&mut Cursor) -> mdl::ModelResult<mdl::SemanticModel> =
             mdl::read_semantic_model::<Cursor>;
         let _semantic_write: fn(&mut Cursor, &mdl::SemanticModel) -> mdl::ModelResult<()> =

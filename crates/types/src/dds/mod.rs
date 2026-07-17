@@ -736,14 +736,18 @@ fn alpha_mean_rgba8(rgba: &[u8]) -> DdsResult<f32> {
     if pixel_count == 0 {
         return Err(DdsError::msg("DDS RGBA input contains no pixels"));
     }
-    let alpha_sum = rgba.chunks_exact(4).try_fold(0_u64, |acc, pixel| {
-        pixel
-            .get(3)
-            .copied()
-            .map(u64::from)
-            .and_then(|alpha| acc.checked_add(alpha))
-            .ok_or_else(|| DdsError::msg("DDS alpha sum overflow"))
-    })?;
+    let alpha_sum = rgba
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .try_fold(0_u64, |acc, pixel| {
+            pixel
+                .get(3)
+                .copied()
+                .map(u64::from)
+                .and_then(|alpha| acc.checked_add(alpha))
+                .ok_or_else(|| DdsError::msg("DDS alpha sum overflow"))
+        })?;
     Ok((alpha_sum as f32) / (pixel_count as f32 * 255.0))
 }
 

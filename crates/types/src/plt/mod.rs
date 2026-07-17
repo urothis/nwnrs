@@ -552,9 +552,7 @@ fn parse_plt_bytes(bytes: &[u8]) -> PltResult<PltTexture> {
         .get(PLT_HEADER_SIZE..PLT_HEADER_SIZE + payload_len)
         .ok_or_else(|| PltError::msg("PLT pixel payload extends past end of file"))?;
     let mut pixels = Vec::with_capacity(pixel_count);
-    for entry in payload.chunks_exact(2) {
-        let [value, layer_id] = <[u8; 2]>::try_from(entry)
-            .map_err(|_error| PltError::msg("PLT pixel entry length mismatch"))?;
+    for &[value, layer_id] in payload.as_chunks::<2>().0 {
         pixels.push(PltPixel {
             value,
             layer_id,

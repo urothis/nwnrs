@@ -1,10 +1,14 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
-use nwnrs_types::resman::{
-    CachePolicy, Res, ResMan, ResRef, ResType, ResolvedResRef, get_res_type,
+use nwnrs_types::{
+    mtr::{MTR_RES_TYPE, MtrMaterial},
+    resman::{CachePolicy, Res, ResMan, ResRef, ResType, ResolvedResRef, get_res_type},
+    txi::TxiFile,
 };
 
-use crate::mdl::{MODEL_RES_TYPE, NwnMaterial, NwnScene, NwnTextureRef, NwnTextureSlot};
+use crate::mdl::{
+    MODEL_RES_TYPE, ModelError, ModelResult, NwnMaterial, NwnScene, NwnTextureRef, NwnTextureSlot,
+};
 
 /// NWN texture resource kinds the model resolver can search for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -91,6 +95,98 @@ pub struct ResolvedMaterialTextures {
     pub resolved:       Vec<ResolvedTexture>,
     /// Texture references that could not be resolved.
     pub missing:        Vec<UnresolvedTexture>,
+}
+
+/// Renderer-neutral role of a texture in an NWN material.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum NwnMaterialTextureRole {
+    /// Base color/diffuse texture (`texture0`).
+    Diffuse,
+    /// Tangent-space normal map (`texture1`).
+    Normal,
+    /// Specular map (`texture2`).
+    Specular,
+    /// Roughness map (`texture3`).
+    Roughness,
+    /// Height/parallax map (`texture4`).
+    Height,
+    /// Emissive map (`texture5`).
+    Emissive,
+    /// An extension slot not covered by the standard six MTR roles.
+    Custom(usize),
+}
+
+impl NwnMaterialTextureRole {
+    /// Maps an MTR texture index to its renderer-neutral role.
+    #[must_use]
+    pub const fn from_texture_index(index: usize) -> Self {
+        match index {
+            0 => Self::Diffuse,
+            1 => Self::Normal,
+            2 => Self::Specular,
+            3 => Self::Roughness,
+            4 => Self::Height,
+            5 => Self::Emissive,
+            other => Self::Custom(other),
+        }
+    }
+}
+
+/// Origin of one effective material texture binding.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NwnMaterialTextureSource {
+    /// Binding authored directly in the MDL node.
+    Mdl,
+    /// Binding authored by the referenced MTR material.
+    Mtr,
+}
+
+/// One resolved, missing, or ignored effective material texture slot.
+#[derive(Debug, Clone)]
+pub struct ResolvedMaterialSlot {
+    /// Renderer-neutral texture role.
+    pub role:     NwnMaterialTextureRole,
+    /// Whether the effective binding came from MDL or MTR.
+    pub source:   NwnMaterialTextureSource,
+    /// Effective texture reference.
+    pub texture:  NwnTextureRef,
+    /// Resolved texture resource, when found.
+    pub resolved: Option<ResolvedTexture>,
+    /// Missing-resource details, when lookup failed.
+    pub missing:  Option<UnresolvedTexture>,
+    /// Optional TXI metadata associated with the resolved texture name.
+    pub txi:      Option<TxiFile>,
+}
+
+/// Parsed and resolved MTR definition referenced by an MDL material.
+#[derive(Debug, Clone)]
+pub struct ResolvedMtrMaterial {
+    /// Resolved MTR resource name.
+    pub resolved: ResolvedResRef,
+    /// Resource entry that supplied the MTR bytes.
+    pub resource: Res,
+    /// Parsed MTR definition.
+    pub material: MtrMaterial,
+}
+
+/// Renderer-neutral effective material assembled from MDL, MTR, TXI, and
+/// texture resources.
+#[derive(Debug, Clone)]
+pub struct ResolvedSceneMaterial {
+    /// Material index within [`NwnScene::materials`].
+    pub material_index: usize,
+    /// Source scene node index.
+    pub source_node:    usize,
+    /// MDL `materialname`, when authored.
+    pub material_name:  Option<String>,
+    /// Effective render hint, with MTR taking precedence over MDL.
+    pub render_hint:    Option<String>,
+    /// Parsed MTR definition, when present in the resource manager.
+    pub mtr:            Option<ResolvedMtrMaterial>,
+    /// Missing MTR reference, when `materialname` was authored but not found.
+    pub missing_mtr:    Option<ResolvedResRef>,
+    /// Effective texture slots after MTR-over-MDL precedence is applied.
+    pub slots:          Vec<ResolvedMaterialSlot>,
 }
 
 /// One scene-aware texture resolution outcome.
@@ -240,6 +336,143 @@ pub fn resolve_scene_textures(
             resolve_material_textures(scene, material_index, material, resman, options)
         })
         .collect()
+}
+
+/// Resolves renderer-neutral effective materials for every material in a
+/// scene, joining MDL bindings with optional MTR and TXI resources.
+///
+/// MTR texture slots and render hints take precedence over the corresponding
+/// MDL values. Missing MTR and texture resources are reported in the returned
+/// descriptions; malformed MTR or TXI payloads return an error.
+pub fn resolve_scene_materials(
+    scene: &NwnScene,
+    resman: &mut ResMan,
+    options: &TextureResolverOptions,
+) -> ModelResult<Vec<ResolvedSceneMaterial>> {
+    scene
+        .materials
+        .iter()
+        .enumerate()
+        .map(|(material_index, material)| {
+            resolve_scene_material(scene, material_index, material, resman, options)
+        })
+        .collect()
+}
+
+/// Resolves one renderer-neutral effective scene material.
+pub fn resolve_scene_material(
+    scene: &NwnScene,
+    material_index: usize,
+    material: &NwnMaterial,
+    resman: &mut ResMan,
+    options: &TextureResolverOptions,
+) -> ModelResult<ResolvedSceneMaterial> {
+    let (mtr, missing_mtr) = resolve_mtr_material(material, resman)?;
+    let mut effective =
+        BTreeMap::<NwnMaterialTextureRole, (NwnMaterialTextureSource, NwnTextureRef)>::new();
+    for texture in &material.textures {
+        let index = match texture.slot {
+            NwnTextureSlot::Bitmap => 0,
+            NwnTextureSlot::Texture(index) => index,
+        };
+        effective.insert(
+            NwnMaterialTextureRole::from_texture_index(index),
+            (NwnMaterialTextureSource::Mdl, texture.clone()),
+        );
+    }
+    if let Some(resolved_mtr) = &mtr {
+        for (&index, name) in &resolved_mtr.material.textures {
+            effective.insert(
+                NwnMaterialTextureRole::from_texture_index(index),
+                (
+                    NwnMaterialTextureSource::Mtr,
+                    NwnTextureRef {
+                        slot: NwnTextureSlot::Texture(index),
+                        name: name.clone(),
+                    },
+                ),
+            );
+        }
+    }
+
+    let mut slots = Vec::with_capacity(effective.len());
+    for (role, (source, texture)) in effective {
+        let resolution =
+            resolve_scene_texture_ref_with_policy(scene, material, &texture, resman, options);
+        let (resolved, missing, txi) = match resolution {
+            SceneTextureResolution::Resolved(resolved) => {
+                let txi = TxiFile::optional_from_resman(
+                    resman,
+                    resolved.resolved.res_ref(),
+                    CachePolicy::Use,
+                )
+                .map_err(|error| {
+                    ModelError::msg(format!(
+                        "failed to parse TXI for {}: {error}",
+                        resolved.resolved
+                    ))
+                })?;
+                (Some(resolved), None, txi)
+            }
+            SceneTextureResolution::Ignored => (None, None, None),
+            SceneTextureResolution::Missing(missing) => (None, Some(missing), None),
+        };
+        slots.push(ResolvedMaterialSlot {
+            role,
+            source,
+            texture,
+            resolved,
+            missing,
+            txi,
+        });
+    }
+
+    let render_hint = mtr
+        .as_ref()
+        .and_then(|resolved| resolved.material.render_hint.clone())
+        .or_else(|| material.render_hint.clone());
+    Ok(ResolvedSceneMaterial {
+        material_index,
+        source_node: material.source_node,
+        material_name: material.material_name.clone(),
+        render_hint,
+        mtr,
+        missing_mtr,
+        slots,
+    })
+}
+
+fn resolve_mtr_material(
+    material: &NwnMaterial,
+    resman: &mut ResMan,
+) -> ModelResult<(Option<ResolvedMtrMaterial>, Option<ResolvedResRef>)> {
+    let Some(material_name) = material
+        .material_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|name| !name.is_empty() && !name.eq_ignore_ascii_case("null"))
+    else {
+        return Ok((None, None));
+    };
+    let material_name = material_name
+        .strip_suffix(".mtr")
+        .or_else(|| material_name.strip_suffix(".MTR"))
+        .unwrap_or(material_name);
+    let resolved = ResolvedResRef::new(material_name.to_string(), MTR_RES_TYPE)
+        .map_err(|error| ModelError::msg(format!("invalid MTR resref {material_name}: {error}")))?;
+    let Some(resource) = resman.get_resolved(&resolved) else {
+        return Ok((None, Some(resolved)));
+    };
+    let parsed = MtrMaterial::from_res(&resource, CachePolicy::Use)
+        .map_err(|error| ModelError::msg(format!("failed to parse {resolved}: {error}")))?;
+    Ok((
+        Some(ResolvedMtrMaterial {
+            resolved,
+            resource,
+            material: parsed,
+        }),
+        None,
+    ))
 }
 
 fn normalize_body_part_texture_name(name: &str) -> Option<String> {
@@ -499,8 +732,9 @@ mod tests {
     use nwnrs_types::resman::{ResContainer, ResMan, ResolvedResRef, read_resmemfile};
 
     use crate::mdl::{
-        NwnMaterial, NwnTextureRef, NwnTextureSlot, SceneTextureResolution, TextureResolverOptions,
-        TextureResourceKind, parse_scene_model, resolve_material_textures,
+        NwnMaterial, NwnMaterialTextureRole, NwnMaterialTextureSource, NwnTextureRef,
+        NwnTextureSlot, SceneTextureResolution, TextureResolverOptions, TextureResourceKind,
+        parse_scene_model, resolve_material_textures, resolve_scene_materials,
         resolve_scene_texture_ref_with_policy, resolve_scene_textures, resolve_texture_ref,
         scene_texture_resolution_names,
     };
@@ -532,6 +766,72 @@ mod tests {
 
         assert_eq!(resolved.kind, TextureResourceKind::Dds);
         assert_eq!(resolved.resolved.to_file(), "stone.dds");
+    }
+
+    #[test]
+    fn resolves_effective_mtr_slots_and_txi_metadata() {
+        let scene = parse_scene_model(
+            "\
+newmodel demo
+setsupermodel demo null
+beginmodelgeom demo
+node trimesh demo
+  parent NULL
+  bitmap mdl_diffuse
+  materialname stone_material
+  renderhint LegacyHint
+  verts 3
+    0 0 0
+    1 0 0
+    0 1 0
+  faces 1
+    0 1 2 0 0 1 2 0
+  tverts 3
+    0 0 0
+    1 0 0
+    0 1 0
+endnode
+endmodelgeom demo
+donemodel demo
+",
+        )
+        .unwrap_or_else(|error| panic!("parse scene: {error}"));
+        let mut manager = build_manager(&[
+            (
+                "material",
+                "stone_material.mtr",
+                b"renderhint NormalAndSpecMapped\ntexture0 mtr_diffuse\ntexture1 mtr_normal\nparameter float Roughness 0.4\n",
+            ),
+            ("diffuse", "mtr_diffuse.tga", b"texture"),
+            ("normal", "mtr_normal.tga", b"normal"),
+            ("metadata", "mtr_diffuse.txi", b"clamp 1\nblending additive\n"),
+        ]);
+
+        let resolved =
+            resolve_scene_materials(&scene, &mut manager, &TextureResolverOptions::default())
+                .unwrap_or_else(|error| panic!("resolve effective material: {error}"));
+        let material = resolved
+            .first()
+            .unwrap_or_else(|| panic!("missing resolved material"));
+        assert_eq!(material.render_hint.as_deref(), Some("NormalAndSpecMapped"));
+        assert!(material.mtr.is_some());
+        assert!(material.missing_mtr.is_none());
+        let diffuse = material
+            .slots
+            .iter()
+            .find(|slot| slot.role == NwnMaterialTextureRole::Diffuse)
+            .unwrap_or_else(|| panic!("missing diffuse slot"));
+        assert_eq!(diffuse.source, NwnMaterialTextureSource::Mtr);
+        assert_eq!(diffuse.texture.name, "mtr_diffuse");
+        assert!(diffuse.resolved.is_some());
+        assert!(diffuse.txi.is_some());
+        let normal = material
+            .slots
+            .iter()
+            .find(|slot| slot.role == NwnMaterialTextureRole::Normal)
+            .unwrap_or_else(|| panic!("missing normal slot"));
+        assert_eq!(normal.source, NwnMaterialTextureSource::Mtr);
+        assert!(normal.resolved.is_some());
     }
 
     #[test]
@@ -685,6 +985,7 @@ donemodel demo
             inherit_color:     0,
             tilefade:          0,
             rotate_texture:    0,
+            light_mapped:      0,
             transparency_hint: 0,
             shininess:         0.0,
             alpha:             1.0,

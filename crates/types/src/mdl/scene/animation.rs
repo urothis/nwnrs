@@ -2,7 +2,8 @@ use std::collections::BTreeSet;
 
 use crate::mdl::{
     ModelError, ModelResult, NwnAnimMeshTrack, NwnAnimation, NwnComposedScene,
-    NwnNodeAnimationTrack, NwnScene, NwnTransform, NwnVec2Sample, NwnVec3Sample, Vec3Key, Vec4Key,
+    NwnEmitterControllerTrack, NwnEmitterKey, NwnNodeAnimationTrack, NwnPropertyValue, NwnScene,
+    NwnTransform, NwnVec2Sample, NwnVec3Sample, ScalarKey, Vec3Key, Vec4Key,
     bake_scene_pose_with_bind_pose,
 };
 
@@ -171,11 +172,53 @@ fn sample_scene_with_animation(
         let Some(node_index) = resolve_track_node_index(&sampled, track) else {
             continue;
         };
+        let material_indices = node_material_indices(&sampled, node_index);
         let Some(node) = sampled.nodes.get_mut(node_index) else {
             continue;
         };
         node.local_transform =
             sample_transform_track(&track.transform, &node.local_transform, sampled_time);
+
+        if !track.material.color_keys.is_empty() {
+            node.color = Some(sample_vec3_keys(
+                &track.material.color_keys,
+                sampled_time,
+                node.color.unwrap_or([1.0, 1.0, 1.0]),
+            ));
+        }
+        if !track.material.radius_keys.is_empty() {
+            node.radius = Some(sample_scalar_keys(
+                &track.material.radius_keys,
+                sampled_time,
+                node.radius.unwrap_or(0.0),
+            ));
+        }
+        if !track.material.alpha_keys.is_empty() {
+            node.alpha = Some(sample_scalar_keys(
+                &track.material.alpha_keys,
+                sampled_time,
+                node.alpha.unwrap_or(1.0),
+            ));
+        }
+        if !track.material.multiplier_keys.is_empty()
+            && let Some(light) = node.light.as_mut()
+        {
+            light.multiplier = sample_scalar_keys(
+                &track.material.multiplier_keys,
+                sampled_time,
+                light.multiplier,
+            );
+        }
+        if let Some(dangly) = &track.effects.dangly {
+            node.dangly = Some(dangly.clone());
+        }
+        if let Some(emitter) = node.emitter.as_mut() {
+            for controller in &track.effects.emitter_controllers {
+                apply_emitter_controller(emitter, controller, sampled_time);
+            }
+        }
+
+        let sampled_alpha = node.alpha;
 
         if let Some(animmesh) = track.animmesh.as_ref()
             && let Some(mesh_index) = node.mesh
@@ -185,9 +228,98 @@ fn sample_scene_with_animation(
                 apply_animmesh_track(primitive, animmesh, animation.length, sampled_time);
             }
         }
+
+        for material_index in material_indices {
+            let Some(material) = sampled.materials.get_mut(material_index) else {
+                continue;
+            };
+            if let Some(alpha) = sampled_alpha {
+                material.alpha = alpha;
+            }
+            if !track.material.self_illum_color_keys.is_empty() {
+                material.self_illum_color = sample_vec3_keys(
+                    &track.material.self_illum_color_keys,
+                    sampled_time,
+                    material.self_illum_color,
+                );
+            }
+        }
     }
 
     bake_scene_pose_with_bind_pose(scene, &sampled)
+}
+
+fn node_material_indices(scene: &NwnScene, node_index: usize) -> Vec<usize> {
+    let Some(mesh_index) = scene.nodes.get(node_index).and_then(|node| node.mesh) else {
+        return Vec::new();
+    };
+    let Some(mesh) = scene.meshes.get(mesh_index) else {
+        return Vec::new();
+    };
+    let mut indices = mesh
+        .primitives
+        .iter()
+        .filter_map(|primitive| primitive.material)
+        .collect::<Vec<_>>();
+    indices.sort_unstable();
+    indices.dedup();
+    indices
+}
+
+fn apply_emitter_controller(
+    emitter: &mut crate::mdl::NwnEmitter,
+    controller: &NwnEmitterControllerTrack,
+    time: f32,
+) {
+    let Some(values) = sample_emitter_keys(&controller.keys, time) else {
+        return;
+    };
+    let property_name = controller.controller.property_name();
+    let values = values.into_iter().map(NwnPropertyValue::Float).collect();
+    if let Some(property) = emitter
+        .properties
+        .iter_mut()
+        .find(|property| property.name.eq_ignore_ascii_case(property_name))
+    {
+        property.values = values;
+    } else {
+        emitter.properties.push(crate::mdl::NwnEmitterProperty {
+            name: property_name.to_string(),
+            values,
+        });
+    }
+}
+
+fn sample_emitter_keys(keys: &[NwnEmitterKey], time: f32) -> Option<Vec<f32>> {
+    let first = keys.first()?;
+    if keys.len() == 1 || time <= first.time {
+        return Some(first.values.clone());
+    }
+    let last = keys.last().unwrap_or(first);
+    if time >= last.time {
+        return Some(last.values.clone());
+    }
+    for window in keys.windows(2) {
+        let [start, end] = window else {
+            continue;
+        };
+        if time <= end.time {
+            let duration = (end.time - start.time).max(f32::EPSILON);
+            let factor = ((time - start.time) / duration).clamp(0.0, 1.0);
+            if start.values.len() != end.values.len() {
+                return Some(start.values.clone());
+            }
+            return Some(
+                start
+                    .values
+                    .iter()
+                    .zip(&end.values)
+                    .map(|(start, end)| start + (end - start) * factor)
+                    .collect(),
+            );
+        }
+    }
+    Some(last.values.clone())
 }
 
 fn resolve_track_node_index(scene: &NwnScene, track: &NwnNodeAnimationTrack) -> Option<usize> {
@@ -279,6 +411,30 @@ fn sample_vec3_keys(keys: &[Vec3Key], time: f32, fallback: [f32; 3]) -> [f32; 3]
         }
     }
 
+    last.value
+}
+
+fn sample_scalar_keys(keys: &[ScalarKey], time: f32, fallback: f32) -> f32 {
+    let Some(first) = keys.first() else {
+        return fallback;
+    };
+    if keys.len() == 1 || time <= first.time {
+        return first.value;
+    }
+    let last = keys.last().unwrap_or(first);
+    if time >= last.time {
+        return last.value;
+    }
+    for window in keys.windows(2) {
+        let [start, end] = window else {
+            continue;
+        };
+        if time <= end.time {
+            let duration = (end.time - start.time).max(f32::EPSILON);
+            let factor = ((time - start.time) / duration).clamp(0.0, 1.0);
+            return start.value + (end.value - start.value) * factor;
+        }
+    }
     last.value
 }
 
@@ -557,11 +713,11 @@ fn normalize_vec3(vector: [f32; 3]) -> Option<[f32; 3]> {
 mod tests {
     use crate::mdl::{
         AnimationEvent, NodeKind, NwnAnimMeshTrack, NwnAnimation, NwnComposedScene,
-        NwnCoordinateSystem, NwnFace, NwnMaterial, NwnMaterialTrack, NwnMesh,
-        NwnNodeAnimationTrack, NwnPrimitive, NwnScene, NwnSceneAttachment, NwnSceneNode,
-        NwnTextureRef, NwnTextureSlot, NwnTransform, NwnTransformTrack, NwnUvSet, NwnVec2Sample,
-        NwnVec3Sample, ScalarKey, Vec3Key, Vec4Key, sample_composed_scene_animation,
-        sample_scene_animation, scene_animation_names,
+        NwnCoordinateSystem, NwnEffectTrack, NwnFace, NwnMaterial, NwnMaterialTrack, NwnMesh,
+        NwnNodeAnimationTrack, NwnPrimitive, NwnPropertyValue, NwnScene, NwnSceneAttachment,
+        NwnSceneNode, NwnTextureRef, NwnTextureSlot, NwnTransform, NwnTransformTrack, NwnUvSet,
+        NwnVec2Sample, NwnVec3Sample, ScalarKey, Vec3Key, Vec4Key, parse_scene_model,
+        sample_composed_scene_animation, sample_scene_animation, scene_animation_names,
     };
 
     #[test]
@@ -611,6 +767,164 @@ mod tests {
     }
 
     #[test]
+    fn samples_material_light_emitter_and_dangly_channels() {
+        let scene = parse_scene_model(
+            "\
+newmodel effects
+setsupermodel effects null
+beginmodelgeom effects
+node dummy effects
+  parent NULL
+endnode
+node trimesh glow
+  parent effects
+  alpha 1
+  selfillumcolor 0 0 0
+  bitmap glow
+  verts 3
+    0 0 0
+    1 0 0
+    0 1 0
+  faces 1
+    0 1 2 0 0 1 2 0
+  tverts 3
+    0 0 0
+    1 0 0
+    0 1 0
+endnode
+node light lamp
+  parent effects
+  color 1 1 1
+  radius 2
+  multiplier 1
+endnode
+node emitter sparks
+  parent effects
+  birthrate 0
+endnode
+node danglymesh cloth
+  parent effects
+  displacement 0.25
+  tightness 0.5
+  period 1
+  bitmap cloth
+  verts 3
+    0 0 0
+    1 0 0
+    0 1 0
+  faces 1
+    0 1 2 0 0 1 2 0
+  tverts 3
+    0 0 0
+    1 0 0
+    0 1 0
+  constraints 3
+    0
+    128
+    255
+endnode
+endmodelgeom effects
+newanim pulse effects
+  length 2
+  node trimesh glow
+    parent effects
+    alphakey 2
+      0 1
+      1 0
+    selfillumcolorkey 2
+      0 0 0 0
+      1 1 0.5 0.25
+  endnode
+  node light lamp
+    parent effects
+    colorkey 2
+      0 1 1 1
+      1 0 0.5 1
+    radiuskey 2
+      0 2
+      1 6
+    multiplierkey 2
+      0 1
+      1 3
+  endnode
+  node emitter sparks
+    parent effects
+    birthratekey 2
+      0 0
+      1 20
+    colorstartkey 2
+      0 1 0 0
+      1 0 0 1
+  endnode
+  node danglymesh cloth
+    parent effects
+    displacement -2
+    tightness 0.75
+    period 0.5
+  endnode
+doneanim pulse effects
+donemodel effects
+",
+        )
+        .unwrap_or_else(|error| panic!("parse effects scene: {error}"));
+        let sampled = sample_scene_animation(&scene, "pulse", 0.5)
+            .unwrap_or_else(|error| panic!("sample effects scene: {error}"));
+
+        let glow = sampled
+            .node("glow")
+            .unwrap_or_else(|| panic!("missing glow"));
+        assert_eq!(glow.alpha, Some(0.5));
+        let material = glow
+            .mesh
+            .and_then(|index| sampled.meshes.get(index))
+            .and_then(|mesh| mesh.primitives.first())
+            .and_then(|primitive| primitive.material)
+            .and_then(|index| sampled.materials.get(index))
+            .unwrap_or_else(|| panic!("missing glow material"));
+        assert_eq!(material.alpha, 0.5);
+        assert_eq!(material.self_illum_color, [0.5, 0.25, 0.125]);
+
+        let lamp = sampled
+            .node("lamp")
+            .unwrap_or_else(|| panic!("missing lamp"));
+        assert_eq!(lamp.color, Some([0.5, 0.75, 1.0]));
+        assert_eq!(lamp.radius, Some(4.0));
+        assert_eq!(lamp.light.as_ref().map(|light| light.multiplier), Some(2.0));
+
+        let sparks = sampled
+            .node("sparks")
+            .and_then(|node| node.emitter.as_ref())
+            .unwrap_or_else(|| panic!("missing sparks emitter"));
+        let birthrate = sparks
+            .properties
+            .iter()
+            .find(|property| property.name.eq_ignore_ascii_case("birthrate"))
+            .and_then(|property| property.values.first());
+        assert_eq!(birthrate, Some(&NwnPropertyValue::Float(10.0)));
+        let color = sparks
+            .properties
+            .iter()
+            .find(|property| property.name.eq_ignore_ascii_case("colorstart"))
+            .map(|property| property.values.clone());
+        assert_eq!(
+            color,
+            Some(vec![
+                NwnPropertyValue::Float(0.5),
+                NwnPropertyValue::Float(0.0),
+                NwnPropertyValue::Float(0.5),
+            ])
+        );
+
+        let cloth = sampled
+            .node("cloth")
+            .and_then(|node| node.dangly.as_ref())
+            .unwrap_or_else(|| panic!("missing cloth dangly metadata"));
+        assert_eq!(cloth.displacement, -2.0);
+        assert_eq!(cloth.tightness, 0.75);
+        assert_eq!(cloth.period, 0.5);
+    }
+
+    #[test]
     fn composed_sampling_updates_attachment_with_matching_animation() {
         let child = NwnComposedScene {
             model_name:            "child".to_string(),
@@ -625,27 +939,30 @@ mod tests {
                 supermodel:        None,
                 classification:    None,
                 animation_scale:   None,
+                ignore_fog:        None,
                 coordinate_system: NwnCoordinateSystem::AuroraSource,
                 nodes:             vec![NwnSceneNode {
-                    kind:            NodeKind::Dummy,
-                    node_type:       "dummy".to_string(),
-                    name:            "attach".to_string(),
-                    parent:          None,
-                    part_number:     None,
-                    local_transform: NwnTransform {
+                    kind:               NodeKind::Dummy,
+                    node_type:          "dummy".to_string(),
+                    name:               "attach".to_string(),
+                    parent:             None,
+                    part_number:        None,
+                    local_transform:    NwnTransform {
                         translation:         [0.0, 0.0, 0.0],
                         rotation_axis_angle: [0.0, 1.0, 0.0, 0.0],
                         scale:               [1.0, 1.0, 1.0],
                     },
-                    center:          None,
-                    color:           None,
-                    radius:          None,
-                    alpha:           None,
-                    wirecolor:       None,
-                    light:           None,
-                    emitter:         None,
-                    reference:       None,
-                    mesh:            None,
+                    center:             None,
+                    color:              None,
+                    radius:             None,
+                    alpha:              None,
+                    wirecolor:          None,
+                    light:              None,
+                    emitter:            None,
+                    dangly:             None,
+                    reference:          None,
+                    mesh:               None,
+                    opaque_controllers: Vec::new(),
                 }],
                 meshes:            Vec::new(),
                 materials:         Vec::new(),
@@ -677,32 +994,36 @@ mod tests {
             supermodel:        None,
             classification:    None,
             animation_scale:   None,
+            ignore_fog:        None,
             coordinate_system: NwnCoordinateSystem::AuroraSource,
             nodes:             vec![NwnSceneNode {
-                kind:            NodeKind::Trimesh,
-                node_type:       "trimesh".to_string(),
-                name:            "mesh".to_string(),
-                parent:          None,
-                part_number:     None,
-                local_transform: NwnTransform {
+                kind:               NodeKind::Trimesh,
+                node_type:          "trimesh".to_string(),
+                name:               "mesh".to_string(),
+                parent:             None,
+                part_number:        None,
+                local_transform:    NwnTransform {
                     translation:         [0.0, 0.0, 0.0],
                     rotation_axis_angle: [0.0, 1.0, 0.0, 0.0],
                     scale:               [1.0, 1.0, 1.0],
                 },
-                center:          None,
-                color:           None,
-                radius:          None,
-                alpha:           None,
-                wirecolor:       None,
-                light:           None,
-                emitter:         None,
-                reference:       None,
-                mesh:            Some(0),
+                center:             None,
+                color:              None,
+                radius:             None,
+                alpha:              None,
+                wirecolor:          None,
+                light:              None,
+                emitter:            None,
+                dangly:             None,
+                reference:          None,
+                mesh:               Some(0),
+                opaque_controllers: Vec::new(),
             }],
             meshes:            vec![NwnMesh {
                 name:        "mesh".to_string(),
                 source_node: 0,
                 primitives:  vec![NwnPrimitive {
+                    sample_period:   None,
                     positions:       vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
                     faces:           vec![NwnFace {
                         vertex_indices: [0, 1, 2],
@@ -732,6 +1053,7 @@ mod tests {
                 inherit_color:     0,
                 tilefade:          0,
                 rotate_texture:    0,
+                light_mapped:      0,
                 transparency_hint: 0,
                 shininess:         0.0,
                 alpha:             1.0,
@@ -756,10 +1078,10 @@ mod tests {
                 root_node:       None,
                 events:          Vec::<AnimationEvent>::new(),
                 node_tracks:     vec![NwnNodeAnimationTrack {
-                    target_name: "mesh".to_string(),
-                    target_node: Some(0),
-                    kind:        NodeKind::Trimesh,
-                    transform:   NwnTransformTrack {
+                    target_name:        "mesh".to_string(),
+                    target_node:        Some(0),
+                    kind:               NodeKind::Trimesh,
+                    transform:          NwnTransformTrack {
                         translation_keys:         vec![
                             Vec3Key {
                                 time:  0.0,
@@ -779,13 +1101,20 @@ mod tests {
                             value: [1.0, 1.0, 1.0],
                         }],
                     },
-                    material:    NwnMaterialTrack {
-                        color_keys:            Vec::new(),
-                        radius_keys:           Vec::<ScalarKey>::new(),
-                        alpha_keys:            Vec::<ScalarKey>::new(),
-                        self_illum_color_keys: Vec::new(),
+                    material:           NwnMaterialTrack {
+                        color_keys:                 Vec::new(),
+                        radius_keys:                Vec::<ScalarKey>::new(),
+                        alpha_keys:                 Vec::<ScalarKey>::new(),
+                        self_illum_color_keys:      Vec::new(),
+                        multiplier_keys:            Vec::new(),
+                        shadow_radius_keys:         Vec::new(),
+                        vertical_displacement_keys: Vec::new(),
                     },
-                    animmesh:    Some(NwnAnimMeshTrack {
+                    effects:            NwnEffectTrack {
+                        emitter_controllers: Vec::new(),
+                        dangly:              None,
+                    },
+                    animmesh:           Some(NwnAnimMeshTrack {
                         sample_period:  Some(1.0),
                         face_overrides: Vec::new(),
                         vertex_samples: vec![
@@ -800,6 +1129,8 @@ mod tests {
                             values: vec![[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]],
                         }],
                     }),
+                    bezier_controllers: Vec::new(),
+                    opaque_controllers: Vec::new(),
                 }],
             }],
             diagnostics:       Vec::new(),
@@ -812,76 +1143,84 @@ mod tests {
             supermodel:        None,
             classification:    None,
             animation_scale:   None,
+            ignore_fog:        None,
             coordinate_system: NwnCoordinateSystem::AuroraSource,
             nodes:             vec![
                 NwnSceneNode {
-                    kind:            NodeKind::Dummy,
-                    node_type:       "dummy".to_string(),
-                    name:            "root".to_string(),
-                    parent:          None,
-                    part_number:     None,
-                    local_transform: NwnTransform {
+                    kind:               NodeKind::Dummy,
+                    node_type:          "dummy".to_string(),
+                    name:               "root".to_string(),
+                    parent:             None,
+                    part_number:        None,
+                    local_transform:    NwnTransform {
                         translation:         [0.0, 0.0, 0.0],
                         rotation_axis_angle: [0.0, 1.0, 0.0, 0.0],
                         scale:               [1.0, 1.0, 1.0],
                     },
-                    center:          None,
-                    color:           None,
-                    radius:          None,
-                    alpha:           None,
-                    wirecolor:       None,
-                    light:           None,
-                    emitter:         None,
-                    reference:       None,
-                    mesh:            None,
+                    center:             None,
+                    color:              None,
+                    radius:             None,
+                    alpha:              None,
+                    wirecolor:          None,
+                    light:              None,
+                    emitter:            None,
+                    dangly:             None,
+                    reference:          None,
+                    mesh:               None,
+                    opaque_controllers: Vec::new(),
                 },
                 NwnSceneNode {
-                    kind:            NodeKind::Dummy,
-                    node_type:       "dummy".to_string(),
-                    name:            "bone".to_string(),
-                    parent:          Some(0),
-                    part_number:     None,
-                    local_transform: NwnTransform {
+                    kind:               NodeKind::Dummy,
+                    node_type:          "dummy".to_string(),
+                    name:               "bone".to_string(),
+                    parent:             Some(0),
+                    part_number:        None,
+                    local_transform:    NwnTransform {
                         translation:         [1.0, 0.0, 0.0],
                         rotation_axis_angle: [0.0, 1.0, 0.0, 0.0],
                         scale:               [1.0, 1.0, 1.0],
                     },
-                    center:          None,
-                    color:           None,
-                    radius:          None,
-                    alpha:           None,
-                    wirecolor:       None,
-                    light:           None,
-                    emitter:         None,
-                    reference:       None,
-                    mesh:            None,
+                    center:             None,
+                    color:              None,
+                    radius:             None,
+                    alpha:              None,
+                    wirecolor:          None,
+                    light:              None,
+                    emitter:            None,
+                    dangly:             None,
+                    reference:          None,
+                    mesh:               None,
+                    opaque_controllers: Vec::new(),
                 },
                 NwnSceneNode {
-                    kind:            NodeKind::Skin,
-                    node_type:       "skin".to_string(),
-                    name:            "skin".to_string(),
-                    parent:          Some(0),
-                    part_number:     None,
-                    local_transform: NwnTransform {
+                    kind:               NodeKind::Skin,
+                    node_type:          "skin".to_string(),
+                    name:               "skin".to_string(),
+                    parent:             Some(0),
+                    part_number:        None,
+                    local_transform:    NwnTransform {
                         translation:         [0.0, 0.0, 0.0],
                         rotation_axis_angle: [0.0, 1.0, 0.0, 0.0],
                         scale:               [1.0, 1.0, 1.0],
                     },
-                    center:          None,
-                    color:           None,
-                    radius:          None,
-                    alpha:           None,
-                    wirecolor:       None,
-                    light:           None,
-                    emitter:         None,
-                    reference:       None,
-                    mesh:            Some(0),
+                    center:             None,
+                    color:              None,
+                    radius:             None,
+                    alpha:              None,
+                    wirecolor:          None,
+                    light:              None,
+                    emitter:            None,
+                    dangly:             None,
+                    reference:          None,
+                    mesh:               Some(0),
+                    opaque_controllers: Vec::new(),
                 },
             ],
             meshes:            vec![NwnMesh {
                 name:        "skin".to_string(),
                 source_node: 2,
                 primitives:  vec![NwnPrimitive {
+                    sample_period:   None,
                     positions:       vec![[1.0, 0.0, 0.0]],
                     faces:           vec![NwnFace {
                         vertex_indices: [0, 0, 0],
@@ -916,10 +1255,10 @@ mod tests {
                 root_node:       None,
                 events:          Vec::new(),
                 node_tracks:     vec![NwnNodeAnimationTrack {
-                    target_name: "bone".to_string(),
-                    target_node: Some(1),
-                    kind:        NodeKind::Dummy,
-                    transform:   NwnTransformTrack {
+                    target_name:        "bone".to_string(),
+                    target_node:        Some(1),
+                    kind:               NodeKind::Dummy,
+                    transform:          NwnTransformTrack {
                         translation_keys:         vec![Vec3Key {
                             time:  1.0,
                             value: [2.0, 0.0, 0.0],
@@ -927,13 +1266,22 @@ mod tests {
                         rotation_axis_angle_keys: Vec::new(),
                         scale_keys:               Vec::new(),
                     },
-                    material:    NwnMaterialTrack {
-                        color_keys:            Vec::new(),
-                        radius_keys:           Vec::new(),
-                        alpha_keys:            Vec::new(),
-                        self_illum_color_keys: Vec::new(),
+                    material:           NwnMaterialTrack {
+                        color_keys:                 Vec::new(),
+                        radius_keys:                Vec::new(),
+                        alpha_keys:                 Vec::new(),
+                        self_illum_color_keys:      Vec::new(),
+                        multiplier_keys:            Vec::new(),
+                        shadow_radius_keys:         Vec::new(),
+                        vertical_displacement_keys: Vec::new(),
                     },
-                    animmesh:    None,
+                    effects:            NwnEffectTrack {
+                        emitter_controllers: Vec::new(),
+                        dangly:              None,
+                    },
+                    animmesh:           None,
+                    bezier_controllers: Vec::new(),
+                    opaque_controllers: Vec::new(),
                 }],
             }],
             diagnostics:       Vec::new(),

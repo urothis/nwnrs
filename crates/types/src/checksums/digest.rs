@@ -42,7 +42,8 @@ pub fn parse_secure_hash(input: &str) -> Result<SecureHash, ParseSecureHashError
     }
 
     let mut bytes = [0_u8; 20];
-    for (slot, chunk) in bytes.iter_mut().zip(input.as_bytes().chunks_exact(2)) {
+    let (chunks, _remainder) = input.as_bytes().as_chunks::<2>();
+    for (slot, chunk) in bytes.iter_mut().zip(chunks) {
         let chunk =
             std::str::from_utf8(chunk).map_err(|_error| ParseSecureHashError::new(input))?;
         *slot = u8::from_str_radix(chunk, 16).map_err(|_error| ParseSecureHashError::new(input))?;

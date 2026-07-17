@@ -81,10 +81,14 @@ structure. This is the fast path for understanding what is inside an unknown
 do not fit simple pack/unpack semantics, such as:
 
 - compiled `MDL` to canonical ASCII `MDL`
-- canonical ASCII `MDL` back to compiled model bytes
+- ASCII `MDL` to a newly compiled binary `MDL`
 - `MDL` to flattened `OBJ`
 - image conversion into texture-oriented formats
 - install-backed creature appearance export using model and texture resolution
+
+Compiled-to-ASCII conversion omits embedded source bytes by default. Pass
+`--preserve-compiled-source` when byte-exact restoration of an unchanged ASCII
+conversion is worth the additional comment payload.
 
 ### `pack`
 
@@ -121,8 +125,8 @@ The `nwsync` command family provides repository and manifest utilities:
 - Unpack a module or hak, edit the unpacked sources, then `pack` the directory
   back into an archive.
 - Unpack raw `.ncs` to `.ncs.asm`, edit it, and `pack` it back into bytecode.
-- Lower compiled `MDL` files to canonical ASCII with `convert`, make changes,
-  then rebuild compiled bytes.
+- Lower compiled `MDL` files to canonical ASCII with `convert` for inspection,
+  edit them, and compile the ASCII back to binary with another `convert` call.
 - Export static or install-backed model geometry to `OBJ` for tooling or asset
   inspection.
 - Package an install-backed resource view into a slim KEY/BIF set for server or

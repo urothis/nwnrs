@@ -12,6 +12,17 @@ use crate::mdl::{
     AsciiAnimation, AsciiBodyItem, AsciiElement, AsciiModel, AsciiNode, AsciiStatement,
     BinaryAnimation, BinaryController, BinaryEmitter, BinaryMesh, BinaryModel, BinaryNode,
     BinaryReference, BinarySkin, MODEL_RES_TYPE, Model, ModelError, ModelResult, ParsedModel,
+    ascii::text::parse_legacy_f32,
+    controllers::{
+        ALPHA_CONTROLLER, EMITTER_CONTROLLER_DEFINITIONS, LIGHT_COLOR_CONTROLLER,
+        LIGHT_CONTROLLER_DEFINITIONS, LIGHT_MULTIPLIER_CONTROLLER, LIGHT_RADIUS_CONTROLLER,
+        LIGHT_SHADOW_RADIUS_CONTROLLER, LIGHT_VERTICAL_DISPLACEMENT_CONTROLLER,
+        MESH_CONTROLLER_DEFINITIONS, NwnEmitterController, ORIENTATION_CONTROLLER,
+        POSITION_CONTROLLER, SCALE_CONTROLLER, SELF_ILLUM_COLOR_CONTROLLER,
+        TRANSFORM_CONTROLLER_DEFINITIONS, controller_definition_by_binary_id,
+        emitter_controller_definition, emitter_controller_definition_by_binary_id,
+        emitter_controller_definition_for, emitter_uses_nwnmdlcomp_ids,
+    },
     parse_ascii_model, read_ascii_model, read_parsed_model,
 };
 
@@ -20,6 +31,14 @@ use crate::mdl::{
 /// The semantic layer keeps authored ordering and enough source structure to
 /// support further lowering, diagnostics, and stable rewriting without falling
 /// back to raw ASCII parsing.
+///
+/// # Examples
+///
+/// ```
+/// let model = nwnrs_types::mdl::parse_semantic_model("beginmodelgeom demo\nendmodelgeom demo\ndonemodel demo\n")?;
+/// assert_eq!(model.geometry_name, "demo");
+/// # Ok::<(), nwnrs_types::mdl::ModelError>(())
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct SemanticModel {
     /// Parsed model header data.
@@ -45,6 +64,14 @@ pub struct SemanticModel {
 impl SemanticModel {
     /// Returns the first lowered geometry node named `name`,
     /// case-insensitively.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let model = nwnrs_types::mdl::parse_semantic_model("beginmodelgeom demo\nnode dummy root\nendnode\nendmodelgeom demo\ndonemodel demo\n")?;
+    /// assert!(model.node("ROOT").is_some());
+    /// # Ok::<(), nwnrs_types::mdl::ModelError>(())
+    /// ```
     #[must_use]
     pub fn node(&self, name: &str) -> Option<&SemanticNode> {
         self.nodes
@@ -53,6 +80,14 @@ impl SemanticModel {
     }
 
     /// Returns the first lowered animation named `name`, case-insensitively.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let model = nwnrs_types::mdl::parse_semantic_model("beginmodelgeom demo\nendmodelgeom demo\nnewanim idle demo\ndoneanim idle demo\ndonemodel demo\n")?;
+    /// assert!(model.animation("IDLE").is_some());
+    /// # Ok::<(), nwnrs_types::mdl::ModelError>(())
+    /// ```
     #[must_use]
     pub fn animation(&self, name: &str) -> Option<&SemanticAnimation> {
         self.animations
@@ -65,6 +100,13 @@ impl SemanticModel {
     /// # Errors
     ///
     /// Returns [`ModelError`] if the file cannot be opened or lowered.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// let model = nwnrs_types::mdl::SemanticModel::from_file("model.mdl")?;
+    /// # Ok::<(), nwnrs_types::mdl::ModelError>(())
+    /// ```
     pub fn from_file(path: impl AsRef<Path>) -> ModelResult<Self> {
         let mut file = File::open(path.as_ref())?;
         read_semantic_model(&mut file)
@@ -76,6 +118,13 @@ impl SemanticModel {
     /// # Errors
     ///
     /// Returns [`ModelError`] if the file cannot be opened or lowered.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// let model = nwnrs_types::mdl::SemanticModel::from_auto_file("model.mdl")?;
+    /// # Ok::<(), nwnrs_types::mdl::ModelError>(())
+    /// ```
     pub fn from_auto_file(path: impl AsRef<Path>) -> ModelResult<Self> {
         let mut file = File::open(path.as_ref())?;
         read_semantic_model_auto(&mut file)
@@ -87,6 +136,15 @@ impl SemanticModel {
     ///
     /// Returns [`ModelError`] if the resource is not an MDL type or lowering
     /// fails.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use nwnrs_types::resman::{CachePolicy, Res};
+    /// fn parse(res: &Res) -> nwnrs_types::mdl::ModelResult<nwnrs_types::mdl::SemanticModel> {
+    ///     nwnrs_types::mdl::SemanticModel::from_res(res, CachePolicy::Use)
+    /// }
+    /// ```
     pub fn from_res(res: &Res, cache_policy: CachePolicy) -> ModelResult<Self> {
         if res.resref().res_type() != MODEL_RES_TYPE {
             return Err(ModelError::msg(format!(
@@ -106,6 +164,15 @@ impl SemanticModel {
     ///
     /// Returns [`ModelError`] if the resource is not an MDL type or lowering
     /// fails.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use nwnrs_types::resman::{CachePolicy, Res};
+    /// fn parse(res: &Res) -> nwnrs_types::mdl::ModelResult<nwnrs_types::mdl::SemanticModel> {
+    ///     nwnrs_types::mdl::SemanticModel::from_auto_res(res, CachePolicy::Use)
+    /// }
+    /// ```
     pub fn from_auto_res(res: &Res, cache_policy: CachePolicy) -> ModelResult<Self> {
         if res.resref().res_type() != MODEL_RES_TYPE {
             return Err(ModelError::msg(format!(
@@ -120,6 +187,13 @@ impl SemanticModel {
 }
 
 /// Typed model header data lowered from top-level ASCII statements.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use nwnrs_types::mdl::SemanticHeader;
+/// fn model_name(header: &SemanticHeader) -> &str { &header.model_name }
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct SemanticHeader {
     /// Model name from `newmodel`.
@@ -130,6 +204,8 @@ pub struct SemanticHeader {
     pub classification:  Option<ModelClassification>,
     /// Animation scale from `setanimationscale`.
     pub animation_scale: Option<f32>,
+    /// `ignorefog`
+    pub ignore_fog:      Option<i32>,
     /// Comments preserved from the prefix section.
     pub comments:        Vec<String>,
     /// Unlowered prefix elements.
@@ -137,6 +213,13 @@ pub struct SemanticHeader {
 }
 
 /// Known model classification values.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::ModelClassification;
+/// assert_eq!(ModelClassification::Character, ModelClassification::Character);
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ModelClassification {
     /// Character or creature model.
@@ -156,6 +239,13 @@ pub enum ModelClassification {
 }
 
 /// Known MDL node kinds.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::NodeKind;
+/// assert_eq!(NodeKind::Trimesh, NodeKind::Trimesh);
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NodeKind {
     /// `dummy`
@@ -174,6 +264,8 @@ pub enum NodeKind {
     Aabb,
     /// `reference`
     Reference,
+    /// `camera`
+    Camera,
     /// `patch`
     Patch,
     /// `animmesh`
@@ -183,49 +275,69 @@ pub enum NodeKind {
 }
 
 /// One lowered geometry node.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use nwnrs_types::mdl::SemanticNode;
+/// fn node_name(node: &SemanticNode) -> &str { &node.name }
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct SemanticNode {
     /// Typed node kind.
-    pub kind:        NodeKind,
+    pub kind:               NodeKind,
     /// Authored node type token.
-    pub node_type:   String,
+    pub node_type:          String,
     /// Node name.
-    pub name:        String,
+    pub name:               String,
     /// Parent node name, if not `NULL`.
-    pub parent:      Option<String>,
+    pub parent:             Option<String>,
     /// Parsed `#part-number` comment value, when present.
-    pub part_number: Option<i32>,
+    pub part_number:        Option<i32>,
     /// Static local position.
-    pub position:    Option<[f32; 3]>,
+    pub position:           Option<[f32; 3]>,
     /// Static local orientation in source axis-angle order.
-    pub orientation: Option<[f32; 4]>,
+    pub orientation:        Option<[f32; 4]>,
     /// Static uniform scale.
-    pub scale:       Option<f32>,
+    pub scale:              Option<f32>,
     /// Static light/object color.
-    pub color:       Option<[f32; 3]>,
+    pub color:              Option<[f32; 3]>,
     /// Static node radius.
-    pub radius:      Option<f32>,
+    pub radius:             Option<f32>,
     /// Node center value when authored.
-    pub center:      Option<[f32; 3]>,
+    pub center:             Option<[f32; 3]>,
     /// Node wireframe color when authored.
-    pub wirecolor:   Option<[f32; 3]>,
+    pub wirecolor:          Option<[f32; 3]>,
+    /// Geometry animmesh `sampleperiod` value.
+    pub sample_period:      Option<f32>,
+    /// Compiled controllers whose engine meaning is not yet known.
+    pub opaque_controllers: Vec<SemanticController>,
     /// Lowered material and render flags.
-    pub material:    SemanticMaterial,
+    pub material:           SemanticMaterial,
     /// Light-specific payloads when this node is a light.
-    pub light:       Option<SemanticLight>,
+    pub light:              Option<SemanticLight>,
     /// Emitter-specific payloads when this node is an emitter.
-    pub emitter:     Option<SemanticEmitter>,
+    pub emitter:            Option<SemanticEmitter>,
+    /// Danglymesh-specific physics metadata when this node is a danglymesh.
+    pub dangly:             Option<SemanticDangly>,
     /// Reference-node payloads when this node is a reference.
-    pub reference:   Option<SemanticReference>,
+    pub reference:          Option<SemanticReference>,
     /// Lowered mesh payloads when present.
-    pub mesh:        Option<SemanticMesh>,
+    pub mesh:               Option<SemanticMesh>,
     /// Preserved node comments.
-    pub comments:    Vec<String>,
+    pub comments:           Vec<String>,
     /// Unlowered node entries.
-    pub extras:      Vec<AsciiElement>,
+    pub extras:             Vec<AsciiElement>,
 }
 
 /// Material and render state attached to a geometry node.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use nwnrs_types::mdl::SemanticMaterial;
+/// fn bitmap(material: &SemanticMaterial) -> Option<&str> { material.bitmap.as_deref() }
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct SemanticMaterial {
     /// `render`
@@ -240,6 +352,8 @@ pub struct SemanticMaterial {
     pub tilefade:          Option<i32>,
     /// `rotatetexture`
     pub rotate_texture:    Option<i32>,
+    /// `lightmapped`
+    pub light_mapped:      Option<i32>,
     /// `transparencyhint`
     pub transparency_hint: Option<i32>,
     /// `shininess`
@@ -265,6 +379,14 @@ pub struct SemanticMaterial {
 }
 
 /// One `textureN` binding.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::SemanticTextureBinding;
+/// let texture = SemanticTextureBinding { index: 1, name: "normal_map".into() };
+/// assert_eq!(texture.index, 1);
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SemanticTextureBinding {
     /// Texture slot index.
@@ -274,6 +396,13 @@ pub struct SemanticTextureBinding {
 }
 
 /// Typed mesh payloads captured from a geometry node.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use nwnrs_types::mdl::SemanticMesh;
+/// fn vertex_count(mesh: &SemanticMesh) -> usize { mesh.vertices.len() }
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct SemanticMesh {
     /// Vertex positions from `verts`.
@@ -299,6 +428,14 @@ pub struct SemanticMesh {
 }
 
 /// One named skin-weight influence.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::SemanticSkinWeight;
+/// let weight = SemanticSkinWeight { bone: "pelvis".into(), weight: 1.0 };
+/// assert_eq!(weight.bone, "pelvis");
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct SemanticSkinWeight {
     /// Bone or node name referenced by the skin row.
@@ -308,39 +445,58 @@ pub struct SemanticSkinWeight {
 }
 
 /// Typed light payloads for `light` nodes.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use nwnrs_types::mdl::SemanticLight;
+/// fn multiplier(light: &SemanticLight) -> Option<f32> { light.multiplier }
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct SemanticLight {
     /// `multiplier`
-    pub multiplier:         Option<f32>,
+    pub multiplier:            Option<f32>,
     /// `ambientonly`
-    pub ambient_only:       Option<i32>,
+    pub ambient_only:          Option<i32>,
     /// `ndynamictype`
-    pub n_dynamic_type:     Option<i32>,
+    pub n_dynamic_type:        Option<i32>,
     /// `isdynamic`
-    pub is_dynamic:         Option<i32>,
+    pub is_dynamic:            Option<i32>,
     /// `affectdynamic`
-    pub affect_dynamic:     Option<i32>,
+    pub affect_dynamic:        Option<i32>,
     /// `negativelight`
-    pub negative_light:     Option<i32>,
+    pub negative_light:        Option<i32>,
     /// `lightpriority`
-    pub light_priority:     Option<i32>,
+    pub light_priority:        Option<i32>,
     /// `fadinglight`
-    pub fading_light:       Option<i32>,
+    pub fading_light:          Option<i32>,
     /// `lensflares`
-    pub lens_flares:        Option<i32>,
+    pub lens_flares:           Option<i32>,
     /// `flareradius`
-    pub flare_radius:       Option<f32>,
+    pub flare_radius:          Option<f32>,
+    /// Static `shadowradius` controller.
+    pub shadow_radius:         Option<f32>,
+    /// Static `verticaldisplacement` controller.
+    pub vertical_displacement: Option<f32>,
     /// `texturenames` for lens flares.
-    pub flare_textures:     Vec<String>,
+    pub flare_textures:        Vec<String>,
     /// `flaresizes`
-    pub flare_sizes:        Vec<f32>,
+    pub flare_sizes:           Vec<f32>,
     /// `flarepositions`
-    pub flare_positions:    Vec<f32>,
+    pub flare_positions:       Vec<f32>,
     /// `flarecolorshifts`
-    pub flare_color_shifts: Vec<[f32; 3]>,
+    pub flare_color_shifts:    Vec<[f32; 3]>,
 }
 
 /// Typed emitter payloads for `emitter` nodes.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::SemanticEmitter;
+/// let emitter = SemanticEmitter { x_size: Some(1.0), y_size: Some(2.0), properties: vec![] };
+/// assert_eq!(emitter.x_size, Some(1.0));
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct SemanticEmitter {
     /// `xsize`
@@ -352,6 +508,14 @@ pub struct SemanticEmitter {
 }
 
 /// One typed emitter property statement.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::{SemanticEmitterProperty, SemanticPropertyValue};
+/// let property = SemanticEmitterProperty { name: "render".into(), values: vec![SemanticPropertyValue::Text("Normal".into())] };
+/// assert_eq!(property.name, "render");
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct SemanticEmitterProperty {
     /// Source keyword.
@@ -360,7 +524,33 @@ pub struct SemanticEmitterProperty {
     pub values: Vec<SemanticPropertyValue>,
 }
 
+/// Typed danglymesh physics metadata.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::SemanticDangly;
+/// let dangly = SemanticDangly { displacement: Some(0.5), tightness: Some(0.8), period: Some(1.0) };
+/// assert_eq!(dangly.period, Some(1.0));
+/// ```
+#[derive(Debug, Clone, PartialEq)]
+pub struct SemanticDangly {
+    /// Maximum authored vertex displacement.
+    pub displacement: Option<f32>,
+    /// Return-force/tightness value.
+    pub tightness:    Option<f32>,
+    /// Oscillation period in seconds.
+    pub period:       Option<f32>,
+}
+
 /// One typed scalar/string property value.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::SemanticPropertyValue;
+/// assert_eq!(SemanticPropertyValue::Int(2), SemanticPropertyValue::Int(2));
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub enum SemanticPropertyValue {
     /// Boolean token such as `true` or `0/1` where explicitly parsed as bool.
@@ -374,6 +564,14 @@ pub enum SemanticPropertyValue {
 }
 
 /// Typed reference payloads for `reference` nodes.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::SemanticReference;
+/// let reference = SemanticReference { model: Some("fx_smoke".into()), reattachable: Some(1) };
+/// assert_eq!(reference.model.as_deref(), Some("fx_smoke"));
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct SemanticReference {
     /// `refmodel`
@@ -383,6 +581,14 @@ pub struct SemanticReference {
 }
 
 /// One UV layer.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::SemanticUvLayer;
+/// let layer = SemanticUvLayer { index: 0, coordinates: vec![[0.0, 1.0]] };
+/// assert_eq!(layer.coordinates.len(), 1);
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct SemanticUvLayer {
     /// UV layer index derived from `tverts` or `tvertsN`.
@@ -392,6 +598,14 @@ pub struct SemanticUvLayer {
 }
 
 /// One lowered face row.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::SemanticFace;
+/// let face = SemanticFace { vertex_indices: [0, 1, 2], group: 1, uv_indices: [0, 1, 2], material_index: 0 };
+/// assert_eq!(face.vertex_indices, [0, 1, 2]);
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SemanticFace {
     /// Vertex indices.
@@ -405,6 +619,13 @@ pub struct SemanticFace {
 }
 
 /// One lowered animation block.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use nwnrs_types::mdl::SemanticAnimation;
+/// fn duration(animation: &SemanticAnimation) -> Option<f32> { animation.length }
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct SemanticAnimation {
     /// Animation name.
@@ -430,6 +651,13 @@ pub struct SemanticAnimation {
 impl SemanticAnimation {
     /// Returns the first lowered animation node named `name`,
     /// case-insensitively.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use nwnrs_types::mdl::{SemanticAnimation, SemanticAnimationNode};
+    /// fn root(animation: &SemanticAnimation) -> Option<&SemanticAnimationNode> { animation.node("root") }
+    /// ```
     #[must_use]
     pub fn node(&self, name: &str) -> Option<&SemanticAnimationNode> {
         self.nodes
@@ -439,6 +667,14 @@ impl SemanticAnimation {
 }
 
 /// One animation event.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::AnimationEvent;
+/// let event = AnimationEvent { time: 0.5, name: "hit".into() };
+/// assert_eq!(event.name, "hit");
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct AnimationEvent {
     /// Event time in animation seconds.
@@ -448,61 +684,168 @@ pub struct AnimationEvent {
 }
 
 /// One lowered animation node overlay.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use nwnrs_types::mdl::SemanticAnimationNode;
+/// fn target(node: &SemanticAnimationNode) -> &str { &node.name }
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct SemanticAnimationNode {
     /// Typed node kind.
-    pub kind:                  NodeKind,
+    pub kind: NodeKind,
     /// Authored node type token.
-    pub node_type:             String,
+    pub node_type: String,
     /// Target node name.
-    pub name:                  String,
+    pub name: String,
     /// Parent node name, if not `NULL`.
-    pub parent:                Option<String>,
+    pub parent: Option<String>,
     /// Parsed `#part-number` comment value, when present.
-    pub part_number:           Option<i32>,
+    pub part_number: Option<i32>,
     /// Static position override.
-    pub position:              Option<[f32; 3]>,
+    pub position: Option<[f32; 3]>,
     /// Static orientation override in source axis-angle order.
-    pub orientation:           Option<[f32; 4]>,
+    pub orientation: Option<[f32; 4]>,
     /// Static scale override.
-    pub scale:                 Option<f32>,
+    pub scale: Option<f32>,
     /// Static color override.
-    pub color:                 Option<[f32; 3]>,
+    pub color: Option<[f32; 3]>,
     /// Static radius override.
-    pub radius:                Option<f32>,
+    pub radius: Option<f32>,
     /// Static alpha override.
-    pub alpha:                 Option<f32>,
+    pub alpha: Option<f32>,
     /// Static self-illumination override.
-    pub self_illum_color:      Option<[f32; 3]>,
+    pub self_illum_color: Option<[f32; 3]>,
+    /// Static light multiplier override.
+    pub multiplier: Option<f32>,
+    /// Static light shadow-radius override.
+    pub shadow_radius: Option<f32>,
+    /// Static light vertical-displacement override.
+    pub vertical_displacement: Option<f32>,
     /// `positionkey`
-    pub position_keys:         Vec<Vec3Key>,
+    pub position_keys: Vec<Vec3Key>,
     /// `orientationkey`
-    pub orientation_keys:      Vec<Vec4Key>,
+    pub orientation_keys: Vec<Vec4Key>,
     /// `scalekey`
-    pub scale_keys:            Vec<ScalarKey>,
+    pub scale_keys: Vec<ScalarKey>,
     /// `colorkey`
-    pub color_keys:            Vec<Vec3Key>,
+    pub color_keys: Vec<Vec3Key>,
     /// `radiuskey`
-    pub radius_keys:           Vec<ScalarKey>,
+    pub radius_keys: Vec<ScalarKey>,
     /// `alphakey`
-    pub alpha_keys:            Vec<ScalarKey>,
+    pub alpha_keys: Vec<ScalarKey>,
     /// `selfillumcolorkey` or `setfillumcolorkey`
     pub self_illum_color_keys: Vec<Vec3Key>,
+    /// `multiplierkey`
+    pub multiplier_keys: Vec<ScalarKey>,
+    /// `shadowradiuskey`
+    pub shadow_radius_keys: Vec<ScalarKey>,
+    /// `verticaldisplacementkey`
+    pub vertical_displacement_keys: Vec<ScalarKey>,
+    /// Controller property names authored with `bezierkey` interpolation.
+    pub bezier_controllers: Vec<String>,
+    /// Typed emitter controller curves.
+    pub emitter_controllers: Vec<SemanticEmitterController>,
+    /// Compiled controllers whose engine meaning is not yet known.
+    pub opaque_controllers: Vec<SemanticController>,
+    /// Per-animation danglymesh overrides.
+    pub dangly: Option<SemanticDangly>,
     /// `sampleperiod`
-    pub sample_period:         Option<f32>,
+    pub sample_period: Option<f32>,
     /// `faces`
-    pub faces:                 Vec<SemanticFace>,
+    pub faces: Vec<SemanticFace>,
     /// `animverts`
-    pub animverts:             Vec<[f32; 3]>,
+    pub animverts: Vec<[f32; 3]>,
     /// `animtverts`
-    pub animtverts:            Vec<[f32; 2]>,
+    pub animtverts: Vec<[f32; 2]>,
     /// Preserved animation-node comments.
-    pub comments:              Vec<String>,
+    pub comments: Vec<String>,
     /// Unlowered animation-node entries.
-    pub extras:                Vec<AsciiElement>,
+    pub extras: Vec<AsciiElement>,
+}
+
+/// A losslessly preserved compiled controller with an unknown engine meaning.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::SemanticController;
+/// let controller = SemanticController { type_id: 999, bezier_keyed: false, keys: vec![] };
+/// assert_eq!(controller.type_id, 999);
+/// ```
+#[derive(Debug, Clone, PartialEq)]
+pub struct SemanticController {
+    /// Raw compiled controller type identifier.
+    pub type_id:      i32,
+    /// Whether the compiled controller uses Bezier-key interpolation.
+    pub bezier_keyed: bool,
+    /// Controller samples as `(time, values)` rows.
+    pub keys:         Vec<SemanticControllerKey>,
+}
+
+/// One sample from a losslessly preserved compiled controller.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::SemanticControllerKey;
+/// let key = SemanticControllerKey { time: 0.0, values: vec![1.0] };
+/// assert_eq!(key.values, vec![1.0]);
+/// ```
+#[derive(Debug, Clone, PartialEq)]
+pub struct SemanticControllerKey {
+    /// Sample time in animation seconds.
+    pub time:   f32,
+    /// Raw controller value columns.
+    pub values: Vec<f32>,
+}
+
+/// One named emitter controller curve from an animation node.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::SemanticEmitterController;
+/// let controller = SemanticEmitterController { name: "birthrate".into(), bezier_keyed: false, keys: vec![] };
+/// assert_eq!(controller.name, "birthrate");
+/// ```
+#[derive(Debug, Clone, PartialEq)]
+pub struct SemanticEmitterController {
+    /// Controller name without the trailing `key` suffix.
+    pub name:         String,
+    /// Whether the controller uses Bezier interpolation.
+    pub bezier_keyed: bool,
+    /// Authored key rows.
+    pub keys:         Vec<SemanticEmitterKey>,
+}
+
+/// One emitter-controller sample.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::SemanticEmitterKey;
+/// let key = SemanticEmitterKey { time: 0.0, values: vec![10.0] };
+/// assert_eq!(key.values[0], 10.0);
+/// ```
+#[derive(Debug, Clone, PartialEq)]
+pub struct SemanticEmitterKey {
+    /// Key time in animation seconds.
+    pub time:   f32,
+    /// Scalar or vector controller value.
+    pub values: Vec<f32>,
 }
 
 /// One scalar animation key.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::ScalarKey;
+/// let key = ScalarKey { time: 0.5, value: 1.0 };
+/// assert_eq!(key.value, 1.0);
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct ScalarKey {
     /// Key time in animation seconds.
@@ -512,6 +855,14 @@ pub struct ScalarKey {
 }
 
 /// One 3D animation key.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::Vec3Key;
+/// let key = Vec3Key { time: 0.0, value: [1.0, 2.0, 3.0] };
+/// assert_eq!(key.value[2], 3.0);
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct Vec3Key {
     /// Key time in animation seconds.
@@ -521,6 +872,14 @@ pub struct Vec3Key {
 }
 
 /// One 4D animation key.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::Vec4Key;
+/// let key = Vec4Key { time: 0.0, value: [0.0, 0.0, 1.0, 0.5] };
+/// assert_eq!(key.value[3], 0.5);
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct Vec4Key {
     /// Key time in animation seconds.
@@ -530,6 +889,14 @@ pub struct Vec4Key {
 }
 
 /// One non-fatal semantic lowering diagnostic.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::{ModelDiagnostic, ModelDiagnosticKind};
+/// let diagnostic = ModelDiagnostic { kind: ModelDiagnosticKind::MissingParent, message: "missing root".into() };
+/// assert_eq!(diagnostic.kind, ModelDiagnosticKind::MissingParent);
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelDiagnostic {
     /// Diagnostic kind.
@@ -539,6 +906,13 @@ pub struct ModelDiagnostic {
 }
 
 /// Diagnostic categories raised by semantic lowering.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::ModelDiagnosticKind;
+/// assert_eq!(ModelDiagnosticKind::MalformedValue, ModelDiagnosticKind::MalformedValue);
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ModelDiagnosticKind {
     /// Duplicate geometry node name.
@@ -551,6 +925,9 @@ pub enum ModelDiagnosticKind {
     MalformedValue,
     /// A payload row did not match the expected width or numeric shape.
     MalformedPayloadRow,
+    /// Source or compiled data uses a value this implementation cannot
+    /// preserve.
+    UnsupportedValue,
 }
 
 impl Model {
@@ -582,6 +959,14 @@ impl Model {
 /// # Errors
 ///
 /// Returns [`ModelError`] if parsing or lowering fails.
+///
+/// # Examples
+///
+/// ```
+/// let model = nwnrs_types::mdl::parse_semantic_model("beginmodelgeom demo\nendmodelgeom demo\ndonemodel demo\n")?;
+/// assert_eq!(model.geometry_name, "demo");
+/// # Ok::<(), nwnrs_types::mdl::ModelError>(())
+/// ```
 pub fn parse_semantic_model(text: &str) -> ModelResult<SemanticModel> {
     lower_ascii_model(&parse_ascii_model(text)?)
 }
@@ -592,6 +977,14 @@ pub fn parse_semantic_model(text: &str) -> ModelResult<SemanticModel> {
 /// # Errors
 ///
 /// Returns [`ModelError`] if parsing or lowering fails.
+///
+/// # Examples
+///
+/// ```
+/// let model = nwnrs_types::mdl::parse_semantic_model_auto(b"beginmodelgeom demo\nendmodelgeom demo\ndonemodel demo\n")?;
+/// assert_eq!(model.geometry_name, "demo");
+/// # Ok::<(), nwnrs_types::mdl::ModelError>(())
+/// ```
 pub fn parse_semantic_model_auto(bytes: &[u8]) -> ModelResult<SemanticModel> {
     match crate::mdl::parse_model_bytes(bytes)? {
         ParsedModel::Ascii(model) => lower_ascii_model(&model),
@@ -604,6 +997,15 @@ pub fn parse_semantic_model_auto(bytes: &[u8]) -> ModelResult<SemanticModel> {
 /// # Errors
 ///
 /// Returns [`ModelError`] if reading or lowering fails.
+///
+/// # Examples
+///
+/// ```
+/// let mut input = b"beginmodelgeom demo\nendmodelgeom demo\ndonemodel demo\n".as_slice();
+/// let model = nwnrs_types::mdl::read_semantic_model(&mut input)?;
+/// assert_eq!(model.geometry_name, "demo");
+/// # Ok::<(), nwnrs_types::mdl::ModelError>(())
+/// ```
 #[instrument(level = "debug", skip_all, err)]
 pub fn read_semantic_model<R: Read>(reader: &mut R) -> ModelResult<SemanticModel> {
     let ascii = read_ascii_model(reader)?;
@@ -616,6 +1018,15 @@ pub fn read_semantic_model<R: Read>(reader: &mut R) -> ModelResult<SemanticModel
 /// # Errors
 ///
 /// Returns [`ModelError`] if reading or lowering fails.
+///
+/// # Examples
+///
+/// ```
+/// let mut input = b"beginmodelgeom demo\nendmodelgeom demo\ndonemodel demo\n".as_slice();
+/// let model = nwnrs_types::mdl::read_semantic_model_auto(&mut input)?;
+/// assert_eq!(model.geometry_name, "demo");
+/// # Ok::<(), nwnrs_types::mdl::ModelError>(())
+/// ```
 #[instrument(level = "debug", skip_all, err)]
 pub fn read_semantic_model_auto<R: Read>(reader: &mut R) -> ModelResult<SemanticModel> {
     match read_parsed_model(reader)? {
@@ -628,11 +1039,50 @@ pub fn read_semantic_model_auto<R: Read>(reader: &mut R) -> ModelResult<Semantic
 ///
 /// # Errors
 ///
-/// Returns [`ModelError`] if the write fails.
+/// Returns [`ModelError`] if the write fails or the semantic model contains
+/// opaque compiled controllers that have no ASCII representation.
+///
+/// # Examples
+///
+/// ```
+/// let model = nwnrs_types::mdl::parse_semantic_model("beginmodelgeom demo\nendmodelgeom demo\ndonemodel demo\n")?;
+/// let mut output = Vec::new();
+/// nwnrs_types::mdl::write_semantic_model(&mut output, &model)?;
+/// assert!(!output.is_empty());
+/// # Ok::<(), nwnrs_types::mdl::ModelError>(())
+/// ```
 #[instrument(level = "debug", skip_all, err, fields(model_name = %model.geometry_name))]
 pub fn write_semantic_model<W: Write>(writer: &mut W, model: &SemanticModel) -> ModelResult<()> {
-    let ascii = crate::mdl::ascii::lower_semantic_model_to_ascii(model, None);
+    let ascii = crate::mdl::ascii::lower_semantic_model_to_ascii(model, None)?;
     crate::mdl::write_ascii_model(writer, &ascii)
+}
+
+pub(crate) fn ensure_ascii_representable(model: &SemanticModel) -> ModelResult<()> {
+    if let Some(node) = model
+        .nodes
+        .iter()
+        .find(|node| !node.opaque_controllers.is_empty())
+    {
+        return Err(ModelError::msg(format!(
+            "geometry node {} contains opaque compiled controllers that cannot be written as \
+             ASCII; compile the semantic model directly to binary instead",
+            node.name
+        )));
+    }
+    if let Some((animation, node)) = model.animations.iter().find_map(|animation| {
+        animation
+            .nodes
+            .iter()
+            .find(|node| !node.opaque_controllers.is_empty())
+            .map(|node| (animation, node))
+    }) {
+        return Err(ModelError::msg(format!(
+            "animation {} node {} contains opaque compiled controllers that cannot be written as \
+             ASCII; compile the semantic model directly to binary instead",
+            animation.name, node.name
+        )));
+    }
+    Ok(())
 }
 
 /// Lowers a source-faithful ASCII MDL model into typed semantic data.
@@ -640,6 +1090,15 @@ pub fn write_semantic_model<W: Write>(writer: &mut W, model: &SemanticModel) -> 
 /// # Errors
 ///
 /// Returns [`ModelError`] if lowering fails.
+///
+/// # Examples
+///
+/// ```
+/// let ascii = nwnrs_types::mdl::parse_ascii_model("beginmodelgeom demo\nnode dummy demo\nparent null\nendnode\nendmodelgeom demo\ndonemodel demo\n")?;
+/// let semantic = nwnrs_types::mdl::lower_ascii_model(&ascii)?;
+/// assert_eq!(semantic.geometry_name, "demo");
+/// # Ok::<(), nwnrs_types::mdl::ModelError>(())
+/// ```
 pub fn lower_ascii_model(model: &AsciiModel) -> ModelResult<SemanticModel> {
     let mut diagnostics = Vec::new();
     let header = lower_header(model, &mut diagnostics);
@@ -680,6 +1139,16 @@ pub fn lower_ascii_model(model: &AsciiModel) -> ModelResult<SemanticModel> {
 /// # Errors
 ///
 /// Returns [`ModelError`] if lowering fails.
+///
+/// # Examples
+///
+/// ```
+/// let ascii = nwnrs_types::mdl::parse_ascii_model("beginmodelgeom demo\nnode dummy demo\nparent null\nendnode\nendmodelgeom demo\ndonemodel demo\n")?;
+/// let binary = nwnrs_types::mdl::compile_ascii_model(&ascii)?;
+/// let semantic = nwnrs_types::mdl::lower_binary_model(&binary)?;
+/// assert_eq!(semantic.geometry_name, "demo");
+/// # Ok::<(), nwnrs_types::mdl::ModelError>(())
+/// ```
 pub fn lower_binary_model(model: &BinaryModel) -> ModelResult<SemanticModel> {
     let mut diagnostics = model.diagnostics.clone();
     let offset_to_name = model
@@ -695,7 +1164,12 @@ pub fn lower_binary_model(model: &BinaryModel) -> ModelResult<SemanticModel> {
     let part_number_to_name = model
         .nodes
         .iter()
-        .filter_map(|node| node.part_number.map(|part| (part, node.name.clone())))
+        .enumerate()
+        .filter_map(|(index, node)| {
+            i32::try_from(index)
+                .ok()
+                .map(|part| (part, node.name.clone()))
+        })
         .collect::<std::collections::BTreeMap<_, _>>();
 
     let nodes = model
@@ -733,8 +1207,9 @@ pub fn lower_binary_model(model: &BinaryModel) -> ModelResult<SemanticModel> {
         header: SemanticHeader {
             model_name:      model.name.clone(),
             supermodel:      model.supermodel_name.clone(),
-            classification:  None,
+            classification:  binary_classification(model.flags),
             animation_scale: Some(model.animation_scale),
+            ignore_fog:      Some(i32::from(model.fog)),
             comments:        Vec::new(),
             extras:          Vec::new(),
         },
@@ -756,16 +1231,33 @@ fn lower_binary_node(
     part_number_to_name: &std::collections::BTreeMap<i32, String>,
     diagnostics: &mut Vec<ModelDiagnostic>,
 ) -> SemanticNode {
-    let position = binary_static_vec3(node, CONTROLLER_POSITION, diagnostics);
-    let orientation = binary_static_axis_angle(node, CONTROLLER_ORIENTATION, diagnostics);
-    let scale = binary_static_scalar(node, CONTROLLER_SCALE, diagnostics);
-    let color = binary_static_vec3(node, CONTROLLER_COLOR, diagnostics);
-    let radius = binary_static_scalar(node, CONTROLLER_RADIUS, diagnostics);
-    let alpha = binary_static_scalar(node, CONTROLLER_ALPHA, diagnostics);
-    let self_illum_color = binary_static_vec3(node, CONTROLLER_SELF_ILLUM_COLOR, diagnostics);
+    let position = binary_static_vec3(node, POSITION_CONTROLLER.binary_id(), diagnostics);
+    let orientation =
+        binary_static_axis_angle(node, ORIENTATION_CONTROLLER.binary_id(), diagnostics);
+    let scale = binary_static_scalar(node, SCALE_CONTROLLER.binary_id(), diagnostics);
+    let color = node
+        .light
+        .as_ref()
+        .and_then(|_| binary_static_vec3(node, LIGHT_COLOR_CONTROLLER.binary_id(), diagnostics));
+    let radius = node
+        .light
+        .as_ref()
+        .and_then(|_| binary_static_scalar(node, LIGHT_RADIUS_CONTROLLER.binary_id(), diagnostics));
+    let alpha = node
+        .mesh
+        .as_ref()
+        .and_then(|_| binary_static_scalar(node, ALPHA_CONTROLLER.binary_id(), diagnostics));
+    let self_illum_color = node.mesh.as_ref().and_then(|_| {
+        binary_static_vec3(node, SELF_ILLUM_COLOR_CONTROLLER.binary_id(), diagnostics)
+    });
 
     let parent = binary_parent_name(node, offset_to_name, diagnostics);
-    let mesh = lower_binary_mesh(node.mesh.as_ref(), node.skin.as_ref(), part_number_to_name);
+    let mesh = lower_binary_mesh(
+        node.mesh.as_ref(),
+        node.skin.as_ref(),
+        node.dangly.as_ref(),
+        part_number_to_name,
+    );
     let material = lower_binary_material(
         node,
         alpha,
@@ -787,28 +1279,51 @@ fn lower_binary_node(
         radius,
         center: None,
         wirecolor: None,
+        sample_period: node
+            .animmesh
+            .as_ref()
+            .map(|animmesh| animmesh.sample_period),
+        opaque_controllers: lower_unknown_binary_controllers(node, diagnostics),
         material,
         light: node.light.as_ref().map(|light| SemanticLight {
-            multiplier:         binary_static_scalar(
+            multiplier:            binary_static_scalar(
                 node,
-                CONTROLLER_LIGHT_MULTIPLIER,
+                LIGHT_MULTIPLIER_CONTROLLER.binary_id(),
                 diagnostics,
             ),
-            ambient_only:       i32::try_from(light.ambient_only).ok(),
-            n_dynamic_type:     i32::try_from(light.dynamic_type).ok(),
-            is_dynamic:         Some(i32::from(light.dynamic_type != 0)),
-            affect_dynamic:     i32::try_from(light.affect_dynamic).ok(),
-            negative_light:     None,
-            light_priority:     i32::try_from(light.light_priority).ok(),
-            fading_light:       i32::try_from(light.fading).ok(),
-            lens_flares:        i32::try_from(light.generate_flare).ok(),
-            flare_radius:       Some(light.flare_radius),
-            flare_textures:     light.flare_textures.clone(),
-            flare_sizes:        light.flare_sizes.clone(),
-            flare_positions:    light.flare_positions.clone(),
-            flare_color_shifts: light.flare_color_shifts.clone(),
+            ambient_only:          i32::try_from(light.ambient_only).ok(),
+            n_dynamic_type:        i32::try_from(light.dynamic_type).ok(),
+            is_dynamic:            Some(i32::from(light.dynamic_type != 0)),
+            affect_dynamic:        i32::try_from(light.affect_dynamic).ok(),
+            negative_light:        None,
+            light_priority:        i32::try_from(light.light_priority).ok(),
+            fading_light:          i32::try_from(light.fading).ok(),
+            lens_flares:           i32::try_from(light.generate_flare).ok(),
+            flare_radius:          Some(light.flare_radius),
+            shadow_radius:         binary_static_scalar(
+                node,
+                LIGHT_SHADOW_RADIUS_CONTROLLER.binary_id(),
+                diagnostics,
+            ),
+            vertical_displacement: binary_static_scalar(
+                node,
+                LIGHT_VERTICAL_DISPLACEMENT_CONTROLLER.binary_id(),
+                diagnostics,
+            ),
+            flare_textures:        light.flare_textures.clone(),
+            flare_sizes:           light.flare_sizes.clone(),
+            flare_positions:       light.flare_positions.clone(),
+            flare_color_shifts:    light.flare_color_shifts.clone(),
         }),
-        emitter: node.emitter.as_ref().map(lower_binary_emitter),
+        emitter: node
+            .emitter
+            .as_ref()
+            .map(|emitter| lower_binary_emitter(node, emitter, diagnostics)),
+        dangly: node.dangly.as_ref().map(|dangly| SemanticDangly {
+            displacement: Some(dangly.displacement),
+            tightness:    Some(dangly.tightness),
+            period:       Some(dangly.period),
+        }),
         reference: node.reference.as_ref().map(lower_binary_reference),
         mesh,
         comments: Vec::new(),
@@ -819,17 +1334,26 @@ fn lower_binary_node(
 fn lower_binary_animation(
     animation: &BinaryAnimation,
     model_name: &str,
-    offset_to_name: &std::collections::BTreeMap<u32, String>,
+    _geometry_offset_to_name: &std::collections::BTreeMap<u32, String>,
     geometry_node_names: &BTreeSet<String>,
     part_number_to_name: &std::collections::BTreeMap<i32, String>,
     diagnostics: &mut Vec<ModelDiagnostic>,
 ) -> SemanticAnimation {
+    let animation_offset_to_name = animation
+        .nodes
+        .iter()
+        .map(|node| (node.offset, node.name.clone()))
+        .collect::<std::collections::BTreeMap<_, _>>();
     let nodes = animation
         .nodes
         .iter()
         .map(|node| {
-            let lowered =
-                lower_binary_animation_node(node, offset_to_name, part_number_to_name, diagnostics);
+            let lowered = lower_binary_animation_node(
+                node,
+                &animation_offset_to_name,
+                part_number_to_name,
+                diagnostics,
+            );
             if !geometry_node_names.contains(&lowered.name.to_ascii_lowercase()) {
                 diagnostics.push(ModelDiagnostic {
                     kind:    ModelDiagnosticKind::UnknownAnimationTarget,
@@ -869,13 +1393,25 @@ fn lower_binary_animation_node(
     _part_number_to_name: &std::collections::BTreeMap<i32, String>,
     diagnostics: &mut Vec<ModelDiagnostic>,
 ) -> SemanticAnimationNode {
-    let position = binary_static_vec3(node, CONTROLLER_POSITION, diagnostics);
-    let orientation = binary_static_axis_angle(node, CONTROLLER_ORIENTATION, diagnostics);
-    let scale = binary_static_scalar(node, CONTROLLER_SCALE, diagnostics);
-    let color = binary_static_vec3(node, CONTROLLER_COLOR, diagnostics);
-    let radius = binary_static_scalar(node, CONTROLLER_RADIUS, diagnostics);
-    let alpha = binary_static_scalar(node, CONTROLLER_ALPHA, diagnostics);
-    let self_illum_color = binary_static_vec3(node, CONTROLLER_SELF_ILLUM_COLOR, diagnostics);
+    let position = binary_static_vec3(node, POSITION_CONTROLLER.binary_id(), diagnostics);
+    let orientation =
+        binary_static_axis_angle(node, ORIENTATION_CONTROLLER.binary_id(), diagnostics);
+    let scale = binary_static_scalar(node, SCALE_CONTROLLER.binary_id(), diagnostics);
+    let color = node
+        .light
+        .as_ref()
+        .and_then(|_| binary_static_vec3(node, LIGHT_COLOR_CONTROLLER.binary_id(), diagnostics));
+    let radius = node
+        .light
+        .as_ref()
+        .and_then(|_| binary_static_scalar(node, LIGHT_RADIUS_CONTROLLER.binary_id(), diagnostics));
+    let alpha = node
+        .mesh
+        .as_ref()
+        .and_then(|_| binary_static_scalar(node, ALPHA_CONTROLLER.binary_id(), diagnostics));
+    let self_illum_color = node.mesh.as_ref().and_then(|_| {
+        binary_static_vec3(node, SELF_ILLUM_COLOR_CONTROLLER.binary_id(), diagnostics)
+    });
 
     SemanticAnimationNode {
         kind: node.kind.clone(),
@@ -890,13 +1426,98 @@ fn lower_binary_animation_node(
         radius,
         alpha,
         self_illum_color,
-        position_keys: binary_vec3_keys(node, CONTROLLER_POSITION, diagnostics),
-        orientation_keys: binary_axis_angle_keys(node, CONTROLLER_ORIENTATION, diagnostics),
-        scale_keys: binary_scalar_keys(node, CONTROLLER_SCALE, diagnostics),
-        color_keys: binary_vec3_keys(node, CONTROLLER_COLOR, diagnostics),
-        radius_keys: binary_scalar_keys(node, CONTROLLER_RADIUS, diagnostics),
-        alpha_keys: binary_scalar_keys(node, CONTROLLER_ALPHA, diagnostics),
-        self_illum_color_keys: binary_vec3_keys(node, CONTROLLER_SELF_ILLUM_COLOR, diagnostics),
+        multiplier: node.light.as_ref().and_then(|_| {
+            binary_static_scalar(node, LIGHT_MULTIPLIER_CONTROLLER.binary_id(), diagnostics)
+        }),
+        shadow_radius: node.light.as_ref().and_then(|_| {
+            binary_static_scalar(
+                node,
+                LIGHT_SHADOW_RADIUS_CONTROLLER.binary_id(),
+                diagnostics,
+            )
+        }),
+        vertical_displacement: node.light.as_ref().and_then(|_| {
+            binary_static_scalar(
+                node,
+                LIGHT_VERTICAL_DISPLACEMENT_CONTROLLER.binary_id(),
+                diagnostics,
+            )
+        }),
+        position_keys: binary_vec3_keys(node, POSITION_CONTROLLER.binary_id(), diagnostics),
+        orientation_keys: binary_axis_angle_keys(
+            node,
+            ORIENTATION_CONTROLLER.binary_id(),
+            diagnostics,
+        ),
+        scale_keys: binary_scalar_keys(node, SCALE_CONTROLLER.binary_id(), diagnostics),
+        color_keys: node
+            .light
+            .as_ref()
+            .map(|_| binary_vec3_keys(node, LIGHT_COLOR_CONTROLLER.binary_id(), diagnostics))
+            .unwrap_or_default(),
+        radius_keys: node
+            .light
+            .as_ref()
+            .map(|_| binary_scalar_keys(node, LIGHT_RADIUS_CONTROLLER.binary_id(), diagnostics))
+            .unwrap_or_default(),
+        alpha_keys: node
+            .mesh
+            .as_ref()
+            .map(|_| binary_scalar_keys(node, ALPHA_CONTROLLER.binary_id(), diagnostics))
+            .unwrap_or_default(),
+        self_illum_color_keys: node
+            .mesh
+            .as_ref()
+            .map(|_| binary_vec3_keys(node, SELF_ILLUM_COLOR_CONTROLLER.binary_id(), diagnostics))
+            .unwrap_or_default(),
+        multiplier_keys: node
+            .light
+            .as_ref()
+            .map(|_| binary_scalar_keys(node, LIGHT_MULTIPLIER_CONTROLLER.binary_id(), diagnostics))
+            .unwrap_or_default(),
+        shadow_radius_keys: node
+            .light
+            .as_ref()
+            .map(|_| {
+                binary_scalar_keys(
+                    node,
+                    LIGHT_SHADOW_RADIUS_CONTROLLER.binary_id(),
+                    diagnostics,
+                )
+            })
+            .unwrap_or_default(),
+        vertical_displacement_keys: node
+            .light
+            .as_ref()
+            .map(|_| {
+                binary_scalar_keys(
+                    node,
+                    LIGHT_VERTICAL_DISPLACEMENT_CONTROLLER.binary_id(),
+                    diagnostics,
+                )
+            })
+            .unwrap_or_default(),
+        bezier_controllers: node
+            .controllers
+            .iter()
+            .filter(|controller| controller.bezier_keyed)
+            .filter_map(|controller| {
+                binary_controller_name(node, controller.type_id).map(str::to_string)
+            })
+            .collect(),
+        emitter_controllers: lower_binary_emitter_controllers(node, diagnostics),
+        opaque_controllers: lower_unknown_binary_controllers(node, diagnostics),
+        // Type-specific animation headers in game binaries can contain
+        // uninitialised non-finite padding. Keep authored finite values while
+        // discarding those sentinel/padding values before semantic recompilation.
+        dangly: node.dangly.as_ref().map(|dangly| SemanticDangly {
+            displacement: dangly
+                .displacement
+                .is_finite()
+                .then_some(dangly.displacement),
+            tightness:    dangly.tightness.is_finite().then_some(dangly.tightness),
+            period:       dangly.period.is_finite().then_some(dangly.period),
+        }),
         sample_period: node
             .animmesh
             .as_ref()
@@ -935,6 +1556,7 @@ fn lower_binary_material(
         inherit_color: Some(i32::try_from(node.color_inherit).unwrap_or(0)),
         tilefade: None,
         rotate_texture: None,
+        light_mapped: None,
         transparency_hint: None,
         shininess: None,
         alpha,
@@ -954,11 +1576,14 @@ fn lower_binary_material(
         material.beaming = i32::try_from(mesh.beaming).ok();
         material.tilefade = i32::try_from(mesh.tile_fade).ok();
         material.rotate_texture = Some(i32::from(mesh.rotate_texture));
+        material.light_mapped = Some(i32::from(mesh.light_mapped));
         material.transparency_hint = i32::try_from(mesh.transparency_hint).ok();
         material.shininess = Some(mesh.shininess);
         material.ambient = Some(mesh.ambient);
         material.diffuse = Some(mesh.diffuse);
         material.specular = Some(mesh.specular);
+        material.material_name = mesh.texture3.clone();
+        material.render_hint = (mesh.render_hint == 2).then(|| "NormalAndSpecMapped".to_string());
         material.bitmap = lower_binary_texture_name(
             mesh.texture0.as_deref(),
             node,
@@ -966,22 +1591,19 @@ fn lower_binary_material(
             diagnostics,
             "bitmap",
         );
-        for (index, name) in [
-            (1, mesh.texture1.as_deref()),
-            (2, mesh.texture2.as_deref()),
-            (3, mesh.texture3.as_deref()),
-        ]
-        .into_iter()
-        .filter_map(|(index, name)| {
-            lower_binary_texture_name(
-                name,
-                node,
-                geometry_node_names,
-                diagnostics,
-                &format!("texture{index}"),
-            )
-            .map(|name| (index, name))
-        }) {
+        for (index, name) in [(1, mesh.texture1.as_deref()), (2, mesh.texture2.as_deref())]
+            .into_iter()
+            .filter_map(|(index, name)| {
+                lower_binary_texture_name(
+                    name,
+                    node,
+                    geometry_node_names,
+                    diagnostics,
+                    &format!("texture{index}"),
+                )
+                .map(|name| (index, name))
+            })
+        {
             material.textures.push(SemanticTextureBinding {
                 index,
                 name,
@@ -994,10 +1616,10 @@ fn lower_binary_material(
 
 fn lower_binary_texture_name(
     candidate: Option<&str>,
-    node: &BinaryNode,
-    geometry_node_names: &BTreeSet<String>,
-    diagnostics: &mut Vec<ModelDiagnostic>,
-    field_name: &str,
+    _node: &BinaryNode,
+    _geometry_node_names: &BTreeSet<String>,
+    _diagnostics: &mut Vec<ModelDiagnostic>,
+    _field_name: &str,
 ) -> Option<String> {
     let candidate = candidate?.trim();
     if candidate.is_empty() {
@@ -1009,23 +1631,13 @@ fn lower_binary_texture_name(
         return None;
     }
 
-    if candidate_lower == "material" || geometry_node_names.contains(&candidate_lower) {
-        diagnostics.push(ModelDiagnostic {
-            kind:    ModelDiagnosticKind::MalformedValue,
-            message: format!(
-                "compiled node {} has suspicious {field_name} value {candidate}; ignoring it",
-                node.name
-            ),
-        });
-        return None;
-    }
-
     Some(candidate.to_string())
 }
 
 fn lower_binary_mesh(
     mesh: Option<&BinaryMesh>,
     skin: Option<&BinarySkin>,
+    dangly: Option<&crate::mdl::BinaryDangly>,
     part_number_to_name: &std::collections::BTreeMap<i32, String>,
 ) -> Option<SemanticMesh> {
     let mesh = mesh?;
@@ -1044,7 +1656,7 @@ fn lower_binary_mesh(
             })
             .collect(),
         normals: mesh.normals.clone(),
-        tangents: Vec::new(),
+        tangents: mesh.tangents.iter().map(|row| row.to_vec()).collect(),
         colors: mesh
             .colors
             .iter()
@@ -1055,7 +1667,15 @@ fn lower_binary_mesh(
             })
             .collect(),
         weights,
-        constraints: Vec::new(),
+        constraints: dangly
+            .map(|dangly| {
+                dangly
+                    .constraints
+                    .iter()
+                    .map(|value| vec![*value])
+                    .collect()
+            })
+            .unwrap_or_default(),
         multimaterial: Vec::new(),
         texture_names: Vec::new(),
     })
@@ -1127,14 +1747,20 @@ fn lower_binary_face(face: &crate::mdl::BinaryFace) -> SemanticFace {
     }
 }
 
-fn lower_binary_emitter(emitter: &BinaryEmitter) -> SemanticEmitter {
+fn lower_binary_emitter(
+    node: &BinaryNode,
+    emitter: &BinaryEmitter,
+    diagnostics: &mut Vec<ModelDiagnostic>,
+) -> SemanticEmitter {
+    let nwnmdlcomp =
+        emitter_uses_nwnmdlcomp_ids(node.controllers.iter().map(|controller| controller.type_id));
     let mut properties = Vec::new();
     binary_emitter_property_f32(&mut properties, "deadspace", emitter.dead_space);
     binary_emitter_property_f32(&mut properties, "blastradius", emitter.blast_radius);
     binary_emitter_property_f32(&mut properties, "blastlength", emitter.blast_length);
-    binary_emitter_property_int(&mut properties, "gridx", emitter.grid_x);
-    binary_emitter_property_int(&mut properties, "gridy", emitter.grid_y);
-    binary_emitter_property_int(&mut properties, "spacetype", emitter.space);
+    binary_emitter_property_int(&mut properties, "xgrid", emitter.grid_x);
+    binary_emitter_property_int(&mut properties, "ygrid", emitter.grid_y);
+    binary_emitter_property_int(&mut properties, "spawntype", emitter.space);
     binary_emitter_property_text(&mut properties, "update", &emitter.update);
     binary_emitter_property_text(&mut properties, "render", &emitter.render);
     binary_emitter_property_text(&mut properties, "blend", &emitter.blend);
@@ -1152,7 +1778,7 @@ fn lower_binary_emitter(emitter: &BinaryEmitter) -> SemanticEmitter {
         u32::from(emitter.render_order),
     );
     binary_emitter_property_bool(&mut properties, "p2p", emitter.flags.p2p);
-    binary_emitter_property_bool(&mut properties, "p2psel", emitter.flags.p2p_sel);
+    binary_emitter_property_bool(&mut properties, "p2p_sel", emitter.flags.p2p_sel);
     binary_emitter_property_bool(
         &mut properties,
         "affectedbywind",
@@ -1167,9 +1793,32 @@ fn lower_binary_emitter(emitter: &BinaryEmitter) -> SemanticEmitter {
     binary_emitter_property_bool(&mut properties, "splat", emitter.flags.splat);
     binary_emitter_property_bool(&mut properties, "inheritpart", emitter.flags.inherit_part);
 
+    for definition in EMITTER_CONTROLLER_DEFINITIONS.iter().filter(|definition| {
+        !matches!(
+            definition.controller,
+            NwnEmitterController::XSize | NwnEmitterController::YSize
+        )
+    }) {
+        let type_id = definition.binary_id(nwnmdlcomp);
+        if definition.value_width == 1 {
+            if let Some(value) = binary_static_scalar(node, type_id, diagnostics) {
+                binary_emitter_property_f32(&mut properties, definition.name(), value);
+            }
+        } else if let Some(value) = binary_static_vec3(node, type_id, diagnostics) {
+            properties.push(SemanticEmitterProperty {
+                name:   definition.name().to_string(),
+                values: value
+                    .into_iter()
+                    .map(SemanticPropertyValue::Float)
+                    .collect(),
+            });
+        }
+    }
+    let x_size = emitter_controller_definition_for(NwnEmitterController::XSize);
+    let y_size = emitter_controller_definition_for(NwnEmitterController::YSize);
     SemanticEmitter {
-        x_size: None,
-        y_size: None,
+        x_size: binary_static_scalar(node, x_size.binary_id(nwnmdlcomp), diagnostics),
+        y_size: binary_static_scalar(node, y_size.binary_id(nwnmdlcomp), diagnostics),
         properties,
     }
 }
@@ -1202,14 +1851,129 @@ fn binary_parent_name(
     }
 }
 
-const CONTROLLER_POSITION: i32 = 8;
-const CONTROLLER_ORIENTATION: i32 = 20;
-const CONTROLLER_SCALE: i32 = 36;
-const CONTROLLER_COLOR: i32 = 76;
-const CONTROLLER_RADIUS: i32 = 88;
-const CONTROLLER_SELF_ILLUM_COLOR: i32 = 100;
-const CONTROLLER_ALPHA: i32 = 128;
-const CONTROLLER_LIGHT_MULTIPLIER: i32 = 140;
+fn lower_binary_emitter_controllers(
+    node: &BinaryNode,
+    diagnostics: &mut Vec<ModelDiagnostic>,
+) -> Vec<SemanticEmitterController> {
+    if node.emitter.is_none() {
+        return Vec::new();
+    }
+    let nwnmdlcomp =
+        emitter_uses_nwnmdlcomp_ids(node.controllers.iter().map(|controller| controller.type_id));
+    EMITTER_CONTROLLER_DEFINITIONS
+        .iter()
+        .filter_map(|definition| {
+            binary_emitter_controller(
+                node,
+                definition.name(),
+                definition.binary_id(nwnmdlcomp),
+                definition.value_width,
+                diagnostics,
+            )
+        })
+        .collect()
+}
+
+fn binary_emitter_controller(
+    node: &BinaryNode,
+    name: &str,
+    controller_type: i32,
+    width: usize,
+    diagnostics: &mut Vec<ModelDiagnostic>,
+) -> Option<SemanticEmitterController> {
+    let controller = binary_controller(node, controller_type)?;
+    let keys = controller
+        .values
+        .iter()
+        .enumerate()
+        .filter_map(|(index, values)| {
+            if values.len() < width {
+                diagnostics.push(ModelDiagnostic {
+                    kind:    ModelDiagnosticKind::MalformedPayloadRow,
+                    message: format!(
+                        "compiled emitter {} controller {} row {} expected {} values",
+                        node.name, name, index, width
+                    ),
+                });
+                return None;
+            }
+            let values = values.get(..width)?.to_vec();
+            Some(SemanticEmitterKey {
+                time: controller.time_keys.get(index).copied().unwrap_or(0.0),
+                values,
+            })
+        })
+        .collect::<Vec<_>>();
+    (!keys.is_empty()).then(|| SemanticEmitterController {
+        name: name.to_string(),
+        bezier_keyed: controller.bezier_keyed,
+        keys,
+    })
+}
+
+fn binary_controller_name(node: &BinaryNode, type_id: i32) -> Option<&'static str> {
+    if let Some(definition) =
+        controller_definition_by_binary_id(TRANSFORM_CONTROLLER_DEFINITIONS, type_id)
+    {
+        return Some(definition.name());
+    }
+    if node.light.is_some()
+        && let Some(definition) =
+            controller_definition_by_binary_id(LIGHT_CONTROLLER_DEFINITIONS, type_id)
+    {
+        return Some(definition.name());
+    }
+    if node.mesh.is_some()
+        && let Some(definition) =
+            controller_definition_by_binary_id(MESH_CONTROLLER_DEFINITIONS, type_id)
+    {
+        return Some(definition.name());
+    }
+    if node.emitter.is_some() {
+        return emitter_controller_definition_by_binary_id(type_id)
+            .map(|definition| definition.name());
+    }
+    None
+}
+
+fn lower_unknown_binary_controllers(
+    node: &BinaryNode,
+    diagnostics: &mut Vec<ModelDiagnostic>,
+) -> Vec<SemanticController> {
+    node.controllers
+        .iter()
+        .filter(|controller| binary_controller_name(node, controller.type_id).is_none())
+        .filter_map(|controller| {
+            if controller.time_keys.len() != controller.values.len() {
+                diagnostics.push(ModelDiagnostic {
+                    kind:    ModelDiagnosticKind::MalformedPayloadRow,
+                    message: format!(
+                        "compiled node {} controller type {} has {} time rows and {} value rows",
+                        node.name,
+                        controller.type_id,
+                        controller.time_keys.len(),
+                        controller.values.len()
+                    ),
+                });
+                return None;
+            }
+            Some(SemanticController {
+                type_id:      controller.type_id,
+                bezier_keyed: controller.bezier_keyed,
+                keys:         controller
+                    .time_keys
+                    .iter()
+                    .copied()
+                    .zip(controller.values.iter().cloned())
+                    .map(|(time, values)| SemanticControllerKey {
+                        time,
+                        values,
+                    })
+                    .collect(),
+            })
+        })
+        .collect()
+}
 
 fn binary_static_scalar(
     node: &BinaryNode,
@@ -1246,27 +2010,16 @@ fn binary_static_axis_angle(
 
 fn binary_static_row<'a>(
     controller: &'a BinaryController,
-    node: &BinaryNode,
-    diagnostics: &mut Vec<ModelDiagnostic>,
+    _node: &BinaryNode,
+    _diagnostics: &mut Vec<ModelDiagnostic>,
 ) -> Option<&'a [f32]> {
     let time_is_static = controller
         .time_keys
         .first()
         .is_none_or(|time| time.abs() <= 0.0001);
-    if controller.values.len() == 1 && time_is_static {
-        controller.values.first().map(Vec::as_slice)
-    } else {
-        diagnostics.push(ModelDiagnostic {
-            kind:    ModelDiagnosticKind::MalformedValue,
-            message: format!(
-                "compiled node {} controller type {} was expected to be static but has {} rows",
-                node.name,
-                controller.type_id,
-                controller.values.len()
-            ),
-        });
-        None
-    }
+    (controller.values.len() == 1 && time_is_static)
+        .then(|| controller.values.first().map(Vec::as_slice))
+        .flatten()
 }
 
 fn binary_vec3_keys(
@@ -1420,6 +2173,7 @@ fn node_kind_token(kind: &NodeKind) -> String {
         NodeKind::Light => "light".to_string(),
         NodeKind::Aabb => "aabb".to_string(),
         NodeKind::Reference => "reference".to_string(),
+        NodeKind::Camera => "camera".to_string(),
         NodeKind::Patch => "patch".to_string(),
         NodeKind::Animmesh => "animmesh".to_string(),
         NodeKind::Other(value) => value.clone(),
@@ -1464,6 +2218,7 @@ fn lower_header(model: &AsciiModel, diagnostics: &mut Vec<ModelDiagnostic>) -> S
     let mut supermodel = None;
     let mut classification = None;
     let mut animation_scale = None;
+    let mut ignore_fog = None;
     let mut comments = Vec::new();
     let mut extras = Vec::new();
 
@@ -1521,6 +2276,9 @@ fn lower_header(model: &AsciiModel, diagnostics: &mut Vec<ModelDiagnostic>) -> S
                 animation_scale =
                     parse_f32_statement(statement, 0, "setanimationscale", diagnostics);
             }
+            AsciiElement::Statement(statement) if statement.keyword_is("ignorefog") => {
+                ignore_fog = parse_i32_statement(statement, 0, "ignorefog", diagnostics);
+            }
             AsciiElement::Statement(_) => extras.push(element.clone()),
         }
     }
@@ -1530,6 +2288,7 @@ fn lower_header(model: &AsciiModel, diagnostics: &mut Vec<ModelDiagnostic>) -> S
         supermodel,
         classification,
         animation_scale,
+        ignore_fog,
         comments,
         extras,
     }
@@ -1545,26 +2304,49 @@ fn is_nonsemantic_header_comment(comment: &str) -> bool {
 }
 
 fn lower_geometry_node(node: &AsciiNode, diagnostics: &mut Vec<ModelDiagnostic>) -> SemanticNode {
+    let legacy_dangly_enabled = node.entries.iter().any(|element| {
+        let AsciiElement::Statement(statement) = element else {
+            return false;
+        };
+        statement.keyword_is("danglymesh")
+            && statement.argument(0).is_some_and(|value| {
+                value.eq_ignore_ascii_case("true")
+                    || value.parse::<i32>().is_ok_and(|value| value != 0)
+            })
+    });
+    let authored_kind = parse_node_kind(&node.node_type);
+    let kind = if legacy_dangly_enabled && matches!(authored_kind, NodeKind::Trimesh) {
+        NodeKind::Danglymesh
+    } else {
+        authored_kind
+    };
     let mut lowered = SemanticNode {
-        kind:        parse_node_kind(&node.node_type),
-        node_type:   node.node_type.clone(),
-        name:        node.name.clone(),
-        parent:      None,
+        node_type: if legacy_dangly_enabled {
+            "danglymesh".to_string()
+        } else {
+            node.node_type.clone()
+        },
+        kind,
+        name: node.name.clone(),
+        parent: None,
         part_number: None,
-        position:    None,
+        position: None,
         orientation: None,
-        scale:       None,
-        color:       None,
-        radius:      None,
-        center:      None,
-        wirecolor:   None,
-        material:    SemanticMaterial {
+        scale: None,
+        color: None,
+        radius: None,
+        center: None,
+        wirecolor: None,
+        sample_period: None,
+        opaque_controllers: Vec::new(),
+        material: SemanticMaterial {
             render:            None,
             shadow:            None,
             beaming:           None,
             inherit_color:     None,
             tilefade:          None,
             rotate_texture:    None,
+            light_mapped:      None,
             transparency_hint: None,
             shininess:         None,
             alpha:             None,
@@ -1577,12 +2359,13 @@ fn lower_geometry_node(node: &AsciiNode, diagnostics: &mut Vec<ModelDiagnostic>)
             bitmap:            None,
             textures:          Vec::new(),
         },
-        light:       None,
-        emitter:     None,
-        reference:   None,
-        mesh:        None,
-        comments:    Vec::new(),
-        extras:      Vec::new(),
+        light: None,
+        emitter: None,
+        dangly: None,
+        reference: None,
+        mesh: None,
+        comments: Vec::new(),
+        extras: Vec::new(),
     };
 
     let mut mesh = SemanticMesh {
@@ -1608,27 +2391,51 @@ fn lower_geometry_node(node: &AsciiNode, diagnostics: &mut Vec<ModelDiagnostic>)
                 }
             }
             AsciiElement::Statement(statement) => {
-                if !lower_common_node_statement(
-                    statement,
-                    &mut lowered.parent,
-                    &mut lowered.position,
-                    &mut lowered.orientation,
-                    &mut lowered.scale,
-                    &mut lowered.color,
-                    &mut lowered.radius,
-                    &mut lowered.center,
-                    &mut lowered.wirecolor,
-                    &mut lowered.material,
-                    diagnostics,
-                ) && !lower_special_node_statement(
-                    &lowered.kind,
-                    statement,
-                    &mut lowered.light,
-                    &mut lowered.emitter,
-                    &mut lowered.reference,
-                    &mut mesh,
-                    diagnostics,
-                ) && !lower_mesh_statement(statement, &mut mesh, diagnostics)
+                if statement.keyword_is("danglymesh") {
+                    continue;
+                }
+                if statement.keyword_is("sampleperiod") {
+                    lowered.sample_period =
+                        parse_f32_statement(statement, 0, "sampleperiod", diagnostics);
+                    continue;
+                }
+                let handled_special_first = matches!(lowered.kind, NodeKind::Emitter)
+                    && statement.keyword_is("render")
+                    && lower_special_node_statement(
+                        &lowered.kind,
+                        statement,
+                        &mut lowered.light,
+                        &mut lowered.emitter,
+                        &mut lowered.dangly,
+                        &mut lowered.reference,
+                        &mut mesh,
+                        diagnostics,
+                    );
+                if !handled_special_first
+                    && !lower_common_node_statement(
+                        statement,
+                        &mut lowered.parent,
+                        &mut lowered.position,
+                        &mut lowered.orientation,
+                        &mut lowered.scale,
+                        &mut lowered.color,
+                        &mut lowered.radius,
+                        &mut lowered.center,
+                        &mut lowered.wirecolor,
+                        &mut lowered.material,
+                        diagnostics,
+                    )
+                    && !lower_special_node_statement(
+                        &lowered.kind,
+                        statement,
+                        &mut lowered.light,
+                        &mut lowered.emitter,
+                        &mut lowered.dangly,
+                        &mut lowered.reference,
+                        &mut mesh,
+                        diagnostics,
+                    )
+                    && !lower_mesh_statement(statement, &mut mesh, diagnostics)
                 {
                     lowered
                         .extras
@@ -1638,7 +2445,18 @@ fn lower_geometry_node(node: &AsciiNode, diagnostics: &mut Vec<ModelDiagnostic>)
         }
     }
 
-    lowered.mesh = mesh_present(mesh);
+    lowered.mesh = if matches!(
+        lowered.kind,
+        NodeKind::Trimesh
+            | NodeKind::Skin
+            | NodeKind::Animmesh
+            | NodeKind::Danglymesh
+            | NodeKind::Aabb
+    ) {
+        Some(mesh)
+    } else {
+        mesh_present(mesh)
+    };
     lowered
 }
 
@@ -1740,31 +2558,41 @@ fn lower_animation_node(
     diagnostics: &mut Vec<ModelDiagnostic>,
 ) -> SemanticAnimationNode {
     let mut lowered = SemanticAnimationNode {
-        kind:                  parse_node_kind(&node.node_type),
-        node_type:             node.node_type.clone(),
-        name:                  node.name.clone(),
-        parent:                None,
-        part_number:           None,
-        position:              None,
-        orientation:           None,
-        scale:                 None,
-        color:                 None,
-        radius:                None,
-        alpha:                 None,
-        self_illum_color:      None,
-        position_keys:         Vec::new(),
-        orientation_keys:      Vec::new(),
-        scale_keys:            Vec::new(),
-        color_keys:            Vec::new(),
-        radius_keys:           Vec::new(),
-        alpha_keys:            Vec::new(),
+        kind: parse_node_kind(&node.node_type),
+        node_type: node.node_type.clone(),
+        name: node.name.clone(),
+        parent: None,
+        part_number: None,
+        position: None,
+        orientation: None,
+        scale: None,
+        color: None,
+        radius: None,
+        alpha: None,
+        self_illum_color: None,
+        multiplier: None,
+        shadow_radius: None,
+        vertical_displacement: None,
+        position_keys: Vec::new(),
+        orientation_keys: Vec::new(),
+        scale_keys: Vec::new(),
+        color_keys: Vec::new(),
+        radius_keys: Vec::new(),
+        alpha_keys: Vec::new(),
         self_illum_color_keys: Vec::new(),
-        sample_period:         None,
-        faces:                 Vec::new(),
-        animverts:             Vec::new(),
-        animtverts:            Vec::new(),
-        comments:              Vec::new(),
-        extras:                Vec::new(),
+        multiplier_keys: Vec::new(),
+        shadow_radius_keys: Vec::new(),
+        vertical_displacement_keys: Vec::new(),
+        bezier_controllers: Vec::new(),
+        emitter_controllers: Vec::new(),
+        opaque_controllers: Vec::new(),
+        dangly: None,
+        sample_period: None,
+        faces: Vec::new(),
+        animverts: Vec::new(),
+        animtverts: Vec::new(),
+        comments: Vec::new(),
+        extras: Vec::new(),
     };
 
     for element in &node.entries {
@@ -1797,24 +2625,95 @@ fn lower_animation_node(
                 {
                     lowered.self_illum_color =
                         parse_vec3_statement(statement, "selfillumcolor", diagnostics);
-                } else if statement.keyword_is("positionkey") {
-                    lowered.position_keys = parse_vec3_keys(statement, "positionkey", diagnostics);
-                } else if statement.keyword_is("orientationkey") {
+                } else if controller_keyword_is(statement, "position") {
+                    record_bezier_controller(
+                        statement,
+                        "position",
+                        &mut lowered.bezier_controllers,
+                    );
+                    lowered.position_keys =
+                        parse_vec3_keys(statement, &statement.keyword, diagnostics);
+                } else if controller_keyword_is(statement, "orientation") {
+                    record_bezier_controller(
+                        statement,
+                        "orientation",
+                        &mut lowered.bezier_controllers,
+                    );
                     lowered.orientation_keys =
-                        parse_vec4_keys(statement, "orientationkey", diagnostics);
-                } else if statement.keyword_is("scalekey") {
-                    lowered.scale_keys = parse_scalar_keys(statement, "scalekey", diagnostics);
-                } else if statement.keyword_is("colorkey") {
-                    lowered.color_keys = parse_vec3_keys(statement, "colorkey", diagnostics);
-                } else if statement.keyword_is("radiuskey") {
-                    lowered.radius_keys = parse_scalar_keys(statement, "radiuskey", diagnostics);
-                } else if statement.keyword_is("alphakey") {
-                    lowered.alpha_keys = parse_scalar_keys(statement, "alphakey", diagnostics);
-                } else if statement.keyword_is("selfillumcolorkey")
-                    || statement.keyword_is("setfillumcolorkey")
+                        parse_vec4_keys(statement, &statement.keyword, diagnostics);
+                } else if controller_keyword_is(statement, "scale") {
+                    record_bezier_controller(statement, "scale", &mut lowered.bezier_controllers);
+                    lowered.scale_keys =
+                        parse_scalar_keys(statement, &statement.keyword, diagnostics);
+                } else if controller_keyword_is(statement, "color") {
+                    record_bezier_controller(statement, "color", &mut lowered.bezier_controllers);
+                    lowered.color_keys =
+                        parse_vec3_keys(statement, &statement.keyword, diagnostics);
+                } else if controller_keyword_is(statement, "radius") {
+                    record_bezier_controller(statement, "radius", &mut lowered.bezier_controllers);
+                    lowered.radius_keys =
+                        parse_scalar_keys(statement, &statement.keyword, diagnostics);
+                } else if controller_keyword_is(statement, "alpha") {
+                    record_bezier_controller(statement, "alpha", &mut lowered.bezier_controllers);
+                    lowered.alpha_keys =
+                        parse_scalar_keys(statement, &statement.keyword, diagnostics);
+                } else if controller_keyword_is(statement, "selfillumcolor")
+                    || controller_keyword_is(statement, "setfillumcolor")
                 {
+                    record_bezier_controller(
+                        statement,
+                        "selfillumcolor",
+                        &mut lowered.bezier_controllers,
+                    );
                     lowered.self_illum_color_keys =
-                        parse_vec3_keys(statement, "selfillumcolorkey", diagnostics);
+                        parse_vec3_keys(statement, &statement.keyword, diagnostics);
+                } else if statement.keyword_is("multiplier") {
+                    lowered.multiplier =
+                        parse_f32_statement(statement, 0, "multiplier", diagnostics);
+                } else if controller_keyword_is(statement, "multiplier") {
+                    record_bezier_controller(
+                        statement,
+                        "multiplier",
+                        &mut lowered.bezier_controllers,
+                    );
+                    lowered.multiplier_keys =
+                        parse_scalar_keys(statement, &statement.keyword, diagnostics);
+                } else if statement.keyword_is("shadowradius") {
+                    lowered.shadow_radius =
+                        parse_f32_statement(statement, 0, "shadowradius", diagnostics);
+                } else if controller_keyword_is(statement, "shadowradius") {
+                    record_bezier_controller(
+                        statement,
+                        "shadowradius",
+                        &mut lowered.bezier_controllers,
+                    );
+                    lowered.shadow_radius_keys =
+                        parse_scalar_keys(statement, &statement.keyword, diagnostics);
+                } else if statement.keyword_is("verticaldisplacement") {
+                    lowered.vertical_displacement =
+                        parse_f32_statement(statement, 0, "verticaldisplacement", diagnostics);
+                } else if controller_keyword_is(statement, "verticaldisplacement") {
+                    record_bezier_controller(
+                        statement,
+                        "verticaldisplacement",
+                        &mut lowered.bezier_controllers,
+                    );
+                    lowered.vertical_displacement_keys =
+                        parse_scalar_keys(statement, &statement.keyword, diagnostics);
+                } else if is_emitter_controller_key(statement.keyword.as_str()) {
+                    lowered
+                        .emitter_controllers
+                        .push(parse_emitter_controller(statement, diagnostics));
+                } else if matches!(lowered.kind, NodeKind::Emitter)
+                    && is_emitter_controller_name(statement.keyword.as_str())
+                {
+                    lowered
+                        .emitter_controllers
+                        .push(parse_static_emitter_controller(statement, diagnostics));
+                } else if matches!(lowered.kind, NodeKind::Danglymesh)
+                    && is_dangly_property(statement.keyword.as_str())
+                {
+                    lower_dangly_statement(statement, &mut lowered.dangly, diagnostics);
                 } else if statement.keyword_is("sampleperiod") {
                     lowered.sample_period =
                         parse_f32_statement(statement, 0, "sampleperiod", diagnostics);
@@ -1862,7 +2761,14 @@ fn lower_common_node_statement(
     } else if statement.keyword_is("radius") {
         *radius = parse_f32_statement(statement, 0, "radius", diagnostics);
     } else if statement.keyword_is("center") {
-        *center = parse_vec3_statement(statement, "center", diagnostics);
+        *center = if statement
+            .argument(0)
+            .is_some_and(|value| value.eq_ignore_ascii_case("undefined"))
+        {
+            None
+        } else {
+            parse_vec3_statement(statement, "center", diagnostics)
+        };
     } else if statement.keyword_is("wirecolor") {
         *wirecolor = parse_vec3_statement(statement, "wirecolor", diagnostics);
     } else if statement.keyword_is("render") {
@@ -1877,6 +2783,8 @@ fn lower_common_node_statement(
         material.tilefade = parse_i32_statement(statement, 0, "tilefade", diagnostics);
     } else if statement.keyword_is("rotatetexture") {
         material.rotate_texture = parse_i32_statement(statement, 0, "rotatetexture", diagnostics);
+    } else if statement.keyword_is("lightmapped") {
+        material.light_mapped = parse_i32_statement(statement, 0, "lightmapped", diagnostics);
     } else if statement.keyword_is("transparencyhint") {
         material.transparency_hint =
             parse_i32_statement(statement, 0, "transparencyhint", diagnostics);
@@ -1928,10 +2836,15 @@ fn lower_mesh_statement(
     } else if keyword == "faces" {
         mesh.faces = parse_faces(statement, diagnostics);
     } else if let Some(index) = parse_tverts_index(&keyword) {
-        mesh.uv_layers.push(SemanticUvLayer {
+        let layer = SemanticUvLayer {
             index,
             coordinates: parse_vec2_payload(statement, &keyword, diagnostics),
-        });
+        };
+        if let Some(existing) = mesh.uv_layers.iter_mut().find(|layer| layer.index == index) {
+            *existing = layer;
+        } else {
+            mesh.uv_layers.push(layer);
+        }
     } else if keyword == "normals" {
         mesh.normals = parse_vec3_payload(statement, "normals", diagnostics);
     } else if keyword == "tangents" {
@@ -1958,6 +2871,7 @@ fn lower_special_node_statement(
     statement: &AsciiStatement,
     light: &mut Option<SemanticLight>,
     emitter: &mut Option<SemanticEmitter>,
+    dangly: &mut Option<SemanticDangly>,
     reference: &mut Option<SemanticReference>,
     mesh: &mut SemanticMesh,
     diagnostics: &mut Vec<ModelDiagnostic>,
@@ -1969,6 +2883,10 @@ fn lower_special_node_statement(
         }
         NodeKind::Light => lower_light_statement(statement, light, diagnostics),
         NodeKind::Emitter => lower_emitter_statement(statement, emitter),
+        NodeKind::Danglymesh if is_dangly_property(statement.keyword.as_str()) => {
+            lower_dangly_statement(statement, dangly, diagnostics);
+            true
+        }
         NodeKind::Reference => lower_reference_statement(statement, reference, diagnostics),
         _ => false,
     }
@@ -1979,50 +2897,58 @@ fn lower_light_statement(
     light: &mut Option<SemanticLight>,
     diagnostics: &mut Vec<ModelDiagnostic>,
 ) -> bool {
+    let keyword = statement.keyword.to_ascii_lowercase().replace('_', "");
     let light = light.get_or_insert_with(|| SemanticLight {
-        multiplier:         None,
-        ambient_only:       None,
-        n_dynamic_type:     None,
-        is_dynamic:         None,
-        affect_dynamic:     None,
-        negative_light:     None,
-        light_priority:     None,
-        fading_light:       None,
-        lens_flares:        None,
-        flare_radius:       None,
-        flare_textures:     Vec::new(),
-        flare_sizes:        Vec::new(),
-        flare_positions:    Vec::new(),
-        flare_color_shifts: Vec::new(),
+        multiplier:            None,
+        ambient_only:          None,
+        n_dynamic_type:        None,
+        is_dynamic:            None,
+        affect_dynamic:        None,
+        negative_light:        None,
+        light_priority:        None,
+        fading_light:          None,
+        lens_flares:           None,
+        flare_radius:          None,
+        shadow_radius:         None,
+        vertical_displacement: None,
+        flare_textures:        Vec::new(),
+        flare_sizes:           Vec::new(),
+        flare_positions:       Vec::new(),
+        flare_color_shifts:    Vec::new(),
     });
 
-    if statement.keyword_is("multiplier") {
+    if keyword == "multiplier" {
         light.multiplier = parse_f32_statement(statement, 0, "multiplier", diagnostics);
-    } else if statement.keyword_is("ambientonly") {
+    } else if keyword == "ambientonly" {
         light.ambient_only = parse_i32_statement(statement, 0, "ambientonly", diagnostics);
-    } else if statement.keyword_is("ndynamictype") {
+    } else if keyword == "ndynamictype" {
         light.n_dynamic_type = parse_i32_statement(statement, 0, "ndynamictype", diagnostics);
-    } else if statement.keyword_is("isdynamic") {
+    } else if keyword == "isdynamic" {
         light.is_dynamic = parse_i32_statement(statement, 0, "isdynamic", diagnostics);
-    } else if statement.keyword_is("affectdynamic") {
+    } else if keyword == "affectdynamic" {
         light.affect_dynamic = parse_i32_statement(statement, 0, "affectdynamic", diagnostics);
-    } else if statement.keyword_is("negativelight") {
+    } else if keyword == "negativelight" {
         light.negative_light = parse_i32_statement(statement, 0, "negativelight", diagnostics);
-    } else if statement.keyword_is("lightpriority") {
+    } else if keyword == "lightpriority" {
         light.light_priority = parse_i32_statement(statement, 0, "lightpriority", diagnostics);
-    } else if statement.keyword_is("fadinglight") {
+    } else if keyword == "fadinglight" {
         light.fading_light = parse_i32_statement(statement, 0, "fadinglight", diagnostics);
-    } else if statement.keyword_is("lensflares") {
+    } else if keyword == "lensflares" {
         light.lens_flares = parse_i32_statement(statement, 0, "lensflares", diagnostics);
-    } else if statement.keyword_is("flareradius") {
+    } else if keyword == "flareradius" {
         light.flare_radius = parse_f32_statement(statement, 0, "flareradius", diagnostics);
-    } else if statement.keyword_is("texturenames") {
+    } else if keyword == "shadowradius" {
+        light.shadow_radius = parse_f32_statement(statement, 0, "shadowradius", diagnostics);
+    } else if keyword == "verticaldisplacement" {
+        light.vertical_displacement =
+            parse_f32_statement(statement, 0, "verticaldisplacement", diagnostics);
+    } else if keyword == "texturenames" {
         light.flare_textures = parse_string_rows(statement);
-    } else if statement.keyword_is("flaresizes") {
+    } else if keyword == "flaresizes" {
         light.flare_sizes = parse_scalar_payload(statement, "flaresizes", diagnostics);
-    } else if statement.keyword_is("flarepositions") {
+    } else if keyword == "flarepositions" {
         light.flare_positions = parse_scalar_payload(statement, "flarepositions", diagnostics);
-    } else if statement.keyword_is("flarecolorshifts") {
+    } else if keyword == "flarecolorshifts" {
         light.flare_color_shifts = parse_vec3_payload(statement, "flarecolorshifts", diagnostics);
     } else {
         return false;
@@ -2061,6 +2987,165 @@ fn lower_emitter_statement(
     }
 
     true
+}
+
+fn is_dangly_property(keyword: &str) -> bool {
+    keyword.eq_ignore_ascii_case("displacement")
+        || keyword.eq_ignore_ascii_case("tightness")
+        || keyword.eq_ignore_ascii_case("period")
+}
+
+fn lower_dangly_statement(
+    statement: &AsciiStatement,
+    dangly: &mut Option<SemanticDangly>,
+    diagnostics: &mut Vec<ModelDiagnostic>,
+) {
+    let dangly = dangly.get_or_insert(SemanticDangly {
+        displacement: None,
+        tightness:    None,
+        period:       None,
+    });
+    if statement.keyword_is("displacement") {
+        dangly.displacement = parse_f32_statement(statement, 0, "displacement", diagnostics);
+    } else if statement.keyword_is("tightness") {
+        dangly.tightness = parse_f32_statement(statement, 0, "tightness", diagnostics);
+    } else if statement.keyword_is("period") {
+        dangly.period = parse_f32_statement(statement, 0, "period", diagnostics);
+    }
+}
+
+fn is_emitter_controller_key(keyword: &str) -> bool {
+    let lower = keyword.to_ascii_lowercase();
+    let Some(name) = lower
+        .strip_suffix("bezierkey")
+        .or_else(|| lower.strip_suffix("key"))
+    else {
+        return false;
+    };
+    is_emitter_controller_name(name)
+}
+
+fn is_emitter_controller_name(name: &str) -> bool {
+    emitter_controller_definition(name).is_some()
+}
+
+fn parse_static_emitter_controller(
+    statement: &AsciiStatement,
+    diagnostics: &mut Vec<ModelDiagnostic>,
+) -> SemanticEmitterController {
+    let definition = emitter_controller_definition(&statement.keyword);
+    let expected_values = definition.map_or(1, |definition| definition.value_width);
+    let values = statement
+        .arguments
+        .iter()
+        .map(|value| parse_legacy_f32(value))
+        .collect::<Option<Vec<_>>>();
+    let keys = match values {
+        Some(values) if values.len() == expected_values => vec![SemanticEmitterKey {
+            time: 0.0,
+            values,
+        }],
+        _ => {
+            diagnostics.push(ModelDiagnostic {
+                kind:    ModelDiagnosticKind::MalformedValue,
+                message: format!(
+                    "{} expected {expected_values} finite controller values",
+                    statement.keyword
+                ),
+            });
+            Vec::new()
+        }
+    };
+    SemanticEmitterController {
+        name: definition.map_or_else(
+            || statement.keyword.to_ascii_lowercase(),
+            |definition| definition.name().to_string(),
+        ),
+        bezier_keyed: false,
+        keys,
+    }
+}
+
+fn parse_emitter_controller(
+    statement: &AsciiStatement,
+    diagnostics: &mut Vec<ModelDiagnostic>,
+) -> SemanticEmitterController {
+    let lower = statement.keyword.to_ascii_lowercase();
+    let bezier_keyed = lower.ends_with("bezierkey");
+    let name = lower
+        .strip_suffix("bezierkey")
+        .or_else(|| lower.strip_suffix("key"))
+        .unwrap_or(lower.as_str());
+    let definition = emitter_controller_definition(name);
+    let expected_values = definition.map_or(1, |definition| definition.value_width);
+    let keys = statement
+        .payload_rows
+        .iter()
+        .enumerate()
+        .filter_map(|(row_index, row)| {
+            if row.len() != expected_values + 1 {
+                diagnostics.push(ModelDiagnostic {
+                    kind:    ModelDiagnosticKind::MalformedPayloadRow,
+                    message: format!(
+                        "{} row {} expected {} values, got {}",
+                        statement.keyword,
+                        row_index + 1,
+                        expected_values + 1,
+                        row.len()
+                    ),
+                });
+                return None;
+            }
+            let parsed = row
+                .iter()
+                .map(|value| parse_legacy_f32(value))
+                .collect::<Option<Vec<_>>>();
+            match parsed {
+                Some(parsed) => {
+                    let mut parsed = parsed.into_iter();
+                    let time = parsed.next()?;
+                    Some(SemanticEmitterKey {
+                        time,
+                        values: parsed.collect(),
+                    })
+                }
+                None => {
+                    diagnostics.push(ModelDiagnostic {
+                        kind:    ModelDiagnosticKind::MalformedPayloadRow,
+                        message: format!(
+                            "{} row {} contains a non-float value",
+                            statement.keyword,
+                            row_index + 1
+                        ),
+                    });
+                    None
+                }
+            }
+        })
+        .collect();
+    SemanticEmitterController {
+        name: definition.map_or_else(
+            || name.to_string(),
+            |definition| definition.name().to_string(),
+        ),
+        bezier_keyed,
+        keys,
+    }
+}
+
+fn controller_keyword_is(statement: &AsciiStatement, name: &str) -> bool {
+    statement.keyword_is(&format!("{name}key")) || statement.keyword_is(&format!("{name}bezierkey"))
+}
+
+fn record_bezier_controller(statement: &AsciiStatement, name: &str, into: &mut Vec<String>) {
+    if statement
+        .keyword
+        .to_ascii_lowercase()
+        .ends_with("bezierkey")
+        && !into.iter().any(|existing| existing == name)
+    {
+        into.push(name.to_string());
+    }
 }
 
 fn lower_reference_statement(
@@ -2144,9 +3229,24 @@ fn parse_classification(value: &str) -> ModelClassification {
     }
 }
 
+fn binary_classification(value: u8) -> Option<ModelClassification> {
+    match value {
+        1 => Some(ModelClassification::Effect),
+        2 => Some(ModelClassification::Tile),
+        4 => Some(ModelClassification::Character),
+        8 => Some(ModelClassification::Door),
+        0 => None,
+        other => Some(ModelClassification::Other(other.to_string())),
+    }
+}
+
 fn parse_node_kind(value: &str) -> NodeKind {
     match value.to_ascii_lowercase().as_str() {
         "dummy" => NodeKind::Dummy,
+        // NWMax emits PWK/DWK pseudo nodes inside animation hierarchies. The
+        // compiled format has no distinct node-content bit for them; the game
+        // stores them as hierarchy-only dummy nodes.
+        "pwk" | "dwk" => NodeKind::Dummy,
         "trimesh" => NodeKind::Trimesh,
         "danglymesh" => NodeKind::Danglymesh,
         "skin" => NodeKind::Skin,
@@ -2154,6 +3254,7 @@ fn parse_node_kind(value: &str) -> NodeKind {
         "light" => NodeKind::Light,
         "aabb" => NodeKind::Aabb,
         "reference" => NodeKind::Reference,
+        "camera" => NodeKind::Camera,
         "patch" => NodeKind::Patch,
         "animmesh" => NodeKind::Animmesh,
         _ => NodeKind::Other(value.to_string()),
@@ -2395,7 +3496,7 @@ fn parse_float_rows(
         .filter_map(|(row_index, row)| {
             let mut parsed = Vec::with_capacity(row.len());
             for value in row {
-                if let Ok(value) = value.parse::<f32>() {
+                if let Some(value) = parse_legacy_f32(value) {
                     parsed.push(value);
                 } else {
                     diagnostics.push(ModelDiagnostic {
@@ -2493,7 +3594,7 @@ fn parse_f32_arg(
     diagnostics: &mut Vec<ModelDiagnostic>,
 ) -> Option<f32> {
     if let Some(value) = value {
-        if let Ok(value) = value.parse::<f32>() {
+        if let Some(value) = parse_legacy_f32(value) {
             Some(value)
         } else {
             diagnostics.push(ModelDiagnostic {
@@ -2554,10 +3655,10 @@ fn parse_f32_array<const N: usize>(
     let parsed = arguments
         .iter()
         .take(N)
-        .map(|value| value.parse::<f32>())
-        .collect::<Result<Vec<_>, _>>();
+        .map(|value| parse_legacy_f32(value))
+        .collect::<Option<Vec<_>>>();
     match parsed {
-        Ok(values) => match <Vec<f32> as TryInto<[f32; N]>>::try_into(values) {
+        Some(values) => match <Vec<f32> as TryInto<[f32; N]>>::try_into(values) {
             Ok(array) => Some(array),
             Err(_values) => {
                 diagnostics.push(ModelDiagnostic {
@@ -2567,7 +3668,7 @@ fn parse_f32_array<const N: usize>(
                 None
             }
         },
-        Err(_parse_error) => {
+        None => {
             diagnostics.push(ModelDiagnostic {
                 kind:    ModelDiagnosticKind::MalformedValue,
                 message: format!("{keyword} contains a non-float value"),
@@ -2598,10 +3699,10 @@ fn parse_f32_row_array<const N: usize>(
     let parsed = row
         .iter()
         .take(N)
-        .map(|value| value.parse::<f32>())
-        .collect::<Result<Vec<_>, _>>();
+        .map(|value| parse_legacy_f32(value))
+        .collect::<Option<Vec<_>>>();
     match parsed {
-        Ok(values) => match <Vec<f32> as TryInto<[f32; N]>>::try_into(values) {
+        Some(values) => match <Vec<f32> as TryInto<[f32; N]>>::try_into(values) {
             Ok(array) => Some(array),
             Err(_values) => {
                 diagnostics.push(ModelDiagnostic {
@@ -2614,7 +3715,7 @@ fn parse_f32_row_array<const N: usize>(
                 None
             }
         },
-        Err(_parse_error) => {
+        None => {
             diagnostics.push(ModelDiagnostic {
                 kind:    ModelDiagnosticKind::MalformedPayloadRow,
                 message: format!("{keyword} row {} contains a non-float value", row_index + 1),

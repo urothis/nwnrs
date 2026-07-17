@@ -10,25 +10,24 @@ use tracing::instrument;
 
 use crate::mdl::{
     MODEL_RES_TYPE, Model, ModelDiagnostic, ModelDiagnosticKind, ModelError, ModelResult, NodeKind,
+    layout::{
+        AABB_ENTRY_SIZE, AABB_HEADER_SIZE, ANIM_HEADER_SIZE, CONTROLLER_SIZE, DANGLY_HEADER_SIZE,
+        EMITTER_HEADER_SIZE, EVENT_SIZE, FACE_SIZE, FILE_HEADER_SIZE, LIGHT_HEADER_SIZE,
+        MESH_HEADER_SIZE, MESH_HEADER_SIZE_U32, MODEL_HEADER_SIZE, NODE_HEADER_SIZE,
+        REFERENCE_HEADER_SIZE, SKIN_HEADER_SIZE,
+    },
 };
 
-const FILE_HEADER_SIZE: usize = 12;
-const MODEL_HEADER_SIZE: usize = 232;
-const NODE_HEADER_SIZE: usize = 112;
-const LIGHT_HEADER_SIZE: usize = 92;
-const EMITTER_HEADER_SIZE: usize = 216;
-const REFERENCE_HEADER_SIZE: usize = 68;
-const MESH_HEADER_SIZE: usize = 512;
-const SKIN_HEADER_SIZE: usize = 100;
-const ANIM_HEADER_SIZE: usize = 56;
-const DANGLY_HEADER_SIZE: usize = 24;
-const AABB_HEADER_SIZE: usize = 4;
-const CONTROLLER_SIZE: usize = 12;
-const FACE_SIZE: usize = 32;
-const EVENT_SIZE: usize = 36;
-const AABB_ENTRY_SIZE: usize = 36;
+const MAX_TREE_DEPTH: usize = 256;
 
 /// On-disk encoding used by an NWN model payload.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::ModelEncoding;
+/// assert_eq!(ModelEncoding::Ascii, ModelEncoding::Ascii);
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ModelEncoding {
     /// Source-style ASCII MDL text.
@@ -38,6 +37,14 @@ pub enum ModelEncoding {
 }
 
 /// A parsed MDL payload, dispatched by encoding.
+///
+/// # Examples
+///
+/// ```
+/// let parsed = nwnrs_types::mdl::parse_model_bytes(b"beginmodelgeom demo\nendmodelgeom demo\ndonemodel demo\n")?;
+/// assert!(matches!(parsed, nwnrs_types::mdl::ParsedModel::Ascii(_)));
+/// # Ok::<(), nwnrs_types::mdl::ModelError>(())
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub enum ParsedModel {
     /// Parsed ASCII MDL.
@@ -52,6 +59,13 @@ impl ParsedModel {
     /// # Errors
     ///
     /// Returns [`ModelError`] if the file cannot be opened or parsed.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// let parsed = nwnrs_types::mdl::ParsedModel::from_file("model.mdl")?;
+    /// # Ok::<(), nwnrs_types::mdl::ModelError>(())
+    /// ```
     pub fn from_file(path: impl AsRef<Path>) -> ModelResult<Self> {
         let mut file = File::open(path.as_ref())?;
         read_parsed_model(&mut file)
@@ -63,6 +77,15 @@ impl ParsedModel {
     ///
     /// Returns [`ModelError`] if the resource is not an MDL type or parsing
     /// fails.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use nwnrs_types::resman::{CachePolicy, Res};
+    /// fn parse(res: &Res) -> nwnrs_types::mdl::ModelResult<nwnrs_types::mdl::ParsedModel> {
+    ///     nwnrs_types::mdl::ParsedModel::from_res(res, CachePolicy::Use)
+    /// }
+    /// ```
     pub fn from_res(res: &Res, cache_policy: CachePolicy) -> ModelResult<Self> {
         if res.resref().res_type() != MODEL_RES_TYPE {
             return Err(ModelError::msg(format!(
@@ -75,6 +98,14 @@ impl ParsedModel {
 }
 
 /// Top-level compiled MDL header.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::BinaryHeader;
+/// let header = BinaryHeader { binary_id: 0, raw_data_offset: 232, raw_data_size: 0, model_data_size: 232 };
+/// assert_eq!(header.binary_id, 0);
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BinaryHeader {
     /// Always zero for a compiled model.
@@ -88,6 +119,14 @@ pub struct BinaryHeader {
 }
 
 /// One compiled-model array descriptor.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::BinaryArrayDefinition;
+/// let array = BinaryArrayDefinition { pointer: 128, used_entries: 2, allocated_entries: 2 };
+/// assert_eq!(array.used_entries, 2);
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BinaryArrayDefinition {
     /// Model-data offset to the first element.
@@ -98,53 +137,306 @@ pub struct BinaryArrayDefinition {
     pub allocated_entries: u32,
 }
 
-/// Parsed compiled model.
+/// Read-only snapshot of a parsed compiled model.
+///
+/// The typed fields describe the original payload; they are not an editable
+/// serialization graph. Convert the snapshot to
+/// [`SemanticModel`](crate::mdl::SemanticModel) before making changes, then
+/// compile that semantic model into a new snapshot.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use nwnrs_types::mdl::{BinaryModel, ModelResult};
+/// fn load() -> ModelResult<BinaryModel> { BinaryModel::from_file("model.mdl") }
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct BinaryModel {
     /// Original compiled model bytes.
-    pub source_bytes:     Vec<u8>,
+    pub(crate) source_bytes:     Vec<u8>,
     /// File header.
-    pub header:           BinaryHeader,
+    pub(crate) header:           BinaryHeader,
     /// Model name from the compiled header.
-    pub name:             String,
+    pub(crate) name:             String,
     /// Supermodel name from the compiled header.
-    pub supermodel_name:  Option<String>,
+    pub(crate) supermodel_name:  Option<String>,
     /// Raw geometry/model type byte.
-    pub geometry_type:    u8,
+    pub(crate) geometry_type:    u8,
     /// Model flags byte from the compiled header.
-    pub flags:            u8,
+    pub(crate) flags:            u8,
     /// Fog byte from the compiled header.
-    pub fog:              u8,
+    pub(crate) fog:              u8,
     /// Reported geometry node count.
-    pub node_count_hint:  u32,
+    pub(crate) node_count_hint:  u32,
     /// Geometry-root node offset in model data.
-    pub root_node_offset: u32,
+    pub(crate) root_node_offset: u32,
     /// Animation pointer table.
-    pub animation_table:  BinaryArrayDefinition,
+    pub(crate) animation_table:  BinaryArrayDefinition,
     /// Animation scale value from the compiled header.
-    pub animation_scale:  f32,
+    pub(crate) animation_scale:  f32,
     /// Bounding box minimum.
-    pub bound_min:        [f32; 3],
+    pub(crate) bound_min:        [f32; 3],
     /// Bounding box maximum.
-    pub bound_max:        [f32; 3],
+    pub(crate) bound_max:        [f32; 3],
     /// Model radius.
-    pub radius:           f32,
+    pub(crate) radius:           f32,
     /// Geometry tree in source order.
-    pub nodes:            Vec<BinaryNode>,
+    pub(crate) nodes:            Vec<BinaryNode>,
     /// Animations in source order.
-    pub animations:       Vec<BinaryAnimation>,
+    pub(crate) animations:       Vec<BinaryAnimation>,
     /// Gaps or unsupported regions preserved from the original file.
-    pub unknown_blocks:   Vec<UnknownBinaryBlock>,
+    pub(crate) unknown_blocks:   Vec<UnknownBinaryBlock>,
     /// Non-fatal binary parsing diagnostics.
-    pub diagnostics:      Vec<ModelDiagnostic>,
+    pub(crate) diagnostics:      Vec<ModelDiagnostic>,
 }
 
 impl BinaryModel {
+    /// Returns the original compiled payload.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use nwnrs_types::mdl::BinaryModel;
+    /// fn byte_len(model: &BinaryModel) -> usize { model.original_bytes().len() }
+    /// ```
+    #[must_use]
+    pub fn original_bytes(&self) -> &[u8] {
+        &self.source_bytes
+    }
+
+    /// Returns the parsed file header.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use nwnrs_types::mdl::{BinaryHeader, BinaryModel};
+    /// fn header(model: &BinaryModel) -> &BinaryHeader { model.header() }
+    /// ```
+    #[must_use]
+    pub const fn header(&self) -> &BinaryHeader {
+        &self.header
+    }
+
+    /// Returns the model name.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use nwnrs_types::mdl::BinaryModel;
+    /// fn name(model: &BinaryModel) -> &str { model.name() }
+    /// ```
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Returns the supermodel name, if present.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use nwnrs_types::mdl::BinaryModel;
+    /// fn supermodel(model: &BinaryModel) -> Option<&str> { model.supermodel_name() }
+    /// ```
+    #[must_use]
+    pub fn supermodel_name(&self) -> Option<&str> {
+        self.supermodel_name.as_deref()
+    }
+
+    /// Returns the raw geometry/model type byte.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use nwnrs_types::mdl::BinaryModel;
+    /// fn geometry_type(model: &BinaryModel) -> u8 { model.geometry_type() }
+    /// ```
+    #[must_use]
+    pub const fn geometry_type(&self) -> u8 {
+        self.geometry_type
+    }
+
+    /// Returns the compiled model flags byte.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use nwnrs_types::mdl::BinaryModel;
+    /// fn flags(model: &BinaryModel) -> u8 { model.flags() }
+    /// ```
+    #[must_use]
+    pub const fn flags(&self) -> u8 {
+        self.flags
+    }
+
+    /// Returns the compiled fog byte.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use nwnrs_types::mdl::BinaryModel;
+    /// fn fog(model: &BinaryModel) -> u8 { model.fog() }
+    /// ```
+    #[must_use]
+    pub const fn fog(&self) -> u8 {
+        self.fog
+    }
+
+    /// Returns the node-count hint stored in the model header.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use nwnrs_types::mdl::BinaryModel;
+    /// fn node_count(model: &BinaryModel) -> u32 { model.node_count_hint() }
+    /// ```
+    #[must_use]
+    pub const fn node_count_hint(&self) -> u32 {
+        self.node_count_hint
+    }
+
+    /// Returns the geometry-root offset in model data.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use nwnrs_types::mdl::BinaryModel;
+    /// fn root_offset(model: &BinaryModel) -> u32 { model.root_node_offset() }
+    /// ```
+    #[must_use]
+    pub const fn root_node_offset(&self) -> u32 {
+        self.root_node_offset
+    }
+
+    /// Returns the animation pointer table descriptor.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use nwnrs_types::mdl::{BinaryArrayDefinition, BinaryModel};
+    /// fn animations(model: &BinaryModel) -> &BinaryArrayDefinition { model.animation_table() }
+    /// ```
+    #[must_use]
+    pub const fn animation_table(&self) -> &BinaryArrayDefinition {
+        &self.animation_table
+    }
+
+    /// Returns the model animation scale.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use nwnrs_types::mdl::BinaryModel;
+    /// fn scale(model: &BinaryModel) -> f32 { model.animation_scale() }
+    /// ```
+    #[must_use]
+    pub const fn animation_scale(&self) -> f32 {
+        self.animation_scale
+    }
+
+    /// Returns the model bounding-box minimum.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use nwnrs_types::mdl::BinaryModel;
+    /// fn minimum(model: &BinaryModel) -> [f32; 3] { model.bound_min() }
+    /// ```
+    #[must_use]
+    pub const fn bound_min(&self) -> [f32; 3] {
+        self.bound_min
+    }
+
+    /// Returns the model bounding-box maximum.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use nwnrs_types::mdl::BinaryModel;
+    /// fn maximum(model: &BinaryModel) -> [f32; 3] { model.bound_max() }
+    /// ```
+    #[must_use]
+    pub const fn bound_max(&self) -> [f32; 3] {
+        self.bound_max
+    }
+
+    /// Returns the model radius.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use nwnrs_types::mdl::BinaryModel;
+    /// fn radius(model: &BinaryModel) -> f32 { model.radius() }
+    /// ```
+    #[must_use]
+    pub const fn radius(&self) -> f32 {
+        self.radius
+    }
+
+    /// Returns geometry nodes in source order.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use nwnrs_types::mdl::{BinaryModel, BinaryNode};
+    /// fn nodes(model: &BinaryModel) -> &[BinaryNode] { model.nodes() }
+    /// ```
+    #[must_use]
+    pub fn nodes(&self) -> &[BinaryNode] {
+        &self.nodes
+    }
+
+    /// Returns animations in source order.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use nwnrs_types::mdl::{BinaryAnimation, BinaryModel};
+    /// fn animations(model: &BinaryModel) -> &[BinaryAnimation] { model.animations() }
+    /// ```
+    #[must_use]
+    pub fn animations(&self) -> &[BinaryAnimation] {
+        &self.animations
+    }
+
+    /// Returns gaps and unsupported original binary regions.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use nwnrs_types::mdl::{BinaryModel, UnknownBinaryBlock};
+    /// fn unknown(model: &BinaryModel) -> &[UnknownBinaryBlock] { model.unknown_blocks() }
+    /// ```
+    #[must_use]
+    pub fn unknown_blocks(&self) -> &[UnknownBinaryBlock] {
+        &self.unknown_blocks
+    }
+
+    /// Returns non-fatal parser diagnostics.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use nwnrs_types::mdl::{BinaryModel, ModelDiagnostic};
+    /// fn diagnostics(model: &BinaryModel) -> &[ModelDiagnostic] { model.diagnostics() }
+    /// ```
+    #[must_use]
+    pub fn diagnostics(&self) -> &[ModelDiagnostic] {
+        &self.diagnostics
+    }
+
     /// Reads a compiled binary MDL from disk.
     ///
     /// # Errors
     ///
     /// Returns [`ModelError`] if the file cannot be opened or parsed.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// let model = nwnrs_types::mdl::BinaryModel::from_file("compiled.mdl")?;
+    /// # Ok::<(), nwnrs_types::mdl::ModelError>(())
+    /// ```
     pub fn from_file(path: impl AsRef<Path>) -> ModelResult<Self> {
         let mut file = File::open(path.as_ref())?;
         read_binary_model(&mut file)
@@ -156,6 +448,15 @@ impl BinaryModel {
     ///
     /// Returns [`ModelError`] if the resource is not an MDL type or parsing
     /// fails.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use nwnrs_types::resman::{CachePolicy, Res};
+    /// fn parse(res: &Res) -> nwnrs_types::mdl::ModelResult<nwnrs_types::mdl::BinaryModel> {
+    ///     nwnrs_types::mdl::BinaryModel::from_res(res, CachePolicy::Use)
+    /// }
+    /// ```
     pub fn from_res(res: &Res, cache_policy: CachePolicy) -> ModelResult<Self> {
         if res.resref().res_type() != MODEL_RES_TYPE {
             return Err(ModelError::msg(format!(
@@ -169,6 +470,13 @@ impl BinaryModel {
 
 impl BinaryModel {
     /// Returns the first geometry node named `name`, case-insensitively.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use nwnrs_types::mdl::{BinaryModel, BinaryNode};
+    /// fn root(model: &BinaryModel) -> Option<&BinaryNode> { model.node("root") }
+    /// ```
     #[must_use]
     pub fn node(&self, name: &str) -> Option<&BinaryNode> {
         self.nodes
@@ -177,6 +485,13 @@ impl BinaryModel {
     }
 
     /// Returns the first animation named `name`, case-insensitively.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use nwnrs_types::mdl::{BinaryAnimation, BinaryModel};
+    /// fn idle(model: &BinaryModel) -> Option<&BinaryAnimation> { model.animation("idle") }
+    /// ```
     #[must_use]
     pub fn animation(&self, name: &str) -> Option<&BinaryAnimation> {
         self.animations
@@ -186,6 +501,13 @@ impl BinaryModel {
 }
 
 /// One parsed compiled-model node.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use nwnrs_types::mdl::BinaryNode;
+/// fn node_name(node: &BinaryNode) -> &str { &node.name }
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct BinaryNode {
     /// Offset of this node within model data.
@@ -235,6 +557,18 @@ struct BinaryNodeTree {
 }
 
 /// Raw node content flags.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::BinaryNodeContent;
+/// let content = BinaryNodeContent {
+///     raw: 1, has_header: true, has_light: false, has_emitter: false,
+///     has_camera: false, has_reference: false, has_mesh: false,
+///     has_skin: false, has_anim: false, has_dangly: false, has_aabb: false,
+/// };
+/// assert!(content.has_header);
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(clippy::struct_excessive_bools)]
 pub struct BinaryNodeContent {
@@ -263,6 +597,18 @@ pub struct BinaryNodeContent {
 }
 
 /// One parsed controller.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::BinaryController;
+/// let controller = BinaryController {
+///     type_id: 8, row_count: 1, timekey_start: 0, data_start: 1,
+///     raw_column_count: 3, bezier_keyed: false, value_columns: 3,
+///     time_keys: vec![0.0], values: vec![vec![1.0, 2.0, 3.0]],
+/// };
+/// assert_eq!(controller.type_id, 8);
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct BinaryController {
     /// Raw controller type id.
@@ -286,6 +632,14 @@ pub struct BinaryController {
 }
 
 /// One animation event.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::BinaryEvent;
+/// let event = BinaryEvent { time: 0.5, name: "hit".into() };
+/// assert_eq!(event.name, "hit");
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct BinaryEvent {
     /// Event time in seconds.
@@ -295,6 +649,13 @@ pub struct BinaryEvent {
 }
 
 /// One compiled animation block.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use nwnrs_types::mdl::BinaryAnimation;
+/// fn duration(animation: &BinaryAnimation) -> f32 { animation.length }
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct BinaryAnimation {
     /// Offset of the animation header within model data.
@@ -318,6 +679,13 @@ pub struct BinaryAnimation {
 }
 
 /// Light node payload.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use nwnrs_types::mdl::BinaryLight;
+/// fn flare_radius(light: &BinaryLight) -> f32 { light.flare_radius }
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct BinaryLight {
     /// Flare radius.
@@ -347,6 +715,13 @@ pub struct BinaryLight {
 }
 
 /// Emitter flags.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use nwnrs_types::mdl::BinaryEmitterFlags;
+/// fn is_tinted(flags: &BinaryEmitterFlags) -> bool { flags.tinted }
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(clippy::struct_excessive_bools)]
 pub struct BinaryEmitterFlags {
@@ -377,6 +752,13 @@ pub struct BinaryEmitterFlags {
 }
 
 /// Emitter node payload.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use nwnrs_types::mdl::BinaryEmitter;
+/// fn texture(emitter: &BinaryEmitter) -> &str { &emitter.texture }
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct BinaryEmitter {
     /// Dead-space value.
@@ -412,6 +794,14 @@ pub struct BinaryEmitter {
 }
 
 /// Reference node payload.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::BinaryReference;
+/// let reference = BinaryReference { referenced_model_name: "fx_smoke".into(), reattachable: 1 };
+/// assert_eq!(reference.referenced_model_name, "fx_smoke");
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct BinaryReference {
     /// Referenced model name.
@@ -421,6 +811,17 @@ pub struct BinaryReference {
 }
 
 /// One mesh face row.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::BinaryFace;
+/// let face = BinaryFace {
+///     normal: [0.0, 0.0, 1.0], distance: 0.0, surface_id: 0,
+///     adjacent_faces: [u16::MAX; 3], vertex_indices: [0, 1, 2],
+/// };
+/// assert_eq!(face.vertex_indices, [0, 1, 2]);
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct BinaryFace {
     /// Plane normal.
@@ -436,6 +837,13 @@ pub struct BinaryFace {
 }
 
 /// Mesh payload.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use nwnrs_types::mdl::BinaryMesh;
+/// fn vertex_count(mesh: &BinaryMesh) -> usize { mesh.vertices.len() }
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct BinaryMesh {
     /// Face rows.
@@ -464,6 +872,8 @@ pub struct BinaryMesh {
     pub render:            u32,
     /// Transparency hint.
     pub transparency_hint: u32,
+    /// EE mesh render-hint value.
+    pub render_hint:       u32,
     /// Texture bitmap.
     pub texture0:          Option<String>,
     /// Texture1 name.
@@ -480,17 +890,29 @@ pub struct BinaryMesh {
     pub texture_count:     u16,
     /// Rotate-texture flag.
     pub rotate_texture:    u8,
+    /// EE light-mapped flag.
+    pub light_mapped:      u8,
     /// Vertex positions from the raw section.
     pub vertices:          Vec<[f32; 3]>,
     /// UV layers.
     pub uv_sets:           Vec<BinaryUvSet>,
     /// Vertex normals.
     pub normals:           Vec<[f32; 3]>,
+    /// EE tangent rows reconstructed as `xyz + handedness`.
+    pub tangents:          Vec<[f32; 4]>,
     /// Vertex colors.
     pub colors:            Vec<[u8; 4]>,
 }
 
 /// One UV layer from the mesh raw section.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::BinaryUvSet;
+/// let uv = BinaryUvSet { index: 0, coordinates: vec![[0.0, 1.0]] };
+/// assert_eq!(uv.index, 0);
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct BinaryUvSet {
     /// UV set index.
@@ -500,6 +922,13 @@ pub struct BinaryUvSet {
 }
 
 /// Skin payload.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use nwnrs_types::mdl::BinarySkin;
+/// fn vertex_count(skin: &BinarySkin) -> usize { skin.vertex_weights.len() }
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct BinarySkin {
     /// Bone mapping array.
@@ -513,6 +942,13 @@ pub struct BinarySkin {
 }
 
 /// Animmesh payload.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use nwnrs_types::mdl::BinaryAnimMesh;
+/// fn sample_period(mesh: &BinaryAnimMesh) -> f32 { mesh.sample_period }
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct BinaryAnimMesh {
     /// Sample period.
@@ -528,6 +964,14 @@ pub struct BinaryAnimMesh {
 }
 
 /// Danglymesh payload.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::BinaryDangly;
+/// let dangly = BinaryDangly { constraints: vec![1.0], displacement: 0.5, tightness: 0.8, period: 1.0 };
+/// assert_eq!(dangly.constraints.len(), 1);
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct BinaryDangly {
     /// Constraint values.
@@ -541,6 +985,14 @@ pub struct BinaryDangly {
 }
 
 /// AABB payload.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::BinaryAabb;
+/// let aabb = BinaryAabb { root_offset: None, root: None };
+/// assert!(aabb.root.is_none());
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct BinaryAabb {
     /// Root entry pointer.
@@ -550,6 +1002,15 @@ pub struct BinaryAabb {
 }
 
 /// One AABB entry.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use nwnrs_types::mdl::BinaryAabbEntry;
+/// fn bounds(entry: &BinaryAabbEntry) -> ([f32; 3], [f32; 3]) {
+///     (entry.bound_min, entry.bound_max)
+/// }
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct BinaryAabbEntry {
     /// Entry offset within model data.
@@ -573,6 +1034,14 @@ pub struct BinaryAabbEntry {
 }
 
 /// One unparsed or unknown binary block preserved from the file.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::UnknownBinaryBlock;
+/// let block = UnknownBinaryBlock { offset: 12, length: 2, bytes: vec![0xaa, 0xbb] };
+/// assert_eq!(block.length, 2);
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnknownBinaryBlock {
     /// Absolute file offset.
@@ -611,15 +1080,18 @@ impl Model {
 }
 
 /// Detects whether a raw MDL payload is ASCII or compiled.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::{ModelEncoding, detect_model_encoding};
+/// assert_eq!(detect_model_encoding(b"newmodel demo\n"), ModelEncoding::Ascii);
+/// assert_eq!(detect_model_encoding(&[0; 12]), ModelEncoding::Compiled);
+/// ```
 pub fn detect_model_encoding(bytes: &[u8]) -> ModelEncoding {
     if read_u32_at(bytes, 0) == Some(0) {
         return ModelEncoding::Compiled;
     }
-
-    let _prefix = bytes
-        .get(..bytes.len().min(2048))
-        .map(String::from_utf8_lossy)
-        .unwrap_or_default();
     ModelEncoding::Ascii
 }
 
@@ -629,14 +1101,19 @@ pub fn detect_model_encoding(bytes: &[u8]) -> ModelEncoding {
 ///
 /// Returns [`ModelError`] if the payload cannot be parsed as ASCII or compiled
 /// MDL.
+///
+/// # Examples
+///
+/// ```
+/// let parsed = nwnrs_types::mdl::parse_model_bytes(b"beginmodelgeom demo\nendmodelgeom demo\ndonemodel demo\n")?;
+/// assert!(matches!(parsed, nwnrs_types::mdl::ParsedModel::Ascii(_)));
+/// # Ok::<(), nwnrs_types::mdl::ModelError>(())
+/// ```
 pub fn parse_model_bytes(bytes: &[u8]) -> ModelResult<ParsedModel> {
     match detect_model_encoding(bytes) {
-        ModelEncoding::Ascii => {
-            let text = std::str::from_utf8(bytes).map_err(|error| {
-                ModelError::msg(format!("ASCII mdl payload is not valid UTF-8: {error}"))
-            })?;
-            Ok(ParsedModel::Ascii(crate::mdl::parse_ascii_model(text)?))
-        }
+        ModelEncoding::Ascii => Ok(ParsedModel::Ascii(
+            crate::mdl::ascii::parse_ascii_model_bytes(bytes)?,
+        )),
         ModelEncoding::Compiled => Ok(ParsedModel::Compiled(parse_binary_model_bytes(bytes)?)),
     }
 }
@@ -646,6 +1123,15 @@ pub fn parse_model_bytes(bytes: &[u8]) -> ModelResult<ParsedModel> {
 /// # Errors
 ///
 /// Returns [`ModelError`] if the data cannot be read or parsed.
+///
+/// # Examples
+///
+/// ```
+/// let mut source = b"beginmodelgeom demo\nendmodelgeom demo\ndonemodel demo\n".as_slice();
+/// let parsed = nwnrs_types::mdl::read_parsed_model(&mut source)?;
+/// assert!(matches!(parsed, nwnrs_types::mdl::ParsedModel::Ascii(_)));
+/// # Ok::<(), nwnrs_types::mdl::ModelError>(())
+/// ```
 #[instrument(level = "debug", skip_all, err)]
 pub fn read_parsed_model<R: Read>(reader: &mut R) -> ModelResult<ParsedModel> {
     let mut bytes = Vec::new();
@@ -658,11 +1144,21 @@ pub fn read_parsed_model<R: Read>(reader: &mut R) -> ModelResult<ParsedModel> {
 /// # Errors
 ///
 /// Returns [`ModelError`] if the write fails.
+///
+/// # Examples
+///
+/// ```
+/// let ascii = nwnrs_types::mdl::parse_ascii_model("beginmodelgeom demo\nendmodelgeom demo\ndonemodel demo\n")?;
+/// let mut bytes = Vec::new();
+/// nwnrs_types::mdl::write_parsed_model(&mut bytes, &nwnrs_types::mdl::ParsedModel::Ascii(ascii))?;
+/// assert!(!bytes.is_empty());
+/// # Ok::<(), nwnrs_types::mdl::ModelError>(())
+/// ```
 #[instrument(level = "debug", skip_all, err)]
 pub fn write_parsed_model<W: Write>(writer: &mut W, model: &ParsedModel) -> ModelResult<()> {
     match model {
         ParsedModel::Ascii(model) => crate::mdl::write_ascii_model(writer, model),
-        ParsedModel::Compiled(model) => write_binary_model(writer, model),
+        ParsedModel::Compiled(model) => write_original_binary_model(writer, model),
     }
 }
 
@@ -672,6 +1168,15 @@ pub fn write_parsed_model<W: Write>(writer: &mut W, model: &ParsedModel) -> Mode
 ///
 /// Returns [`ModelError`] if the bytes do not conform to the compiled MDL
 /// format.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use nwnrs_types::mdl::{BinaryModel, ModelResult};
+/// fn parse(bytes: &[u8]) -> ModelResult<BinaryModel> {
+///     nwnrs_types::mdl::parse_binary_model_bytes(bytes)
+/// }
+/// ```
 pub fn parse_binary_model_bytes(bytes: &[u8]) -> ModelResult<BinaryModel> {
     let header = parse_binary_header(bytes)?;
     let mut parser = BinaryParser::new(bytes, header.clone());
@@ -684,6 +1189,15 @@ pub fn parse_binary_model_bytes(bytes: &[u8]) -> ModelResult<BinaryModel> {
 ///
 /// Returns [`ModelError`] if the data cannot be read or parsed as a compiled
 /// MDL.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use nwnrs_types::mdl::{BinaryModel, ModelResult};
+/// fn read(reader: &mut impl std::io::Read) -> ModelResult<BinaryModel> {
+///     nwnrs_types::mdl::read_binary_model(reader)
+/// }
+/// ```
 #[instrument(level = "debug", skip_all, err)]
 pub fn read_binary_model<R: Read>(reader: &mut R) -> ModelResult<BinaryModel> {
     let mut bytes = Vec::new();
@@ -691,13 +1205,29 @@ pub fn read_binary_model<R: Read>(reader: &mut R) -> ModelResult<BinaryModel> {
     parse_binary_model_bytes(&bytes)
 }
 
-/// Writes a compiled binary MDL back to its original bytes.
+/// Writes a compiled-model snapshot back to its original bytes.
+///
+/// This function deliberately serializes the immutable original payload. To
+/// write edits, lower the snapshot to
+/// [`SemanticModel`](crate::mdl::SemanticModel) and compile it.
 ///
 /// # Errors
 ///
 /// Returns [`ModelError`] if the write fails.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use nwnrs_types::mdl::{BinaryModel, ModelResult};
+/// fn write(model: &BinaryModel, output: &mut Vec<u8>) -> ModelResult<()> {
+///     nwnrs_types::mdl::write_original_binary_model(output, model)
+/// }
+/// ```
 #[instrument(level = "debug", skip_all, err, fields(model_name = %model.name))]
-pub fn write_binary_model<W: Write>(writer: &mut W, model: &BinaryModel) -> ModelResult<()> {
+pub fn write_original_binary_model<W: Write>(
+    writer: &mut W,
+    model: &BinaryModel,
+) -> ModelResult<()> {
     writer.write_all(&model.source_bytes)?;
     Ok(())
 }
@@ -781,7 +1311,7 @@ impl<'a> BinaryParser<'a> {
         let fog = self.read_model_u8(115)?;
 
         let mut active = BTreeSet::new();
-        let root = self.parse_node(root_node_offset, None, &mut active)?;
+        let root = self.parse_node(root_node_offset, None, &mut active, 0)?;
         let mut nodes = Vec::new();
         flatten_nodes(&root, &mut nodes);
 
@@ -838,7 +1368,7 @@ impl<'a> BinaryParser<'a> {
         let events = self.read_events(&events_def)?;
 
         let mut active = BTreeSet::new();
-        let root = self.parse_node(root_node_offset, None, &mut active)?;
+        let root = self.parse_node(root_node_offset, None, &mut active, 0)?;
         let mut nodes = Vec::new();
         flatten_nodes(&root, &mut nodes);
 
@@ -860,7 +1390,13 @@ impl<'a> BinaryParser<'a> {
         offset: u32,
         parent_offset: Option<u32>,
         active: &mut BTreeSet<u32>,
+        depth: usize,
     ) -> ModelResult<BinaryNodeTree> {
+        if depth > MAX_TREE_DEPTH {
+            return Err(ModelError::msg(format!(
+                "compiled node tree exceeds maximum depth {MAX_TREE_DEPTH} at {offset:#x}"
+            )));
+        }
         self.ensure_model_range(offset, NODE_HEADER_SIZE, "node header")?;
         if !active.insert(offset) {
             self.push_diagnostic(
@@ -875,9 +1411,11 @@ impl<'a> BinaryParser<'a> {
         self.mark_model_range(offset, NODE_HEADER_SIZE);
         let name = self.read_model_string(offset + 32, 32)?.unwrap_or_default();
         let part_number_raw = self.read_model_u32(offset + 28)?;
-        let part_number = (part_number_raw != u32::MAX)
-            .then(|| i32::try_from(part_number_raw).ok())
-            .flatten();
+        // The compiler stores this as a signed 32-bit value. In particular, an
+        // explicit -1 marks animation nodes that target geometry outside this
+        // model. Preserve that distinction instead of treating 0xffff_ffff as
+        // an absent part number.
+        let part_number = Some(i32::from_le_bytes(part_number_raw.to_le_bytes()));
         let color_inherit = self.read_model_u32(offset + 24)?;
         let stored_parent = nonzero(self.read_model_u32(offset + 68)?);
         let children_def = self.read_array_definition(offset + 72)?;
@@ -909,14 +1447,14 @@ impl<'a> BinaryParser<'a> {
         };
         let mesh = if content.has_mesh {
             let parsed = self.parse_mesh(cursor)?;
-            cursor = cursor.saturating_add(u32::try_from(MESH_HEADER_SIZE).unwrap_or(512));
+            cursor = cursor.saturating_add(MESH_HEADER_SIZE_U32);
             Some(parsed)
         } else {
             None
         };
         let skin = if content.has_skin {
             let parsed = self.parse_skin(cursor, mesh.as_ref())?;
-            cursor = cursor.saturating_add(u32::try_from(SKIN_HEADER_SIZE).unwrap_or(100));
+            cursor = cursor.saturating_add(u32::try_from(SKIN_HEADER_SIZE).unwrap_or(192));
             Some(parsed)
         } else {
             None
@@ -947,7 +1485,7 @@ impl<'a> BinaryParser<'a> {
         let child_offsets = self.read_model_pointer_array(&children_def)?;
         let mut children = Vec::new();
         for child_offset in &child_offsets {
-            match self.parse_node(*child_offset, Some(offset), active) {
+            match self.parse_node(*child_offset, Some(offset), active, depth + 1) {
                 Ok(child) => children.push(child),
                 Err(error) => self.push_diagnostic(
                     ModelDiagnosticKind::MalformedValue,
@@ -1080,6 +1618,9 @@ impl<'a> BinaryParser<'a> {
         let p_mdx_texture3 = self.read_model_i32(offset + 464)?;
         let p_mdx_normals = self.read_model_i32(offset + 468)?;
         let p_mdx_colors = self.read_model_i32(offset + 472)?;
+        let p_mdx_tangents = self.read_model_i32(offset + 488)?;
+        let p_mdx_bitangents = self.read_model_i32(offset + 496)?;
+        let light_mapped = self.read_model_u8(offset + 500)?;
         let rotate_texture = self.read_model_u8(offset + 501)?;
 
         let vertex_count_usize = usize::from(vertex_count);
@@ -1102,6 +1643,30 @@ impl<'a> BinaryParser<'a> {
         })
         .collect::<ModelResult<Vec<_>>>()?;
         let normals = self.read_raw_vec3_array(p_mdx_normals, vertex_count_usize)?;
+        let tangent_vectors = self.read_raw_vec3_array(p_mdx_tangents, vertex_count_usize)?;
+        let bitangent_vectors = self.read_raw_vec3_array(p_mdx_bitangents, vertex_count_usize)?;
+        let tangents = tangent_vectors
+            .iter()
+            .enumerate()
+            .map(|(index, tangent)| {
+                let normal = normals.get(index).copied().unwrap_or([0.0, 0.0, 1.0]);
+                let bitangent = bitangent_vectors.get(index).copied().unwrap_or([0.0; 3]);
+                let cross = [
+                    normal[1] * tangent[2] - normal[2] * tangent[1],
+                    normal[2] * tangent[0] - normal[0] * tangent[2],
+                    normal[0] * tangent[1] - normal[1] * tangent[0],
+                ];
+                let handedness =
+                    if cross[0] * bitangent[0] + cross[1] * bitangent[1] + cross[2] * bitangent[2]
+                        < 0.0
+                    {
+                        -1.0
+                    } else {
+                        1.0
+                    };
+                [tangent[0], tangent[1], tangent[2], handedness]
+            })
+            .collect();
         let colors = self.read_raw_rgba_array(p_mdx_colors, vertex_count_usize)?;
 
         Ok(BinaryMesh {
@@ -1118,6 +1683,7 @@ impl<'a> BinaryParser<'a> {
             beaming: self.read_model_u32(offset + 104)?,
             render: self.read_model_u32(offset + 108)?,
             transparency_hint: self.read_model_u32(offset + 112)?,
+            render_hint: self.read_model_u32(offset + 116)?,
             texture0,
             texture1,
             texture2,
@@ -1126,9 +1692,11 @@ impl<'a> BinaryParser<'a> {
             vertex_count,
             texture_count,
             rotate_texture,
+            light_mapped,
             vertices,
             uv_sets,
             normals,
+            tangents,
             colors,
         })
     }
@@ -1158,7 +1726,7 @@ impl<'a> BinaryParser<'a> {
         let vertex_weights = self.read_raw_vec4_array(p_weight_vertex, vertex_count)?;
         let vertex_bone_indices = self.read_raw_u16x4_array(p_bone_ref_index, vertex_count)?;
         let mut bone_parts = Vec::new();
-        for index in 0..17usize {
+        for index in 0..64usize {
             bone_parts
                 .push(self.read_model_u16(offset + 64 + u32::try_from(index * 2).unwrap_or(0))?);
         }
@@ -1225,8 +1793,9 @@ impl<'a> BinaryParser<'a> {
     fn parse_aabb(&mut self, offset: u32) -> ModelResult<BinaryAabb> {
         self.mark_model_range(offset, AABB_HEADER_SIZE);
         let root_offset = nonzero(self.read_model_u32(offset)?);
+        let mut active = BTreeSet::new();
         let root = root_offset
-            .map(|root_offset| self.parse_aabb_entry(root_offset))
+            .map(|root_offset| self.parse_aabb_entry(root_offset, &mut active, 0))
             .transpose()?
             .map(Box::new)
             .map(|entry| *entry);
@@ -1236,27 +1805,44 @@ impl<'a> BinaryParser<'a> {
         })
     }
 
-    fn parse_aabb_entry(&mut self, offset: u32) -> ModelResult<BinaryAabbEntry> {
+    fn parse_aabb_entry(
+        &mut self,
+        offset: u32,
+        active: &mut BTreeSet<u32>,
+        depth: usize,
+    ) -> ModelResult<BinaryAabbEntry> {
+        if depth > MAX_TREE_DEPTH {
+            return Err(ModelError::msg(format!(
+                "compiled AABB tree exceeds maximum depth {MAX_TREE_DEPTH} at {offset:#x}"
+            )));
+        }
+        if !active.insert(offset) {
+            return Err(ModelError::msg(format!(
+                "detected recursive AABB reference at {offset:#x}"
+            )));
+        }
         self.mark_model_range(offset, AABB_ENTRY_SIZE);
         let left_offset = nonzero(self.read_model_u32(offset + 24)?);
         let right_offset = nonzero(self.read_model_u32(offset + 28)?);
-        Ok(BinaryAabbEntry {
+        let entry = BinaryAabbEntry {
             offset,
             bound_min: self.read_model_vec3(offset)?,
             bound_max: self.read_model_vec3(offset + 12)?,
             left_offset,
             right_offset,
             leaf_part: self.read_model_i32(offset + 32)?,
-            plane: self.read_model_u32(offset + 32)?,
+            plane: self.read_model_u32(offset + 36)?,
             left: left_offset
-                .map(|left| self.parse_aabb_entry(left))
+                .map(|left| self.parse_aabb_entry(left, active, depth + 1))
                 .transpose()?
                 .map(Box::new),
             right: right_offset
-                .map(|right| self.parse_aabb_entry(right))
+                .map(|right| self.parse_aabb_entry(right, active, depth + 1))
                 .transpose()?
                 .map(Box::new),
-        })
+        };
+        active.remove(&offset);
+        Ok(entry)
     }
 
     fn parse_controllers(
@@ -1278,6 +1864,7 @@ impl<'a> BinaryParser<'a> {
         let byte_len = used
             .checked_mul(CONTROLLER_SIZE)
             .ok_or_else(|| ModelError::msg("controller byte length overflow"))?;
+        self.ensure_model_range(headers.pointer, byte_len, "controller header array")?;
         self.mark_model_range(headers.pointer, byte_len);
 
         for index in 0..used {
@@ -1363,6 +1950,7 @@ impl<'a> BinaryParser<'a> {
         let byte_len = used
             .checked_mul(FACE_SIZE)
             .ok_or_else(|| ModelError::msg("face byte length overflow"))?;
+        self.ensure_model_range(def.pointer, byte_len, "face array")?;
         self.mark_model_range(def.pointer, byte_len);
 
         let mut faces = Vec::with_capacity(used);
@@ -1406,6 +1994,7 @@ impl<'a> BinaryParser<'a> {
         let byte_len = used
             .checked_mul(EVENT_SIZE)
             .ok_or_else(|| ModelError::msg("event byte length overflow"))?;
+        self.ensure_model_range(def.pointer, byte_len, "event array")?;
         self.mark_model_range(def.pointer, byte_len);
 
         let mut events = Vec::with_capacity(used);
@@ -1444,6 +2033,7 @@ impl<'a> BinaryParser<'a> {
         let byte_len = used
             .checked_mul(4)
             .ok_or_else(|| ModelError::msg("array byte length overflow"))?;
+        self.ensure_model_range(def.pointer, byte_len, "u32 array")?;
         self.mark_model_range(def.pointer, byte_len);
         let mut values = Vec::with_capacity(used);
         for index in 0..used {
@@ -1468,6 +2058,7 @@ impl<'a> BinaryParser<'a> {
         let byte_len = count
             .checked_mul(2)
             .ok_or_else(|| ModelError::msg("u16 array byte length overflow"))?;
+        self.ensure_model_range(pointer, byte_len, "u16 array")?;
         self.mark_model_range(pointer, byte_len);
         let mut values = Vec::with_capacity(count);
         for index in 0..count {
@@ -1495,6 +2086,7 @@ impl<'a> BinaryParser<'a> {
         let byte_len = used
             .checked_mul(4)
             .ok_or_else(|| ModelError::msg("float array byte length overflow"))?;
+        self.ensure_model_range(def.pointer, byte_len, "float array")?;
         self.mark_model_range(def.pointer, byte_len);
         let mut values = Vec::with_capacity(used);
         for index in 0..used {
@@ -1533,6 +2125,7 @@ impl<'a> BinaryParser<'a> {
         let byte_len = count
             .checked_mul(12)
             .ok_or_else(|| ModelError::msg("vec3 array byte length overflow"))?;
+        self.ensure_model_range(pointer, byte_len, "vec3 array")?;
         self.mark_model_range(pointer, byte_len);
         let mut values = Vec::with_capacity(count);
         for index in 0..count {
@@ -1559,6 +2152,7 @@ impl<'a> BinaryParser<'a> {
         let byte_len = count
             .checked_mul(8)
             .ok_or_else(|| ModelError::msg("vec2 array byte length overflow"))?;
+        self.ensure_model_range(pointer, byte_len, "vec2 array")?;
         self.mark_model_range(pointer, byte_len);
         let mut values = Vec::with_capacity(count);
         for index in 0..count {
@@ -1583,6 +2177,10 @@ impl<'a> BinaryParser<'a> {
         let byte_len = count
             .checked_mul(12)
             .ok_or_else(|| ModelError::msg("raw vec3 byte length overflow"))?;
+        if let Err(error) = self.ensure_raw_range(raw_offset, byte_len, "raw vec3 array") {
+            self.push_diagnostic(ModelDiagnosticKind::MalformedValue, error.to_string());
+            return Ok(Vec::new());
+        }
         self.mark_raw_range(raw_offset, byte_len);
         let mut values = Vec::with_capacity(count);
         for index in 0..count {
@@ -1607,6 +2205,10 @@ impl<'a> BinaryParser<'a> {
         let byte_len = count
             .checked_mul(16)
             .ok_or_else(|| ModelError::msg("raw vec4 byte length overflow"))?;
+        if let Err(error) = self.ensure_raw_range(raw_offset, byte_len, "raw vec4 array") {
+            self.push_diagnostic(ModelDiagnosticKind::MalformedValue, error.to_string());
+            return Ok(Vec::new());
+        }
         self.mark_raw_range(raw_offset, byte_len);
         let mut values = Vec::with_capacity(count);
         for index in 0..count {
@@ -1636,6 +2238,10 @@ impl<'a> BinaryParser<'a> {
         let byte_len = count
             .checked_mul(8)
             .ok_or_else(|| ModelError::msg("raw u16x4 byte length overflow"))?;
+        if let Err(error) = self.ensure_raw_range(raw_offset, byte_len, "raw u16x4 array") {
+            self.push_diagnostic(ModelDiagnosticKind::MalformedValue, error.to_string());
+            return Ok(Vec::new());
+        }
         self.mark_raw_range(raw_offset, byte_len);
         let mut values = Vec::with_capacity(count);
         for index in 0..count {
@@ -1665,6 +2271,10 @@ impl<'a> BinaryParser<'a> {
         let byte_len = count
             .checked_mul(8)
             .ok_or_else(|| ModelError::msg("raw vec2 byte length overflow"))?;
+        if let Err(error) = self.ensure_raw_range(raw_offset, byte_len, "raw vec2 array") {
+            self.push_diagnostic(ModelDiagnosticKind::MalformedValue, error.to_string());
+            return Ok(Vec::new());
+        }
         self.mark_raw_range(raw_offset, byte_len);
         let mut values = Vec::with_capacity(count);
         for index in 0..count {
@@ -1686,12 +2296,14 @@ impl<'a> BinaryParser<'a> {
         }
         let raw_offset = u32::try_from(pointer)
             .map_err(|error| ModelError::msg(format!("raw rgba pointer out of range: {error}")))?;
-        self.mark_raw_range(
-            raw_offset,
-            count
-                .checked_mul(4)
-                .ok_or_else(|| ModelError::msg("raw rgba byte length overflow"))?,
-        );
+        let byte_len = count
+            .checked_mul(4)
+            .ok_or_else(|| ModelError::msg("raw rgba byte length overflow"))?;
+        if let Err(error) = self.ensure_raw_range(raw_offset, byte_len, "raw rgba array") {
+            self.push_diagnostic(ModelDiagnosticKind::MalformedValue, error.to_string());
+            return Ok(Vec::new());
+        }
+        self.mark_raw_range(raw_offset, byte_len);
         let mut values = Vec::with_capacity(count);
         for index in 0..count {
             let item_offset = usize::try_from(raw_offset)
@@ -2006,6 +2618,21 @@ impl<'a> BinaryParser<'a> {
         }
         Ok(())
     }
+
+    fn ensure_raw_range(&self, offset: u32, len: usize, label: &str) -> ModelResult<()> {
+        let len_u32 = u32::try_from(len)
+            .map_err(|error| ModelError::msg(format!("{label} length out of range: {error}")))?;
+        let end = offset
+            .checked_add(len_u32)
+            .ok_or_else(|| ModelError::msg(format!("{label} offset overflow at {offset:#x}")))?;
+        if end > self.header.raw_data_size {
+            return Err(ModelError::msg(format!(
+                "{label} at {offset:#x} extends past raw data size {:#x}",
+                self.header.raw_data_size
+            )));
+        }
+        Ok(())
+    }
 }
 
 fn flatten_nodes(node: &BinaryNodeTree, into: &mut Vec<BinaryNode>) {
@@ -2032,6 +2659,8 @@ fn node_kind_from_content(content: BinaryNodeContent) -> NodeKind {
         NodeKind::Aabb
     } else if content.has_mesh {
         NodeKind::Trimesh
+    } else if content.has_camera {
+        NodeKind::Camera
     } else {
         NodeKind::Dummy
     }
@@ -2089,7 +2718,11 @@ fn trimmed_cstring(bytes: &[u8]) -> Option<String> {
     if trimmed.is_empty() {
         None
     } else {
-        Some(String::from_utf8_lossy(&trimmed).trim().to_string())
+        Some(
+            crate::mdl::ascii::text::decode_model_text(&trimmed)
+                .trim()
+                .to_string(),
+        )
     }
 }
 
