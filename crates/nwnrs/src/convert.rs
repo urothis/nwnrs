@@ -1,6 +1,6 @@
 use std::{
     ffi::OsStr,
-    fs::File,
+    fs::{self, File},
     io::{Cursor, Write},
     path::Path,
 };
@@ -127,31 +127,44 @@ fn run_convert_model(cmd: &ConvertCmd) -> Result<(), String> {
 
     let parsed = mdl::ParsedModel::from_file(&cmd.input)
         .map_err(|error| format!("failed to parse {} as MDL: {error}", cmd.input.display()))?;
-    let mut output_file = File::create(output)
-        .map_err(|error| format!("failed to create {}: {error}", output.display()))?;
+    let mut output_bytes = Vec::new();
 
     match parsed {
         mdl::ParsedModel::Ascii(model) => {
-            let compiled = mdl::compile_ascii_model(&model).map_err(|error| {
-                format!(
-                    "failed to rebuild compiled MDL from {}: {error}",
-                    cmd.input.display()
-                )
-            })?;
-            mdl::write_model(&mut output_file, &compiled)
-                .map_err(|error| format!("failed to write {}: {error}", output.display()))
+            if let Ok(restored) = mdl::restore_compiled_model(&model) {
+                mdl::write_model(&mut output_bytes, &restored)
+                    .map_err(|error| format!("failed to encode {}: {error}", output.display()))?;
+            } else {
+                let compiled = mdl::compile_ascii_model(&model).map_err(|error| {
+                    format!(
+                        "failed to compile ASCII MDL {}: {error}",
+                        cmd.input.display()
+                    )
+                })?;
+                mdl::write_original_binary_model(&mut output_bytes, &compiled)
+                    .map_err(|error| format!("failed to encode {}: {error}", output.display()))?;
+            }
         }
         mdl::ParsedModel::Compiled(model) => {
-            let ascii = mdl::lower_binary_model_to_ascii(&model).map_err(|error| {
+            let ascii = mdl::lower_binary_model_to_ascii_with_options(
+                &model,
+                mdl::BinaryToAsciiOptions {
+                    embed_original_binary: cmd.preserve_compiled_source,
+                },
+            )
+            .map_err(|error| {
                 format!(
                     "failed to lower compiled MDL {} to ascii: {error}",
                     cmd.input.display()
                 )
             })?;
-            mdl::write_ascii_model(&mut output_file, &ascii)
-                .map_err(|error| format!("failed to write {}: {error}", output.display()))
+            mdl::write_ascii_model(&mut output_bytes, &ascii)
+                .map_err(|error| format!("failed to encode {}: {error}", output.display()))?;
         }
     }
+
+    fs::write(output, output_bytes)
+        .map_err(|error| format!("failed to write {}: {error}", output.display()))
 }
 
 fn read_input_image(path: &Path) -> Result<DecodedImage, String> {
@@ -418,6 +431,7 @@ mod tests {
             animation: None,
             time: None,
             list_animations: false,
+            preserve_compiled_source: false,
             input,
             output: Some(output),
         }
@@ -575,7 +589,7 @@ mod tests {
 
         let ascii = mdl::AsciiModel::from_file(&output).expect("read canonical ascii mdl");
         assert_eq!(ascii.geometry_name, "a_ba2");
-        assert!(ascii.to_text().contains("# nwnrs-compiled-source begin"));
+        assert!(!ascii.to_text().contains("# nwnrs-compiled-source begin"));
         Ok(())
     }
 
@@ -591,8 +605,49 @@ mod tests {
             .expect("convert ascii mdl to compiled");
 
         let compiled = mdl::BinaryModel::from_file(&output).expect("read compiled mdl");
-        assert_eq!(compiled.name, "a_ba2");
-        assert_eq!(compiled.animations.len(), 20);
+        assert_eq!(compiled.name(), "a_ba2");
+        assert_eq!(compiled.animations().len(), 20);
+        Ok(())
+    }
+
+    #[test]
+    fn failed_mdl_compilation_preserves_existing_output() -> Result<(), Box<dyn Error>> {
+        let temp_dir = unique_test_dir("convert-invalid-mdl");
+        let input = temp_dir.join("invalid.mdl");
+        let output = temp_dir.join("existing.mdl");
+        fs::write(
+            &input,
+            b"newmodel wrong\nbeginmodelgeom demo\nnode dummy demo\nparent NULL\nendnode\n\
+              endmodelgeom demo\ndonemodel demo\n",
+        )?;
+        fs::write(&output, b"existing output")?;
+
+        let error = run_convert(&base_convert_cmd(input, output.clone()))
+            .expect_err("invalid semantic model must fail compilation");
+
+        assert!(error.contains("failed to compile ASCII MDL"), "{error}");
+        assert_eq!(fs::read(output)?, b"existing output");
+        Ok(())
+    }
+
+    #[test]
+    fn unchanged_compiled_ascii_compiled_conversion_is_byte_exact() -> Result<(), Box<dyn Error>> {
+        let input = match compiled_mdl_fixture_path() {
+            Ok(path) => path,
+            Err(error) => return skip_if_game_resources_unavailable(error),
+        };
+        let original = fs::read(&input)?;
+        let temp_dir = unique_test_dir("convert-compiled-ascii-compiled");
+        let ascii = temp_dir.join("a_ba2_ascii.mdl");
+        let rebuilt = temp_dir.join("a_ba2_rebuilt.mdl");
+
+        let mut decompile = base_convert_cmd(input, ascii.clone());
+        decompile.preserve_compiled_source = true;
+        run_convert(&decompile).expect("convert compiled mdl to reversible ascii");
+        run_convert(&base_convert_cmd(ascii, rebuilt.clone()))
+            .expect("restore compiled mdl from unchanged ascii");
+
+        assert_eq!(fs::read(rebuilt)?, original);
         Ok(())
     }
 
@@ -607,10 +662,9 @@ mod tests {
         let res = require_game_resource(demand_resource("a_ba2", mdl::MODEL_RES_TYPE))?;
         let binary = mdl::BinaryModel::from_res(&res, CachePolicy::Use)?;
         let ascii = mdl::lower_binary_model_to_ascii(&binary)?;
-        Ok(materialize_bytes_to_temp_file(
-            &ascii.to_text().into_bytes(),
-            "a_ba2_ascii.mdl",
-        )?)
+        let mut bytes = Vec::new();
+        mdl::write_ascii_model(&mut bytes, &ascii)?;
+        Ok(materialize_bytes_to_temp_file(&bytes, "a_ba2_ascii.mdl")?)
     }
 
     #[test]
@@ -659,6 +713,7 @@ mod tests {
             supermodel:        None,
             classification:    None,
             animation_scale:   None,
+            ignore_fog:        None,
             coordinate_system: mdl::NwnCoordinateSystem::AuroraSource,
             nodes:             Vec::new(),
             meshes:            Vec::new(),

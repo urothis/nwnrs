@@ -7,7 +7,7 @@ use nwnrs_types::{
 };
 
 use crate::mdl::{
-    MODEL_RES_TYPE, ModelError, ModelResult, NwnAppearanceOverrides, NwnScene,
+    MODEL_RES_TYPE, ModelError, ModelResult, NwnAnimation, NwnAppearanceOverrides, NwnScene,
     apply_appearance_overrides,
 };
 
@@ -246,13 +246,145 @@ fn load_scene_from_resman_with_overrides(
     model_name: &str,
     overrides: &NwnAppearanceOverrides,
 ) -> ModelResult<NwnScene> {
+    let mut loading = BTreeSet::new();
+    load_scene_with_supermodels(resman, model_name, overrides, &mut loading)
+}
+
+fn load_scene_with_supermodels(
+    resman: &mut ResMan,
+    model_name: &str,
+    overrides: &NwnAppearanceOverrides,
+    loading: &mut BTreeSet<String>,
+) -> ModelResult<NwnScene> {
+    let normalized_name = model_name.to_ascii_lowercase();
+    if !loading.insert(normalized_name.clone()) {
+        return Err(ModelError::msg(format!(
+            "supermodel cycle detected while loading {model_name}.mdl"
+        )));
+    }
     let resref = ResRef::new(model_name.to_string(), MODEL_RES_TYPE)
         .map_err(|error| ModelError::msg(format!("invalid mdl resref {model_name}: {error}")))?;
     let res = resman
         .get(&resref)
         .ok_or_else(|| ModelError::msg(format!("model not found in ResMan: {model_name}.mdl")))?;
-    let scene = NwnScene::from_auto_res(&res, CachePolicy::Use)?;
-    Ok(apply_appearance_overrides(&scene, overrides))
+    let mut scene =
+        apply_appearance_overrides(&NwnScene::from_auto_res(&res, CachePolicy::Use)?, overrides);
+    let supermodel_name = scene
+        .supermodel
+        .as_deref()
+        .map(str::trim)
+        .filter(|name| !name.is_empty() && !name.eq_ignore_ascii_case("null"))
+        .filter(|name| !name.eq_ignore_ascii_case(model_name))
+        .map(str::to_string);
+    if let Some(supermodel_name) = supermodel_name {
+        let supermodel = load_scene_with_supermodels(resman, &supermodel_name, overrides, loading)?;
+        inherit_supermodel_animations(&mut scene, &supermodel);
+    }
+    loading.remove(&normalized_name);
+    Ok(scene)
+}
+
+/// Inherits animations from an already-resolved supermodel into `scene`.
+///
+/// Locally authored animations win by name. Inherited node tracks are matched
+/// case-insensitively, the supermodel root is remapped to the child root, and
+/// inherited translation keys honor the child's `setanimationscale` value.
+/// Returns the number of inherited animations added.
+pub fn inherit_supermodel_animations(scene: &mut NwnScene, supermodel: &NwnScene) -> usize {
+    let child_root = scene_root_index(scene);
+    let super_root_name = scene_root_index(supermodel)
+        .and_then(|index| supermodel.nodes.get(index))
+        .map(|node| node.name.clone())
+        .unwrap_or_else(|| supermodel.name.clone());
+    let animation_scale = scene.animation_scale.unwrap_or(1.0);
+    let inherited = supermodel
+        .animations
+        .iter()
+        .filter(|animation| {
+            !scene
+                .animations
+                .iter()
+                .any(|local| local.name.eq_ignore_ascii_case(&animation.name))
+        })
+        .filter_map(|animation| {
+            remap_supermodel_animation(
+                scene,
+                animation,
+                super_root_name.as_str(),
+                child_root,
+                animation_scale,
+            )
+        })
+        .collect::<Vec<_>>();
+    let added = inherited.len();
+    scene.animations.extend(inherited);
+    added
+}
+
+fn scene_root_index(scene: &NwnScene) -> Option<usize> {
+    scene
+        .nodes
+        .iter()
+        .position(|node| node.parent.is_none() && node.name.eq_ignore_ascii_case(&scene.name))
+        .or_else(|| scene.nodes.iter().position(|node| node.parent.is_none()))
+}
+
+fn remap_supermodel_animation(
+    scene: &NwnScene,
+    animation: &NwnAnimation,
+    super_root_name: &str,
+    child_root: Option<usize>,
+    animation_scale: f32,
+) -> Option<NwnAnimation> {
+    let mut inherited = animation.clone();
+    inherited.model_name = scene.name.clone();
+    inherited.node_tracks = animation
+        .node_tracks
+        .iter()
+        .filter_map(|source_track| {
+            let target_index = if source_track
+                .target_name
+                .eq_ignore_ascii_case(super_root_name)
+            {
+                child_root
+            } else {
+                scene.nodes.iter().position(|node| {
+                    node.name
+                        .eq_ignore_ascii_case(source_track.target_name.as_str())
+                })
+            }?;
+            let mut track = source_track.clone();
+            track.target_node = Some(target_index);
+            track.target_name = scene.nodes.get(target_index)?.name.clone();
+            if animation_scale != 1.0 {
+                for key in &mut track.transform.translation_keys {
+                    for value in &mut key.value {
+                        *value *= animation_scale;
+                    }
+                }
+            }
+            Some(track)
+        })
+        .collect();
+    inherited.root_node = animation
+        .root_name
+        .as_deref()
+        .and_then(|name| {
+            if name.eq_ignore_ascii_case(super_root_name) {
+                child_root
+            } else {
+                scene
+                    .nodes
+                    .iter()
+                    .position(|node| node.name.eq_ignore_ascii_case(name))
+            }
+        })
+        .or(child_root);
+    inherited.root_name = inherited
+        .root_node
+        .and_then(|index| scene.nodes.get(index))
+        .map(|node| node.name.clone());
+    (!inherited.node_tracks.is_empty()).then_some(inherited)
 }
 
 fn creature_appearance_row_from_blueprint(
@@ -1201,5 +1333,162 @@ fn gff_u8(value: Option<&GffValue>) -> Option<u8> {
         GffValue::Dword(value) => u8::try_from(*value).ok(),
         GffValue::Int(value) => u8::try_from(*value).ok(),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use nwnrs_types::resman::{ResContainer, ResMan, ResolvedResRef, read_resmemfile};
+
+    use crate::mdl::{
+        NwnAppearanceOverrides, inherit_supermodel_animations, load_composed_scene_from_resman,
+        parse_scene_model,
+    };
+
+    #[test]
+    fn inherits_and_remaps_supermodel_animations() {
+        let supermodel = parse_scene_model(
+            "\
+newmodel super_root
+setsupermodel super_root null
+setanimationscale 1
+beginmodelgeom super_root
+node dummy super_root
+  parent NULL
+endnode
+node dummy Bone
+  parent super_root
+endnode
+endmodelgeom super_root
+newanim walk super_root
+  length 1
+  animroot super_root
+  node dummy super_root
+    parent NULL
+    positionkey 1
+      0 1 0 0
+  endnode
+  node dummy bone
+    parent super_root
+    positionkey 1
+      0 0 2 0
+  endnode
+doneanim walk super_root
+newanim idle super_root
+  length 1
+  node dummy Bone
+    parent super_root
+  endnode
+doneanim idle super_root
+donemodel super_root
+",
+        )
+        .unwrap_or_else(|error| panic!("parse supermodel: {error}"));
+        let mut child = parse_scene_model(
+            "\
+newmodel child_root
+setsupermodel child_root super_root
+setanimationscale 2
+beginmodelgeom child_root
+node dummy child_root
+  parent NULL
+endnode
+node dummy BONE
+  parent child_root
+endnode
+endmodelgeom child_root
+newanim idle child_root
+  length 1
+  node dummy BONE
+    parent child_root
+  endnode
+doneanim idle child_root
+donemodel child_root
+",
+        )
+        .unwrap_or_else(|error| panic!("parse child: {error}"));
+
+        assert_eq!(inherit_supermodel_animations(&mut child, &supermodel), 1);
+        assert_eq!(child.animations.len(), 2);
+        let walk = child
+            .animation("walk")
+            .unwrap_or_else(|| panic!("missing inherited walk"));
+        assert_eq!(walk.model_name, "child_root");
+        assert_eq!(walk.root_name.as_deref(), Some("child_root"));
+        let root = walk
+            .node_track("child_root")
+            .unwrap_or_else(|| panic!("missing remapped root track"));
+        assert_eq!(root.target_node, Some(0));
+        assert_eq!(
+            root.transform.translation_keys.first().map(|key| key.value),
+            Some([2.0, 0.0, 0.0])
+        );
+        let bone = walk
+            .node_track("BONE")
+            .unwrap_or_else(|| panic!("missing case-remapped bone track"));
+        assert_eq!(bone.target_node, Some(1));
+        assert_eq!(
+            bone.transform.translation_keys.first().map(|key| key.value),
+            Some([0.0, 4.0, 0.0])
+        );
+    }
+
+    #[test]
+    fn resman_loader_resolves_supermodel_chain() {
+        let mut manager = ResMan::new(1);
+        for (label, filename, contents) in [
+            (
+                "super",
+                "base.mdl",
+                "\
+newmodel base
+setsupermodel base null
+beginmodelgeom base
+node dummy base
+  parent NULL
+endnode
+endmodelgeom base
+newanim walk base
+  length 1
+  node dummy base
+    parent NULL
+    positionkey 1
+      0 1 0 0
+  endnode
+doneanim walk base
+donemodel base
+",
+            ),
+            (
+                "child",
+                "child.mdl",
+                "\
+newmodel child
+setsupermodel child base
+beginmodelgeom child
+node dummy child
+  parent NULL
+endnode
+endmodelgeom child
+donemodel child
+",
+            ),
+        ] {
+            let resref = ResolvedResRef::from_filename(filename)
+                .unwrap_or_else(|error| panic!("resolve {filename}: {error}"));
+            let container = read_resmemfile(label.to_string(), resref.into(), contents.as_bytes())
+                .unwrap_or_else(|error| panic!("build {filename}: {error}"));
+            manager.add(Arc::new(container) as Arc<dyn ResContainer>);
+        }
+
+        let composed = load_composed_scene_from_resman(
+            &mut manager,
+            "child",
+            &NwnAppearanceOverrides::default(),
+        )
+        .unwrap_or_else(|error| panic!("load composed child: {error}"));
+        assert!(composed.scene.animation("walk").is_some());
     }
 }

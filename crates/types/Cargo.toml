@@ -67,7 +67,7 @@ key = ["checksums", "compressedbuf", "exo", "resman", "dep:indexmap"]
 localization = []
 lru = []
 masterlist = ["dep:reqwest", "dep:serde", "dep:serde_json"]
-mdl = ["gff", "resman", "twoda"]
+mdl = ["gff", "mtr", "resman", "twoda", "txi"]
 mtr = ["resman"]
 nwsync = [
     "checksums",

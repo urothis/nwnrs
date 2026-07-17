@@ -1,3 +1,6 @@
+mod animation;
+mod pose;
+
 use std::{
     collections::BTreeMap,
     fs::File,
@@ -5,17 +8,21 @@ use std::{
     path::Path,
 };
 
+pub use animation::*;
 use nwnrs_types::resman::prelude::*;
+pub use pose::*;
 use tracing::instrument;
 
+pub use crate::mdl::controllers::NwnEmitterController;
 use crate::mdl::{
     AnimationEvent, MODEL_RES_TYPE, Model, ModelClassification, ModelDiagnostic,
     ModelDiagnosticKind, ModelError, ModelResult, NodeKind, ScalarKey, SemanticAnimation,
-    SemanticAnimationNode, SemanticEmitter, SemanticEmitterProperty, SemanticFace, SemanticHeader,
-    SemanticLight, SemanticMaterial, SemanticMesh, SemanticModel, SemanticNode,
+    SemanticAnimationNode, SemanticController, SemanticDangly, SemanticEmitter,
+    SemanticEmitterController, SemanticEmitterKey, SemanticEmitterProperty, SemanticFace,
+    SemanticHeader, SemanticLight, SemanticMaterial, SemanticMesh, SemanticModel, SemanticNode,
     SemanticPropertyValue, SemanticReference, SemanticSkinWeight, SemanticTextureBinding,
-    SemanticUvLayer, Vec3Key, Vec4Key, parse_semantic_model, parse_semantic_model_auto,
-    read_semantic_model, read_semantic_model_auto,
+    SemanticUvLayer, Vec3Key, Vec4Key, controllers::emitter_controller_definition,
+    parse_semantic_model, parse_semantic_model_auto, read_semantic_model, read_semantic_model_auto,
 };
 
 /// An engine-neutral scene representation lowered from a semantic NWN model.
@@ -24,6 +31,14 @@ use crate::mdl::{
 /// downstream renderers or tools can preserve stable references back to the
 /// source model. This layer makes normalization explicit without erasing NWN
 /// model concepts such as references, helpers, and authored animation names.
+///
+/// # Examples
+///
+/// ```
+/// let scene = nwnrs_types::mdl::parse_scene_model("beginmodelgeom demo\nendmodelgeom demo\ndonemodel demo\n")?;
+/// assert_eq!(scene.name, "demo");
+/// # Ok::<(), nwnrs_types::mdl::ModelError>(())
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct NwnScene {
     /// Model name.
@@ -34,6 +49,8 @@ pub struct NwnScene {
     pub classification:    Option<ModelClassification>,
     /// Optional animation scale.
     pub animation_scale:   Option<f32>,
+    /// Optional compiled-model fog override (`ignorefog`).
+    pub ignore_fog:        Option<i32>,
     /// Coordinate system used by this scene.
     pub coordinate_system: NwnCoordinateSystem,
     /// Scene graph nodes in source order.
@@ -118,6 +135,13 @@ impl NwnScene {
     /// # Errors
     ///
     /// Returns [`ModelError`] if the file cannot be opened or parsed.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// let scene = nwnrs_types::mdl::NwnScene::from_file("model.mdl")?;
+    /// # Ok::<(), nwnrs_types::mdl::ModelError>(())
+    /// ```
     pub fn from_file(path: impl AsRef<Path>) -> ModelResult<Self> {
         let mut file = File::open(path.as_ref())?;
         read_scene_model(&mut file)
@@ -129,6 +153,13 @@ impl NwnScene {
     /// # Errors
     ///
     /// Returns [`ModelError`] if the file cannot be opened or parsed.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// let scene = nwnrs_types::mdl::NwnScene::from_auto_file("model.mdl")?;
+    /// # Ok::<(), nwnrs_types::mdl::ModelError>(())
+    /// ```
     pub fn from_auto_file(path: impl AsRef<Path>) -> ModelResult<Self> {
         let mut file = File::open(path.as_ref())?;
         read_scene_model_auto(&mut file)
@@ -140,6 +171,15 @@ impl NwnScene {
     ///
     /// Returns [`ModelError`] if the resource is not an MDL type or lowering
     /// fails.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use nwnrs_types::resman::{CachePolicy, Res};
+    /// fn scene(res: &Res) -> nwnrs_types::mdl::ModelResult<nwnrs_types::mdl::NwnScene> {
+    ///     nwnrs_types::mdl::NwnScene::from_res(res, CachePolicy::Use)
+    /// }
+    /// ```
     pub fn from_res(res: &Res, cache_policy: CachePolicy) -> ModelResult<Self> {
         if res.resref().res_type() != MODEL_RES_TYPE {
             return Err(ModelError::msg(format!(
@@ -159,6 +199,15 @@ impl NwnScene {
     ///
     /// Returns [`ModelError`] if the resource is not an MDL type or lowering
     /// fails.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use nwnrs_types::resman::{CachePolicy, Res};
+    /// fn scene(res: &Res) -> nwnrs_types::mdl::ModelResult<nwnrs_types::mdl::NwnScene> {
+    ///     nwnrs_types::mdl::NwnScene::from_auto_res(res, CachePolicy::Use)
+    /// }
+    /// ```
     pub fn from_auto_res(res: &Res, cache_policy: CachePolicy) -> ModelResult<Self> {
         if res.resref().res_type() != MODEL_RES_TYPE {
             return Err(ModelError::msg(format!(
@@ -173,6 +222,13 @@ impl NwnScene {
 }
 
 /// Coordinate system metadata for the lowered scene.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::NwnCoordinateSystem;
+/// assert_eq!(NwnCoordinateSystem::AuroraSource, NwnCoordinateSystem::AuroraSource);
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NwnCoordinateSystem {
     /// Raw Aurora / NWN source-space coordinates and axis-angle rotations.
@@ -180,41 +236,62 @@ pub enum NwnCoordinateSystem {
 }
 
 /// One node in the lowered scene graph.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use nwnrs_types::mdl::NwnSceneNode;
+/// fn node_name(node: &NwnSceneNode) -> &str { &node.name }
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct NwnSceneNode {
     /// Typed node kind.
-    pub kind:            NodeKind,
+    pub kind:               NodeKind,
     /// Authored node type token.
-    pub node_type:       String,
+    pub node_type:          String,
     /// Node name.
-    pub name:            String,
+    pub name:               String,
     /// Parent node index in [`NwnScene::nodes`], when resolved.
-    pub parent:          Option<usize>,
+    pub parent:             Option<usize>,
     /// Parsed `#part-number` value when present.
-    pub part_number:     Option<i32>,
+    pub part_number:        Option<i32>,
     /// Local transform in Aurora source space.
-    pub local_transform: NwnTransform,
+    pub local_transform:    NwnTransform,
     /// Optional node center metadata.
-    pub center:          Option<[f32; 3]>,
+    pub center:             Option<[f32; 3]>,
     /// Optional static node color metadata.
-    pub color:           Option<[f32; 3]>,
+    pub color:              Option<[f32; 3]>,
     /// Optional static node radius metadata.
-    pub radius:          Option<f32>,
+    pub radius:             Option<f32>,
     /// Optional static node alpha metadata.
-    pub alpha:           Option<f32>,
+    pub alpha:              Option<f32>,
     /// Optional wireframe color metadata.
-    pub wirecolor:       Option<[f32; 3]>,
+    pub wirecolor:          Option<[f32; 3]>,
     /// Typed light payload when this scene node is a light.
-    pub light:           Option<NwnLight>,
+    pub light:              Option<NwnLight>,
     /// Typed emitter payload when this scene node is an emitter.
-    pub emitter:         Option<NwnEmitter>,
+    pub emitter:            Option<NwnEmitter>,
+    /// Typed danglymesh physics metadata.
+    pub dangly:             Option<NwnDangly>,
     /// Typed reference payload when this scene node is a reference.
-    pub reference:       Option<NwnReference>,
+    pub reference:          Option<NwnReference>,
     /// Referenced mesh index in [`NwnScene::meshes`], when present.
-    pub mesh:            Option<usize>,
+    pub mesh:               Option<usize>,
+    /// Compiled controllers whose engine meaning is not yet known.
+    pub opaque_controllers: Vec<SemanticController>,
 }
 
 /// A local transform expressed in Aurora source-space conventions.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::NwnTransform;
+/// let transform = NwnTransform {
+///     translation: [1.0, 2.0, 3.0], rotation_axis_angle: [0.0, 0.0, 1.0, 0.0], scale: [1.0; 3],
+/// };
+/// assert_eq!(transform.translation, [1.0, 2.0, 3.0]);
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct NwnTransform {
     /// Translation vector.
@@ -226,6 +303,14 @@ pub struct NwnTransform {
 }
 
 /// One lowered mesh.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::NwnMesh;
+/// let mesh = NwnMesh { name: "body".into(), source_node: 0, primitives: vec![] };
+/// assert_eq!(mesh.name, "body");
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct NwnMesh {
     /// Mesh name, typically matching the source node name.
@@ -237,8 +322,17 @@ pub struct NwnMesh {
 }
 
 /// One primitive inside a lowered mesh.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use nwnrs_types::mdl::NwnPrimitive;
+/// fn vertex_count(primitive: &NwnPrimitive) -> usize { primitive.positions.len() }
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct NwnPrimitive {
+    /// Geometry animmesh sample period in seconds.
+    pub sample_period:   Option<f32>,
     /// Position stream.
     pub positions:       Vec<[f32; 3]>,
     /// Face list with explicit vertex and UV indices.
@@ -264,6 +358,14 @@ pub struct NwnPrimitive {
 }
 
 /// One named skin-weight influence.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::NwnSkinWeight;
+/// let influence = NwnSkinWeight { bone: "pelvis".into(), weight: 1.0 };
+/// assert_eq!(influence.bone, "pelvis");
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct NwnSkinWeight {
     /// Bone or node name referenced by the source skin row.
@@ -273,6 +375,14 @@ pub struct NwnSkinWeight {
 }
 
 /// One lowered face entry.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::NwnFace;
+/// let face = NwnFace { vertex_indices: [0, 1, 2], group: 1, uv_indices: [0, 1, 2], material_index: 0 };
+/// assert_eq!(face.vertex_indices, [0, 1, 2]);
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NwnFace {
     /// Vertex indices.
@@ -286,6 +396,14 @@ pub struct NwnFace {
 }
 
 /// One UV set.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::NwnUvSet;
+/// let uv = NwnUvSet { index: 0, coordinates: vec![[0.0, 0.0]] };
+/// assert_eq!(uv.coordinates.len(), 1);
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct NwnUvSet {
     /// UV set index.
@@ -295,6 +413,13 @@ pub struct NwnUvSet {
 }
 
 /// One lowered material.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use nwnrs_types::mdl::NwnMaterial;
+/// fn opacity(material: &NwnMaterial) -> f32 { material.alpha }
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct NwnMaterial {
     /// Scene node index that authored this material.
@@ -311,6 +436,8 @@ pub struct NwnMaterial {
     pub tilefade:          i32,
     /// `rotatetexture`
     pub rotate_texture:    i32,
+    /// `lightmapped`
+    pub light_mapped:      i32,
     /// `transparencyhint`
     pub transparency_hint: i32,
     /// `shininess`
@@ -337,6 +464,14 @@ pub struct NwnMaterial {
 }
 
 /// One typed texture reference.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::{NwnTextureRef, NwnTextureSlot};
+/// let texture = NwnTextureRef { slot: NwnTextureSlot::Bitmap, name: "body01".into() };
+/// assert_eq!(texture.name, "body01");
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NwnTextureRef {
     /// Texture binding slot.
@@ -346,6 +481,13 @@ pub struct NwnTextureRef {
 }
 
 /// Texture binding slots carried by scene materials.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::NwnTextureSlot;
+/// assert_eq!(NwnTextureSlot::Texture(1), NwnTextureSlot::Texture(1));
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NwnTextureSlot {
     /// Primary `bitmap` texture.
@@ -355,6 +497,13 @@ pub enum NwnTextureSlot {
 }
 
 /// One lowered animation.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use nwnrs_types::mdl::NwnAnimation;
+/// fn duration(animation: &NwnAnimation) -> f32 { animation.length }
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct NwnAnimation {
     /// Animation name.
@@ -377,6 +526,13 @@ pub struct NwnAnimation {
 
 impl NwnAnimation {
     /// Returns the first node track named `name`, case-insensitively.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use nwnrs_types::mdl::{NwnAnimation, NwnNodeAnimationTrack};
+    /// fn root(animation: &NwnAnimation) -> Option<&NwnNodeAnimationTrack> { animation.node_track("root") }
+    /// ```
     #[must_use]
     pub fn node_track(&self, name: &str) -> Option<&NwnNodeAnimationTrack> {
         self.node_tracks
@@ -386,23 +542,43 @@ impl NwnAnimation {
 }
 
 /// One lowered node animation track.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use nwnrs_types::mdl::NwnNodeAnimationTrack;
+/// fn target(track: &NwnNodeAnimationTrack) -> &str { &track.target_name }
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct NwnNodeAnimationTrack {
     /// Target node name from the source animation.
-    pub target_name: String,
+    pub target_name:        String,
     /// Resolved target node index.
-    pub target_node: Option<usize>,
+    pub target_node:        Option<usize>,
     /// Typed node kind.
-    pub kind:        NodeKind,
+    pub kind:               NodeKind,
     /// Local transform animation channels.
-    pub transform:   NwnTransformTrack,
+    pub transform:          NwnTransformTrack,
     /// Material- or light-style channels.
-    pub material:    NwnMaterialTrack,
+    pub material:           NwnMaterialTrack,
+    /// Emitter and danglymesh animation channels.
+    pub effects:            NwnEffectTrack,
     /// Animmesh payload, when present.
-    pub animmesh:    Option<NwnAnimMeshTrack>,
+    pub animmesh:           Option<NwnAnimMeshTrack>,
+    /// Controller property names using Bezier interpolation.
+    pub bezier_controllers: Vec<String>,
+    /// Compiled controllers whose engine meaning is not yet known.
+    pub opaque_controllers: Vec<SemanticController>,
 }
 
 /// Transform animation channels for one node.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use nwnrs_types::mdl::NwnTransformTrack;
+/// fn key_count(track: &NwnTransformTrack) -> usize { track.translation_keys.len() }
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct NwnTransformTrack {
     /// Translation keys.
@@ -414,52 +590,100 @@ pub struct NwnTransformTrack {
 }
 
 /// Non-transform animation channels for one node.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use nwnrs_types::mdl::NwnMaterialTrack;
+/// fn alpha_key_count(track: &NwnMaterialTrack) -> usize { track.alpha_keys.len() }
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct NwnMaterialTrack {
     /// Color keys.
-    pub color_keys:            Vec<Vec3Key>,
+    pub color_keys:                 Vec<Vec3Key>,
     /// Radius keys.
-    pub radius_keys:           Vec<ScalarKey>,
+    pub radius_keys:                Vec<ScalarKey>,
     /// Alpha keys.
-    pub alpha_keys:            Vec<ScalarKey>,
+    pub alpha_keys:                 Vec<ScalarKey>,
     /// Self-illumination color keys.
-    pub self_illum_color_keys: Vec<Vec3Key>,
+    pub self_illum_color_keys:      Vec<Vec3Key>,
+    /// Light multiplier keys.
+    pub multiplier_keys:            Vec<ScalarKey>,
+    /// Light shadow-radius keys.
+    pub shadow_radius_keys:         Vec<ScalarKey>,
+    /// Light vertical-displacement keys.
+    pub vertical_displacement_keys: Vec<ScalarKey>,
+}
+
+/// Per-animation emitter and danglymesh channels for one node.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use nwnrs_types::mdl::NwnEffectTrack;
+/// fn controller_count(track: &NwnEffectTrack) -> usize { track.emitter_controllers.len() }
+/// ```
+#[derive(Debug, Clone, PartialEq)]
+pub struct NwnEffectTrack {
+    /// Typed emitter controller curves.
+    pub emitter_controllers: Vec<NwnEmitterControllerTrack>,
+    /// Per-animation danglymesh overrides.
+    pub dangly:              Option<NwnDangly>,
 }
 
 /// Typed light payload lowered onto a scene node.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use nwnrs_types::mdl::NwnLight;
+/// fn intensity(light: &NwnLight) -> f32 { light.multiplier }
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct NwnLight {
     /// `multiplier`
-    pub multiplier:         f32,
+    pub multiplier:            f32,
     /// `ambientonly`
-    pub ambient_only:       i32,
+    pub ambient_only:          i32,
     /// `ndynamictype`
-    pub n_dynamic_type:     Option<i32>,
+    pub n_dynamic_type:        Option<i32>,
     /// `isdynamic`
-    pub is_dynamic:         i32,
+    pub is_dynamic:            i32,
     /// `affectdynamic`
-    pub affect_dynamic:     i32,
+    pub affect_dynamic:        i32,
     /// `negativelight`
-    pub negative_light:     i32,
+    pub negative_light:        i32,
     /// `lightpriority`
-    pub light_priority:     i32,
+    pub light_priority:        i32,
     /// `fadinglight`
-    pub fading_light:       i32,
+    pub fading_light:          i32,
     /// `lensflares`
-    pub lens_flares:        i32,
+    pub lens_flares:           i32,
     /// `flareradius`
-    pub flare_radius:       f32,
+    pub flare_radius:          f32,
+    /// `shadowradius`
+    pub shadow_radius:         f32,
+    /// `verticaldisplacement`
+    pub vertical_displacement: f32,
     /// `texturenames`
-    pub flare_textures:     Vec<String>,
+    pub flare_textures:        Vec<String>,
     /// `flaresizes`
-    pub flare_sizes:        Vec<f32>,
+    pub flare_sizes:           Vec<f32>,
     /// `flarepositions`
-    pub flare_positions:    Vec<f32>,
+    pub flare_positions:       Vec<f32>,
     /// `flarecolorshifts`
-    pub flare_color_shifts: Vec<[f32; 3]>,
+    pub flare_color_shifts:    Vec<[f32; 3]>,
 }
 
 /// Typed emitter payload lowered onto a scene node.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::NwnEmitter;
+/// let emitter = NwnEmitter { x_size: 1.0, y_size: 2.0, properties: vec![] };
+/// assert_eq!(emitter.y_size, 2.0);
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct NwnEmitter {
     /// `xsize`
@@ -470,7 +694,70 @@ pub struct NwnEmitter {
     pub properties: Vec<NwnEmitterProperty>,
 }
 
+/// Typed danglymesh physics metadata.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::NwnDangly;
+/// let dangly = NwnDangly { displacement: 0.5, tightness: 0.8, period: 1.0 };
+/// assert_eq!(dangly.period, 1.0);
+/// ```
+#[derive(Debug, Clone, PartialEq)]
+pub struct NwnDangly {
+    /// Maximum vertex displacement.
+    pub displacement: f32,
+    /// Return-force/tightness value.
+    pub tightness:    f32,
+    /// Oscillation period in seconds.
+    pub period:       f32,
+}
+
+/// One typed emitter controller curve.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::{NwnEmitterController, NwnEmitterControllerTrack};
+/// let track = NwnEmitterControllerTrack { controller: NwnEmitterController::Birthrate, keys: vec![], bezier_keyed: false };
+/// assert_eq!(track.controller.property_name(), "birthrate");
+/// ```
+#[derive(Debug, Clone, PartialEq)]
+pub struct NwnEmitterControllerTrack {
+    /// Controlled emitter property.
+    pub controller:   NwnEmitterController,
+    /// Key samples in authored order.
+    pub keys:         Vec<NwnEmitterKey>,
+    /// Whether this controller uses Bezier rather than linear interpolation.
+    pub bezier_keyed: bool,
+}
+
+/// One scalar or vector emitter-controller sample.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::NwnEmitterKey;
+/// let key = NwnEmitterKey { time: 0.0, values: vec![10.0] };
+/// assert_eq!(key.values, vec![10.0]);
+/// ```
+#[derive(Debug, Clone, PartialEq)]
+pub struct NwnEmitterKey {
+    /// Key time in animation seconds.
+    pub time:   f32,
+    /// Scalar or vector value.
+    pub values: Vec<f32>,
+}
+
 /// One typed emitter property statement.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::{NwnEmitterProperty, NwnPropertyValue};
+/// let property = NwnEmitterProperty { name: "render".into(), values: vec![NwnPropertyValue::Text("Normal".into())] };
+/// assert_eq!(property.name, "render");
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct NwnEmitterProperty {
     /// Source keyword.
@@ -480,6 +767,13 @@ pub struct NwnEmitterProperty {
 }
 
 /// One typed scalar/string property value.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::NwnPropertyValue;
+/// assert_eq!(NwnPropertyValue::Float(1.0), NwnPropertyValue::Float(1.0));
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub enum NwnPropertyValue {
     /// Boolean token.
@@ -493,6 +787,14 @@ pub enum NwnPropertyValue {
 }
 
 /// Typed reference payload lowered onto a scene node.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::NwnReference;
+/// let reference = NwnReference { model: Some("fx_smoke".into()), reattachable: 1 };
+/// assert_eq!(reference.model.as_deref(), Some("fx_smoke"));
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct NwnReference {
     /// `refmodel`
@@ -502,6 +804,13 @@ pub struct NwnReference {
 }
 
 /// Animmesh payload lowered into sample groups.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use nwnrs_types::mdl::NwnAnimMeshTrack;
+/// fn sample_count(track: &NwnAnimMeshTrack) -> usize { track.vertex_samples.len() }
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct NwnAnimMeshTrack {
     /// Sample period in seconds.
@@ -515,6 +824,14 @@ pub struct NwnAnimMeshTrack {
 }
 
 /// One sampled vector3 frame.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::NwnVec3Sample;
+/// let sample = NwnVec3Sample { values: vec![[1.0, 2.0, 3.0]] };
+/// assert_eq!(sample.values.len(), 1);
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct NwnVec3Sample {
     /// Sampled values.
@@ -522,6 +839,14 @@ pub struct NwnVec3Sample {
 }
 
 /// One sampled vector2 frame.
+///
+/// # Examples
+///
+/// ```
+/// use nwnrs_types::mdl::NwnVec2Sample;
+/// let sample = NwnVec2Sample { values: vec![[0.0, 1.0]] };
+/// assert_eq!(sample.values[0], [0.0, 1.0]);
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct NwnVec2Sample {
     /// Sampled values.
@@ -595,6 +920,14 @@ pub fn parse_scene_model(text: &str) -> ModelResult<NwnScene> {
 /// # Errors
 ///
 /// Returns [`ModelError`] if the bytes cannot be parsed or lowered.
+///
+/// # Examples
+///
+/// ```
+/// let scene = nwnrs_types::mdl::parse_scene_model_auto(b"beginmodelgeom demo\nendmodelgeom demo\ndonemodel demo\n")?;
+/// assert_eq!(scene.name, "demo");
+/// # Ok::<(), nwnrs_types::mdl::ModelError>(())
+/// ```
 pub fn parse_scene_model_auto(bytes: &[u8]) -> ModelResult<NwnScene> {
     lower_semantic_model_to_scene(&parse_semantic_model_auto(bytes)?)
 }
@@ -604,6 +937,15 @@ pub fn parse_scene_model_auto(bytes: &[u8]) -> ModelResult<NwnScene> {
 /// # Errors
 ///
 /// Returns [`ModelError`] if the data cannot be read or lowered.
+///
+/// # Examples
+///
+/// ```
+/// let mut input = b"beginmodelgeom demo\nendmodelgeom demo\ndonemodel demo\n".as_slice();
+/// let scene = nwnrs_types::mdl::read_scene_model(&mut input)?;
+/// assert_eq!(scene.name, "demo");
+/// # Ok::<(), nwnrs_types::mdl::ModelError>(())
+/// ```
 #[instrument(level = "debug", skip_all, err)]
 pub fn read_scene_model<R: Read>(reader: &mut R) -> ModelResult<NwnScene> {
     let semantic = read_semantic_model(reader)?;
@@ -616,6 +958,15 @@ pub fn read_scene_model<R: Read>(reader: &mut R) -> ModelResult<NwnScene> {
 /// # Errors
 ///
 /// Returns [`ModelError`] if the data cannot be read or lowered.
+///
+/// # Examples
+///
+/// ```
+/// let mut input = b"beginmodelgeom demo\nendmodelgeom demo\ndonemodel demo\n".as_slice();
+/// let scene = nwnrs_types::mdl::read_scene_model_auto(&mut input)?;
+/// assert_eq!(scene.name, "demo");
+/// # Ok::<(), nwnrs_types::mdl::ModelError>(())
+/// ```
 #[instrument(level = "debug", skip_all, err)]
 pub fn read_scene_model_auto<R: Read>(reader: &mut R) -> ModelResult<NwnScene> {
     let semantic = read_semantic_model_auto(reader)?;
@@ -680,6 +1031,7 @@ fn raise_scene_to_semantic(scene: &NwnScene) -> ModelResult<SemanticModel> {
             supermodel:      scene.supermodel.clone(),
             classification:  scene.classification.clone(),
             animation_scale: scene.animation_scale,
+            ignore_fog:      scene.ignore_fog,
             comments:        Vec::new(),
             extras:          Vec::new(),
         },
@@ -849,7 +1201,7 @@ fn raise_scene_node(
         .parent
         .and_then(|parent_index| scene.nodes.get(parent_index))
         .map(|node| node.name.clone());
-    let (material, mesh) = if let Some(mesh_index) = node.mesh {
+    let (material, mesh, sample_period) = if let Some(mesh_index) = node.mesh {
         let mesh = scene.meshes.get(mesh_index).ok_or_else(|| {
             ModelError::msg(format!(
                 "scene node {} references invalid mesh index {}",
@@ -893,10 +1245,11 @@ fn raise_scene_node(
                 ))
             })?,
         )?;
+        let sample_period = primitive.sample_period;
         let mesh = raise_scene_mesh(mesh)?;
-        (material, Some(mesh))
+        (material, Some(mesh), sample_period)
     } else {
-        (default_scene_material(node.alpha), None)
+        (default_scene_material(node.alpha), None, None)
     };
 
     if let Some(alpha) = node.alpha
@@ -923,11 +1276,14 @@ fn raise_scene_node(
         radius: node.radius,
         center: node.center,
         wirecolor: node.wirecolor,
+        sample_period,
         material,
         light: node.light.as_ref().map(raise_scene_light),
         emitter: node.emitter.as_ref().map(raise_scene_emitter),
+        dangly: node.dangly.as_ref().map(raise_scene_dangly),
         reference: node.reference.as_ref().map(raise_scene_reference),
         mesh,
+        opaque_controllers: node.opaque_controllers.clone(),
         comments: Vec::new(),
         extras: Vec::new(),
     })
@@ -1006,6 +1362,7 @@ fn raise_scene_material(
         inherit_color: Some(material.inherit_color),
         tilefade: Some(material.tilefade),
         rotate_texture: Some(material.rotate_texture),
+        light_mapped: Some(material.light_mapped),
         transparency_hint: Some(material.transparency_hint),
         shininess: Some(material.shininess),
         alpha: Some(material.alpha),
@@ -1028,6 +1385,7 @@ fn default_scene_material(alpha: Option<f32>) -> SemanticMaterial {
         inherit_color: None,
         tilefade: None,
         rotate_texture: None,
+        light_mapped: None,
         transparency_hint: None,
         shininess: None,
         alpha,
@@ -1044,20 +1402,22 @@ fn default_scene_material(alpha: Option<f32>) -> SemanticMaterial {
 
 fn raise_scene_light(light: &NwnLight) -> SemanticLight {
     SemanticLight {
-        multiplier:         Some(light.multiplier),
-        ambient_only:       Some(light.ambient_only),
-        n_dynamic_type:     light.n_dynamic_type,
-        is_dynamic:         Some(light.is_dynamic),
-        affect_dynamic:     Some(light.affect_dynamic),
-        negative_light:     Some(light.negative_light),
-        light_priority:     Some(light.light_priority),
-        fading_light:       Some(light.fading_light),
-        lens_flares:        Some(light.lens_flares),
-        flare_radius:       Some(light.flare_radius),
-        flare_textures:     light.flare_textures.clone(),
-        flare_sizes:        light.flare_sizes.clone(),
-        flare_positions:    light.flare_positions.clone(),
-        flare_color_shifts: light.flare_color_shifts.clone(),
+        multiplier:            Some(light.multiplier),
+        ambient_only:          Some(light.ambient_only),
+        n_dynamic_type:        light.n_dynamic_type,
+        is_dynamic:            Some(light.is_dynamic),
+        affect_dynamic:        Some(light.affect_dynamic),
+        negative_light:        Some(light.negative_light),
+        light_priority:        Some(light.light_priority),
+        fading_light:          Some(light.fading_light),
+        lens_flares:           Some(light.lens_flares),
+        flare_radius:          Some(light.flare_radius),
+        shadow_radius:         Some(light.shadow_radius),
+        vertical_displacement: Some(light.vertical_displacement),
+        flare_textures:        light.flare_textures.clone(),
+        flare_sizes:           light.flare_sizes.clone(),
+        flare_positions:       light.flare_positions.clone(),
+        flare_color_shifts:    light.flare_color_shifts.clone(),
     }
 }
 
@@ -1220,6 +1580,9 @@ fn raise_scene_animation_track(
         radius: None,
         alpha: None,
         self_illum_color: None,
+        multiplier: None,
+        shadow_radius: None,
+        vertical_displacement: None,
         position_keys: track.transform.translation_keys.clone(),
         orientation_keys: track.transform.rotation_axis_angle_keys.clone(),
         scale_keys,
@@ -1227,6 +1590,18 @@ fn raise_scene_animation_track(
         radius_keys: track.material.radius_keys.clone(),
         alpha_keys: track.material.alpha_keys.clone(),
         self_illum_color_keys: track.material.self_illum_color_keys.clone(),
+        multiplier_keys: track.material.multiplier_keys.clone(),
+        shadow_radius_keys: track.material.shadow_radius_keys.clone(),
+        vertical_displacement_keys: track.material.vertical_displacement_keys.clone(),
+        bezier_controllers: track.bezier_controllers.clone(),
+        emitter_controllers: track
+            .effects
+            .emitter_controllers
+            .iter()
+            .map(raise_emitter_controller)
+            .collect(),
+        opaque_controllers: track.opaque_controllers.clone(),
+        dangly: track.effects.dangly.as_ref().map(raise_scene_dangly),
         sample_period: animmesh.and_then(|animmesh| animmesh.sample_period),
         faces: animmesh
             .map(|animmesh| {
@@ -1322,6 +1697,15 @@ fn validate_uniform_scale(scale: &[f32; 3], context: &str) -> ModelResult<f32> {
 /// # Errors
 ///
 /// Returns [`ModelError`] if the semantic model cannot be lowered into a scene.
+///
+/// # Examples
+///
+/// ```
+/// let semantic = nwnrs_types::mdl::parse_semantic_model("beginmodelgeom demo\nendmodelgeom demo\ndonemodel demo\n")?;
+/// let scene = nwnrs_types::mdl::lower_semantic_model_to_scene(&semantic)?;
+/// assert_eq!(scene.name, "demo");
+/// # Ok::<(), nwnrs_types::mdl::ModelError>(())
+/// ```
 pub fn lower_semantic_model_to_scene(model: &SemanticModel) -> ModelResult<NwnScene> {
     let mut diagnostics = model.diagnostics.clone();
 
@@ -1387,7 +1771,13 @@ pub fn lower_semantic_model_to_scene(model: &SemanticModel) -> ModelResult<NwnSc
                 &node.kind,
                 &node_names,
             ));
-            let lowered_mesh = lower_mesh(mesh, node_index, node.name.clone(), material_index);
+            let lowered_mesh = lower_mesh(
+                mesh,
+                node.sample_period,
+                node_index,
+                node.name.clone(),
+                material_index,
+            );
             let mesh_index = meshes.len();
             meshes.push(lowered_mesh);
             mesh_index
@@ -1407,8 +1797,10 @@ pub fn lower_semantic_model_to_scene(model: &SemanticModel) -> ModelResult<NwnSc
             wirecolor: node.wirecolor,
             light: node.light.as_ref().map(lower_light),
             emitter: node.emitter.as_ref().map(lower_emitter),
+            dangly: node.dangly.as_ref().map(lower_dangly),
             reference: node.reference.as_ref().map(lower_reference),
             mesh: mesh_index,
+            opaque_controllers: node.opaque_controllers.clone(),
         });
     }
 
@@ -1430,6 +1822,7 @@ pub fn lower_semantic_model_to_scene(model: &SemanticModel) -> ModelResult<NwnSc
         supermodel: model.header.supermodel.clone(),
         classification: model.header.classification.clone(),
         animation_scale: model.header.animation_scale,
+        ignore_fog: model.header.ignore_fog,
         coordinate_system: NwnCoordinateSystem::AuroraSource,
         nodes,
         meshes,
@@ -1489,6 +1882,7 @@ fn lower_material(
         inherit_color: material.inherit_color.unwrap_or(0),
         tilefade: material.tilefade.unwrap_or(0),
         rotate_texture: material.rotate_texture.unwrap_or(0),
+        light_mapped: material.light_mapped.unwrap_or(0),
         transparency_hint: material.transparency_hint.unwrap_or(0),
         shininess: material.shininess.unwrap_or(0.0),
         alpha: material.alpha.unwrap_or(1.0),
@@ -1532,6 +1926,7 @@ fn normalize_texture_name(
 
 fn lower_mesh(
     mesh: &SemanticMesh,
+    sample_period: Option<f32>,
     source_node: usize,
     name: String,
     material_index: usize,
@@ -1540,21 +1935,22 @@ fn lower_mesh(
         name,
         source_node,
         primitives: vec![NwnPrimitive {
-            positions:       mesh.vertices.clone(),
-            faces:           mesh.faces.iter().map(lower_face).collect(),
-            uv_sets:         mesh.uv_layers.iter().map(lower_uv_set).collect(),
-            normals:         mesh.normals.clone(),
-            tangents:        mesh.tangents.clone(),
-            color_rows:      mesh.colors.clone(),
-            weight_rows:     mesh
+            sample_period,
+            positions: mesh.vertices.clone(),
+            faces: mesh.faces.iter().map(lower_face).collect(),
+            uv_sets: mesh.uv_layers.iter().map(lower_uv_set).collect(),
+            normals: mesh.normals.clone(),
+            tangents: mesh.tangents.clone(),
+            color_rows: mesh.colors.clone(),
+            weight_rows: mesh
                 .weights
                 .iter()
                 .map(|row| row.iter().map(lower_skin_weight).collect())
                 .collect(),
             constraint_rows: mesh.constraints.clone(),
-            surface_labels:  mesh.multimaterial.clone(),
-            texture_names:   mesh.texture_names.clone(),
-            material:        Some(material_index),
+            surface_labels: mesh.multimaterial.clone(),
+            texture_names: mesh.texture_names.clone(),
+            material: Some(material_index),
         }],
     }
 }
@@ -1568,20 +1964,22 @@ fn lower_skin_weight(weight: &SemanticSkinWeight) -> NwnSkinWeight {
 
 fn lower_light(light: &SemanticLight) -> NwnLight {
     NwnLight {
-        multiplier:         light.multiplier.unwrap_or(1.0),
-        ambient_only:       light.ambient_only.unwrap_or(0),
-        n_dynamic_type:     light.n_dynamic_type,
-        is_dynamic:         light.is_dynamic.unwrap_or(0),
-        affect_dynamic:     light.affect_dynamic.unwrap_or(0),
-        negative_light:     light.negative_light.unwrap_or(0),
-        light_priority:     light.light_priority.unwrap_or(5),
-        fading_light:       light.fading_light.unwrap_or(0),
-        lens_flares:        light.lens_flares.unwrap_or(0),
-        flare_radius:       light.flare_radius.unwrap_or(0.0),
-        flare_textures:     light.flare_textures.clone(),
-        flare_sizes:        light.flare_sizes.clone(),
-        flare_positions:    light.flare_positions.clone(),
-        flare_color_shifts: light.flare_color_shifts.clone(),
+        multiplier:            light.multiplier.unwrap_or(1.0),
+        ambient_only:          light.ambient_only.unwrap_or(0),
+        n_dynamic_type:        light.n_dynamic_type,
+        is_dynamic:            light.is_dynamic.unwrap_or(0),
+        affect_dynamic:        light.affect_dynamic.unwrap_or(0),
+        negative_light:        light.negative_light.unwrap_or(0),
+        light_priority:        light.light_priority.unwrap_or(5),
+        fading_light:          light.fading_light.unwrap_or(0),
+        lens_flares:           light.lens_flares.unwrap_or(0),
+        flare_radius:          light.flare_radius.unwrap_or(0.0),
+        shadow_radius:         light.shadow_radius.unwrap_or(0.0),
+        vertical_displacement: light.vertical_displacement.unwrap_or(0.0),
+        flare_textures:        light.flare_textures.clone(),
+        flare_sizes:           light.flare_sizes.clone(),
+        flare_positions:       light.flare_positions.clone(),
+        flare_color_shifts:    light.flare_color_shifts.clone(),
     }
 }
 
@@ -1594,6 +1992,22 @@ fn lower_emitter(emitter: &SemanticEmitter) -> NwnEmitter {
             .iter()
             .map(lower_emitter_property)
             .collect(),
+    }
+}
+
+fn lower_dangly(dangly: &SemanticDangly) -> NwnDangly {
+    NwnDangly {
+        displacement: dangly.displacement.unwrap_or(0.0),
+        tightness:    dangly.tightness.unwrap_or(0.0),
+        period:       dangly.period.unwrap_or(0.0),
+    }
+}
+
+fn raise_scene_dangly(dangly: &NwnDangly) -> SemanticDangly {
+    SemanticDangly {
+        displacement: Some(dangly.displacement),
+        tightness:    Some(dangly.tightness),
+        period:       Some(dangly.period),
     }
 }
 
@@ -1762,6 +2176,36 @@ fn lower_animation_track(
         });
     }
 
+    let mut multiplier_keys = node.multiplier_keys.clone();
+    if multiplier_keys.is_empty()
+        && let Some(multiplier) = node.multiplier
+    {
+        multiplier_keys.push(ScalarKey {
+            time:  0.0,
+            value: multiplier,
+        });
+    }
+
+    let mut shadow_radius_keys = node.shadow_radius_keys.clone();
+    if shadow_radius_keys.is_empty()
+        && let Some(value) = node.shadow_radius
+    {
+        shadow_radius_keys.push(ScalarKey {
+            time: 0.0,
+            value,
+        });
+    }
+
+    let mut vertical_displacement_keys = node.vertical_displacement_keys.clone();
+    if vertical_displacement_keys.is_empty()
+        && let Some(value) = node.vertical_displacement
+    {
+        vertical_displacement_keys.push(ScalarKey {
+            time: 0.0,
+            value,
+        });
+    }
+
     let layout = base_mesh_layouts
         .get(&node.name.to_ascii_lowercase())
         .copied();
@@ -1806,8 +2250,54 @@ fn lower_animation_track(
             radius_keys,
             alpha_keys,
             self_illum_color_keys,
+            multiplier_keys,
+            shadow_radius_keys,
+            vertical_displacement_keys,
+        },
+        effects: NwnEffectTrack {
+            emitter_controllers: node
+                .emitter_controllers
+                .iter()
+                .filter_map(lower_emitter_controller)
+                .collect(),
+            dangly:              node.dangly.as_ref().map(lower_dangly),
         },
         animmesh,
+        bezier_controllers: node.bezier_controllers.clone(),
+        opaque_controllers: node.opaque_controllers.clone(),
+    }
+}
+
+fn lower_emitter_controller(
+    controller: &SemanticEmitterController,
+) -> Option<NwnEmitterControllerTrack> {
+    let controller_kind = emitter_controller_definition(&controller.name)?.controller;
+    Some(NwnEmitterControllerTrack {
+        controller:   controller_kind,
+        keys:         controller
+            .keys
+            .iter()
+            .map(|key| NwnEmitterKey {
+                time:   key.time,
+                values: key.values.clone(),
+            })
+            .collect(),
+        bezier_keyed: controller.bezier_keyed,
+    })
+}
+
+fn raise_emitter_controller(controller: &NwnEmitterControllerTrack) -> SemanticEmitterController {
+    SemanticEmitterController {
+        name:         controller.controller.property_name().to_string(),
+        bezier_keyed: controller.bezier_keyed,
+        keys:         controller
+            .keys
+            .iter()
+            .map(|key| SemanticEmitterKey {
+                time:   key.time,
+                values: key.values.clone(),
+            })
+            .collect(),
     }
 }
 

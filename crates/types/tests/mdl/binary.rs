@@ -1,18 +1,15 @@
-#![allow(missing_docs)]
-
-mod support;
-
 use std::{error::Error, io::Cursor};
 
 use nwnrs_types::{
     mdl::{
         BinaryModel, MODEL_RES_TYPE, ModelEncoding, ParsedModel, detect_model_encoding,
         lower_binary_model_to_ascii, parse_binary_model_bytes, parse_model_bytes,
-        read_parsed_model, write_binary_model, write_parsed_model,
+        read_parsed_model, write_ascii_model, write_original_binary_model, write_parsed_model,
     },
     resman::CachePolicy,
 };
-use support::{demand_resource, require_game_resource, skip_if_game_resources_unavailable};
+
+use super::support::{demand_resource, require_game_resource, skip_if_game_resources_unavailable};
 
 const FILE_HEADER_SIZE: usize = 12;
 
@@ -23,6 +20,19 @@ fn detects_ascii_fixture_encoding() -> Result<(), Box<dyn Error>> {
         Err(error) => return skip_if_game_resources_unavailable(error),
     };
     assert_eq!(detect_model_encoding(&bytes), ModelEncoding::Ascii);
+    Ok(())
+}
+
+#[test]
+fn automatic_ascii_io_preserves_non_utf8_bytes() -> Result<(), Box<dyn Error>> {
+    let bytes = b"# author \xff\nnewmodel demo\nbeginmodelgeom demo\nnode dummy demo\n  parent \
+                  NULL\nendnode\nendmodelgeom demo\ndonemodel demo\n";
+    let parsed = parse_model_bytes(bytes)?;
+    assert!(matches!(parsed, ParsedModel::Ascii(_)));
+
+    let mut encoded = Vec::new();
+    write_parsed_model(&mut encoded, &parsed)?;
+    assert!(encoded.windows(9).any(|window| window == b"author \xff\n"));
     Ok(())
 }
 
@@ -43,13 +53,13 @@ fn parses_compiled_fixture_header_and_summary() -> Result<(), Box<dyn Error>> {
         Err(error) => return skip_if_game_resources_unavailable(error),
     };
 
-    assert_eq!(model.name, "a_ba2");
-    assert_eq!(model.node_count_hint, 222);
-    assert_eq!(model.nodes.len(), 57);
-    assert_eq!(model.animations.len(), 20);
-    assert_eq!(model.header.binary_id, 0);
-    assert_eq!(model.header.raw_data_offset, 760_200);
-    assert_eq!(model.header.raw_data_size, 77_606);
+    assert_eq!(model.name(), "a_ba2");
+    assert_eq!(model.node_count_hint(), 222);
+    assert_eq!(model.nodes().len(), 57);
+    assert_eq!(model.animations().len(), 20);
+    assert_eq!(model.header().binary_id, 0);
+    assert_eq!(model.header().raw_data_offset, 760_200);
+    assert_eq!(model.header().raw_data_size, 77_606);
     assert!(model.node("torso_g").is_some());
     assert!(model.animation("salute").is_some());
     assert_eq!(
@@ -79,7 +89,7 @@ fn auto_parsing_dispatches_to_compiled_model() -> Result<(), Box<dyn Error>> {
     });
     match parsed {
         ParsedModel::Compiled(model) => {
-            assert_eq!(model.name, "a_ba2");
+            assert_eq!(model.name(), "a_ba2");
         }
         ParsedModel::Ascii(_ascii) => panic!("expected compiled model"),
     }
@@ -105,7 +115,7 @@ fn malformed_animation_pointer_becomes_diagnostic() -> Result<(), Box<dyn Error>
 
     assert!(
         model
-            .diagnostics
+            .diagnostics()
             .iter()
             .any(|diagnostic| diagnostic.message.contains("failed to parse animation"))
     );
@@ -123,7 +133,7 @@ fn binary_writer_roundtrips_exact_bytes() -> Result<(), Box<dyn Error>> {
     });
 
     let mut encoded = Vec::new();
-    if let Err(error) = write_binary_model(&mut encoded, &model) {
+    if let Err(error) = write_original_binary_model(&mut encoded, &model) {
         panic!("write compiled model: {error}");
     }
 
@@ -179,11 +189,14 @@ fn shipped_compiled_fixture() -> Result<BinaryModel, Box<dyn Error>> {
 }
 
 fn shipped_compiled_fixture_bytes() -> Result<Vec<u8>, Box<dyn Error>> {
-    Ok(shipped_compiled_fixture()?.source_bytes)
+    Ok(shipped_compiled_fixture()?.original_bytes().to_vec())
 }
 
 fn shipped_ascii_fixture_bytes() -> Result<Vec<u8>, Box<dyn Error>> {
     let res = require_game_resource(demand_resource("a_ba_casts", MODEL_RES_TYPE))?;
     let binary = BinaryModel::from_res(&res, CachePolicy::Use)?;
-    Ok(lower_binary_model_to_ascii(&binary)?.to_text().into_bytes())
+    let ascii = lower_binary_model_to_ascii(&binary)?;
+    let mut bytes = Vec::new();
+    write_ascii_model(&mut bytes, &ascii)?;
+    Ok(bytes)
 }

@@ -113,15 +113,15 @@ fn inspect_model(path: &Path) -> Result<String, String> {
             Ok(format!(
                 "MDL encoding: compiled\nmodel: {}\nnode_count: {}\nanimation_count: \
                  {}\nrecognized_block_kinds: {}\ndiagnostic_count: {}",
-                model.name,
-                model.nodes.len(),
-                model.animations.len(),
+                model.name(),
+                model.nodes().len(),
+                model.animations().len(),
                 if block_kinds.is_empty() {
                     "none"
                 } else {
                     &block_kinds
                 },
-                model.diagnostics.len(),
+                model.diagnostics().len(),
             ))
         }
     }
@@ -210,9 +210,9 @@ fn load_adjacent_source_files(path: &Path, ndb: &nwscript::Ndb) -> BTreeMap<Stri
 
 fn compiled_block_kinds(model: &mdl::BinaryModel) -> Vec<&'static str> {
     let mut kinds = std::collections::BTreeSet::new();
-    for node in model.nodes.iter().chain(
+    for node in model.nodes().iter().chain(
         model
-            .animations
+            .animations()
             .iter()
             .flat_map(|animation| animation.nodes.iter()),
     ) {
