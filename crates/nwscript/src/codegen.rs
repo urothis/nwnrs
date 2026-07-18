@@ -1,7 +1,9 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, VecDeque},
     error::Error,
     fmt,
+    ops::{BitOr, BitOrAssign},
+    path::Path,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -9,17 +11,22 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     AssignmentOp, BinaryOp, BuiltinFunction, BuiltinType, BuiltinValue, HirBlock, HirCallTarget,
-    HirExpr, HirExprKind, HirFunction, HirLocalId, HirLocalKind, HirModule, HirStmt, LangSpec,
-    Literal, NCS_OPERATION_BASE_SIZE, NcsAuxCode, NcsInstruction, NcsOpcode, Ndb, NdbFile,
-    NdbFunction, NdbLine, NdbStruct, NdbStructField, NdbType, NdbVariable, Script, SemanticOptions,
-    SemanticType, SourceBundle, SourceId, SourceMap, UnaryOp, analyze_script_with_options,
-    encode_ncs_instructions, lower_to_hir, nwscript_string_hash,
+    HirExpr, HirExprKind, HirFunction, HirLocalId, HirModule, HirStmt, LangSpec, Literal,
+    NCS_BINARY_HEADER_SIZE, NCS_OPERATION_BASE_SIZE, NcsAuxCode, NcsInstruction, NcsOpcode, Ndb,
+    NdbFile, NdbFunction, NdbLine, NdbStruct, NdbStructField, NdbType, NdbVariable, Script,
+    ScriptString, SemanticOptions, SemanticType, SourceBundle, SourceId, SourceMap, UnaryOp,
+    analyze_script_with_options, encode_ncs_instructions, lower_to_hir, nwscript_string_hash_bytes,
     opt::{
-        ConstValue, build_constant_env, evaluate_const_expr, meld_instructions,
+        ConstValue, build_constant_env, evaluate_const_expr, melded_instruction,
         optimization_needs_hir_passes, optimization_needs_post_codegen_passes, optimize_hir,
     },
     parse_source_bundle, parse_text, write_ndb,
 };
+
+/// Maximum identifier-table entries accepted by the native compiler.
+pub const MAX_COMPILER_IDENTIFIERS: usize = 65_536;
+/// Maximum 32-bit runtime stack cells tracked by the native compiler.
+pub const MAX_COMPILER_RUNTIME_CELLS: usize = 8_192;
 
 /// Optimization levels accepted by the pure-Rust compiler pipeline.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
@@ -27,28 +34,163 @@ pub enum OptimizationLevel {
     /// Unoptimized code generation.
     #[default]
     O0,
-    /// Placeholder for future optimization work.
+    /// Eliminates unreachable user functions.
     O1,
-    /// Placeholder for future optimization work.
+    /// Applies O1 plus constant dead-branch elimination.
     O2,
-    /// Placeholder for future optimization work.
+    /// Applies O2 plus upstream-compatible instruction melding.
     O3,
+}
+
+impl OptimizationLevel {
+    /// Returns the independent optimization flags represented by this level.
+    #[must_use]
+    pub const fn flags(self) -> OptimizationFlags {
+        match self {
+            Self::O0 => OptimizationFlags::O0,
+            Self::O1 => OptimizationFlags::O1,
+            Self::O2 => OptimizationFlags::O2,
+            Self::O3 => OptimizationFlags::O3,
+        }
+    }
+}
+
+/// One independently selectable native compiler optimization.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[repr(u8)]
+pub enum OptimizationFlag {
+    /// Removes user functions that cannot be reached from the script loader.
+    RemoveDeadCode = 0x01,
+    /// Merges native-compatible instruction sequences after code generation.
+    MeldInstructions = 0x02,
+    /// Removes branches proven unreachable from constant conditions.
+    RemoveDeadBranches = 0x04,
+}
+
+/// A set of independently selectable compiler optimizations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[serde(transparent)]
+pub struct OptimizationFlags(u8);
+
+impl OptimizationFlags {
+    const KNOWN_BITS: u8 = Self::O3.0;
+    /// No optimization flags, corresponding to O0.
+    pub const O0: Self = Self(0);
+    /// Dead-code removal, corresponding to O1.
+    pub const O1: Self = Self(OptimizationFlag::RemoveDeadCode as u8);
+    /// Dead-code and dead-branch removal, corresponding to O2.
+    pub const O2: Self =
+        Self(OptimizationFlag::RemoveDeadCode as u8 | OptimizationFlag::RemoveDeadBranches as u8);
+    /// Every native optimization, corresponding to O3.
+    pub const O3: Self = Self(
+        OptimizationFlag::RemoveDeadCode as u8
+            | OptimizationFlag::MeldInstructions as u8
+            | OptimizationFlag::RemoveDeadBranches as u8,
+    );
+
+    /// Creates a flag set containing one optimization.
+    #[must_use]
+    pub const fn from_flag(flag: OptimizationFlag) -> Self {
+        Self(flag as u8)
+    }
+
+    /// Creates a flag set from its native bit representation.
+    #[must_use]
+    pub const fn from_bits(bits: u8) -> Option<Self> {
+        if bits & !Self::KNOWN_BITS == 0 {
+            Some(Self(bits))
+        } else {
+            None
+        }
+    }
+
+    /// Returns the native bit representation of this flag set.
+    #[must_use]
+    pub const fn bits(self) -> u8 {
+        self.0
+    }
+
+    /// Returns whether this set contains `flag`.
+    #[must_use]
+    pub const fn contains(self, flag: OptimizationFlag) -> bool {
+        self.0 & flag as u8 != 0
+    }
+
+    /// Returns the standard O-level matching this exact set, when one exists.
+    #[must_use]
+    pub const fn level(self) -> Option<OptimizationLevel> {
+        match self.0 {
+            0 => Some(OptimizationLevel::O0),
+            value if value == Self::O1.0 => Some(OptimizationLevel::O1),
+            value if value == Self::O2.0 => Some(OptimizationLevel::O2),
+            value if value == Self::O3.0 => Some(OptimizationLevel::O3),
+            _ => None,
+        }
+    }
+}
+
+impl From<OptimizationFlag> for OptimizationFlags {
+    fn from(value: OptimizationFlag) -> Self {
+        Self::from_flag(value)
+    }
+}
+
+impl From<OptimizationLevel> for OptimizationFlags {
+    fn from(value: OptimizationLevel) -> Self {
+        value.flags()
+    }
+}
+
+impl BitOr for OptimizationFlags {
+    type Output = Self;
+
+    fn bitor(self, rhs: Self) -> Self::Output {
+        Self(self.0 | rhs.0)
+    }
+}
+
+impl BitOr for OptimizationFlag {
+    type Output = OptimizationFlags;
+
+    fn bitor(self, rhs: Self) -> Self::Output {
+        OptimizationFlags::from(self) | OptimizationFlags::from(rhs)
+    }
+}
+
+impl BitOr<OptimizationFlag> for OptimizationFlags {
+    type Output = Self;
+
+    fn bitor(self, rhs: OptimizationFlag) -> Self::Output {
+        self | Self::from(rhs)
+    }
+}
+
+impl BitOrAssign for OptimizationFlags {
+    fn bitor_assign(&mut self, rhs: Self) {
+        self.0 |= rhs.0;
+    }
+}
+
+impl BitOrAssign<OptimizationFlag> for OptimizationFlags {
+    fn bitor_assign(&mut self, rhs: OptimizationFlag) {
+        self.0 |= rhs as u8;
+    }
 }
 
 /// One compilation request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct CompileOptions {
     /// Entry-point validation policy forwarded to semantic analysis.
-    pub semantic:     SemanticOptions,
-    /// Optimization level for code generation.
-    pub optimization: OptimizationLevel,
+    pub semantic:      SemanticOptions,
+    /// Independently selectable optimization passes for code generation.
+    pub optimizations: OptimizationFlags,
 }
 
 impl Default for CompileOptions {
     fn default() -> Self {
         Self {
-            semantic:     SemanticOptions::default(),
-            optimization: OptimizationLevel::O0,
+            semantic:      SemanticOptions::default(),
+            optimizations: OptimizationFlags::O0,
         }
     }
 }
@@ -65,6 +207,8 @@ pub struct CompileArtifacts {
 /// One pure-Rust code generation failure.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CodegenError {
+    /// Upstream-aligned compiler error code when this failure has one.
+    pub code:    Option<crate::CompilerErrorCode>,
     /// Optional source span associated with the failure.
     pub span:    Option<crate::Span>,
     /// Human-readable error text.
@@ -74,6 +218,19 @@ pub struct CodegenError {
 impl CodegenError {
     fn new(span: Option<crate::Span>, message: impl Into<String>) -> Self {
         Self {
+            code: None,
+            span,
+            message: message.into(),
+        }
+    }
+
+    fn native(
+        code: crate::CompilerErrorCode,
+        span: Option<crate::Span>,
+        message: impl Into<String>,
+    ) -> Self {
+        Self {
+            code: Some(code),
             span,
             message: message.into(),
         }
@@ -82,7 +239,10 @@ impl CodegenError {
 
 impl fmt::Display for CodegenError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.message)
+        match self.code {
+            Some(code) => write!(f, "{} ({})", self.message, code.code()),
+            None => f.write_str(&self.message),
+        }
     }
 }
 
@@ -117,6 +277,8 @@ fn usize_to_u8(value: usize, what: &str) -> Result<u8, CodegenError> {
 /// One compilation failure across analysis, lowering, or code generation.
 #[derive(Debug)]
 pub enum CompileError {
+    /// Source resolution, preprocessing, or parsing failed.
+    Parse(crate::ResolvedParseError),
     /// Semantic analysis failed.
     Semantic(crate::SemanticError),
     /// HIR lowering failed.
@@ -128,6 +290,7 @@ pub enum CompileError {
 impl fmt::Display for CompileError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Parse(error) => error.fmt(f),
             Self::Semantic(error) => error.fmt(f),
             Self::Hir(error) => error.fmt(f),
             Self::Codegen(error) => error.fmt(f),
@@ -136,6 +299,12 @@ impl fmt::Display for CompileError {
 }
 
 impl Error for CompileError {}
+
+impl From<crate::ResolvedParseError> for CompileError {
+    fn from(value: crate::ResolvedParseError) -> Self {
+        Self::Parse(value)
+    }
+}
 
 impl From<crate::SemanticError> for CompileError {
     fn from(value: crate::SemanticError) -> Self {
@@ -233,12 +402,7 @@ pub fn compile_source_bundle(
     langspec: Option<&LangSpec>,
     options: CompileOptions,
 ) -> Result<CompileArtifacts, CompileError> {
-    let script = parse_source_bundle(bundle, langspec).map_err(|error| {
-        CompileError::Codegen(CodegenError::new(
-            None,
-            format!("failed to parse source bundle during compile: {error}"),
-        ))
-    })?;
+    let script = parse_source_bundle(bundle, langspec)?;
     compile_script_with_source_map(
         &script,
         &bundle.source_map,
@@ -257,19 +421,19 @@ fn compile_script_with_debug(
 ) -> Result<CompileArtifacts, CompileError> {
     let semantic = analyze_script_with_options(script, langspec, options.semantic)?;
     let hir = lower_to_hir(script, &semantic, langspec)?;
-    if optimization_not_o0(options.optimization) {
-        let ncs = compile_hir_to_ncs(&hir, langspec, options.optimization)?;
-        return Ok(CompileArtifacts {
-            ncs,
-            ndb: None,
-        });
-    }
-
-    let output = O0Compiler::new(&hir, langspec, source_map)?.compile()?;
+    let optimized_hir = if optimization_needs_hir_passes(options.optimizations) {
+        optimize_hir(&hir, langspec, options.optimizations)
+    } else {
+        hir
+    };
+    validate_hir_limits(&optimized_hir, langspec)?;
+    let output = O0Compiler::new(&optimized_hir, langspec, source_map)?.compile(
+        optimization_needs_post_codegen_passes(options.optimizations),
+    )?;
     let ncs = encode_ncs_instructions(&output.instructions);
     let ndb = match (source_map, root_id) {
         (Some(source_map), Some(root_id)) => {
-            let ndb = build_ndb(&hir, langspec, source_map, root_id, &output)?;
+            let ndb = build_ndb(&optimized_hir, langspec, source_map, root_id, &output)?;
             let mut bytes = Vec::new();
             write_ndb(&mut bytes, &ndb).map_err(CodegenError::from)?;
             Some(bytes)
@@ -305,7 +469,7 @@ fn compile_script_with_debug(
 /// let ncs = nwnrs_nwscript::compile_hir_to_ncs(
 ///     &hir,
 ///     None,
-///     nwnrs_nwscript::OptimizationLevel::O0,
+///     nwnrs_nwscript::OptimizationFlags::O0,
 /// )?;
 /// assert!(!ncs.is_empty());
 /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -313,25 +477,19 @@ fn compile_script_with_debug(
 pub fn compile_hir_to_ncs(
     hir: &HirModule,
     langspec: Option<&LangSpec>,
-    optimization: OptimizationLevel,
+    optimizations: OptimizationFlags,
 ) -> Result<Vec<u8>, CodegenError> {
-    let optimized_hir = if optimization_needs_hir_passes(optimization) {
-        optimize_hir(hir, langspec, optimization)
+    let optimized_hir = if optimization_needs_hir_passes(optimizations) {
+        optimize_hir(hir, langspec, optimizations)
     } else {
         hir.clone()
     };
 
-    let mut instructions = O0Compiler::new(&optimized_hir, langspec, None)?
-        .compile()?
-        .instructions;
-    if optimization_needs_post_codegen_passes(optimization) {
-        instructions = meld_instructions(instructions);
-    }
-    Ok(encode_ncs_instructions(&instructions))
-}
+    validate_hir_limits(&optimized_hir, langspec)?;
 
-fn optimization_not_o0(optimization: OptimizationLevel) -> bool {
-    optimization != OptimizationLevel::O0
+    let output = O0Compiler::new(&optimized_hir, langspec, None)?
+        .compile(optimization_needs_post_codegen_passes(optimizations))?;
+    Ok(encode_ncs_instructions(&output.instructions))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -417,6 +575,59 @@ impl Assembler {
         });
     }
 
+    fn meld_instructions(&mut self) {
+        let mut pending = VecDeque::from(std::mem::take(&mut self.items));
+        let mut optimized = Vec::with_capacity(self.items.len());
+        while !pending.is_empty() {
+            let candidate = {
+                let mut instructions = Vec::with_capacity(4);
+                let mut positions = Vec::with_capacity(4);
+                for (position, item) in pending.iter().enumerate() {
+                    match item {
+                        AssemblyItem::Label(_) => {}
+                        AssemblyItem::Instruction(instruction) => {
+                            instructions.push(instruction);
+                            positions.push(position);
+                            if instructions.len() == 4 {
+                                break;
+                            }
+                        }
+                        AssemblyItem::RelativeJump {
+                            ..
+                        } => break,
+                    }
+                }
+                match (instructions.as_slice(), positions.as_slice()) {
+                    ([first, second, third, fourth], [_, second_pos, _, fourth_pos]) => {
+                        melded_instruction([first, second, third, fourth])
+                            .map(|replacement| (replacement, *second_pos, *fourth_pos))
+                    }
+                    _ => None,
+                }
+            };
+
+            if let Some((replacement, constant_position, end_position)) = candidate {
+                let mut leading_labels = Vec::new();
+                let mut trailing_labels = Vec::new();
+                for position in 0..=end_position {
+                    if let Some(AssemblyItem::Label(label)) = pending.pop_front() {
+                        if position < constant_position {
+                            leading_labels.push(AssemblyItem::Label(label));
+                        } else {
+                            trailing_labels.push(AssemblyItem::Label(label));
+                        }
+                    }
+                }
+                optimized.extend(leading_labels);
+                optimized.push(AssemblyItem::Instruction(replacement));
+                optimized.extend(trailing_labels);
+            } else if let Some(item) = pending.pop_front() {
+                optimized.push(item);
+            }
+        }
+        self.items = optimized;
+    }
+
     fn finalize(self) -> Result<ResolvedAssembly, CodegenError> {
         let mut offsets = BTreeMap::new();
         let mut offset = 0usize;
@@ -488,6 +699,7 @@ struct O0Compiler<'a> {
     entry_function:        Option<&'a HirFunction>,
     global_layout:         BTreeMap<String, ValueLayout>,
     global_size:           usize,
+    global_init_bytes:     Option<usize>,
     function_labels:       BTreeMap<String, LabelId>,
     function_exit_labels:  BTreeMap<String, LabelId>,
     function_end_labels:   BTreeMap<String, LabelId>,
@@ -516,9 +728,24 @@ struct FieldLayout {
 
 #[derive(Clone)]
 struct FunctionLayout {
-    return_layout: Option<ValueLayout>,
-    locals:        BTreeMap<HirLocalId, ValueLayout>,
-    locals_size:   usize,
+    return_layout:      Option<ValueLayout>,
+    locals:             BTreeMap<HirLocalId, ValueLayout>,
+    parameter_size:     usize,
+    active_locals_size: usize,
+}
+
+struct FunctionScope {
+    variable_debug: Vec<usize>,
+    locals:         Vec<HirLocalId>,
+    local_bytes:    usize,
+    temp_bytes:     usize,
+}
+
+#[derive(Clone, Copy)]
+struct ControlTarget {
+    label:       LabelId,
+    scope_depth: usize,
+    temp_bytes:  usize,
 }
 
 struct FunctionEmitter<'a, 'b> {
@@ -526,9 +753,9 @@ struct FunctionEmitter<'a, 'b> {
     function:         &'a HirFunction,
     layout:           FunctionLayout,
     temp_bytes:       usize,
-    break_targets:    Vec<LabelId>,
-    continue_targets: Vec<LabelId>,
-    scope_stack:      Vec<Vec<usize>>,
+    break_targets:    Vec<ControlTarget>,
+    continue_targets: Vec<ControlTarget>,
+    scope_stack:      Vec<FunctionScope>,
 }
 
 impl<'a> O0Compiler<'a> {
@@ -569,7 +796,7 @@ impl<'a> O0Compiler<'a> {
 
         let mut global_layout = BTreeMap::new();
         let mut global_size = 0usize;
-        for global in &hir.globals {
+        for global in hir.globals.iter().filter(|global| !global.is_const) {
             let size = size_of_type(&global.ty, &structs)?;
             global_layout.insert(
                 global.name.clone(),
@@ -582,7 +809,12 @@ impl<'a> O0Compiler<'a> {
         }
 
         let mut assembler = Assembler::default();
-        let globals_label = (!hir.globals.is_empty()).then(|| assembler.new_label());
+        // Native parsing places top-level structure definitions in the global
+        // parse tree. They therefore retain the saved-base-pointer wrapper
+        // even when no mutable global storage is allocated. Const-only units
+        // do not create that wrapper.
+        let globals_label =
+            (global_size > 0 || !hir.structs.is_empty()).then(|| assembler.new_label());
         let globals_end_label = globals_label.map(|_| assembler.new_label());
         let function_labels = hir
             .functions
@@ -611,6 +843,7 @@ impl<'a> O0Compiler<'a> {
             entry_function,
             global_layout,
             global_size,
+            global_init_bytes: None,
             function_labels,
             function_exit_labels,
             function_end_labels,
@@ -625,7 +858,7 @@ impl<'a> O0Compiler<'a> {
         })
     }
 
-    fn compile(mut self) -> Result<CodegenOutput, CodegenError> {
+    fn compile(mut self, meld: bool) -> Result<CodegenOutput, CodegenError> {
         self.emit_loader()?;
 
         if let Some(globals_label) = self.globals_label {
@@ -665,6 +898,9 @@ impl<'a> O0Compiler<'a> {
             self.assembler.place_label(end_label);
         }
 
+        if meld {
+            self.assembler.meld_instructions();
+        }
         let assembly = self.assembler.finalize()?;
         Ok(CodegenOutput {
             instructions:  assembly.instructions,
@@ -727,34 +963,41 @@ impl<'a> O0Compiler<'a> {
     }
 
     fn emit_globals(&mut self) -> Result<(), CodegenError> {
-        if self.globals_label.is_some() {
-            for global in &self.hir.globals {
-                self.emit_stack_alloc(&global.ty)?;
-                let start = self.assembler.new_label();
-                self.assembler.place_label(start);
-                let layout = self.global_layout.get(&global.name).ok_or_else(|| {
+        let globals = self
+            .hir
+            .globals
+            .iter()
+            .filter(|global| !global.is_const)
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut emitter = GlobalEmitter {
+            compiler:        self,
+            allocated_bytes: 0,
+            temp_bytes:      0,
+        };
+        for global in &globals {
+            emitter.compiler.emit_stack_alloc(&global.ty)?;
+            let size = size_of_type(&global.ty, &emitter.compiler.structs)?;
+            emitter.allocated_bytes += size;
+            let start = emitter.compiler.assembler.new_label();
+            emitter.compiler.assembler.place_label(start);
+            let layout = emitter
+                .compiler
+                .global_layout
+                .get(&global.name)
+                .ok_or_else(|| {
                     CodegenError::new(
                         Some(global.span),
                         format!("unknown global {:?}", global.name),
                     )
                 })?;
-                self.variable_debug.push(VariableDebugInfo {
-                    name: global.name.clone(),
-                    ty: global.ty.clone(),
-                    start,
-                    end: None,
-                    stack_loc: usize_to_u32(layout.offset, "global stack location")?,
-                });
-            }
-        }
-        self.assembler
-            .push(simple_instruction(NcsOpcode::SaveBasePointer));
-
-        let mut emitter = GlobalEmitter {
-            compiler:   self,
-            temp_bytes: 0,
-        };
-        for global in &emitter.compiler.hir.globals {
+            emitter.compiler.variable_debug.push(VariableDebugInfo {
+                name: global.name.clone(),
+                ty: global.ty.clone(),
+                start,
+                end: None,
+                stack_loc: usize_to_u32(layout.offset, "global stack location")?,
+            });
             if let Some(initializer) = &global.initializer {
                 let start = emitter.compiler.assembler.new_label();
                 emitter.compiler.assembler.place_label(start);
@@ -767,6 +1010,10 @@ impl<'a> O0Compiler<'a> {
                 emitter.compiler.end_line_at(global.span, end);
             }
         }
+        emitter
+            .compiler
+            .assembler
+            .push(simple_instruction(NcsOpcode::SaveBasePointer));
 
         if let Some(entry) = emitter.compiler.entry_function {
             if entry.return_type != SemanticType::Void {
@@ -784,12 +1031,49 @@ impl<'a> O0Compiler<'a> {
                     )
                 })?;
             emitter.compiler.assembler.push_jump(NcsOpcode::Jsr, label);
+
+            if entry.return_type != SemanticType::Void {
+                let return_size = size_of_type(&entry.return_type, &emitter.compiler.structs)?;
+                // The loader owns the externally visible conditional return
+                // slot. Copy the nested entrypoint result down across the
+                // globals and saved base-pointer cell before unwinding them.
+                let frame_distance = emitter
+                    .compiler
+                    .global_size
+                    .checked_add(4)
+                    .and_then(|size| size.checked_add(return_size.saturating_mul(2)))
+                    .ok_or_else(|| CodegenError::new(Some(entry.span), "global frame overflow"))?;
+                emitter.compiler.assembler.push(NcsInstruction {
+                    opcode:  NcsOpcode::Assignment,
+                    auxcode: NcsAuxCode::TypeVoid,
+                    extra:   assignment_extra(
+                        -usize_to_i32(frame_distance, "conditional global frame size")?,
+                        return_size,
+                    ),
+                });
+                emitter.compiler.assembler.push(NcsInstruction {
+                    opcode:  NcsOpcode::ModifyStackPointer,
+                    auxcode: NcsAuxCode::None,
+                    extra:   (-usize_to_i32(return_size, "conditional return size")?)
+                        .to_be_bytes()
+                        .to_vec(),
+                });
+            }
         }
 
         emitter
             .compiler
             .assembler
             .push(simple_instruction(NcsOpcode::RestoreBasePointer));
+        if emitter.compiler.global_size > 0 {
+            emitter.compiler.assembler.push(NcsInstruction {
+                opcode:  NcsOpcode::ModifyStackPointer,
+                auxcode: NcsAuxCode::None,
+                extra:   (-usize_to_i32(emitter.compiler.global_size, "global cleanup size")?)
+                    .to_be_bytes()
+                    .to_vec(),
+            });
+        }
         emitter
             .compiler
             .assembler
@@ -873,9 +1157,7 @@ impl<'a> O0Compiler<'a> {
                 emitter
                     .compiler
                     .start_line_end_at(body.span, final_line_start);
-                if function.return_type == SemanticType::Void {
-                    emitter.emit_function_epilogue();
-                }
+                emitter.emit_parameter_cleanup();
                 emitter
                     .compiler
                     .assembler
@@ -883,15 +1165,9 @@ impl<'a> O0Compiler<'a> {
                 let final_line_end = emitter.compiler.assembler.new_label();
                 emitter.compiler.assembler.place_label(final_line_end);
                 emitter.compiler.end_line_end_at(body.span, final_line_end);
-            } else if function.return_type == SemanticType::Void {
-                emitter.compiler.assembler.place_label(exit);
-                emitter.emit_function_epilogue();
-                emitter
-                    .compiler
-                    .assembler
-                    .push(simple_instruction(NcsOpcode::Ret));
             } else {
                 emitter.compiler.assembler.place_label(exit);
+                emitter.emit_parameter_cleanup();
                 emitter
                     .compiler
                     .assembler
@@ -918,7 +1194,7 @@ impl<'a> O0Compiler<'a> {
         };
 
         let mut locals = BTreeMap::new();
-        for parameter in &function.parameters {
+        for parameter in function.parameters.iter().rev() {
             let size = size_of_type(&parameter.ty, &self.structs)?;
             locals.insert(
                 parameter.local,
@@ -930,26 +1206,13 @@ impl<'a> O0Compiler<'a> {
             offset += size;
         }
 
-        let frame_prefix = offset;
-        for local in &function.locals {
-            if local.kind != HirLocalKind::Local {
-                continue;
-            }
-            let size = size_of_type(&local.ty, &self.structs)?;
-            locals.insert(
-                local.id,
-                ValueLayout {
-                    offset,
-                    size,
-                },
-            );
-            offset += size;
-        }
-
+        let return_size = return_layout.as_ref().map_or(0, |layout| layout.size);
+        let parameter_size = offset - return_size;
         Ok(FunctionLayout {
             return_layout,
             locals,
-            locals_size: offset - frame_prefix,
+            parameter_size,
+            active_locals_size: 0,
         })
     }
 
@@ -1088,14 +1351,17 @@ impl<'a> O0Compiler<'a> {
     ) -> Literal {
         match literal {
             crate::MagicLiteral::Function => {
-                Literal::String(self.current_function_name.unwrap_or_default().to_string())
+                Literal::String(self.current_function_name.unwrap_or_default().into())
             }
             crate::MagicLiteral::File => {
-                let value = span
+                let mut value = span
                     .and_then(|span| self.source_map?.get(span.source_id))
                     .map(|file| file.name.clone())
                     .unwrap_or_default();
-                Literal::String(value)
+                if !value.is_empty() && Path::new(&value).extension().is_none() {
+                    value.push_str(".nss");
+                }
+                Literal::String(value.into())
             }
             crate::MagicLiteral::Line => {
                 let value = span
@@ -1105,20 +1371,28 @@ impl<'a> O0Compiler<'a> {
                     });
                 Literal::Integer(value)
             }
-            crate::MagicLiteral::Date => Literal::String(format_magic_date(self.compile_time)),
-            crate::MagicLiteral::Time => Literal::String(format_magic_time(self.compile_time)),
+            crate::MagicLiteral::Date => {
+                Literal::String(format_magic_date(self.compile_time).into())
+            }
+            crate::MagicLiteral::Time => {
+                Literal::String(format_magic_time(self.compile_time).into())
+            }
         }
     }
 }
 
 struct GlobalEmitter<'a, 'b> {
-    compiler:   &'b mut O0Compiler<'a>,
-    temp_bytes: usize,
+    compiler:        &'b mut O0Compiler<'a>,
+    allocated_bytes: usize,
+    temp_bytes:      usize,
 }
 
 impl GlobalEmitter<'_, '_> {
     fn emit_expr(&mut self, expr: &HirExpr) -> Result<(), CodegenError> {
-        emit_expr_common(self.compiler, &mut self.temp_bytes, None, expr)
+        self.compiler.global_init_bytes = Some(self.allocated_bytes);
+        let result = emit_expr_common(self.compiler, &mut self.temp_bytes, None, expr);
+        self.compiler.global_init_bytes = None;
+        result
     }
 
     fn emit_store_global(&mut self, name: &str, span: crate::Span) -> Result<(), CodegenError> {
@@ -1128,9 +1402,12 @@ impl GlobalEmitter<'_, '_> {
             .get(name)
             .ok_or_else(|| CodegenError::new(Some(span), format!("unknown global {name:?}")))?;
         let offset = usize_to_i32(layout.offset, "global offset")?
-            - usize_to_i32(self.compiler.global_size, "global size")?;
+            - usize_to_i32(
+                self.allocated_bytes + self.temp_bytes,
+                "global initialization stack size",
+            )?;
         self.compiler.assembler.push(NcsInstruction {
-            opcode:  NcsOpcode::AssignmentBase,
+            opcode:  NcsOpcode::Assignment,
             auxcode: NcsAuxCode::TypeVoid,
             extra:   assignment_extra(offset, layout.size),
         });
@@ -1155,20 +1432,20 @@ impl GlobalEmitter<'_, '_> {
 
 impl FunctionEmitter<'_, '_> {
     fn emit_prologue(&mut self) -> Result<(), CodegenError> {
-        for local in &self.function.locals {
-            if local.kind == HirLocalKind::Local {
-                self.compiler.emit_stack_alloc(&local.ty)?;
-            }
-        }
         Ok(())
     }
 
     fn emit_block(&mut self, block: &HirBlock) -> Result<(), CodegenError> {
-        self.scope_stack.push(Vec::new());
+        self.scope_stack.push(FunctionScope {
+            variable_debug: Vec::new(),
+            locals:         Vec::new(),
+            local_bytes:    0,
+            temp_bytes:     self.temp_bytes,
+        });
         for statement in &block.statements {
             self.emit_stmt(statement)?;
         }
-        self.close_scope_variables();
+        self.close_scope()?;
         Ok(())
     }
 
@@ -1183,7 +1460,25 @@ impl FunctionEmitter<'_, '_> {
                 let start = self.compiler.assembler.new_label();
                 self.compiler.assembler.place_label(start);
                 for declarator in &statement.declarators {
-                    let local = self.local_info(declarator.local, statement.span)?;
+                    let local = self.local_info(declarator.local, statement.span)?.clone();
+                    let size = size_of_type(&local.ty, &self.compiler.structs)?;
+                    // A switch keeps its selector on the runtime stack while
+                    // emitting the case body. Locals declared inside that
+                    // body are therefore above both the normal frame and the
+                    // live selector value.
+                    let offset = self.current_stack_bytes();
+                    self.compiler.emit_stack_alloc(&local.ty)?;
+                    self.layout.locals.insert(
+                        declarator.local,
+                        ValueLayout {
+                            offset,
+                            size,
+                        },
+                    );
+                    self.layout.active_locals_size += size;
+                    let scope = self.current_scope();
+                    scope.locals.push(declarator.local);
+                    scope.local_bytes += size;
                     let end_index = self.compiler.variable_debug.len();
                     self.compiler.variable_debug.push(VariableDebugInfo {
                         name: local.name.clone(),
@@ -1192,7 +1487,7 @@ impl FunctionEmitter<'_, '_> {
                         end: None,
                         stack_loc: self.local_stack_loc(declarator.local, statement.span)?,
                     });
-                    self.current_scope_variables().push(end_index);
+                    self.current_scope().variable_debug.push(end_index);
                 }
                 for declarator in &statement.declarators {
                     if let Some(initializer) = &declarator.initializer {
@@ -1284,7 +1579,7 @@ impl FunctionEmitter<'_, '_> {
                         extra:   assignment_extra(offset, retval.size),
                     });
                 }
-                self.emit_function_epilogue();
+                self.emit_return_cleanup();
                 let exit = self
                     .compiler
                     .function_exit_labels
@@ -1297,6 +1592,13 @@ impl FunctionEmitter<'_, '_> {
                         )
                     })?;
                 self.compiler.assembler.push_jump(NcsOpcode::Jmp, exit);
+                // Native codegen still emits the expression-temporary pop
+                // after the return jump. It is unreachable at runtime, but it
+                // restores compile-time stack accounting for sibling control
+                // flow and is required for byte-identical output.
+                if let Some(value) = &statement.value {
+                    self.emit_pop_type(&value.ty)?;
+                }
                 let end = self.compiler.assembler.new_label();
                 self.compiler.assembler.place_label(end);
                 self.compiler.end_line_at(statement.span, end);
@@ -1317,8 +1619,8 @@ impl FunctionEmitter<'_, '_> {
                 let loop_end = self.compiler.assembler.new_label();
                 self.compiler.assembler.place_label(loop_end);
                 self.compiler.end_line_at(statement.span, loop_end);
-                self.break_targets.push(end_label);
-                self.continue_targets.push(cond_label);
+                self.break_targets.push(self.control_target(end_label));
+                self.continue_targets.push(self.control_target(cond_label));
                 self.emit_stmt(&statement.body)?;
                 self.continue_targets.pop();
                 self.break_targets.pop();
@@ -1339,8 +1641,8 @@ impl FunctionEmitter<'_, '_> {
                 let cond_label = self.compiler.assembler.new_label();
                 let end_label = self.compiler.assembler.new_label();
                 self.compiler.assembler.place_label(body_label);
-                self.break_targets.push(end_label);
-                self.continue_targets.push(cond_label);
+                self.break_targets.push(self.control_target(end_label));
+                self.continue_targets.push(self.control_target(cond_label));
                 self.emit_stmt(&statement.body)?;
                 self.continue_targets.pop();
                 self.break_targets.pop();
@@ -1378,8 +1680,9 @@ impl FunctionEmitter<'_, '_> {
                     self.emit_expr(condition)?;
                     self.emit_branch_zero(end_label)?;
                 }
-                self.break_targets.push(end_label);
-                self.continue_targets.push(update_label);
+                self.break_targets.push(self.control_target(end_label));
+                self.continue_targets
+                    .push(self.control_target(update_label));
                 self.emit_stmt(&statement.body)?;
                 self.continue_targets.pop();
                 self.break_targets.pop();
@@ -1411,7 +1714,10 @@ impl FunctionEmitter<'_, '_> {
                         "break used outside loop or switch",
                     ));
                 };
-                self.compiler.assembler.push_jump(NcsOpcode::Jmp, target);
+                self.emit_control_cleanup(target)?;
+                self.compiler
+                    .assembler
+                    .push_jump(NcsOpcode::Jmp, target.label);
                 let end = self.compiler.assembler.new_label();
                 self.compiler.assembler.place_label(end);
                 self.compiler.end_line_at(*span, end);
@@ -1424,7 +1730,10 @@ impl FunctionEmitter<'_, '_> {
                 let Some(target) = self.continue_targets.last().copied() else {
                     return Err(CodegenError::new(Some(*span), "continue used outside loop"));
                 };
-                self.compiler.assembler.push_jump(NcsOpcode::Jmp, target);
+                self.emit_control_cleanup(target)?;
+                self.compiler
+                    .assembler
+                    .push_jump(NcsOpcode::Jmp, target.label);
                 let end = self.compiler.assembler.new_label();
                 self.compiler.assembler.place_label(end);
                 self.compiler.end_line_at(*span, end);
@@ -1442,26 +1751,72 @@ impl FunctionEmitter<'_, '_> {
         }
     }
 
-    fn close_scope_variables(&mut self) {
-        let Some(indices) = self.scope_stack.pop() else {
-            return;
+    fn close_scope(&mut self) -> Result<(), CodegenError> {
+        let Some(scope) = self.scope_stack.pop() else {
+            return Ok(());
         };
-        if indices.is_empty() {
-            return;
+        if self.temp_bytes > scope.temp_bytes {
+            self.emit_pop_bytes(self.temp_bytes - scope.temp_bytes);
         }
         let end = self.compiler.assembler.new_label();
         self.compiler.assembler.place_label(end);
-        for index in indices {
+        for index in scope.variable_debug {
             if let Some(variable) = self.compiler.variable_debug.get_mut(index) {
                 variable.end = Some(end);
             }
         }
+        if scope.local_bytes > 0 {
+            self.compiler.assembler.push(NcsInstruction {
+                opcode:  NcsOpcode::ModifyStackPointer,
+                auxcode: NcsAuxCode::None,
+                extra:   (-usize_to_i32(scope.local_bytes, "scope cleanup size")?)
+                    .to_be_bytes()
+                    .to_vec(),
+            });
+            self.layout.active_locals_size = self
+                .layout
+                .active_locals_size
+                .saturating_sub(scope.local_bytes);
+        }
+        for local in scope.locals {
+            self.layout.locals.remove(&local);
+        }
+        Ok(())
     }
 
-    fn current_scope_variables(&mut self) -> &mut Vec<usize> {
+    fn current_scope(&mut self) -> &mut FunctionScope {
         self.scope_stack
             .last_mut()
             .unwrap_or_else(|| unreachable!("function blocks should always have an active scope"))
+    }
+
+    fn control_target(&self, label: LabelId) -> ControlTarget {
+        ControlTarget {
+            label,
+            scope_depth: self.scope_stack.len(),
+            temp_bytes: self.temp_bytes,
+        }
+    }
+
+    fn emit_control_cleanup(&mut self, target: ControlTarget) -> Result<(), CodegenError> {
+        let local_bytes = self
+            .scope_stack
+            .get(target.scope_depth..)
+            .unwrap_or_default()
+            .iter()
+            .map(|scope| scope.local_bytes)
+            .sum::<usize>();
+        let cleanup = local_bytes + self.temp_bytes.saturating_sub(target.temp_bytes);
+        if cleanup > 0 {
+            self.compiler.assembler.push(NcsInstruction {
+                opcode:  NcsOpcode::ModifyStackPointer,
+                auxcode: NcsAuxCode::None,
+                extra:   (-usize_to_i32(cleanup, "control-flow cleanup size")?)
+                    .to_be_bytes()
+                    .to_vec(),
+            });
+        }
+        Ok(())
     }
 
     fn local_info(
@@ -1539,7 +1894,6 @@ impl FunctionEmitter<'_, '_> {
         let next_test = self.compiler.assembler.new_label();
         self.compiler.assembler.place_label(next_test);
         for (_, value, label) in &case_labels {
-            let after_compare = self.compiler.assembler.new_label();
             self.emit_copy_top_value(switch_result_size)?;
             emit_push_literal(
                 self.compiler,
@@ -1554,9 +1908,8 @@ impl FunctionEmitter<'_, '_> {
                 &SemanticType::Int,
                 Some(statement.span),
             )?;
-            self.emit_branch_zero(after_compare)?;
-            self.compiler.assembler.push_jump(NcsOpcode::Jmp, *label);
-            self.compiler.assembler.place_label(after_compare);
+            self.temp_bytes = self.temp_bytes.saturating_sub(4);
+            self.compiler.assembler.push_jump(NcsOpcode::Jnz, *label);
         }
         if let Some((_, label)) = default_label {
             self.compiler.assembler.push_jump(NcsOpcode::Jmp, label);
@@ -1564,7 +1917,14 @@ impl FunctionEmitter<'_, '_> {
             self.compiler.assembler.push_jump(NcsOpcode::Jmp, body_end);
         }
 
-        self.break_targets.push(body_end);
+        let break_target = self.control_target(body_end);
+        self.break_targets.push(break_target);
+        self.scope_stack.push(FunctionScope {
+            variable_debug: Vec::new(),
+            locals:         Vec::new(),
+            local_bytes:    0,
+            temp_bytes:     self.temp_bytes,
+        });
         let mut seen_cases = 0usize;
         for stmt in &block.statements {
             match stmt {
@@ -1588,6 +1948,7 @@ impl FunctionEmitter<'_, '_> {
             }
         }
         self.break_targets.pop();
+        self.close_scope()?;
         self.compiler.assembler.place_label(body_end);
         self.emit_pop_bytes(switch_result_size);
         Ok(())
@@ -1698,10 +2059,19 @@ impl FunctionEmitter<'_, '_> {
         }
     }
 
-    fn emit_function_epilogue(&mut self) {
-        let cleanup = self.layout.locals_size + self.temp_bytes;
+    fn emit_return_cleanup(&mut self) {
+        // A return statement removes live locals and expression temporaries,
+        // then branches to the shared exit that removes parameters.
+        let cleanup = self.layout.active_locals_size + self.temp_bytes;
+        self.emit_cleanup_bytes(cleanup);
+    }
+
+    fn emit_parameter_cleanup(&mut self) {
+        self.emit_cleanup_bytes(self.layout.parameter_size);
+    }
+
+    fn emit_cleanup_bytes(&mut self, cleanup: usize) {
         if cleanup > 0 {
-            self.temp_bytes = 0;
             self.compiler.assembler.push(NcsInstruction {
                 opcode:  NcsOpcode::ModifyStackPointer,
                 auxcode: NcsAuxCode::None,
@@ -1713,29 +2083,7 @@ impl FunctionEmitter<'_, '_> {
     }
 
     fn current_stack_bytes(&self) -> usize {
-        let locals = self
-            .layout
-            .locals
-            .values()
-            .map(|layout| layout.size)
-            .sum::<usize>();
-        let params_and_ret = self
-            .layout
-            .return_layout
-            .as_ref()
-            .map_or(0, |layout| layout.size)
-            + self
-                .function
-                .parameters
-                .iter()
-                .map(|parameter| {
-                    self.layout
-                        .locals
-                        .get(&parameter.local)
-                        .map_or(0, |layout| layout.size)
-                })
-                .sum::<usize>();
-        params_and_ret + locals + self.temp_bytes
+        function_frame_bytes(&self.layout) + self.temp_bytes
     }
 }
 
@@ -1746,6 +2094,21 @@ fn emit_expr_common(
     layout: Option<&FunctionLayout>,
     expr: &HirExpr,
 ) -> Result<(), CodegenError> {
+    // Constant folding is part of the native compiler's ordinary parse-tree
+    // walk, independent of its selectable optimization flags.
+    if matches!(
+        &expr.kind,
+        HirExprKind::Unary { .. } | HirExprKind::Binary { .. }
+    ) && let Some(value) = evaluate_const_expr(expr, &compiler.constant_env)
+    {
+        let literal = match value {
+            ConstValue::Int(value) => Literal::Integer(value),
+            ConstValue::Float(value) => Literal::Float(value),
+            ConstValue::String(value) => Literal::String(value),
+        };
+        return emit_push_literal(compiler, temp_bytes, &literal, &expr.ty, Some(expr.span));
+    }
+
     match &expr.kind {
         HirExprKind::Literal(literal) => {
             emit_push_literal(compiler, temp_bytes, literal, &expr.ty, Some(expr.span))
@@ -1769,19 +2132,34 @@ fn emit_expr_common(
                 *temp_bytes += slot.size;
                 Ok(())
             }
-            crate::HirValueRef::Global(name) | crate::HirValueRef::ConstGlobal(name) => {
+            crate::HirValueRef::Global(name) => {
                 let slot = compiler.global_layout.get(name).ok_or_else(|| {
                     CodegenError::new(Some(expr.span), format!("unknown global {name:?}"))
                 })?;
+                let (opcode, stack_size) = compiler.global_init_bytes.map_or(
+                    (NcsOpcode::RunstackCopyBase, compiler.global_size),
+                    |allocated| (NcsOpcode::RunstackCopy, allocated + *temp_bytes),
+                );
                 let offset = usize_to_i32(slot.offset, "global load offset")?
-                    - usize_to_i32(compiler.global_size, "global size")?;
+                    - usize_to_i32(stack_size, "global load stack size")?;
                 compiler.assembler.push(NcsInstruction {
-                    opcode:  NcsOpcode::RunstackCopyBase,
+                    opcode,
                     auxcode: NcsAuxCode::TypeVoid,
-                    extra:   assignment_extra(offset, slot.size),
+                    extra: assignment_extra(offset, slot.size),
                 });
                 *temp_bytes += slot.size;
                 Ok(())
+            }
+            crate::HirValueRef::ConstGlobal(name) => {
+                let value = compiler.constant_env.get(name).ok_or_else(|| {
+                    CodegenError::new(Some(expr.span), format!("unknown const global {name:?}"))
+                })?;
+                let literal = match value {
+                    ConstValue::Int(value) => Literal::Integer(*value),
+                    ConstValue::Float(value) => Literal::Float(*value),
+                    ConstValue::String(value) => Literal::String(value.clone()),
+                };
+                emit_push_literal(compiler, temp_bytes, &literal, &expr.ty, Some(expr.span))
             }
             crate::HirValueRef::BuiltinConstant(name) => {
                 let value = compiler.builtin_constants.get(name).ok_or_else(|| {
@@ -1811,24 +2189,21 @@ fn emit_expr_common(
             let base_size = size_of_type(&base.ty, &compiler.structs)?;
             let field_layout = field_layout(&base.ty, field, &compiler.structs, Some(expr.span))?;
             debug_assert_eq!(field_layout.ty, expr.ty);
+            let mut extra = Vec::with_capacity(6);
+            extra.extend_from_slice(&usize_to_u16(base_size, "structure size")?.to_be_bytes());
+            extra.extend_from_slice(
+                &usize_to_u16(field_layout.offset, "structure field offset")?.to_be_bytes(),
+            );
+            extra.extend_from_slice(
+                &usize_to_u16(field_layout.size, "structure field size")?.to_be_bytes(),
+            );
             compiler.assembler.push(NcsInstruction {
-                opcode:  NcsOpcode::RunstackCopy,
+                opcode: NcsOpcode::DeStruct,
                 auxcode: NcsAuxCode::TypeVoid,
-                extra:   assignment_extra(
-                    usize_to_i32(field_layout.offset, "field offset")?
-                        - usize_to_i32(base_size, "base size")?,
-                    field_layout.size,
-                ),
+                extra,
             });
-            *temp_bytes += field_layout.size;
             *temp_bytes = temp_bytes.saturating_sub(base_size);
-            compiler.assembler.push(NcsInstruction {
-                opcode:  NcsOpcode::ModifyStackPointer,
-                auxcode: NcsAuxCode::None,
-                extra:   (-usize_to_i32(base_size, "base size")?)
-                    .to_be_bytes()
-                    .to_vec(),
-            });
+            *temp_bytes += field_layout.size;
             Ok(())
         }
         HirExprKind::Unary {
@@ -1842,33 +2217,13 @@ fn emit_expr_common(
                     | UnaryOp::PostIncrement
                     | UnaryOp::PostDecrement
             ) {
+                if matches!(op, UnaryOp::PreIncrement | UnaryOp::PreDecrement) {
+                    emit_increment_target(compiler, *temp_bytes, layout, inner, *op, expr.span)?;
+                    emit_expr_common(compiler, temp_bytes, layout, inner)?;
+                    return Ok(());
+                }
                 emit_expr_common(compiler, temp_bytes, layout, inner)?;
-                if matches!(op, UnaryOp::PostIncrement | UnaryOp::PostDecrement) {
-                    emit_copy_top_bytes(compiler, temp_bytes, 4);
-                }
-                emit_push_literal(
-                    compiler,
-                    temp_bytes,
-                    &Literal::Integer(1),
-                    &SemanticType::Int,
-                    Some(expr.span),
-                )?;
-                let opcode = match op {
-                    UnaryOp::PreIncrement | UnaryOp::PostIncrement => NcsOpcode::Add,
-                    UnaryOp::PreDecrement | UnaryOp::PostDecrement => NcsOpcode::Sub,
-                    _ => unreachable!(),
-                };
-                *temp_bytes = temp_bytes.saturating_sub(8);
-                *temp_bytes += 4;
-                compiler.assembler.push(NcsInstruction {
-                    opcode,
-                    auxcode: NcsAuxCode::TypeTypeIntegerInteger,
-                    extra: Vec::new(),
-                });
-                emit_store_target(compiler, temp_bytes, layout, inner, expr.span)?;
-                if matches!(op, UnaryOp::PostIncrement | UnaryOp::PostDecrement) {
-                    emit_drop_bytes(compiler, temp_bytes, 4);
-                }
+                emit_increment_target(compiler, *temp_bytes, layout, inner, *op, expr.span)?;
                 return Ok(());
             }
             emit_expr_common(compiler, temp_bytes, layout, inner)?;
@@ -1894,6 +2249,37 @@ fn emit_expr_common(
             right,
         } => {
             emit_expr_common(compiler, temp_bytes, layout, left)?;
+            if matches!(op, BinaryOp::LogicalAnd | BinaryOp::LogicalOr) {
+                let base_temp_bytes = temp_bytes.saturating_sub(4);
+                emit_copy_top_bytes(compiler, temp_bytes, 4);
+                let short_circuit = compiler.assembler.new_label();
+                *temp_bytes = temp_bytes.saturating_sub(4);
+                compiler.assembler.push_jump(NcsOpcode::Jz, short_circuit);
+
+                if *op == BinaryOp::LogicalOr {
+                    emit_copy_top_bytes(compiler, temp_bytes, 4);
+                    let merge = compiler.assembler.new_label();
+                    compiler.assembler.push_jump(NcsOpcode::Jmp, merge);
+                    compiler.assembler.place_label(short_circuit);
+                    *temp_bytes = base_temp_bytes + 4;
+                    emit_expr_common(compiler, temp_bytes, layout, right)?;
+                    compiler.assembler.place_label(merge);
+                } else {
+                    emit_expr_common(compiler, temp_bytes, layout, right)?;
+                }
+
+                let opcode = opcode_for_binary(*op);
+                *temp_bytes = temp_bytes.saturating_sub(8) + 4;
+                compiler.assembler.push(NcsInstruction {
+                    opcode,
+                    auxcode: NcsAuxCode::TypeTypeIntegerInteger,
+                    extra: Vec::new(),
+                });
+                if *op == BinaryOp::LogicalAnd {
+                    compiler.assembler.place_label(short_circuit);
+                }
+                return Ok(());
+            }
             emit_expr_common(compiler, temp_bytes, layout, right)?;
             let opcode = opcode_for_binary(*op);
             let aux = aux_for_binary(&left.ty, &right.ty, compiler.hir, &compiler.structs)?;
@@ -2009,35 +2395,50 @@ fn emit_call(
                     .ok_or_else(|| {
                         CodegenError::new(Some(expr.span), format!("unknown builtin {name:?}"))
                     })?;
-            for (index, argument) in arguments.iter().enumerate() {
-                if function
-                    .parameters
-                    .get(index)
-                    .is_some_and(|parameter| matches!(parameter.ty, BuiltinType::Action))
-                {
-                    emit_action_parameter(compiler, temp_bytes, layout, argument)?;
+            // ACTION handlers pop parameters in declaration order, so the
+            // compiler must place the last parameter on the stack first.
+            // Action parameters do not occupy a normal stack cell, but they
+            // still participate in this right-to-left emission order.
+            for (index, parameter) in function.parameters.iter().enumerate().rev() {
+                if let Some(argument) = arguments.get(index) {
+                    if matches!(parameter.ty, BuiltinType::Action) {
+                        emit_action_parameter(compiler, temp_bytes, layout, argument)?;
+                    } else {
+                        emit_expr_common(compiler, temp_bytes, layout, argument)?;
+                    }
                     continue;
                 }
-                emit_expr_common(compiler, temp_bytes, layout, argument)?;
-            }
-            for parameter in function.parameters.iter().skip(arguments.len()) {
-                if matches!(parameter.ty, BuiltinType::Action) {
-                    let default = parameter.default.as_ref().ok_or_else(|| {
-                        CodegenError::new(
-                            Some(expr.span),
-                            format!("missing required parameter for builtin {name:?}"),
-                        )
-                    })?;
-                    let action = lower_builtin_action_default_expr(compiler, default, expr.span)?;
-                    emit_action_parameter(compiler, temp_bytes, layout, &action)?;
-                    continue;
-                }
+
                 let default = parameter.default.as_ref().ok_or_else(|| {
                     CodegenError::new(
                         Some(expr.span),
                         format!("missing required parameter for builtin {name:?}"),
                     )
                 })?;
+                if matches!(parameter.ty, BuiltinType::Action) {
+                    let action = lower_builtin_action_default_expr(compiler, default, expr.span)?;
+                    emit_action_parameter(compiler, temp_bytes, layout, &action)?;
+                    continue;
+                }
+                if matches!(parameter.ty, BuiltinType::Object)
+                    && let BuiltinValue::ObjectId(value) = default
+                {
+                    // The legacy langspec spells its invalid-object default as
+                    // the integer OBJECT_TYPE_INVALID (32767), but native
+                    // codegen widens that sentinel to INVALID_OBJECT_ID.
+                    let object_id = if *value == 32_767 {
+                        0x7f00_0000
+                    } else {
+                        *value
+                    };
+                    compiler.assembler.push(NcsInstruction {
+                        opcode:  NcsOpcode::Constant,
+                        auxcode: NcsAuxCode::TypeObject,
+                        extra:   object_id.to_be_bytes().to_vec(),
+                    });
+                    *temp_bytes += 4;
+                    continue;
+                }
                 let literal = literal_from_builtin_value(default).ok_or_else(|| {
                     CodegenError::new(
                         Some(expr.span),
@@ -2068,17 +2469,18 @@ fn emit_call(
                 compiler.emit_stack_alloc(&function.return_type)?;
                 *temp_bytes += size_of_type(&function.return_type, &compiler.structs)?;
             }
-            for argument in arguments {
-                emit_expr_common(compiler, temp_bytes, layout, argument)?;
-            }
-            for parameter in function.parameters.iter().skip(arguments.len()) {
-                let default = parameter.default.as_ref().ok_or_else(|| {
-                    CodegenError::new(
-                        Some(expr.span),
-                        format!("missing required parameter for function {name:?}"),
-                    )
-                })?;
-                emit_expr_common(compiler, temp_bytes, layout, default)?;
+            for (index, parameter) in function.parameters.iter().enumerate().rev() {
+                if let Some(argument) = arguments.get(index) {
+                    emit_expr_common(compiler, temp_bytes, layout, argument)?;
+                } else {
+                    let default = parameter.default.as_ref().ok_or_else(|| {
+                        CodegenError::new(
+                            Some(expr.span),
+                            format!("missing required parameter for function {name:?}"),
+                        )
+                    })?;
+                    emit_expr_common(compiler, temp_bytes, layout, default)?;
+                }
             }
             let label = compiler.function_labels.get(name).copied().ok_or_else(|| {
                 CodegenError::new(
@@ -2233,6 +2635,59 @@ fn emit_store_target(
     }
 }
 
+fn emit_increment_target(
+    compiler: &mut O0Compiler<'_>,
+    stack_bytes: usize,
+    layout: Option<&FunctionLayout>,
+    target: &HirExpr,
+    op: UnaryOp,
+    span: crate::Span,
+) -> Result<(), CodegenError> {
+    let resolved = resolve_assignment_target(target, &compiler.structs, Some(span))?;
+    let increment = matches!(op, UnaryOp::PreIncrement | UnaryOp::PostIncrement);
+    let (opcode, offset) = match resolved.root {
+        AssignmentTargetRoot::Local(local) => {
+            let layout = layout.ok_or_else(|| {
+                CodegenError::new(Some(span), "local increment used outside a function")
+            })?;
+            let slot = layout.locals.get(&local).ok_or_else(|| {
+                CodegenError::new(Some(span), format!("unknown local slot {local:?}"))
+            })?;
+            let offset = usize_to_i32(slot.offset + resolved.offset, "local increment offset")?
+                - usize_to_i32(
+                    function_frame_bytes(layout) + stack_bytes,
+                    "local increment frame size",
+                )?;
+            let opcode = if increment {
+                NcsOpcode::Increment
+            } else {
+                NcsOpcode::Decrement
+            };
+            (opcode, offset)
+        }
+        AssignmentTargetRoot::Global(name) => {
+            let slot = compiler
+                .global_layout
+                .get(name)
+                .ok_or_else(|| CodegenError::new(Some(span), format!("unknown global {name:?}")))?;
+            let offset = usize_to_i32(slot.offset + resolved.offset, "global increment offset")?
+                - usize_to_i32(compiler.global_size, "global size")?;
+            let opcode = if increment {
+                NcsOpcode::IncrementBase
+            } else {
+                NcsOpcode::DecrementBase
+            };
+            (opcode, offset)
+        }
+    };
+    compiler.assembler.push(NcsInstruction {
+        opcode,
+        auxcode: NcsAuxCode::TypeInteger,
+        extra: offset.to_be_bytes().to_vec(),
+    });
+    Ok(())
+}
+
 fn emit_push_literal(
     compiler: &mut O0Compiler<'_>,
     temp_bytes: &mut usize,
@@ -2274,7 +2729,7 @@ fn emit_push_literal(
         Literal::Json(value) => compiler.assembler.push(NcsInstruction {
             opcode:  NcsOpcode::Constant,
             auxcode: NcsAuxCode::TypeEngst7,
-            extra:   string_extra(value)?,
+            extra:   string_extra_bytes(value.as_bytes())?,
         }),
         Literal::Vector(values) => {
             for value in values {
@@ -2328,7 +2783,7 @@ fn evaluate_case_value(
 ) -> Result<i32, CodegenError> {
     match evaluate_const_expr(expr, constant_env) {
         Some(ConstValue::Int(value)) => Ok(value),
-        Some(ConstValue::String(value)) => Ok(nwscript_string_hash(&value)),
+        Some(ConstValue::String(value)) => Ok(nwscript_string_hash_bytes(value.as_bytes())),
         Some(ConstValue::Float(_)) | None => Err(CodegenError::new(
             Some(expr.span),
             "switch case code generation requires a constant int or string",
@@ -2337,11 +2792,12 @@ fn evaluate_case_value(
 }
 
 fn function_frame_bytes(layout: &FunctionLayout) -> usize {
-    layout.locals.values().map(|slot| slot.size).sum::<usize>()
-        + layout
-            .return_layout
-            .as_ref()
-            .map_or(0, |layout| layout.size)
+    layout
+        .return_layout
+        .as_ref()
+        .map_or(0, |layout| layout.size)
+        + layout.parameter_size
+        + layout.active_locals_size
 }
 
 fn size_of_binary_result(
@@ -2540,6 +2996,79 @@ fn size_of_type(
     }
 }
 
+fn validate_hir_limits(hir: &HirModule, langspec: Option<&LangSpec>) -> Result<(), CodegenError> {
+    let builtin_identifiers = langspec.map_or(0, |spec| {
+        spec.constants.len() + spec.functions.len() + spec.engine_structures.len()
+    });
+    let user_identifiers = hir.globals.len()
+        + hir
+            .structs
+            .iter()
+            .map(|structure| 1 + structure.fields.len())
+            .sum::<usize>()
+        + hir
+            .functions
+            .iter()
+            .map(|function| 1 + function.locals.len())
+            .sum::<usize>();
+    let identifier_count = builtin_identifiers.saturating_add(user_identifiers);
+    if identifier_count >= MAX_COMPILER_IDENTIFIERS {
+        let span = hir
+            .functions
+            .last()
+            .map(|function| function.span)
+            .or_else(|| hir.globals.last().map(|global| global.span));
+        return Err(CodegenError::native(
+            crate::CompilerErrorCode::IdentifierListFull,
+            span,
+            format!(
+                "compiler identifier table contains {identifier_count} entries; the native limit \
+                 is {}",
+                MAX_COMPILER_IDENTIFIERS - 1
+            ),
+        ));
+    }
+
+    let structs = hir
+        .structs
+        .iter()
+        .map(|structure| (structure.name.clone(), structure))
+        .collect::<BTreeMap<_, _>>();
+    let global_bytes = hir.globals.iter().try_fold(0usize, |total, global| {
+        Ok::<_, CodegenError>(total.saturating_add(size_of_type(&global.ty, &structs)?))
+    })?;
+    for function in hir
+        .functions
+        .iter()
+        .filter(|function| function.body.is_some())
+    {
+        let return_bytes = if function.return_type == SemanticType::Void {
+            0
+        } else {
+            size_of_type(&function.return_type, &structs)?
+        };
+        let frame_bytes = function
+            .locals
+            .iter()
+            .try_fold(return_bytes, |total, local| {
+                Ok::<_, CodegenError>(total.saturating_add(size_of_type(&local.ty, &structs)?))
+            })?;
+        let runtime_cells = global_bytes.saturating_add(frame_bytes).div_ceil(4);
+        if runtime_cells > MAX_COMPILER_RUNTIME_CELLS {
+            return Err(CodegenError::native(
+                crate::CompilerErrorCode::ScriptTooLarge,
+                Some(function.span),
+                format!(
+                    "function {:?} requires {runtime_cells} runtime cells with globals; the \
+                     native compiler limit is {MAX_COMPILER_RUNTIME_CELLS}",
+                    function.name
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn field_layout(
     base: &SemanticType,
     field: &str,
@@ -2639,13 +3168,17 @@ fn resolve_assignment_target<'a>(
     }
 }
 
-fn string_extra(value: &str) -> Result<Vec<u8>, CodegenError> {
+fn string_extra(value: &ScriptString) -> Result<Vec<u8>, CodegenError> {
+    string_extra_bytes(value.as_bytes())
+}
+
+fn string_extra_bytes(value: &[u8]) -> Result<Vec<u8>, CodegenError> {
     let length = u16::try_from(value.len()).map_err(|_error| {
         CodegenError::new(None, "string constant exceeds NCS 16-bit length limit")
     })?;
     let mut bytes = Vec::with_capacity(2 + value.len());
     bytes.extend_from_slice(&length.to_be_bytes());
-    bytes.extend_from_slice(value.as_bytes());
+    bytes.extend_from_slice(value);
     Ok(bytes)
 }
 
@@ -2656,21 +3189,7 @@ fn format_magic_date(timestamp: SystemTime) -> String {
         .as_secs();
     let days = i64::try_from(seconds / 86_400).ok().unwrap_or(i64::MAX);
     let (year, month, day) = civil_from_days(days);
-    let month_name = match month {
-        2 => "Feb",
-        3 => "Mar",
-        4 => "Apr",
-        5 => "May",
-        6 => "Jun",
-        7 => "Jul",
-        8 => "Aug",
-        9 => "Sep",
-        10 => "Oct",
-        11 => "Nov",
-        12 => "Dec",
-        _ => "Jan",
-    };
-    format!("{month_name} {day:02} {year:04}")
+    format!("{year:04}-{month:02}-{day:02}")
 }
 
 fn format_magic_time(timestamp: SystemTime) -> String {
@@ -2736,19 +3255,6 @@ fn emit_copy_top_bytes(compiler: &mut O0Compiler<'_>, temp_bytes: &mut usize, si
     *temp_bytes += size;
 }
 
-fn emit_drop_bytes(compiler: &mut O0Compiler<'_>, temp_bytes: &mut usize, size: usize) {
-    if size > 0 {
-        *temp_bytes = temp_bytes.saturating_sub(size);
-        compiler.assembler.push(NcsInstruction {
-            opcode:  NcsOpcode::ModifyStackPointer,
-            auxcode: NcsAuxCode::None,
-            extra:   (-i32::try_from(size).ok().unwrap_or(i32::MAX))
-                .to_be_bytes()
-                .to_vec(),
-        });
-    }
-}
-
 fn build_ndb(
     hir: &HirModule,
     langspec: Option<&LangSpec>,
@@ -2775,16 +3281,20 @@ fn build_ndb(
         lines.push(NdbLine {
             file_num,
             line_num: line.line_num,
-            binary_start: output
-                .label_offsets
-                .get(&line.start)
-                .copied()
-                .unwrap_or_default(),
-            binary_end: output
-                .label_offsets
-                .get(&line.end)
-                .copied()
-                .unwrap_or_default(),
+            binary_start: debug_binary_offset(
+                output
+                    .label_offsets
+                    .get(&line.start)
+                    .copied()
+                    .unwrap_or_default(),
+            ),
+            binary_end: debug_binary_offset(
+                output
+                    .label_offsets
+                    .get(&line.end)
+                    .copied()
+                    .unwrap_or_default(),
+            ),
         });
     }
 
@@ -2838,16 +3348,20 @@ fn build_ndb(
             })?;
             Ok::<_, CodegenError>(NdbFunction {
                 label:        function.name.clone(),
-                binary_start: output
-                    .label_offsets
-                    .get(&info.start)
-                    .copied()
-                    .unwrap_or_default(),
-                binary_end:   output
-                    .label_offsets
-                    .get(&info.end)
-                    .copied()
-                    .unwrap_or_default(),
+                binary_start: debug_binary_offset(
+                    output
+                        .label_offsets
+                        .get(&info.start)
+                        .copied()
+                        .unwrap_or_default(),
+                ),
+                binary_end:   debug_binary_offset(
+                    output
+                        .label_offsets
+                        .get(&info.end)
+                        .copied()
+                        .unwrap_or_default(),
+                ),
                 return_type:  debug_type_for_semantic(&function.return_type, hir, langspec)?,
                 args:         function
                     .parameters
@@ -2865,14 +3379,17 @@ fn build_ndb(
             Ok::<_, CodegenError>(NdbVariable {
                 label:        variable.name.clone(),
                 ty:           debug_type_for_semantic(&variable.ty, hir, langspec)?,
-                binary_start: output
-                    .label_offsets
-                    .get(&variable.start)
-                    .copied()
-                    .unwrap_or_default(),
+                binary_start: debug_binary_offset(
+                    output
+                        .label_offsets
+                        .get(&variable.start)
+                        .copied()
+                        .unwrap_or_default(),
+                ),
                 binary_end:   variable
                     .end
                     .and_then(|end| output.label_offsets.get(&end).copied())
+                    .map(debug_binary_offset)
                     .unwrap_or(u32::MAX),
                 stack_loc:    variable.stack_loc,
             })
@@ -2886,6 +3403,10 @@ fn build_ndb(
         variables,
         lines,
     })
+}
+
+fn debug_binary_offset(code_offset: u32) -> u32 {
+    code_offset.saturating_add(u32::try_from(NCS_BINARY_HEADER_SIZE).ok().unwrap_or(13))
 }
 
 fn debug_type_for_semantic(
@@ -2967,12 +3488,97 @@ fn simple_aux_instruction(opcode: NcsOpcode, auxcode: NcsAuxCode) -> NcsInstruct
 
 #[cfg(test)]
 mod tests {
-    use super::{CompileOptions, OptimizationLevel};
-    use crate::{
-        BuiltinConstant, BuiltinFunction, BuiltinParameter, BuiltinType, BuiltinValue, NcsAuxCode,
-        NcsOpcode, SourceId, SourceMap, compile_script, compile_script_with_source_map,
-        decode_ncs_instructions, parse_text, read_ndb,
+    use super::{
+        CompileError, CompileOptions, MAX_COMPILER_IDENTIFIERS, MAX_COMPILER_RUNTIME_CELLS,
+        OptimizationFlag, OptimizationFlags, validate_hir_limits,
     };
+    use crate::{
+        BuiltinConstant, BuiltinFunction, BuiltinParameter, BuiltinType, BuiltinValue, HirBlock,
+        HirFunction, HirLocal, HirLocalId, HirLocalKind, HirModule, NcsAuxCode, NcsOpcode,
+        SemanticType, SourceId, SourceMap, Span, compile_script, compile_script_with_source_map,
+        compile_source_bundle, decode_ncs_instructions, load_source_bundle, parse_text, read_ndb,
+    };
+
+    fn empty_hir_with_locals(local_count: usize) -> HirModule {
+        let span = Span::new(SourceId::new(0), 0, 0);
+        HirModule {
+            includes:  Vec::new(),
+            structs:   Vec::new(),
+            globals:   Vec::new(),
+            functions: vec![HirFunction {
+                span,
+                name: "main".to_string(),
+                return_type: SemanticType::Void,
+                parameters: Vec::new(),
+                locals: (0..local_count)
+                    .map(|index| HirLocal {
+                        id:   HirLocalId(u32::try_from(index).expect("test local index fits u32")),
+                        name: format!("local_{index}"),
+                        ty:   SemanticType::Int,
+                        kind: HirLocalKind::Local,
+                    })
+                    .collect(),
+                body: Some(HirBlock {
+                    span,
+                    statements: Vec::new(),
+                }),
+                is_builtin: false,
+            }],
+        }
+    }
+
+    #[test]
+    fn reports_native_script_size_limit() {
+        let hir = empty_hir_with_locals(MAX_COMPILER_RUNTIME_CELLS + 1);
+        let error = validate_hir_limits(&hir, None).expect_err("oversized frame should fail");
+        assert_eq!(error.code, Some(crate::CompilerErrorCode::ScriptTooLarge));
+    }
+
+    #[test]
+    fn reports_native_identifier_table_limit() {
+        let mut langspec = test_langspec();
+        let prototype = langspec
+            .constants
+            .first()
+            .cloned()
+            .expect("test langspec contains a constant");
+        langspec.constants = vec![prototype; MAX_COMPILER_IDENTIFIERS];
+
+        let error = validate_hir_limits(&empty_hir_with_locals(0), Some(&langspec))
+            .expect_err("full identifier table should fail");
+        assert_eq!(
+            error.code,
+            Some(crate::CompilerErrorCode::IdentifierListFull)
+        );
+    }
+
+    #[test]
+    fn optimization_passes_are_independently_selectable() {
+        let flags = OptimizationFlag::RemoveDeadBranches | OptimizationFlag::MeldInstructions;
+
+        assert!(flags.contains(OptimizationFlag::RemoveDeadBranches));
+        assert!(flags.contains(OptimizationFlag::MeldInstructions));
+        assert!(!flags.contains(OptimizationFlag::RemoveDeadCode));
+        assert_eq!(flags.level(), None);
+        assert_eq!(OptimizationFlags::from_bits(flags.bits()), Some(flags));
+        assert_eq!(OptimizationFlags::from_bits(0x80), None);
+
+        let mut incremental = OptimizationFlags::O0;
+        incremental |= OptimizationFlag::RemoveDeadCode;
+        assert_eq!(incremental, OptimizationFlags::O1);
+    }
+
+    #[test]
+    fn source_bundle_parse_failures_preserve_the_parse_error_type() {
+        let mut resolver = crate::InMemoryScriptResolver::new();
+        resolver.insert_source("broken", "void main( {");
+        let bundle = load_source_bundle(&resolver, "broken", crate::SourceLoadOptions::default())
+            .expect("source should load before parsing");
+
+        let error = compile_source_bundle(&bundle, None, CompileOptions::default())
+            .expect_err("malformed source should fail parsing");
+        assert!(matches!(error, CompileError::Parse(_)));
+    }
 
     fn decode_string_constant(extra: &[u8]) -> String {
         let length_bytes: [u8; 2] = extra
@@ -3161,7 +3767,7 @@ mod tests {
             &script,
             Some(&test_langspec()),
             CompileOptions {
-                optimization: OptimizationLevel::O0,
+                optimizations: OptimizationFlags::O0,
                 ..CompileOptions::default()
             },
         )?;
@@ -3393,9 +3999,70 @@ mod tests {
             .find(|variable| variable.label == "#retval" && variable.binary_end == u32::MAX)
             .expect("loader #retval debug record should be present");
         assert_eq!(
-            loader_retval.binary_start, 2,
+            loader_retval.binary_start, 15,
             "loader #retval should begin after the loader RunstackAdd instruction",
         );
+    }
+
+    #[test]
+    fn optimized_compiles_preserve_coherent_ndb_ranges() {
+        let source = br#"
+            int Unused() { return 9; }
+            void main() {
+                int nValue = 1;
+                if (FALSE) { nValue = 2; }
+            }
+        "#;
+        let mut source_map = SourceMap::new();
+        let root_id = source_map.add_file("optimized_debug.nss".to_string(), source.to_vec());
+        let script = parse_text(
+            root_id,
+            std::str::from_utf8(source).expect("utf-8"),
+            Some(&test_langspec()),
+        )
+        .expect("script should parse");
+
+        for optimizations in [
+            OptimizationFlags::O1,
+            OptimizationFlags::O2,
+            OptimizationFlags::O3,
+        ] {
+            let artifacts = compile_script_with_source_map(
+                &script,
+                &source_map,
+                root_id,
+                Some(&test_langspec()),
+                CompileOptions {
+                    optimizations,
+                    ..CompileOptions::default()
+                },
+            )
+            .expect("optimized compile should succeed");
+            let ndb = read_ndb(&mut std::io::Cursor::new(
+                artifacts
+                    .ndb
+                    .expect("optimized NDB output should be present"),
+            ))
+            .expect("optimized NDB should parse");
+            let code_size = u32::try_from(artifacts.ncs.len()).expect("test NCS should fit in u32");
+
+            assert!(
+                ndb.functions
+                    .iter()
+                    .any(|function| function.label == "main")
+            );
+            assert!(
+                !ndb.functions
+                    .iter()
+                    .any(|function| function.label == "Unused")
+            );
+            assert!(ndb.functions.iter().all(|function| {
+                function.binary_start <= function.binary_end && function.binary_end <= code_size
+            }));
+            assert!(ndb.lines.iter().all(|line| {
+                line.binary_start <= line.binary_end && line.binary_end <= code_size
+            }));
+        }
     }
 
     #[test]
@@ -3497,12 +4164,12 @@ mod tests {
             .expect("SECOND global should be present");
 
         assert_eq!(
-            first.binary_start, 10,
+            first.binary_start, 23,
             "first global should begin after loader + first RunstackAdd"
         );
         assert_eq!(
-            second.binary_start, 12,
-            "second global should begin after loader + second RunstackAdd"
+            second.binary_start, 45,
+            "second global should begin after the first initializer + second RunstackAdd"
         );
         assert_eq!(first.stack_loc, 0);
         assert_eq!(second.stack_loc, 4);
@@ -3599,6 +4266,34 @@ mod tests {
     }
 
     #[test]
+    fn file_magic_adds_nss_to_extensionless_include_names() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let source = br#"void Included() { string file = __FILE__; } void main() {}"#;
+        let mut source_map = SourceMap::new();
+        let root_id = source_map.add_file("inc_helpers".to_string(), source.to_vec());
+        let script = parse_text(
+            root_id,
+            std::str::from_utf8(source)?,
+            Some(&test_langspec()),
+        )?;
+        let artifacts = compile_script_with_source_map(
+            &script,
+            &source_map,
+            root_id,
+            Some(&test_langspec()),
+            CompileOptions::default(),
+        )?;
+        let instructions = decode_ncs_instructions(&artifacts.ncs)?;
+
+        assert!(instructions.iter().any(|instruction| {
+            instruction.opcode == NcsOpcode::Constant
+                && instruction.auxcode == NcsAuxCode::TypeString
+                && decode_string_constant(&instruction.extra) == "inc_helpers.nss"
+        }));
+        Ok(())
+    }
+
+    #[test]
     fn compiles_magic_literals_without_source_map() -> Result<(), Box<dyn std::error::Error>> {
         let script = parse_text(
             SourceId::new(86),
@@ -3665,12 +4360,15 @@ mod tests {
         assert!(
             string_constants.iter().any(|value| {
                 let bytes = value.as_bytes();
-                value.len() == 11
-                    && bytes.get(3) == Some(&b' ')
-                    && bytes.get(6) == Some(&b' ')
-                    && value.chars().skip(7).all(|ch| ch.is_ascii_digit())
+                value.len() == 10
+                    && bytes.get(4) == Some(&b'-')
+                    && bytes.get(7) == Some(&b'-')
+                    && value
+                        .chars()
+                        .enumerate()
+                        .all(|(index, ch)| matches!(index, 4 | 7) || ch.is_ascii_digit())
             }),
-            "__DATE__ should compile into a macro-style date string",
+            "__DATE__ should compile into an upstream-compatible YYYY-MM-DD string",
         );
         assert!(
             string_constants.iter().any(|value| {
@@ -3742,6 +4440,132 @@ mod tests {
                 .iter()
                 .any(|instruction| instruction.opcode == NcsOpcode::Assignment),
             "nested field assignment should lower to an assignment opcode",
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn emits_native_short_circuit_and_switch_branches() -> Result<(), Box<dyn std::error::Error>> {
+        let script = parse_text(
+            SourceId::new(90),
+            r#"
+                int StartingConditional() {
+                    int n = GetCurrentHitPoints();
+                    switch (n) {
+                        case 1:
+                            return n == 1 || GetMaxHitPoints() > 0;
+                        default:
+                            return FALSE;
+                    }
+                    return FALSE;
+                }
+            "#,
+            Some(&test_langspec()),
+        )?;
+        let artifacts = compile_script(&script, Some(&test_langspec()), CompileOptions::default())?;
+        let instructions = decode_ncs_instructions(&artifacts.ncs)?;
+
+        assert!(instructions.iter().any(|instruction| {
+            instruction.opcode == NcsOpcode::LogicalOr
+                && instruction.auxcode == NcsAuxCode::TypeTypeIntegerInteger
+        }));
+        assert!(
+            instructions
+                .iter()
+                .any(|instruction| instruction.opcode == NcsOpcode::Jnz),
+            "switch cases should branch directly with JNZ",
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn emits_native_direct_increment_opcodes() -> Result<(), Box<dyn std::error::Error>> {
+        let script = parse_text(
+            SourceId::new(91),
+            "void main() { int n = 0; n++; ++n; }",
+            Some(&test_langspec()),
+        )?;
+        let artifacts = compile_script(&script, Some(&test_langspec()), CompileOptions::default())?;
+        let instructions = decode_ncs_instructions(&artifacts.ncs)?;
+
+        assert_eq!(
+            instructions
+                .iter()
+                .filter(|instruction| instruction.opcode == NcsOpcode::Increment)
+                .count(),
+            2,
+        );
+        let increment_offsets = instructions
+            .iter()
+            .filter(|instruction| instruction.opcode == NcsOpcode::Increment)
+            .map(|instruction| {
+                i32::from_be_bytes(
+                    instruction
+                        .extra
+                        .get(..4)
+                        .expect("increment offset should be four bytes")
+                        .try_into()
+                        .expect("increment offset should be four bytes"),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(increment_offsets, vec![-8, -4]);
+        assert!(!instructions.iter().any(|instruction| {
+            instruction.opcode == NcsOpcode::Add
+                && instruction.auxcode == NcsAuxCode::TypeTypeIntegerInteger
+        }));
+        Ok(())
+    }
+
+    #[test]
+    fn const_globals_do_not_create_a_runtime_global_frame() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let script = parse_text(
+            SourceId::new(92),
+            "const int VALUE = 7; int StartingConditional() { return VALUE; }",
+            Some(&test_langspec()),
+        )?;
+        let artifacts = compile_script(&script, Some(&test_langspec()), CompileOptions::default())?;
+        let instructions = decode_ncs_instructions(&artifacts.ncs)?;
+
+        assert!(
+            !instructions
+                .iter()
+                .any(|instruction| instruction.opcode == NcsOpcode::SaveBasePointer),
+        );
+        assert_eq!(
+            instructions
+                .iter()
+                .filter(|instruction| {
+                    instruction.opcode == NcsOpcode::RunstackAdd
+                        && instruction.auxcode == NcsAuxCode::TypeInteger
+                })
+                .count(),
+            1,
+            "only the loader conditional return slot should be allocated",
+        );
+        assert!(instructions.iter().any(|instruction| {
+            instruction.opcode == NcsOpcode::Constant
+                && instruction.auxcode == NcsAuxCode::TypeInteger
+                && decode_integer_constant(&instruction.extra) == 7
+        }));
+        Ok(())
+    }
+
+    #[test]
+    fn top_level_struct_retains_native_global_wrapper() -> Result<(), Box<dyn std::error::Error>> {
+        let script = parse_text(
+            SourceId::new(93),
+            "struct Pair { int value; }; void main() {}",
+            Some(&test_langspec()),
+        )?;
+        let artifacts = compile_script(&script, Some(&test_langspec()), CompileOptions::default())?;
+        let instructions = decode_ncs_instructions(&artifacts.ncs)?;
+
+        assert!(
+            instructions
+                .iter()
+                .any(|instruction| instruction.opcode == NcsOpcode::SaveBasePointer),
         );
         Ok(())
     }

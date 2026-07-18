@@ -99,9 +99,9 @@ pub struct NdbStruct {
 pub struct NdbFunction {
     /// Function name.
     pub label:        String,
-    /// Start byte offset in the emitted `NCS`.
+    /// Start byte offset from the beginning of the emitted `NCS` file.
     pub binary_start: u32,
-    /// End byte offset in the emitted `NCS`.
+    /// End byte offset from the beginning of the emitted `NCS` file.
     pub binary_end:   u32,
     /// Return type abbreviation.
     pub return_type:  NdbType,
@@ -116,9 +116,9 @@ pub struct NdbVariable {
     pub label:        String,
     /// Variable type abbreviation.
     pub ty:           NdbType,
-    /// Start byte offset in the emitted `NCS`.
+    /// Start byte offset from the beginning of the emitted `NCS` file.
     pub binary_start: u32,
-    /// End byte offset in the emitted `NCS`.
+    /// End byte offset from the beginning of the emitted `NCS` file.
     pub binary_end:   u32,
     /// Stack location as recorded by the compiler.
     pub stack_loc:    u32,
@@ -131,9 +131,9 @@ pub struct NdbLine {
     pub file_num:     usize,
     /// One-based source line number.
     pub line_num:     usize,
-    /// Start byte offset in the emitted `NCS`.
+    /// Start byte offset from the beginning of the emitted `NCS` file.
     pub binary_start: u32,
-    /// End byte offset in the emitted `NCS`.
+    /// End byte offset from the beginning of the emitted `NCS` file.
     pub binary_end:   u32,
 }
 

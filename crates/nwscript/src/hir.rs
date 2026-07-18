@@ -568,12 +568,12 @@ impl<'a> HirLowerer<'a> {
                 let ty = lower_decl_type(&declaration.ty, self.semantic)?;
                 let mut declarators = Vec::new();
                 for declarator in &declaration.declarators {
+                    let local = ctx.push_local(&declarator.name, ty.clone(), HirLocalKind::Local);
                     let initializer = declarator
                         .initializer
                         .as_ref()
                         .map(|initializer| self.lower_expr(initializer, ctx))
                         .transpose()?;
-                    let local = ctx.push_local(&declarator.name, ty.clone(), HirLocalKind::Local);
                     declarators.push(HirDeclarator {
                         local,
                         initializer,
@@ -1220,6 +1220,43 @@ mod tests {
                 );
             }
         }
+        Ok(())
+    }
+
+    #[test]
+    fn lowers_self_references_in_local_initializers() -> Result<(), Box<dyn std::error::Error>> {
+        let script = parse_text(
+            SourceId::new(73),
+            "void main() { int value = value = TRUE; }",
+            Some(&test_langspec()),
+        )?;
+        let semantic = analyze_script(&script, Some(&test_langspec()))?;
+        let hir = lower_to_hir(&script, &semantic, Some(&test_langspec()))?;
+        let local_id = hir
+            .functions
+            .iter()
+            .find(|function| function.name == "main")
+            .and_then(|function| function.locals.first())
+            .map(|local| local.id)
+            .ok_or_else(|| std::io::Error::other("missing self-referenced local"))?;
+        let initializer = hir
+            .functions
+            .iter()
+            .find(|function| function.name == "main")
+            .and_then(|function| function.body.as_ref())
+            .and_then(|body| body.statements.first())
+            .and_then(|statement| match statement {
+                HirStmt::Declare(statement) => statement.declarators.first(),
+                _ => None,
+            })
+            .and_then(|declarator| declarator.initializer.as_ref())
+            .ok_or_else(|| std::io::Error::other("missing initializer"))?;
+
+        assert!(matches!(
+            &initializer.kind,
+            HirExprKind::Assignment { left, .. }
+                if left.kind == HirExprKind::Value(HirValueRef::Local(local_id))
+        ));
         Ok(())
     }
 

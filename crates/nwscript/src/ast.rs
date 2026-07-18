@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::source::Span;
+use crate::{ScriptString, source::Span};
 
 /// One parsed `NWScript` translation unit.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -453,7 +453,7 @@ pub enum Literal {
     /// One floating-point literal.
     Float(f32),
     /// One string literal.
-    String(String),
+    String(ScriptString),
     /// `OBJECT_SELF`
     ObjectSelf,
     /// `OBJECT_INVALID`

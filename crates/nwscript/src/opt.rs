@@ -2,45 +2,41 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
     BinaryOp, BuiltinValue, HirBlock, HirExpr, HirExprKind, HirFunction, HirIfStmt, HirModule,
-    HirStmt, HirSwitchStmt, LangSpec, Literal, NcsInstruction, NcsOpcode, OptimizationLevel,
-    SemanticType, UnaryOp,
+    HirStmt, HirSwitchStmt, LangSpec, Literal, NcsInstruction, NcsOpcode, OptimizationFlag,
+    OptimizationFlags, ScriptString, SemanticType, UnaryOp,
 };
 
 pub(crate) fn optimize_hir(
     hir: &HirModule,
     langspec: Option<&LangSpec>,
-    optimization: OptimizationLevel,
+    optimizations: OptimizationFlags,
 ) -> HirModule {
     let mut optimized = hir.clone();
 
-    if enables_dead_branches(optimization) {
+    if enables_dead_branches(optimizations) {
         optimized = trim_dead_branches(&optimized, langspec);
     }
 
-    if enables_dead_functions(optimization) {
+    if enables_dead_functions(optimizations) {
         optimized = eliminate_dead_functions(&optimized);
     }
 
     optimized
 }
 
+#[cfg(test)]
 pub(crate) fn meld_instructions(instructions: Vec<NcsInstruction>) -> Vec<NcsInstruction> {
     let mut optimized: Vec<NcsInstruction> = Vec::with_capacity(instructions.len());
 
     for instruction in instructions {
-        if instruction.opcode == NcsOpcode::ModifyStackPointer
-            && let [.., runstack_add, constant, assignment] = optimized.as_slice()
-            && runstack_add.opcode == NcsOpcode::RunstackAdd
-            && constant.opcode == NcsOpcode::Constant
-            && assignment.opcode == NcsOpcode::Assignment
-            && runstack_add.auxcode == constant.auxcode
-            && assignment_stack_offset(assignment) == Some(-8)
+        if let [.., runstack_add, constant, assignment] = optimized.as_slice()
+            && let Some(replacement) =
+                melded_instruction([runstack_add, constant, assignment, &instruction])
         {
-            let constant = constant.clone();
             optimized.pop();
             optimized.pop();
             optimized.pop();
-            optimized.push(constant);
+            optimized.push(replacement);
             continue;
         }
 
@@ -50,34 +46,42 @@ pub(crate) fn meld_instructions(instructions: Vec<NcsInstruction>) -> Vec<NcsIns
     optimized
 }
 
-fn enables_dead_functions(optimization: OptimizationLevel) -> bool {
-    matches!(
-        optimization,
-        OptimizationLevel::O1 | OptimizationLevel::O2 | OptimizationLevel::O3
-    )
+pub(crate) fn melded_instruction(instructions: [&NcsInstruction; 4]) -> Option<NcsInstruction> {
+    let [runstack_add, constant, assignment, stack_pointer] = instructions;
+    (stack_pointer.opcode == NcsOpcode::ModifyStackPointer
+        && runstack_add.opcode == NcsOpcode::RunstackAdd
+        && constant.opcode == NcsOpcode::Constant
+        && assignment.opcode == NcsOpcode::Assignment
+        && runstack_add.auxcode == constant.auxcode
+        && assignment_stack_offset(assignment) == Some(-8))
+    .then(|| constant.clone())
 }
 
-fn enables_dead_branches(optimization: OptimizationLevel) -> bool {
-    matches!(optimization, OptimizationLevel::O2 | OptimizationLevel::O3)
+fn enables_dead_functions(optimizations: OptimizationFlags) -> bool {
+    optimizations.contains(OptimizationFlag::RemoveDeadCode)
 }
 
-fn enables_instruction_melding(optimization: OptimizationLevel) -> bool {
-    optimization == OptimizationLevel::O3
+fn enables_dead_branches(optimizations: OptimizationFlags) -> bool {
+    optimizations.contains(OptimizationFlag::RemoveDeadBranches)
 }
 
-pub(crate) fn optimization_needs_post_codegen_passes(optimization: OptimizationLevel) -> bool {
-    enables_instruction_melding(optimization)
+fn enables_instruction_melding(optimizations: OptimizationFlags) -> bool {
+    optimizations.contains(OptimizationFlag::MeldInstructions)
 }
 
-pub(crate) fn optimization_needs_hir_passes(optimization: OptimizationLevel) -> bool {
-    enables_dead_functions(optimization) || enables_dead_branches(optimization)
+pub(crate) fn optimization_needs_post_codegen_passes(optimizations: OptimizationFlags) -> bool {
+    enables_instruction_melding(optimizations)
+}
+
+pub(crate) fn optimization_needs_hir_passes(optimizations: OptimizationFlags) -> bool {
+    enables_dead_functions(optimizations) || enables_dead_branches(optimizations)
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum ConstValue {
     Int(i32),
     Float(f32),
-    String(String),
+    String(ScriptString),
 }
 
 fn trim_dead_branches(hir: &HirModule, langspec: Option<&LangSpec>) -> HirModule {
@@ -167,12 +171,17 @@ fn optimize_stmt(statement: HirStmt, constants: &BTreeMap<String, ConstValue>) -
 }
 
 fn eliminate_dead_functions(hir: &HirModule) -> HirModule {
-    let function_map = hir
-        .functions
-        .iter()
-        .enumerate()
-        .map(|(index, function)| (function.name.clone(), (index, function)))
-        .collect::<BTreeMap<_, _>>();
+    let mut function_map = BTreeMap::new();
+    for (index, function) in hir.functions.iter().enumerate() {
+        function_map
+            .entry(function.name.clone())
+            .and_modify(|existing: &mut (usize, &HirFunction)| {
+                if existing.1.body.is_none() && function.body.is_some() {
+                    *existing = (index, function);
+                }
+            })
+            .or_insert((index, function));
+    }
 
     let entry_name = function_map.get("main").map(|_| "main").or_else(|| {
         function_map
@@ -311,7 +320,10 @@ fn collect_user_calls_expr(
             target,
             arguments,
         } => {
-            for argument in arguments {
+            // Codegen evaluates call arguments right-to-left; native dead-code
+            // discovery follows that emitted order as it assigns function
+            // labels.
+            for argument in arguments.iter().rev() {
                 collect_user_calls_expr(argument, ordered, visited, function_map);
             }
             if let crate::HirCallTarget::Function(name) = target {
@@ -485,7 +497,7 @@ fn default_const_value(ty: &SemanticType) -> Option<ConstValue> {
     match ty {
         SemanticType::Int => Some(ConstValue::Int(0)),
         SemanticType::Float => Some(ConstValue::Float(0.0)),
-        SemanticType::String => Some(ConstValue::String(String::new())),
+        SemanticType::String => Some(ConstValue::String(ScriptString::default())),
         _ => None,
     }
 }
@@ -533,9 +545,13 @@ fn evaluate_float_binary(op: BinaryOp, left: f32, right: f32) -> Option<ConstVal
     }
 }
 
-fn evaluate_string_binary(op: BinaryOp, left: &str, right: &str) -> Option<ConstValue> {
+fn evaluate_string_binary(
+    op: BinaryOp,
+    left: &ScriptString,
+    right: &ScriptString,
+) -> Option<ConstValue> {
     match op {
-        BinaryOp::Add => Some(ConstValue::String(format!("{left}{right}"))),
+        BinaryOp::Add => Some(ConstValue::String(left.concat(right))),
         BinaryOp::EqualEqual => Some(ConstValue::Int(i32::from(left == right))),
         BinaryOp::NotEqual => Some(ConstValue::Int(i32::from(left != right))),
         _ => None,
@@ -551,7 +567,7 @@ fn assignment_stack_offset(instruction: &NcsInstruction) -> Option<i32> {
 
 #[cfg(test)]
 mod tests {
-    use super::{OptimizationLevel, meld_instructions, optimize_hir};
+    use super::{OptimizationFlags, meld_instructions, optimize_hir};
     use crate::{
         BuiltinConstant, BuiltinFunction, BuiltinParameter, BuiltinType, BuiltinValue, LangSpec,
         NcsAuxCode, NcsInstruction, NcsOpcode, SourceId, compile_hir_to_ncs,
@@ -604,7 +620,7 @@ mod tests {
         let hir = lower_to_hir(&script, &semantic, Some(&test_langspec()))
             .expect("HIR lowering should succeed");
 
-        let optimized = optimize_hir(&hir, Some(&test_langspec()), OptimizationLevel::O1);
+        let optimized = optimize_hir(&hir, Some(&test_langspec()), OptimizationFlags::O1);
         let names = optimized
             .functions
             .iter()
@@ -612,6 +628,64 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(names, vec!["StartingConditional", "Mid", "Leaf"]);
+    }
+
+    #[test]
+    fn dead_function_pass_prefers_implementation_over_later_declaration() {
+        let script = parse_text(
+            SourceId::new(4),
+            r#"
+                int Helper() { return 7; }
+                int Helper();
+                int StartingConditional() { return Helper(); }
+            "#,
+            Some(&test_langspec()),
+        )
+        .expect("script should parse");
+        let semantic =
+            crate::analyze_script(&script, Some(&test_langspec())).expect("script should analyze");
+        let hir = lower_to_hir(&script, &semantic, Some(&test_langspec()))
+            .expect("HIR lowering should succeed");
+
+        let optimized = optimize_hir(&hir, Some(&test_langspec()), OptimizationFlags::O1);
+        let helper = optimized
+            .functions
+            .iter()
+            .find(|function| function.name == "Helper")
+            .expect("reachable helper should survive");
+
+        assert!(helper.body.is_some());
+    }
+
+    #[test]
+    fn dead_function_discovery_follows_right_to_left_argument_emission() {
+        let script = parse_text(
+            SourceId::new(5),
+            r#"
+                int Left() { return 1; }
+                int Right() { return 2; }
+                int Combine(int left, int right) { return left + right; }
+                int StartingConditional() { return Combine(Left(), Right()); }
+            "#,
+            Some(&test_langspec()),
+        )
+        .expect("script should parse");
+        let semantic =
+            crate::analyze_script(&script, Some(&test_langspec())).expect("script should analyze");
+        let hir = lower_to_hir(&script, &semantic, Some(&test_langspec()))
+            .expect("HIR lowering should succeed");
+
+        let optimized = optimize_hir(&hir, Some(&test_langspec()), OptimizationFlags::O1);
+        let names = optimized
+            .functions
+            .iter()
+            .map(|function| function.name.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            names,
+            vec!["StartingConditional", "Right", "Left", "Combine"]
+        );
     }
 
     #[test]
@@ -637,7 +711,7 @@ mod tests {
         let hir = lower_to_hir(&script, &semantic, Some(&test_langspec()))
             .expect("HIR lowering should succeed");
 
-        let optimized = optimize_hir(&hir, Some(&test_langspec()), OptimizationLevel::O2);
+        let optimized = optimize_hir(&hir, Some(&test_langspec()), OptimizationFlags::O2);
         let names = optimized
             .functions
             .iter()
@@ -665,12 +739,12 @@ mod tests {
             .expect("HIR lowering should succeed");
 
         let o0 = decode_ncs_instructions(
-            &compile_hir_to_ncs(&hir, Some(&test_langspec()), OptimizationLevel::O0)
+            &compile_hir_to_ncs(&hir, Some(&test_langspec()), OptimizationFlags::O0)
                 .expect("O0 compile should succeed"),
         )
         .expect("O0 output should decode");
         let o3 = decode_ncs_instructions(
-            &compile_hir_to_ncs(&hir, Some(&test_langspec()), OptimizationLevel::O3)
+            &compile_hir_to_ncs(&hir, Some(&test_langspec()), OptimizationFlags::O3)
                 .expect("O3 compile should succeed"),
         )
         .expect("O3 output should decode");

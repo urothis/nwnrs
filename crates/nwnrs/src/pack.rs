@@ -18,8 +18,8 @@ use tracing::{debug, info, instrument, warn};
 use crate::{
     args::{KeyPackCmd, PackCmd},
     compile::{
-        CompileScriptOptions, CompileScriptOutcome, compile_script_file,
-        compile_script_file_with_skip, parse_optimization_level,
+        CompileScriptOptions, CompileScriptOutcome, autodetected_install_resman,
+        compile_script_file, compile_script_file_with_skip, parse_optimizations,
     },
     package::{PackageOptions, run_package},
     util::{
@@ -175,6 +175,7 @@ fn run_pack_key(cmd: PackCmd) -> Result<(), String> {
         langspec: cmd.langspec,
         include_dir: cmd.include_dir,
         optimization: cmd.optimization,
+        optimization_flag: cmd.optimization_flag,
         jobs: cmd.jobs,
         key: key_name,
         source: input,
@@ -427,6 +428,16 @@ fn pack_ncs_resource(input: &Path, output: &Path, cmd: &PackCmd) -> Result<(), S
                 .ok_or_else(|| "compiler did not produce NDB output".to_string())?;
             fs::write(&debug_output, ndb)
                 .map_err(|error| format!("failed to write {}: {error}", debug_output.display()))?;
+        } else {
+            let debug_output = output.with_extension("ndb");
+            if debug_output.is_file() {
+                fs::remove_file(&debug_output).map_err(|error| {
+                    format!(
+                        "failed to remove stale debugger output {}: {error}",
+                        debug_output.display()
+                    )
+                })?;
+            }
         }
         return Ok(());
     } else {
@@ -920,6 +931,7 @@ struct ScriptCompileConfig {
     langspec:            Option<PathBuf>,
     include_dirs:        Vec<PathBuf>,
     optimization:        String,
+    optimization_flags:  Vec<String>,
     jobs:                Option<usize>,
 }
 
@@ -931,6 +943,7 @@ impl From<&PackCmd> for ScriptCompileConfig {
             langspec:            value.langspec.clone(),
             include_dirs:        value.include_dir.clone(),
             optimization:        value.optimization.clone(),
+            optimization_flags:  value.optimization_flag.clone(),
             jobs:                value.jobs,
         }
     }
@@ -944,6 +957,7 @@ impl From<&KeyPackCmd> for ScriptCompileConfig {
             langspec:            value.langspec.clone(),
             include_dirs:        value.include_dir.clone(),
             optimization:        value.optimization.clone(),
+            optimization_flags:  value.optimization_flag.clone(),
             jobs:                value.jobs,
         }
     }
@@ -964,7 +978,9 @@ fn pack_compile_options(
         no_entrypoint_check: config.no_entrypoint_check,
         langspec: config.langspec.clone(),
         include_dirs,
-        optimization: parse_optimization_level(&config.optimization)?,
+        optimizations: parse_optimizations(&config.optimization, &config.optimization_flags)?,
+        max_include_depth: nwscript::DEFAULT_MAX_INCLUDE_DEPTH,
+        install_resman: autodetected_install_resman(),
     })
 }
 
@@ -1198,6 +1214,7 @@ mod tests {
             langspec: None,
             include_dir: Vec::new(),
             optimization: crate::compile::DEFAULT_OPTIMIZATION.to_string(),
+            optimization_flag: Vec::new(),
             jobs: None,
             data_version: "V1".to_string(),
             data_compression: "none".to_string(),
@@ -1450,6 +1467,11 @@ int FALSE = 0;
         assert!(debug.is_file(), "NDB output should exist");
         let compiled = fs::read(&output).expect("read compiled ncs");
         assert!(nwscript::decode_ncs_instructions(&compiled).is_ok());
+
+        let mut cmd = base_pack_cmd(vec![input, output]);
+        cmd.force = true;
+        run_pack(cmd).expect("repack standalone script without debug output");
+        assert!(!debug.exists(), "stale NDB output should be removed");
 
         let _ = fs::remove_dir_all(temp_dir);
     }

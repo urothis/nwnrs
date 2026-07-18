@@ -68,6 +68,16 @@ impl<'a> Lexer<'a> {
         let mut tokens = Vec::new();
         loop {
             self.skip_trivia();
+            if self
+                .current_byte()
+                .is_some_and(|byte| !is_token_start(byte))
+            {
+                // The native lexer silently discards bytes that do not begin
+                // a recognized token. Installed scripts rely on this for
+                // stray backticks and backslashes.
+                self.position += 1;
+                continue;
+            }
             let token = self.next_token()?;
             let is_eof = token.kind == TokenKind::Eof;
             tokens.push(token);
@@ -670,7 +680,7 @@ impl<'a> Lexer<'a> {
 ///
 /// # Errors
 ///
-/// Returns [`LexerError`] if an unrecognized token is encountered.
+/// Returns [`LexerError`] if a recognized token begins but is malformed.
 pub fn lex_source(source: &SourceFile) -> Result<Vec<Token>, LexerError> {
     Lexer::new(source.id, source.bytes()).lex_all()
 }
@@ -679,7 +689,7 @@ pub fn lex_source(source: &SourceFile) -> Result<Vec<Token>, LexerError> {
 ///
 /// # Errors
 ///
-/// Returns [`LexerError`] if an unrecognized token is encountered.
+/// Returns [`LexerError`] if a recognized token begins but is malformed.
 pub fn lex_bytes(source_id: SourceId, input: &[u8]) -> Result<Vec<Token>, LexerError> {
     Lexer::new(source_id, input).lex_all()
 }
@@ -688,7 +698,7 @@ pub fn lex_bytes(source_id: SourceId, input: &[u8]) -> Result<Vec<Token>, LexerE
 ///
 /// # Errors
 ///
-/// Returns [`LexerError`] if an unrecognized token is encountered.
+/// Returns [`LexerError`] if a recognized token begins but is malformed.
 pub fn lex_text(source_id: SourceId, input: &str) -> Result<Vec<Token>, LexerError> {
     lex_bytes(source_id, input.as_bytes())
 }
@@ -699,6 +709,39 @@ fn is_identifier_start(byte: u8) -> bool {
 
 fn is_identifier_continue(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || byte == b'_'
+}
+
+fn is_token_start(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric()
+        || matches!(
+            byte,
+            b'_' | b'#'
+                | b'"'
+                | b'.'
+                | b'/'
+                | b'*'
+                | b'&'
+                | b'|'
+                | b'-'
+                | b'{'
+                | b'}'
+                | b'('
+                | b')'
+                | b'['
+                | b']'
+                | b'<'
+                | b'>'
+                | b'!'
+                | b'='
+                | b'+'
+                | b'%'
+                | b';'
+                | b','
+                | b'^'
+                | b'~'
+                | b'?'
+                | b':'
+        )
 }
 
 fn parse_upstream_hex_escape(first: u8, second: u8) -> u8 {
@@ -789,6 +832,29 @@ mod tests {
                 (TokenKind::AssignUnsignedShiftRight, ">>>=".to_string()),
                 (TokenKind::LogicalAnd, "&&".to_string()),
                 (TokenKind::LogicalOr, "||".to_string()),
+                (TokenKind::Eof, "".to_string()),
+            ])
+        );
+    }
+
+    #[test]
+    fn ignores_unrecognized_bytes_like_the_native_lexer() {
+        let tokens = lex_bytes(SourceId::new(20), b"int `value\\ = 1;\xff");
+        let pairs = tokens.ok().map(|items| {
+            items
+                .into_iter()
+                .map(|token| (token.kind, token.text))
+                .collect::<Vec<_>>()
+        });
+
+        assert_eq!(
+            pairs,
+            Some(vec![
+                (TokenKind::Keyword(Keyword::Int), "int".to_string()),
+                (TokenKind::Identifier, "value".to_string()),
+                (TokenKind::Assign, "=".to_string()),
+                (TokenKind::Integer, "1".to_string()),
+                (TokenKind::Semicolon, ";".to_string()),
                 (TokenKind::Eof, "".to_string()),
             ])
         );

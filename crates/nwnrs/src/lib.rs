@@ -40,6 +40,7 @@ pub fn main_entry() -> ExitCode {
 #[instrument(level = "info", skip_all, err)]
 fn run(cli: Cli) -> Result<(), String> {
     match cli.command {
+        Command::Compile(cmd) => compile::run_compile(cmd),
         Command::Convert(cmd) => convert::run_convert(&cmd),
         Command::Inspect(cmd) => inspect::run_inspect(&cmd),
         Command::Init(cmd) => project::run_init(cmd),
@@ -75,6 +76,10 @@ mod tests {
                 no_offsets:        false,
                 no_langspec:       false,
                 langspec:          None,
+                root:              None,
+                user:              None,
+                language:          "english".to_string(),
+                load_ovr:          false,
                 path:              PathBuf::from("unsupported.xyz"),
             }),
         };

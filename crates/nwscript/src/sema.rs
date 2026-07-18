@@ -9,8 +9,11 @@ use serde::{Deserialize, Serialize};
 use crate::{
     AssignmentOp, BinaryOp, BlockStmt, BuiltinType, BuiltinValue, CompilerErrorCode, Expr,
     ExprKind, FunctionDecl, LangSpec, Literal, MagicLiteral, Script, Stmt, TopLevelItem, TypeKind,
-    TypeSpec, UnaryOp, nwscript_string_hash,
+    TypeSpec, UnaryOp,
 };
+
+/// Maximum number of parameters accepted by the native compiler.
+pub const MAX_FUNCTION_PARAMETERS: usize = 32;
 
 /// Options controlling semantic analysis checks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
@@ -172,7 +175,7 @@ pub fn analyze_script_with_options(
 enum ConstantValue {
     Int(i32),
     Float(f32),
-    String(String),
+    String(crate::ScriptString),
     ObjectId(i32),
     ObjectSelf,
     ObjectInvalid,
@@ -239,6 +242,7 @@ struct FunctionInfo {
 #[derive(Debug, Default)]
 struct AnalysisContext {
     switch_stack: Vec<SwitchContext>,
+    loop_depth:   usize,
 }
 
 #[derive(Debug, Default)]
@@ -490,9 +494,10 @@ impl<'a> Analyzer<'a> {
                     ));
                 }
 
-                if existing.signature.return_type != signature.return_type
-                    || !parameters_match(&existing.signature.parameters, &signature.parameters)
-                {
+                // The native compiler permits a prototype and implementation
+                // to disagree only on return type. It continues to use the
+                // prototype's return type at call sites.
+                if !parameters_match(&existing.signature.parameters, &signature.parameters) {
                     return Err(SemanticError::new(
                         CompilerErrorCode::FunctionImplementationAndDefinitionDiffer,
                         function.span,
@@ -648,6 +653,7 @@ impl<'a> Analyzer<'a> {
                     format!("function {:?} missing from semantic table", function.name),
                 )
             })?;
+            let implementation_signature = self.resolve_function_signature(function)?;
             let mut scopes = vec![BTreeMap::new(), BTreeMap::new()];
             for (signature_parameter, source_parameter) in
                 info.signature.parameters.iter().zip(&function.parameters)
@@ -666,12 +672,12 @@ impl<'a> Analyzer<'a> {
             self.analyze_block(
                 body,
                 &mut scopes,
-                &info.signature.return_type,
+                &implementation_signature.return_type,
                 true,
                 &mut context,
             )?;
 
-            if info.signature.return_type != SemanticType::Void
+            if implementation_signature.return_type != SemanticType::Void
                 && !statement_guarantees_return(&Stmt::Block(body.clone()))
             {
                 return Err(SemanticError::new(
@@ -745,20 +751,6 @@ impl<'a> Analyzer<'a> {
                         ));
                     }
 
-                    if let Some(initializer) = &declarator.initializer {
-                        let initializer_type = self.analyze_expr(initializer, scopes)?.ty;
-                        if !types_compatible(&ty, &initializer_type) {
-                            return Err(SemanticError::new(
-                                CompilerErrorCode::MismatchedTypes,
-                                initializer.span,
-                                format!(
-                                    "initializer for {:?} has type {:?}, expected {:?}",
-                                    declarator.name, initializer_type, ty
-                                ),
-                            ));
-                        }
-                    }
-
                     let Some(scope) = scopes.last_mut() else {
                         return Err(SemanticError::new(
                             CompilerErrorCode::UnknownStateInCompiler,
@@ -773,6 +765,20 @@ impl<'a> Analyzer<'a> {
                             is_const: false,
                         },
                     );
+
+                    if let Some(initializer) = &declarator.initializer {
+                        let initializer_type = self.analyze_expr(initializer, scopes)?.ty;
+                        if !types_compatible(&ty, &initializer_type) {
+                            return Err(SemanticError::new(
+                                CompilerErrorCode::MismatchedTypes,
+                                initializer.span,
+                                format!(
+                                    "initializer for {:?} has type {:?}, expected {:?}",
+                                    declarator.name, initializer_type, ty
+                                ),
+                            ));
+                        }
+                    }
                 }
                 context.record_declaration();
                 Ok(())
@@ -847,10 +853,16 @@ impl<'a> Analyzer<'a> {
                         "while condition must evaluate to int",
                     ));
                 }
-                self.analyze_stmt(&statement.body, scopes, return_type, context)
+                context.loop_depth += 1;
+                let result = self.analyze_stmt(&statement.body, scopes, return_type, context);
+                context.loop_depth = context.loop_depth.saturating_sub(1);
+                result
             }
             Stmt::DoWhile(statement) => {
-                self.analyze_stmt(&statement.body, scopes, return_type, context)?;
+                context.loop_depth += 1;
+                let body_result = self.analyze_stmt(&statement.body, scopes, return_type, context);
+                context.loop_depth = context.loop_depth.saturating_sub(1);
+                body_result?;
                 let condition = self.analyze_expr(&statement.condition, scopes)?;
                 if condition.ty != SemanticType::Int {
                     return Err(SemanticError::new(
@@ -878,7 +890,10 @@ impl<'a> Analyzer<'a> {
                 if let Some(update) = &statement.update {
                     self.analyze_expr(update, scopes)?;
                 }
-                self.analyze_stmt(&statement.body, scopes, return_type, context)
+                context.loop_depth += 1;
+                let result = self.analyze_stmt(&statement.body, scopes, return_type, context);
+                context.loop_depth = context.loop_depth.saturating_sub(1);
+                result
             }
             Stmt::Case(statement) => {
                 let value = self
@@ -938,7 +953,27 @@ impl<'a> Analyzer<'a> {
                 current_switch.has_default = true;
                 Ok(())
             }
-            Stmt::Break(_) | Stmt::Continue(_) | Stmt::Empty(_) => Ok(()),
+            Stmt::Break(span) => {
+                if context.loop_depth == 0 && context.switch_stack.is_empty() {
+                    return Err(SemanticError::new(
+                        CompilerErrorCode::BreakOutsideOfLoopOrCaseStatement,
+                        span.span,
+                        "break must appear within a loop or switch statement",
+                    ));
+                }
+                Ok(())
+            }
+            Stmt::Continue(span) => {
+                if context.loop_depth == 0 {
+                    return Err(SemanticError::new(
+                        CompilerErrorCode::BreakOutsideOfLoopOrCaseStatement,
+                        span.span,
+                        "continue must appear within a loop statement",
+                    ));
+                }
+                Ok(())
+            }
+            Stmt::Empty(_) => Ok(()),
         }
     }
 
@@ -1425,6 +1460,17 @@ impl<'a> Analyzer<'a> {
         &self,
         function: &FunctionDecl,
     ) -> Result<SemanticFunction, SemanticError> {
+        if function.parameters.len() > MAX_FUNCTION_PARAMETERS {
+            return Err(SemanticError::new(
+                CompilerErrorCode::TooManyParametersOnFunction,
+                function.span,
+                format!(
+                    "function {:?} has {} parameters; the maximum is {MAX_FUNCTION_PARAMETERS}",
+                    function.name,
+                    function.parameters.len()
+                ),
+            ));
+        }
         let return_type = self.resolve_type(&function.return_type)?;
         let mut parameters = Vec::new();
         let mut optional_started = false;
@@ -1617,7 +1663,9 @@ impl<'a> Analyzer<'a> {
     fn evaluate_switch_case_value(&self, expr: &Expr) -> Option<i32> {
         match self.evaluate_constant_expr(expr)? {
             ConstantValue::Int(value) => Some(value),
-            ConstantValue::String(value) => Some(nwscript_string_hash(&value)),
+            ConstantValue::String(value) => {
+                Some(crate::nwscript_string_hash_bytes(value.as_bytes()))
+            }
             _ => None,
         }
     }
@@ -1682,29 +1730,24 @@ impl<'a> Analyzer<'a> {
             return Ok(());
         }
 
-        if self.options.allow_conditional_script {
-            if let Some(function) = self.functions.get("StartingConditional") {
-                if function.signature.return_type != SemanticType::Int {
-                    return Err(SemanticError::new(
-                        CompilerErrorCode::FunctionIntscMustHaveVoidReturnValue,
-                        function.declaration_span,
-                        "StartingConditional must return int",
-                    ));
-                }
-                if !function.signature.parameters.is_empty() {
-                    return Err(SemanticError::new(
-                        CompilerErrorCode::FunctionIntscMustHaveNoParameters,
-                        function.declaration_span,
-                        "StartingConditional must not take parameters",
-                    ));
-                }
-                return Ok(());
+        if self.options.allow_conditional_script
+            && let Some(function) = self.functions.get("StartingConditional")
+        {
+            if function.signature.return_type != SemanticType::Int {
+                return Err(SemanticError::new(
+                    CompilerErrorCode::FunctionIntscMustHaveVoidReturnValue,
+                    function.declaration_span,
+                    "StartingConditional must return int",
+                ));
             }
-            return Err(SemanticError::new(
-                CompilerErrorCode::NoFunctionIntscInScript,
-                crate::Span::new(crate::SourceId::new(0), 0, 0),
-                "script must define StartingConditional",
-            ));
+            if !function.signature.parameters.is_empty() {
+                return Err(SemanticError::new(
+                    CompilerErrorCode::FunctionIntscMustHaveNoParameters,
+                    function.declaration_span,
+                    "StartingConditional must not take parameters",
+                ));
+            }
+            return Ok(());
         }
 
         Err(SemanticError::new(
@@ -1806,7 +1849,7 @@ fn default_constant_value(ty: &SemanticType) -> Option<ConstantValue> {
     match ty {
         SemanticType::Int => Some(ConstantValue::Int(0)),
         SemanticType::Float => Some(ConstantValue::Float(0.0)),
-        SemanticType::String => Some(ConstantValue::String(String::new())),
+        SemanticType::String => Some(ConstantValue::String(crate::ScriptString::default())),
         _ => None,
     }
 }
@@ -1854,13 +1897,17 @@ fn evaluate_float_constant_binary(op: BinaryOp, left: f32, right: f32) -> Option
     }
 }
 
-fn evaluate_string_constant_binary(op: BinaryOp, left: &str, right: &str) -> Option<ConstantValue> {
+fn evaluate_string_constant_binary(
+    op: BinaryOp,
+    left: &crate::ScriptString,
+    right: &crate::ScriptString,
+) -> Option<ConstantValue> {
     match op {
         BinaryOp::Add => {
             if left.len().saturating_add(right.len()) >= 0x8000 {
                 None
             } else {
-                Some(ConstantValue::String(format!("{left}{right}")))
+                Some(ConstantValue::String(left.concat(right)))
             }
         }
         BinaryOp::EqualEqual => Some(ConstantValue::Int(i32::from(left == right))),
@@ -2331,7 +2378,7 @@ mod tests {
     }
 
     #[test]
-    fn function_name_reuse_requires_identical_parameter_lists() {
+    fn function_name_reuse_requires_identical_parameters_but_not_return_types() {
         let mismatch = parse_text(
             SourceId::new(56),
             "void helper(int n); void helper(float n); void main() {}",
@@ -2351,11 +2398,14 @@ mod tests {
             Some(&test_langspec()),
         )
         .expect("script should parse");
-        let return_mismatch_error = analyze_script(&return_mismatch, Some(&test_langspec()))
-            .expect_err("analysis should fail");
+        let return_mismatch_model = analyze_script(&return_mismatch, Some(&test_langspec()))
+            .expect("native compiler accepts mismatched return types");
         assert_eq!(
-            return_mismatch_error.code,
-            crate::CompilerErrorCode::FunctionImplementationAndDefinitionDiffer
+            return_mismatch_model
+                .functions
+                .get("helper")
+                .map(|function| &function.return_type),
+            Some(&SemanticType::Int)
         );
 
         let duplicate_impl = parse_text(
@@ -2442,6 +2492,19 @@ mod tests {
     }
 
     #[test]
+    fn local_is_visible_inside_its_own_initializer_like_upstream() {
+        let script = parse_text(
+            SourceId::new(66),
+            "void main() { int value = value = 1; }",
+            Some(&test_langspec()),
+        )
+        .expect("script should parse");
+
+        analyze_script(&script, Some(&test_langspec()))
+            .expect("self-referential initializer should analyze");
+    }
+
+    #[test]
     fn function_body_scope_may_shadow_parameter_names() {
         let script = parse_text(
             SourceId::new(65),
@@ -2507,5 +2570,57 @@ mod tests {
         )
         .expect_err("analysis should fail");
         assert_eq!(error.code, crate::CompilerErrorCode::NoFunctionMainInScript);
+    }
+
+    #[test]
+    fn missing_conditional_and_main_reports_legacy_main_error() {
+        let script = parse_text(SourceId::new(46), "", Some(&test_langspec()))
+            .expect("empty script should parse");
+
+        let error = analyze_script_with_options(
+            &script,
+            Some(&test_langspec()),
+            SemanticOptions {
+                require_entrypoint:       true,
+                allow_conditional_script: true,
+            },
+        )
+        .expect_err("analysis should fail");
+        assert_eq!(error.code, crate::CompilerErrorCode::NoFunctionMainInScript);
+    }
+
+    #[test]
+    fn enforces_the_legacy_32_parameter_limit() {
+        let parameters = (0..33)
+            .map(|index| format!("int value{index}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let source = format!("void oversized({parameters}) {{}} void main() {{}}");
+        let script = parse_text(SourceId::new(57), &source, Some(&test_langspec()))
+            .expect("33 parameters should be syntactically valid");
+
+        let error =
+            analyze_script(&script, Some(&test_langspec())).expect_err("analysis should fail");
+        assert_eq!(
+            error.code,
+            crate::CompilerErrorCode::TooManyParametersOnFunction
+        );
+    }
+
+    #[test]
+    fn rejects_break_and_continue_outside_control_flow() {
+        for (source_id, source) in [
+            (58, "void main() { break; }"),
+            (59, "void main() { continue; }"),
+        ] {
+            let script = parse_text(SourceId::new(source_id), source, Some(&test_langspec()))
+                .expect("statement should parse");
+            let error = analyze_script(&script, Some(&test_langspec()))
+                .expect_err("out-of-context control flow should fail");
+            assert_eq!(
+                error.code,
+                crate::CompilerErrorCode::BreakOutsideOfLoopOrCaseStatement
+            );
+        }
     }
 }

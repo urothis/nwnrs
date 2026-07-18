@@ -16,7 +16,7 @@ pub const NCS_EXTRA_DATA_OFFSET: usize = 2;
 /// Fixed metadata extracted from the leading bytes of an `NCS` file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct NcsHeader {
-    /// Encoded bytecode payload size recorded in the binary header.
+    /// Total encoded file size, including the fixed binary header.
     pub code_size: u32,
 }
 
@@ -629,12 +629,19 @@ fn instruction_extra_size(opcode: NcsOpcode, auxcode: NcsAuxCode, bytes: &[u8]) 
 pub fn decode_ncs_instructions(bytes: &[u8]) -> Result<Vec<NcsInstruction>, NcsReadError> {
     let header = decode_ncs_header(bytes)?;
     let mut offset = NCS_BINARY_HEADER_SIZE;
-    let code_end = NCS_BINARY_HEADER_SIZE + header.code_size as usize;
+    let code_end = header.code_size as usize;
+    if code_end < NCS_BINARY_HEADER_SIZE {
+        return Err(NcsReadError::TruncatedInstruction {
+            offset:         0,
+            expected_extra: NCS_BINARY_HEADER_SIZE,
+            actual_extra:   code_end,
+        });
+    }
     if bytes.len() < code_end {
         return Err(NcsReadError::TruncatedInstruction {
             offset,
-            expected_extra: header.code_size as usize,
-            actual_extra: bytes.len().saturating_sub(offset),
+            expected_extra: code_end,
+            actual_extra: bytes.len(),
         });
     }
 
@@ -681,17 +688,14 @@ pub fn decode_ncs_instructions(bytes: &[u8]) -> Result<Vec<NcsInstruction>, NcsR
 
 /// Encodes one `NCS V1.0` instruction stream with the fixed binary header.
 pub fn encode_ncs_instructions(instructions: &[NcsInstruction]) -> Vec<u8> {
-    let code_size = u32::try_from(
-        instructions
-            .iter()
-            .map(NcsInstruction::encoded_len)
-            .sum::<usize>(),
-    )
-    .ok()
-    .unwrap_or(u32::MAX);
-    let mut bytes = Vec::with_capacity(
-        NCS_BINARY_HEADER_SIZE + usize::try_from(code_size).ok().unwrap_or(usize::MAX),
-    );
+    let payload_size = instructions
+        .iter()
+        .map(NcsInstruction::encoded_len)
+        .sum::<usize>();
+    let code_size = u32::try_from(NCS_BINARY_HEADER_SIZE.saturating_add(payload_size))
+        .ok()
+        .unwrap_or(u32::MAX);
+    let mut bytes = Vec::with_capacity(usize::try_from(code_size).ok().unwrap_or(usize::MAX));
     bytes.extend_from_slice(NCS_HEADER.as_bytes());
     bytes.push(b'B');
     bytes.extend_from_slice(&code_size.to_be_bytes());
@@ -744,6 +748,7 @@ mod tests {
         ];
 
         let bytes = encode_ncs_instructions(&instructions);
+        assert_eq!(decode_ncs_header(&bytes)?.code_size as usize, bytes.len());
         let decoded = decode_ncs_instructions(&bytes)?;
         assert_eq!(decoded, instructions);
         Ok(())

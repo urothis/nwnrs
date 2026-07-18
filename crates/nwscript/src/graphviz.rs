@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use crate::{
     AssignmentOp, BinaryOp, BlockStmt, CaseStmt, Declaration, DefaultStmt, DoWhileStmt, Expr,
     ExprKind, ExpressionStmt, ForStmt, FunctionDecl, IfStmt, IncludeDirective, Literal, Script,
@@ -31,7 +33,14 @@ impl<'a> GraphvizRenderer<'a> {
     }
 
     fn finish(self) -> String {
-        let mut dot = String::from("digraph nwscript {\n  rankdir=TB;\n  node [shape=box];\n");
+        let mut dot = String::from(
+            "digraph nwscript {\ngraph [bgcolor=\"#f8fafc\", pad=\"0.35\", nodesep=\"0.28\", \
+             ranksep=\"0.55\", fontname=\"Helvetica\"];\nrankdir=TB;\nnode [shape=box, \
+             style=\"rounded,filled\", fillcolor=\"#ffffff\", color=\"#94a3b8\", \
+             fontcolor=\"#0f172a\", fontname=\"Helvetica\", fontsize=10, \
+             margin=\"0.12,0.08\"];\nedge [color=\"#94a3b8\", fontcolor=\"#475569\", \
+             fontname=\"Helvetica\", fontsize=9, arrowsize=0.65];\n",
+        );
         for node in self.nodes {
             dot.push_str("  ");
             dot.push_str(&node);
@@ -344,8 +353,12 @@ impl<'a> GraphvizRenderer<'a> {
     fn node(&mut self, label: impl Into<String>) -> usize {
         let id = self.next_id;
         self.next_id += 1;
-        self.nodes
-            .push(format!("n{id} [label=\"{}\"];", escape(&label.into())));
+        let label = label.into();
+        self.nodes.push(format!(
+            "n{id} [label=\"{}\", {}];",
+            escape(&label),
+            node_style(&label)
+        ));
         id
     }
 
@@ -354,12 +367,18 @@ impl<'a> GraphvizRenderer<'a> {
         if let Some(source_map) = self.source_map
             && let Some(file) = source_map.get(span.source_id)
         {
-            full.push_str("\\n");
-            full.push_str(&file.name);
-            full.push(':');
-            full.push_str(&span.start.to_string());
-            full.push('-');
-            full.push_str(&span.end.to_string());
+            full.push('\n');
+            let display_name = Path::new(&file.name)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or(&file.name);
+            full.push_str(display_name);
+            if let Some(location) = file.location(span.start) {
+                full.push(':');
+                full.push_str(&location.line.to_string());
+                full.push(':');
+                full.push_str(&location.column.to_string());
+            }
         }
         self.node(full)
     }
@@ -375,7 +394,44 @@ impl<'a> GraphvizRenderer<'a> {
 }
 
 fn escape(input: &str) -> String {
-    input.replace('\\', "\\\\").replace('"', "\\\"")
+    input
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+}
+
+fn node_style(label: &str) -> &'static str {
+    let first_line = label.lines().next().unwrap_or(label);
+    if first_line == "Script" {
+        "fillcolor=\"#0f172a\", color=\"#0f172a\", fontcolor=\"#ffffff\", penwidth=1.5"
+    } else if first_line.starts_with("Function ") || first_line.starts_with("Struct ") {
+        "fillcolor=\"#dbeafe\", color=\"#3b82f6\", penwidth=1.25"
+    } else if matches!(
+        first_line,
+        "If" | "Switch" | "While" | "DoWhile" | "For" | "Case" | "Default"
+    ) {
+        "fillcolor=\"#ffedd5\", color=\"#f97316\""
+    } else if first_line.starts_with("Literal ")
+        || first_line.starts_with("Identifier ")
+        || first_line.starts_with("Type ")
+    {
+        "fillcolor=\"#ecfdf5\", color=\"#10b981\""
+    } else if first_line == "Call"
+        || first_line.starts_with("Binary ")
+        || first_line.starts_with("Unary ")
+        || first_line.starts_with("Assignment ")
+        || first_line == "Conditional"
+    {
+        "fillcolor=\"#f3e8ff\", color=\"#a855f7\""
+    } else if first_line == "Global"
+        || first_line == "Declaration"
+        || first_line.starts_with("Var ")
+        || first_line.starts_with("Param ")
+    {
+        "fillcolor=\"#fef9c3\", color=\"#ca8a04\""
+    } else {
+        "fillcolor=\"#ffffff\", color=\"#94a3b8\""
+    }
 }
 
 fn type_label(kind: &TypeKind, is_const: bool) -> String {

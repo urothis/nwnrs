@@ -12,6 +12,7 @@ pub(crate) struct Cli {
 #[derive(FromArgs)]
 #[argh(subcommand)]
 pub(crate) enum Command {
+    Compile(CompileCmd),
     Convert(ConvertCmd),
     Inspect(InspectCmd),
     Init(InitCmd),
@@ -19,6 +20,103 @@ pub(crate) enum Command {
     Pack(PackCmd),
     Unpack(UnpackCmd),
     Nwsync(NwsyncCmd),
+}
+
+#[derive(FromArgs, Clone)]
+#[argh(subcommand, name = "compile")]
+/// compile one or more NWScript source files
+pub(crate) struct CompileCmd {
+    #[argh(switch, short = 'f')]
+    /// overwrite existing NCS, NDB, and Graphviz output files
+    pub(crate) force: bool,
+
+    #[argh(switch, short = 'g')]
+    /// write NDB debugger output
+    pub(crate) debug: bool,
+
+    #[argh(switch)]
+    /// skip main/StartingConditional entrypoint validation
+    pub(crate) no_entrypoint_check: bool,
+
+    #[argh(option)]
+    /// explicit nwscript.nss path instead of normal resource lookup
+    pub(crate) langspec: Option<PathBuf>,
+
+    #[argh(option)]
+    /// extra directory to search for #include files; may be repeated
+    pub(crate) include_dir: Vec<PathBuf>,
+
+    #[argh(option, default = "String::from(\"O1\")")]
+    /// optimization preset: O0, O1, O2, or O3; defaults to safe O1
+    pub(crate) optimization: String,
+
+    #[argh(option)]
+    /// exact optimization flag set; may repeat and overrides the preset
+    pub(crate) optimization_flag: Vec<String>,
+
+    #[argh(option, default = "16")]
+    /// maximum recursive include depth from 1 through 200
+    pub(crate) max_include_depth: usize,
+
+    #[argh(option)]
+    /// write Graphviz syntax-tree images into this directory
+    pub(crate) graphviz: Option<PathBuf>,
+
+    #[argh(option, default = "String::from(\"svg\")")]
+    /// graphviz output format: svg, png, pdf, or dot; defaults to svg
+    pub(crate) graphviz_format: String,
+
+    #[argh(switch)]
+    /// retain DOT source alongside rendered Graphviz images
+    pub(crate) keep_graphviz_dot: bool,
+
+    #[argh(switch)]
+    /// compile and report outcomes without writing artifacts
+    pub(crate) simulate: bool,
+
+    #[argh(switch, short = 'y')]
+    /// continue compiling remaining inputs after an error
+    pub(crate) continue_on_error: bool,
+
+    #[argh(switch, short = 'R')]
+    /// recurse into input directories
+    pub(crate) recurse: bool,
+
+    #[argh(switch)]
+    /// follow symlinks while collecting input directories
+    pub(crate) follow_symlinks: bool,
+
+    #[argh(option, short = 'j')]
+    /// parallel compile workers; defaults to available CPU parallelism
+    pub(crate) jobs: Option<usize>,
+
+    #[argh(option, short = 'o')]
+    /// exact NCS output path, relative or absolute; only valid with one input
+    pub(crate) output: Option<PathBuf>,
+
+    #[argh(option, short = 'd')]
+    /// directory for compiled NCS and NDB artifacts
+    pub(crate) directory: Option<PathBuf>,
+
+    #[argh(option)]
+    /// explicit Neverwinter Nights installation root
+    pub(crate) root: Option<PathBuf>,
+
+    #[argh(option)]
+    /// explicit Neverwinter Nights user directory
+    pub(crate) user: Option<PathBuf>,
+
+    #[argh(option, default = "String::from(\"english\")")]
+    /// installation language used for resource lookup
+    pub(crate) language: String,
+
+    #[argh(switch)]
+    /// include the installation override directory in resource lookup
+    pub(crate) load_ovr: bool,
+
+    #[argh(positional)]
+    /// source files or directories to compile
+    pub(crate) paths: Vec<PathBuf>,
 }
 
 #[derive(FromArgs)]
@@ -122,8 +220,25 @@ pub(crate) struct InspectCmd {
     pub(crate) no_langspec: bool,
 
     #[argh(option)]
-    /// for .ncs input, explicit nwscript.nss path instead of sibling lookup
+    /// for .ncs input, explicit nwscript.nss path instead of installation
+    /// lookup
     pub(crate) langspec: Option<PathBuf>,
+
+    #[argh(option)]
+    /// explicit Neverwinter Nights installation root for resource lookup
+    pub(crate) root: Option<PathBuf>,
+
+    #[argh(option)]
+    /// explicit Neverwinter Nights user directory for resource lookup
+    pub(crate) user: Option<PathBuf>,
+
+    #[argh(option, default = "String::from(\"english\")")]
+    /// installation language used for resource lookup
+    pub(crate) language: String,
+
+    #[argh(switch)]
+    /// include the installation override directory in resource lookup
+    pub(crate) load_ovr: bool,
 
     #[argh(positional)]
     /// path to the file to inspect
@@ -202,9 +317,13 @@ pub(crate) struct PackCmd {
     /// may be repeated
     pub(crate) include_dir: Vec<PathBuf>,
 
-    #[argh(option, default = "String::from(\"O0\")")]
-    /// optimization level for compiled .nss inputs: O0, O1, O2, or O3
+    #[argh(option, default = "String::from(\"O1\")")]
+    /// optimization level for compiled .nss inputs; defaults to safe O1
     pub(crate) optimization: String,
+
+    #[argh(option)]
+    /// exact NWScript optimization flag set; may repeat and overrides preset
+    pub(crate) optimization_flag: Vec<String>,
 
     #[argh(option, short = 'j')]
     /// parallel NWScript compile workers; defaults to available CPU parallelism
@@ -254,6 +373,7 @@ pub(crate) struct KeyPackCmd {
     pub(crate) langspec:            Option<PathBuf>,
     pub(crate) include_dir:         Vec<PathBuf>,
     pub(crate) optimization:        String,
+    pub(crate) optimization_flag:   Vec<String>,
     pub(crate) jobs:                Option<usize>,
     pub(crate) key:                 String,
     pub(crate) source:              PathBuf,
@@ -348,6 +468,50 @@ mod tests {
     use super::{Cli, Command, InspectCmd, NwsyncCommand};
 
     #[test]
+    fn parses_compile_command_with_compiler_controls() {
+        let cli = Cli::from_args(
+            &["nwnrs"],
+            &[
+                "compile",
+                "-g",
+                "-R",
+                "-y",
+                "--include-dir",
+                "inc",
+                "--optimization-flag",
+                "remove-dead-branches",
+                "--optimization-flag",
+                "meld-instructions",
+                "--max-include-depth",
+                "32",
+                "--graphviz",
+                "graphs",
+                "-d",
+                "build",
+                "scripts",
+            ],
+        )
+        .unwrap_or_else(|error| panic!("parse compile args: {error:?}"));
+
+        let Command::Compile(cmd) = cli.command else {
+            panic!("expected compile command");
+        };
+        assert!(cmd.debug);
+        assert!(cmd.recurse);
+        assert!(cmd.continue_on_error);
+        assert_eq!(cmd.optimization, "O1");
+        assert_eq!(
+            cmd.optimization_flag,
+            vec!["remove-dead-branches", "meld-instructions"]
+        );
+        assert_eq!(cmd.max_include_depth, 32);
+        assert_eq!(cmd.directory, Some(PathBuf::from("build")));
+        assert_eq!(cmd.graphviz, Some(PathBuf::from("graphs")));
+        assert_eq!(cmd.graphviz_format, "svg");
+        assert_eq!(cmd.paths, vec![PathBuf::from("scripts")]);
+    }
+
+    #[test]
     fn parses_pack_command_with_repeated_include_dirs() {
         let cli = Cli::from_args(
             &["nwnrs"],
@@ -361,6 +525,8 @@ mod tests {
                 "inc/b",
                 "--optimization",
                 "O2",
+                "--optimization-flag",
+                "remove-dead-code",
                 "-j",
                 "4",
                 "scripts/test.nss",
@@ -375,6 +541,7 @@ mod tests {
         assert!(cmd.debug);
         assert!(cmd.no_entrypoint_check);
         assert_eq!(cmd.optimization, "O2");
+        assert_eq!(cmd.optimization_flag, vec!["remove-dead-code"]);
         assert_eq!(cmd.jobs, Some(4));
         assert_eq!(
             cmd.include_dir,
@@ -540,6 +707,7 @@ mod tests {
             no_langspec,
             langspec,
             path,
+            ..
         }) = cli.command
         else {
             panic!("expected inspect command");

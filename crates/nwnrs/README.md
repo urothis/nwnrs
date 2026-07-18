@@ -44,7 +44,10 @@ cargo run -p nwnrs -- convert path/to/model.mdl out/model.obj
 cargo run -p nwnrs -- convert --root /path/to/NWN --user /path/to/NWN path/to/creature.utc out/creature.obj
 cargo run -p nwnrs -- unpack path/to/module.mod -d out/
 cargo run -p nwnrs -- pack out/ rebuilt.mod
-cargo run -p nwnrs -- pack --debug path/to/script.nss rebuilt/script.ncs
+cargo run -p nwnrs -- compile -g -o rebuilt/script.ncs path/to/script.nss
+cargo run -p nwnrs -- compile -R -d rebuilt/scripts scripts/
+cargo run -p nwnrs -- compile -R -d rebuilt/scripts --graphviz graphs --graphviz-format svg scripts/
+cargo run -p nwnrs -- compile --optimization O0 --optimization-flag remove-dead-branches path/to/script.nss
 cargo run -p nwnrs -- pack --include-dir path/to/includes --optimization O2 scripts/ rebuilt.mod
 cargo run -p nwnrs -- unpack path/to/script.ncs -d out/
 cargo run -p nwnrs -- pack out/ rebuilt.ncs
@@ -97,11 +100,48 @@ their packaged output forms.
 
 That includes:
 
-- compiling `.nss` into `.ncs`
+- compiling `.nss` into `.ncs` as a compatibility convenience
 - packing directories into ERF-family archives such as `hak`, `mod`, and `nwm`
 - rebuilding KEY/BIF sets
 - preserving original archive ordering and reuse opportunities when
   `nwproject.lock` metadata allows it
+
+### `compile`
+
+`compile` is the dedicated NWScript frontend. It accepts individual `.nss`
+files or directories and writes `.ncs`, optional `.ndb`, and optional Graphviz
+syntax-tree artifacts. Directory inputs can be recursive and compilation can
+run in parallel, continue after errors, or simulate without writing files.
+Recursive builds preserve the source hierarchy beneath both the artifact and
+Graphviz output directories, preventing same-stem scripts in different folders
+from colliding.
+
+For a single input, `-o` honors the supplied relative or absolute output path
+exactly, including its extension. Debug output uses the same path with an
+`.ndb` extension.
+
+Source lookup is local-first: the input directory and repeated `--include-dir`
+roots override resources from the standard NWN installation. Installation and
+user roots are autodetected, with `--root`, `--user`, `--language`, and
+`--load-ovr` available for explicit control.
+
+The default optimization preset is safe O1. `--optimization O0` through `O3`
+select presets. Repeated `--optimization-flag` values select an exact custom
+set and override the preset; accepted values are `remove-dead-code`,
+`remove-dead-branches`, and `meld-instructions`.
+
+Use `-g`/`--debug` for NDB output and `--max-include-depth` to control include
+traversal. `--graphviz DIR` writes one styled syntax-tree image per script,
+preserving directory hierarchy for recursive builds. SVG is the default;
+`--graphviz-format png`, `pdf`, or `dot` selects another format, and
+`--keep-graphviz-dot` retains DOT source alongside rendered images. SVG, PNG,
+and PDF rendering require the Graphviz `dot` executable. Recompiling without
+debug output removes a stale sibling NDB.
+
+`inspect` uses the same installation-backed `nwscript.nss` lookup for NCS
+action names and falls back to installed NSS resources when weaving NDB source
+references. Use its matching `--root`, `--user`, `--language`, and `--load-ovr`
+controls when autodetection is not appropriate.
 
 ### `unpack`
 
@@ -120,6 +160,8 @@ The `nwsync` command family provides repository and manifest utilities:
 
 ## Common Workflows
 
+- Compile one script with `compile -o`, or compile a source tree with
+  `compile -R -d`.
 - Scaffold a new resource project with `new` or `init`, edit the source file,
   then run `pack`.
 - Unpack a module or hak, edit the unpacked sources, then `pack` the directory
