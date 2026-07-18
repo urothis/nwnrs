@@ -1,0 +1,13 @@
+**
+!Cargo.toml
+!Cargo.lock
+!rust-toolchain.toml
+!crates/
+!crates/**
+!docker/
+!docker/Dockerfile
+!docker/scripts/
+!docker/scripts/run-server.sh
+!docker/scripts/prep-nwn-ini.awk
+!docker/data/
+!docker/data/**

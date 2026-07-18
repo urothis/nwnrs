@@ -1,0 +1,61 @@
+[package]
+name = "nwnrs-runtime-sys"
+version = "0.0.1"
+edition.workspace = true
+license.workspace = true
+publish = true
+description = "Native Frida Gum and loader boundary for the nwnrs runtime"
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/nwnrs-runtime-sys"
+readme = "README.md"
+keywords = ["nwn", "neverwinter-nights", "frida", "instrumentation"]
+categories = ["external-ffi-bindings", "game-development"]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+frida-gum-sys.workspace = true
+nwnrs-runtime = { path = "../runtime", version = "0.0.1" }
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+# This is the workspace's one native boundary, so it cannot inherit the
+# workspace-wide `unsafe_code = "deny"`. Keep the remaining policy explicit.
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+dbg_macro = "deny"
+await_holding_lock = "deny"
+await_holding_refcell_ref = "deny"
+too_many_arguments = "allow"
+indexing_slicing = "warn"
+map_err_ignore = "warn"
+result_large_err = "warn"
+mem_forget = "warn"
+cast_lossless = "warn"
+cast_possible_truncation = "warn"
+manual_ok_or = "warn"
+let_and_return = "warn"
+match_like_matches_macro = "warn"
+needless_borrow = "warn"
+unused_async = "warn"
+unused_unit = "warn"
+semicolon_if_nothing_returned = "warn"
+print_stdout = "deny"
+print_stderr = "deny"
+
+[lints.rust]
+missing_docs = "deny"
+unsafe_op_in_unsafe_fn = "deny"
+
+[package.metadata.docs.rs]
+rustdoc-args = [
+    "-Zunstable-options",
+    "--generate-link-to-definition",
+    "--generate-macro-expansion",
+]

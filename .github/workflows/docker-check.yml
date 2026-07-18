@@ -3,6 +3,13 @@ name: Docker checks
 on:
     pull_request:
         paths:
+            - .dockerignore
+            - Cargo.lock
+            - Cargo.toml
+            - rust-toolchain.toml
+            - crates/nwnrs/**
+            - crates/runtime/**
+            - crates/runtime-sys/**
             - docker/**
             - .github/workflows/docker*.yml
 
@@ -16,5 +23,12 @@ jobs:
             - uses: actions/checkout@v6.0.3
               with:
                   persist-credentials: false
+            - uses: ./.github/actions/setup-rust
+              with:
+                  components: clippy
             - name: Check scripts
               run: bash -n docker/scripts/*.sh
+            - name: Check supervisor-only CLI
+              run: >-
+                  cargo clippy --locked --package nwnrs --all-targets
+                  --no-default-features --features supervisor -- -D warnings

@@ -1,0 +1,39 @@
+name: Native runtime checks
+
+on:
+    pull_request:
+        paths:
+            - crates/runtime/**
+            - crates/runtime-sys/**
+            - crates/nwnrs/**
+            - module/nwnrs*.nss
+            - Cargo.toml
+            - Cargo.lock
+            - .github/workflows/runtime-check.yml
+
+jobs:
+    native:
+        name: ${{ matrix.name }}
+        runs-on: ${{ matrix.runner }}
+        timeout-minutes: 30
+        permissions:
+            contents: read
+        strategy:
+            fail-fast: false
+            matrix:
+                include:
+                    - name: macOS ARM64
+                      runner: macos-14
+                    - name: Linux x86_64
+                      runner: ubuntu-24.04
+                    - name: Linux ARM64
+                      runner: ubuntu-24.04-arm
+        steps:
+            - uses: actions/checkout@v6.0.3
+              with:
+                  persist-credentials: false
+            - uses: ./.github/actions/setup-rust
+            - name: Run Frida Gum interception probe
+              run: cargo run --locked --package nwnrs-runtime-sys --example frida-probe
+            - name: Test launcher and injected runtime
+              run: crates/runtime/scripts/test-native-runtime.sh

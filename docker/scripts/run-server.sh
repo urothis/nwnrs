@@ -66,20 +66,17 @@ backup_runtime_configuration() {
   fi
 }
 
-tail_pid=
 backup_pid=
-server_pid=
+supervisor_pid=
 
 cleanup() {
   status=$?
   trap - EXIT
 
-  for pid in "$tail_pid" "$backup_pid"; do
-    if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
-      kill "$pid" 2>/dev/null || true
-      wait "$pid" 2>/dev/null || true
-    fi
-  done
+  if [[ -n "$backup_pid" ]] && kill -0 "$backup_pid" 2>/dev/null; then
+    kill "$backup_pid" 2>/dev/null || true
+    wait "$backup_pid" 2>/dev/null || true
+  fi
 
   backup_runtime_configuration || true
 
@@ -97,8 +94,8 @@ trap cleanup EXIT
 forward_signal() {
   local signal=$1
   local signal_status=$2
-  if [[ -n "$server_pid" ]] && kill -0 "$server_pid" 2>/dev/null; then
-    kill -s "$signal" "$server_pid"
+  if [[ -n "$supervisor_pid" ]] && kill -0 "$supervisor_pid" 2>/dev/null; then
+    kill -s "$signal" "$supervisor_pid"
   else
     exit "$signal_status"
   fi
@@ -106,14 +103,6 @@ forward_signal() {
 trap 'forward_signal TERM 143' TERM
 trap 'forward_signal INT 130' INT
 trap 'forward_signal HUP 129' HUP
-
-if [[ "${NWN_TAIL_LOGS:-y}" == y ]]; then
-  echo "[*] Server logs mirrored to stdout"
-  tail -q -F \
-    "$runtime_home/logs.0/nwserverLog1.txt" \
-    "$runtime_home/logs.0/nwserverError1.txt" &
-  tail_pid=$!
-fi
 
 (
   sleep 10
@@ -174,17 +163,25 @@ fi
 server_args+=( "$@" )
 
 echo "[*] Starting nwserver on UDP port ${NWN_PORT:-5121}"
-export LD_LIBRARY_PATH="${NWN_LD_LIBRARY_PATH:-}"
-export LD_PRELOAD="${NWN_LD_PRELOAD:-}"
+supervisor_args=(
+  run
+  --color "${NWNRS_COLOR:-auto}"
+  --runtime /nwn/runtime/libnwnrs_runtime_sys.so
+  --targets /nwn/runtime/targets
+)
+if [[ "${NWN_TAIL_LOGS:-y}" != y ]]; then
+  supervisor_args+=( --no-tail-logs )
+fi
+supervisor_args+=( -- ./nwserver "${server_args[@]}" )
 
-./nwserver "${server_args[@]}" &
-server_pid=$!
+/nwn/bin/nwnrs "${supervisor_args[@]}" < /dev/stdin &
+supervisor_pid=$!
 
 set +e
-wait "$server_pid"
+wait "$supervisor_pid"
 status=$?
-while kill -0 "$server_pid" 2>/dev/null; do
-  wait "$server_pid"
+while kill -0 "$supervisor_pid" 2>/dev/null; do
+  wait "$supervisor_pid"
   status=$?
 done
 set -e

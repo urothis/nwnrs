@@ -1,0 +1,78 @@
+# Neverwinter Nights 8193.37-17 macOS ARM64.
+schema_version = 2
+runtime_api = 2
+
+[server]
+sha256 = "75475f71906482c3b52bd3e14c5266c0532dadce69ffce5f5bae343a23ccb803"
+build = "8193.37-17 [26c6e573]"
+
+[server.platform]
+os = "macos"
+architecture = "aarch64"
+
+[bridge]
+virtual_machine_offset = 16
+
+[bridge.function_management]
+symbol = "_ZN26CNWSVirtualMachineCommands36ExecuteCommandNWNXFunctionManagementEii"
+
+[bridge.stack_pop_integer]
+symbol = "_ZN15CVirtualMachine15StackPopIntegerEPi"
+
+[bridge.stack_push_integer]
+symbol = "_ZN15CVirtualMachine16StackPushIntegerEi"
+
+[bridge.stack_pop_float]
+symbol = "_ZN15CVirtualMachine13StackPopFloatEPf"
+
+[bridge.stack_push_float]
+symbol = "_ZN15CVirtualMachine14StackPushFloatEf"
+
+[bridge.stack_pop_object]
+symbol = "_ZN15CVirtualMachine14StackPopObjectEPj"
+
+[bridge.stack_push_object]
+symbol = "_ZN15CVirtualMachine15StackPushObjectEj"
+
+[bridge.stack_pop_string]
+symbol = "_ZN15CVirtualMachine14StackPopStringEP10CExoString"
+
+[bridge.stack_push_string]
+symbol = "_ZN15CVirtualMachine15StackPushStringERK10CExoString"
+
+[bridge.stack_pop_vector]
+symbol = "_ZN15CVirtualMachine14StackPopVectorEP6Vector"
+
+[bridge.stack_push_vector]
+symbol = "_ZN15CVirtualMachine15StackPushVectorE6Vector"
+
+[bridge.free_exo_string_buffer]
+symbol = "_ZdaPv"
+
+[server_state]
+server_exo_app_offset = 8
+server_info_module_name_offset = 8
+player_list_count_offset = 8
+
+[server_state.app_manager]
+symbol = "g_pAppManager"
+
+[server_state.get_server_info]
+symbol = "_ZN13CServerExoApp13GetServerInfoEv"
+
+[server_state.get_player_list]
+symbol = "_ZN13CServerExoApp13GetPlayerListEv"
+
+[server_state.get_net_layer]
+symbol = "_ZN13CServerExoApp11GetNetLayerEv"
+
+[server_state.get_session_max_players]
+symbol = "_ZN9CNetLayer20GetSessionMaxPlayersEv"
+
+[events]
+recursion_level_offset = 36
+script_array_offset = 40
+script_slot_count = 8
+script_stride = 136
+script_name_offset = 24
+script_event_id_offset = 72

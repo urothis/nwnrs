@@ -16,16 +16,35 @@ categories = [
     "game-development",
 ]
 
+[features]
+default = ["supervisor", "tooling"]
+supervisor = ["dep:nix", "dep:nwnrs-runtime", "dep:tokio"]
+tooling = [
+    "dep:image",
+    "dep:nwnrs-nwpkg",
+    "dep:nwnrs-nwscript",
+    "dep:nwnrs-types",
+    "dep:reqwest",
+    "dep:tokio",
+]
+
 [dependencies]
 argh.workspace = true
-image.workspace = true
-nwnrs-nwpkg = { package = "nwnrs-nwpkg", path = "../nwpkg", version = "0.0.1" }
-nwnrs-nwscript = { package = "nwnrs-nwscript", path = "../nwscript", version = "0.0.1" }
-nwnrs-types = { package = "nwnrs-types", path = "../types", version = "0.0.1" }
-reqwest.workspace = true
-tokio.workspace = true
+image = { workspace = true, optional = true }
+nwnrs-nwpkg = { package = "nwnrs-nwpkg", path = "../nwpkg", version = "0.0.1", optional = true }
+nwnrs-nwscript = { package = "nwnrs-nwscript", path = "../nwscript", version = "0.0.1", optional = true }
+nwnrs-runtime = { path = "../runtime", version = "0.0.1", optional = true }
+nwnrs-types = { package = "nwnrs-types", path = "../types", version = "0.0.1", optional = true }
+reqwest = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
 tracing.workspace = true
 tracing-subscriber.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+nix = { workspace = true, optional = true }
+
+[dev-dependencies]
+toml.workspace = true
 
 [lints]
 workspace = true

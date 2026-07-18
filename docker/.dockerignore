@@ -1,7 +1,0 @@
-**
-!Dockerfile
-!scripts/
-!scripts/run-server.sh
-!scripts/prep-nwn-ini.awk
-!data/
-!data/**

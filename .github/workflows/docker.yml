@@ -43,7 +43,7 @@ jobs:
             - name: Set up Rust
               uses: ./.github/actions/setup-rust
 
-            - name: Build nwnrs
+            - name: Build asset-preparation CLI
               run: cargo build --locked --release --package nwnrs
 
             - name: Prepare verified Docker context
@@ -88,14 +88,14 @@ jobs:
                       type=raw,value=${{ steps.context.outputs.version }},enable=${{ steps.context.outputs.channel == 'stable' }}
                   labels: |
                       org.opencontainers.image.title=nwserver
-                      org.opencontainers.image.description=Minimal multi-architecture Neverwinter Nights dedicated server
+                      org.opencontainers.image.description=Supervised multi-architecture Neverwinter Nights dedicated server
                       io.github.urothis.nwserver.asset-manifest.sha256=${{ steps.context.outputs.asset_manifest_sha256 }}
                       io.github.urothis.nwserver.prepared-manifest.sha256=${{ steps.context.outputs.prepared_manifest_sha256 }}
 
             - name: Build and push image
               uses: docker/build-push-action@v7.2.0
               with:
-                  context: docker
+                  context: .
                   file: docker/Dockerfile
                   platforms: linux/amd64,linux/arm64
                   push: true

@@ -1,4 +1,4 @@
-# nwserver container image
+# Supervised nwserver container image
 
 This directory builds the Neverwinter Nights dedicated server image published
 as `ghcr.io/urothis/nwserver`. The image supports `linux/amd64` and
@@ -7,8 +7,8 @@ as `ghcr.io/urothis/nwserver`. The image supports `linux/amd64` and
 The repository never downloads proprietary game assets. An internal asset
 process stages an installation and a trusted manifest; this project verifies
 that contract, packages a reduced resource view with the current Rust `nwnrs`
-CLI, builds the default module from its source-controlled project, and builds
-the container.
+CLI as E1 KEY/BIF data with Zlib compression, builds the default module
+from its source-controlled project, and builds the container.
 
 ## Trusted asset contract
 
@@ -71,7 +71,8 @@ docker/scripts/prepare-context.sh \
 
 Preparation records the input-manifest SHA-256, the exact `nwnrs` executable
 SHA-256, both original server hashes, and a digest of every prepared image
-payload. The image exposes these as `/nwn/data/asset-manifest.json`,
+payload. It also records the resource-package version and compression
+algorithm. The image exposes these as `/nwn/data/asset-manifest.json`,
 `/nwn/data/SHA256SUMS`, and `/nwn/data/build-info.json`.
 
 Build a local platform image with:
@@ -82,11 +83,16 @@ docker buildx build \
   --build-arg NWN_VERSION=8193.37.17 \
   --load \
   --tag nwserver:local \
-  docker
+  --file docker/Dockerfile \
+  .
 ```
 
-The Debian base is pinned by digest. Updating it is an intentional source
-change, not an implicit consequence of rebuilding later.
+The repository root is the Docker build context, constrained by the root
+`.dockerignore`. A multi-stage builder compiles `nwnrs` with only its
+`supervisor` feature plus `nwnrs-runtime-sys`; the full asset-preparation CLI
+and the Rust toolchain do not enter the final image. The Debian base is pinned
+by digest. Updating it is an intentional source change, not an implicit
+consequence of rebuilding later.
 
 ## Publishing
 
@@ -109,6 +115,25 @@ publishes provenance and an SBOM. There is no Docker Hub path.
 
 ## Running
 
+The full host CLI delegates to the active Docker context:
+
+```bash
+nwnrs run --docker
+```
+
+The supervisor-only executable inside the image does not include this mode, so
+there is no Docker-in-Docker path. The CLI defaults to the locally built
+`nwserver:local` tag with registry pulling disabled. Select a published image
+and its pull policy explicitly, for example:
+
+```bash
+nwnrs run --docker \
+  --docker-image ghcr.io/urothis/nwserver:stable \
+  --docker-arg pull=always
+```
+
+The equivalent direct Docker command is:
+
 ```bash
 docker run --rm \
   --publish 5121:5121/udp \
@@ -130,9 +155,13 @@ that group write access. The server image does not require root at runtime.
 
 Common non-secret settings include `NWN_PORT`, `NWN_SERVERNAME`, `NWN_MODULE`,
 `NWN_MAXCLIENTS`, `NWN_PUBLICSERVER`, `NWN_NWSYNCURL`, and `NWN_NWSYNCHASH`.
-`NWN_LD_PRELOAD` and `NWN_LD_LIBRARY_PATH` are reserved for the future runtime
-integration. `NWN_EXTRA_ARGS` is split on whitespace; pass container command
-arguments directly when a value must retain spaces.
+The entrypoint launches the server through the slim `nwnrs` supervisor, which
+selects the exact target pack, injects `nwnrs-runtime-sys`, forwards signals,
+and renders console and server-log output through `tracing`. Set
+`NWN_TAIL_LOGS` to a value other than `y` to disable file-log following, or set
+`NWNRS_COLOR` to `auto`, `always`, or `never`. `NWN_EXTRA_ARGS` is split on
+whitespace; pass container command arguments directly when a value must retain
+spaces.
 
 Passwords are file-only. Plaintext password environment variables are not
 supported. Mount a secret and point the matching variable at it:
@@ -161,8 +190,8 @@ Its `nwpkg.lock` preserves the archive layout and source hashes needed for a
 reproducible build. Binary MOD files are ignored by Git. If the lock's local
 source path exists and still matches, `nwpkg` may reuse that binary
 byte-for-byte; otherwise `nwnrs pack` rebuilds the MOD from the module project.
-The source project is outside the Docker build context, and only the prepared
-`data/mod/nwnrs.mod` is copied into the image.
+The source project is excluded from the Docker build context, and only the
+prepared `docker/data/mod/nwnrs.mod` is copied into the image.
 
 To verify that source independently:
 
@@ -177,6 +206,8 @@ The Docker pull-request check validates the container scripts independently:
 
 ```bash
 bash -n docker/scripts/*.sh
+cargo clippy --locked --package nwnrs --all-targets \
+  --no-default-features --features supervisor -- -D warnings
 ```
 
 The module pull-request check owns the Rust packaging tests and verifies that
@@ -190,10 +221,9 @@ cargo run --package nwnrs -- pack --force module /tmp/nwnrs.mod
 test -s /tmp/nwnrs.mod
 ```
 
-There is intentionally no timer-based smoke test or guessed health check. The
-first `nwnrs-runtime` integration milestone should add a structured readiness
-signal from real server state, then wire the container health check and CI
-startup validation to that signal.
+There is intentionally no timer-based smoke test or guessed health check.
+Container health checks remain deferred until the runtime can report readiness
+from verified engine state.
 
 ## Licensing
 

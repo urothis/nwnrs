@@ -20,6 +20,9 @@ encoding_rs = { version = "0.8", default-features = false, features = [
 flate2 = { version = "1.1", default-features = false, features = [
     "rust_backend",
 ] }
+frida-gum-sys = { version = "0.17.2", default-features = false, features = [
+    "auto-download",
+] }
 image = { version = "0.25", default-features = false, features = [
     "jpeg",
     "png",
@@ -28,6 +31,7 @@ image = { version = "0.25", default-features = false, features = [
 ] }
 indexmap = { version = "2.14", default-features = false }
 md5 = { version = "0.8", default-features = false }
+nix = { version = "0.30", default-features = false, features = ["signal"] }
 reqwest = { version = "0.13", default-features = false, features = [
     "json",
     "rustls",
@@ -51,6 +55,7 @@ tracing = { version = "0.1", default-features = false, features = [
     "std",
 ] }
 tracing-subscriber = { version = "0.3", default-features = false, features = [
+    "ansi",
     "env-filter",
     "fmt",
 ] }

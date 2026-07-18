@@ -39,6 +39,8 @@ nwnrs convert out/model_ascii.mdl rebuilt/model.mdl
 nwnrs convert path/to/model.mdl out/model.obj
 nwnrs unpack path/to/module.mod -d out/
 nwnrs pack out/ rebuilt.mod
+nwnrs run --runtime path/to/libnwnrs_runtime_sys.dylib --targets crates/runtime/targets -- /path/to/nwserver -module module_name
+nwnrs run --docker -- -module module_name
 ```
 
 ### Rust
@@ -76,6 +78,10 @@ table.set_columns(vec!["Label".to_string()])?;
   packing, and unpacking workflows
 - [`nwnrs-nwscript`](./crates/nwscript/README.md): NWScript frontend
   and compiler
+- [`nwnrs-runtime`](./crates/runtime/README.md): safe executable identity and
+  exact target-pack selection
+- [`nwnrs-runtime-sys`](./crates/runtime-sys/README.md): Frida Gum and native
+  injected-runtime boundary
 - [`nwnrs-types::mdl`](./crates/types/src/mdl/README.md): MDL parsing,
   lowering, composition, and export
 - [`docker`](./docker/README.md): reproducible Linux AMD64/ARM64 dedicated

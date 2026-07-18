@@ -128,7 +128,7 @@
   },
   "Mod_OnModLoad": {
     "type": "resref",
-    "value": "x2_mod_def_load"
+    "value": "nwnrs_init"
   },
   "Mod_OnModStart": {
     "type": "resref",
