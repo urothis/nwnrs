@@ -1,0 +1,119 @@
+name: Build and publish nwserver image
+
+on:
+    workflow_dispatch:
+        inputs:
+            asset_root:
+                description: Absolute path to the internally staged NWN install
+                required: true
+                type: string
+            asset_manifest:
+                description: Absolute path to its trusted asset manifest
+                required: true
+                type: string
+    workflow_call:
+        inputs:
+            asset_root:
+                description: Absolute path to the internally staged NWN install
+                required: true
+                type: string
+            asset_manifest:
+                description: Absolute path to its trusted asset manifest
+                required: true
+                type: string
+
+concurrency:
+    group: nwserver-image-${{ inputs.asset_manifest }}
+    cancel-in-progress: false
+
+jobs:
+    publish:
+        name: Publish GHCR multi-architecture image
+        runs-on: [self-hosted, linux, X64, nwserver-assets]
+        timeout-minutes: 90
+        permissions:
+            contents: read
+            packages: write
+        steps:
+            - name: Check out source
+              uses: actions/checkout@v6.0.3
+              with:
+                  persist-credentials: false
+
+            - name: Set up Rust
+              uses: ./.github/actions/setup-rust
+
+            - name: Build nwnrs
+              run: cargo build --locked --release --package nwnrs
+
+            - name: Prepare verified Docker context
+              id: context
+              env:
+                  ASSET_ROOT: ${{ inputs.asset_root }}
+                  ASSET_MANIFEST: ${{ inputs.asset_manifest }}
+              run: |
+                  docker/scripts/prepare-context.sh \
+                    "$ASSET_ROOT" \
+                    "$ASSET_MANIFEST" \
+                    docker/data \
+                    target/release/nwnrs
+                  {
+                    echo "channel=$(jq -r .channel docker/data/build-info.json)"
+                    echo "version=$(jq -r .version docker/data/build-info.json)"
+                    echo "asset_manifest_sha256=$(jq -r .asset_manifest_sha256 docker/data/build-info.json)"
+                    echo "prepared_manifest_sha256=$(jq -r .prepared_manifest_sha256 docker/data/build-info.json)"
+                  } >> "$GITHUB_OUTPUT"
+
+            - name: Log in to GHCR
+              uses: docker/login-action@v3.6.0
+              with:
+                  registry: ghcr.io
+                  username: ${{ github.actor }}
+                  password: ${{ secrets.GITHUB_TOKEN }}
+
+            - name: Set up QEMU
+              uses: docker/setup-qemu-action@v3.7.0
+
+            - name: Set up Docker Buildx
+              uses: docker/setup-buildx-action@v3.12.0
+
+            - name: Generate image metadata
+              id: metadata
+              uses: docker/metadata-action@v6.0.0
+              with:
+                  images: ghcr.io/urothis/nwserver
+                  tags: |
+                      type=raw,value=${{ steps.context.outputs.channel }}
+                      type=raw,value=${{ steps.context.outputs.version }}-${{ steps.context.outputs.channel }}
+                      type=raw,value=${{ steps.context.outputs.version }},enable=${{ steps.context.outputs.channel == 'stable' }}
+                  labels: |
+                      org.opencontainers.image.title=nwserver
+                      org.opencontainers.image.description=Minimal multi-architecture Neverwinter Nights dedicated server
+                      io.github.urothis.nwserver.asset-manifest.sha256=${{ steps.context.outputs.asset_manifest_sha256 }}
+                      io.github.urothis.nwserver.prepared-manifest.sha256=${{ steps.context.outputs.prepared_manifest_sha256 }}
+
+            - name: Build and push image
+              uses: docker/build-push-action@v7.2.0
+              with:
+                  context: docker
+                  file: docker/Dockerfile
+                  platforms: linux/amd64,linux/arm64
+                  push: true
+                  tags: ${{ steps.metadata.outputs.tags }}
+                  labels: ${{ steps.metadata.outputs.labels }}
+                  build-args: |
+                      NWN_VERSION=${{ steps.context.outputs.version }}
+                      OCI_CREATED=${{ fromJSON(steps.metadata.outputs.json).labels['org.opencontainers.image.created'] }}
+                      OCI_REVISION=${{ github.sha }}
+                      OCI_SOURCE=${{ github.server_url }}/${{ github.repository }}
+                      OCI_VERSION=${{ steps.context.outputs.version }}
+                      ASSET_MANIFEST_SHA256=${{ steps.context.outputs.asset_manifest_sha256 }}
+                      PREPARED_MANIFEST_SHA256=${{ steps.context.outputs.prepared_manifest_sha256 }}
+                  cache-from: type=gha,scope=nwserver
+                  cache-to: type=gha,mode=max,scope=nwserver
+                  provenance: mode=max
+                  sbom: true
+
+            - name: Remove prepared proprietary context
+              if: always()
+              run: rm -rf -- docker/data docker/data.lock

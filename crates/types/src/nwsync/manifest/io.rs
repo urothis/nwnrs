@@ -67,7 +67,7 @@ pub fn read_manifest<R: Read>(reader: &mut R) -> ManifestResult<Manifest> {
 
     let mut primary_positions = Vec::with_capacity(entry_count as usize);
     for index in 0..entry_count {
-        let sha1 = read_secure_hash(reader)?;
+        let sha1 = read_sha1_digest(reader)?;
         let size = read_u32(reader)?;
         let (resref, raw_resref) = read_resref(reader)?;
         check(
@@ -272,10 +272,10 @@ fn write_resref<W: Write>(writer: &mut W, entry: &ManifestEntry) -> ManifestResu
     Ok(())
 }
 
-fn read_secure_hash<R: Read>(reader: &mut R) -> ManifestResult<SecureHash> {
+fn read_sha1_digest<R: Read>(reader: &mut R) -> ManifestResult<Sha1Digest> {
     let mut bytes = [0_u8; 20];
     reader.read_exact(&mut bytes)?;
-    Ok(SecureHash::new(bytes))
+    Ok(Sha1Digest::new(bytes))
 }
 
 fn read_fixed_string<R: Read>(reader: &mut R, size: usize) -> io::Result<String> {
@@ -320,7 +320,7 @@ fn check(condition: bool, message: impl Into<String>) -> ManifestResult<()> {
 #[cfg(test)]
 mod tests {
     use nwnrs_types::{
-        checksums::secure_hash,
+        checksums::sha1_digest,
         resman::{ResRef, ResType},
     };
 
@@ -340,14 +340,14 @@ mod tests {
         };
         let mut manifest = Manifest::default();
         manifest.entries.push(ManifestEntry {
-            sha1:       secure_hash(b"first"),
+            sha1:       sha1_digest(b"first"),
             size:       5,
             resref:     primary_rr.clone(),
             raw_resref: *b"HELLO\0\0\0\0\0\0\0\0\0\0\0",
             source:     ManifestEntrySource::Primary,
         });
         manifest.entries.push(ManifestEntry {
-            sha1:       secure_hash(b"first"),
+            sha1:       sha1_digest(b"first"),
             size:       5,
             resref:     mapping_rr,
             raw_resref: *b"WORLD\0\0\0\0\0\0\0\0\0\0\0",
@@ -419,8 +419,8 @@ mod tests {
             panic!("gamma resref: {error}");
         });
 
-        let sha1_a = secure_hash(b"payload-a");
-        let sha1_b = secure_hash(b"payload-b");
+        let sha1_a = sha1_digest(b"payload-a");
+        let sha1_b = sha1_digest(b"payload-b");
         let mut manifest = Manifest::default();
         manifest.entries.push(ManifestEntry {
             sha1:       sha1_b,

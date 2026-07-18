@@ -4,40 +4,43 @@
 
 ## Scope
 
-- provide typed SHA-1 and MD5 wrappers
+- provide typed SHA-1, SHA-256, and MD5 wrappers
 - expose parse and formatting routines for those digest types
 - centralize digest handling so higher-level crates do not reimplement it
 
-The principal entry points are `secure_hash`, `parse_secure_hash`, and
-`md5_digest`.
+The principal entry points are `sha1_digest`, `parse_sha1_digest`,
+`sha256_digest`, and `md5_digest`.
 
 ## Public Surface
 
 ### Digest types
 
-- `SecureHash`
+- `Sha1Digest`
+- `Sha256Digest`
 - `Md5Digest`
-- `ParseSecureHashError`
+- `ParseSha1DigestError`
 
 ### Constants
 
-- `SECURE_HASH_HEX_LEN`
-- `EMPTY_SECURE_HASH`
+- `SHA1_HEX_LEN`
+- `SHA256_HEX_LEN`
+- `EMPTY_SHA1_DIGEST`
 
 ### Operations
 
-- `secure_hash`
-- `parse_secure_hash`
+- `sha1_digest`
+- `parse_sha1_digest`
+- `sha256_digest`
 - `md5_digest`
 
 ## Logical Edges
 
-- `SecureHash` is the typed SHA-1 boundary used by the resource and sync layers
-- `parse_secure_hash` accepts the hex representation and normalizes it into the
+- `Sha1Digest` is the typed SHA-1 boundary used by the resource and sync layers
+- `parse_sha1_digest` accepts the hex representation and normalizes it into the
   typed digest value
 - the crate is about typed handling and formatting of digests; it is not a
   general cryptography layer and does not define trust or policy
-- `EMPTY_SECURE_HASH` exists as a concrete sentinel where a digest slot is
+- `EMPTY_SHA1_DIGEST` exists as a concrete sentinel where a digest slot is
   structurally required even when no meaningful hash is known
 
 ## See also

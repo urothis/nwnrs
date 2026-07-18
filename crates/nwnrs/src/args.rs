@@ -354,6 +354,10 @@ pub(crate) struct PackCmd {
     pub(crate) root: Option<PathBuf>,
 
     #[argh(option)]
+    /// package mode: explicit NWN user directory override
+    pub(crate) user: Option<PathBuf>,
+
+    #[argh(option)]
     /// package mode: language root under root/lang to resolve
     pub(crate) language: Option<String>,
 

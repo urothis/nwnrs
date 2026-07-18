@@ -78,6 +78,8 @@ table.set_columns(vec!["Label".to_string()])?;
   and compiler
 - [`nwnrs-types::mdl`](./crates/types/src/mdl/README.md): MDL parsing,
   lowering, composition, and export
+- [`docker`](./docker/README.md): reproducible Linux AMD64/ARM64 dedicated
+  server container images built from internally staged assets
 
 ## Development
 

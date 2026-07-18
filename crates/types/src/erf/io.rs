@@ -182,9 +182,9 @@ pub fn read_erf_shared(stream: SharedReadSeek, filename: String) -> ErfResult<Er
         }
 
         let sha1 = if file_version == ErfVersion::E1 {
-            read_secure_hash(io.as_mut())?
+            read_sha1_digest(io.as_mut())?
         } else {
-            EMPTY_SECURE_HASH
+            EMPTY_SHA1_DIGEST
         };
 
         let mut rr = match ResRef::new(res_ref_raw, ResType(res_type)) {
@@ -295,7 +295,7 @@ pub fn write_erf<W, F>(
 ) -> ErfResult<()>
 where
     W: Write + Seek,
-    F: FnMut(&ResRef, &mut dyn Write) -> ErfResult<(usize, SecureHash)>,
+    F: FnMut(&ResRef, &mut dyn Write) -> ErfResult<(usize, Sha1Digest)>,
 {
     write_erf_with_options(
         writer,
@@ -326,7 +326,7 @@ mod tests {
     use std::{collections::BTreeMap, io::Cursor};
 
     use nwnrs_types::{
-        checksums::prelude::secure_hash, compressedbuf::prelude::Algorithm,
+        checksums::prelude::sha1_digest, compressedbuf::prelude::Algorithm,
         exo::prelude::ExoResFileCompressionType, resman::ResolvedResRef,
     };
 
@@ -354,7 +354,7 @@ mod tests {
             ErfWriteOptions::default(),
             |_rr, out| {
                 out.write_all(b"abc")?;
-                Ok((3, secure_hash(b"abc")))
+                Ok((3, sha1_digest(b"abc")))
             },
             |_rr| Algorithm::None,
         )
@@ -400,7 +400,7 @@ pub fn write_erf_with_options<W, F>(
 ) -> ErfResult<()>
 where
     W: Write + Seek,
-    F: FnMut(&ResRef, &mut dyn Write) -> ErfResult<(usize, SecureHash)>,
+    F: FnMut(&ResRef, &mut dyn Write) -> ErfResult<(usize, Sha1Digest)>,
 {
     write_erf_inner(
         writer,
@@ -465,7 +465,7 @@ where
                 .get(rr)
                 .ok_or_else(|| io::Error::other(format!("missing ERF payload for {rr}")))?;
             out.write_all(bytes)?;
-            Ok((bytes.len(), secure_hash(bytes)))
+            Ok((bytes.len(), sha1_digest(bytes)))
         },
         |rr| algorithms.get(rr).copied().unwrap_or(Algorithm::None),
     )
@@ -490,7 +490,7 @@ fn write_erf_inner<W, F>(
 ) -> ErfResult<()>
 where
     W: Write + Seek,
-    F: FnMut(&ResRef, &mut dyn Write) -> ErfResult<(usize, SecureHash)>,
+    F: FnMut(&ResRef, &mut dyn Write) -> ErfResult<(usize, Sha1Digest)>,
 {
     if exocomp != ExoResFileCompressionType::None && file_version != ErfVersion::E1 {
         return Err(ErfError::msg("Compression requires E1"));
@@ -592,7 +592,7 @@ where
     ])?;
 
     let offset_to_resource_data = writer.stream_position()?;
-    let mut written = Vec::<(ResRef, usize, usize, SecureHash)>::with_capacity(entries.len());
+    let mut written = Vec::<(ResRef, usize, usize, Sha1Digest)>::with_capacity(entries.len());
     for rr in entries {
         let pos = writer.stream_position()?;
         let (disk_size, uncompressed_size, sha1) = match exocomp {
@@ -676,10 +676,10 @@ fn read_fixed_string<R: Read + ?Sized>(reader: &mut R, len: usize) -> io::Result
     String::from_utf8(bytes).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
 }
 
-fn read_secure_hash<R: Read + ?Sized>(reader: &mut R) -> io::Result<SecureHash> {
+fn read_sha1_digest<R: Read + ?Sized>(reader: &mut R) -> io::Result<Sha1Digest> {
     let mut bytes = [0_u8; 20];
     reader.read_exact(&mut bytes)?;
-    Ok(SecureHash::new(bytes))
+    Ok(Sha1Digest::new(bytes))
 }
 
 fn read_i32<R: Read + ?Sized>(reader: &mut R) -> io::Result<i32> {

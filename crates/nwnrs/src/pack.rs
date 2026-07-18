@@ -80,7 +80,7 @@ fn explicit_pack_paths(cmd: &PackCmd) -> Result<(&PathBuf, &PathBuf), String> {
 }
 
 fn package_mode_args(cmd: &PackCmd) -> Result<Option<(String, PathBuf)>, String> {
-    let package_flags = cmd.root.is_some() || cmd.language.is_some();
+    let package_flags = cmd.root.is_some() || cmd.user.is_some() || cmd.language.is_some();
 
     match cmd.paths.as_slice() {
         [key_path, output_dir] => {
@@ -130,7 +130,7 @@ fn run_pack_install_package(cmd: PackCmd) -> Result<(), String> {
         directory:        output_dir,
         key:              key_name,
         root:             cmd.root,
-        userdirectory:    None,
+        userdirectory:    cmd.user,
         language:         cmd.language.unwrap_or_else(|| "english".to_string()),
         data_version:     cmd.data_version,
         data_compression: cmd.data_compression,
@@ -271,7 +271,7 @@ fn run_pack_erf(cmd: PackCmd) -> Result<(), String> {
                 .ok_or_else(|| io::Error::other(format!("no source mapping for {rr}")))?;
             let data = entry.read_bytes().map_err(io::Error::other)?;
             io.write_all(&data)?;
-            Ok((data.len(), checksums::secure_hash(&data)))
+            Ok((data.len(), checksums::sha1_digest(&data)))
         },
         |rr| entry_algorithms.get(rr).copied().unwrap_or(compalg),
     )
@@ -538,6 +538,16 @@ pub(crate) fn apply_erf_entry_order(
         return sources;
     }
 
+    for source in &mut sources {
+        if let Some(original) = metadata
+            .entry_order
+            .iter()
+            .find(|original| **original == source.rr)
+        {
+            source.rr = original.clone();
+        }
+    }
+
     let order = metadata
         .entry_order
         .iter()
@@ -585,6 +595,7 @@ where
         .ok_or_else(|| format!("invalid key name: {key_name}"))?
         .to_string();
     let (build_year, build_day) = current_build_date();
+    let key_build_year = build_year.saturating_sub(1900);
     let key_bifs = bifs
         .iter()
         .map(|bif| key::KeyBifEntry {
@@ -605,13 +616,13 @@ where
         &key_name,
         bif_prefix,
         &key_bifs,
-        build_year,
+        key_build_year,
         build_day,
         None,
         |rr, io| {
             let data = resolve_bytes(rr).map_err(io::Error::other)?;
             io.write_all(&data)?;
-            Ok((data.len(), checksums::secure_hash(&data)))
+            Ok((data.len(), checksums::sha1_digest(&data)))
         },
     )
     .map_err(|error| format!("failed to pack key data: {error}"))?;
@@ -904,6 +915,32 @@ fn pack_source_for_file(path: &Path, pack_root: &Path) -> Result<PackSourceEntry
             source: PackSourceKind::AssembledNcs {
                 path: path.to_path_buf(),
                 bytes,
+            },
+        });
+    }
+
+    if path
+        .extension()
+        .and_then(OsStr::to_str)
+        .is_some_and(|value| value.eq_ignore_ascii_case("json"))
+        && let Some(source_name) = path.file_stem().and_then(OsStr::to_str)
+        && detect_kind(Path::new(source_name)) == Some(Kind::Gff)
+    {
+        let resolved = resman::ResolvedResRef::from_filename(source_name).map_err(|error| {
+            format!("{} is not a valid GFF JSON source: {error}", path.display())
+        })?;
+        let source = fs::read(path)
+            .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
+        let root = gff::gff_root_from_json_bytes(&source)
+            .map_err(|error| format!("failed to parse {} as GFF JSON: {error}", path.display()))?;
+        let mut output = Cursor::new(Vec::new());
+        gff::write_gff_root(&mut output, &root)
+            .map_err(|error| format!("failed to encode {} as GFF: {error}", path.display()))?;
+        return Ok(PackSourceEntry {
+            rr:     resolved.into(),
+            source: PackSourceKind::GeneratedBytes {
+                path:  path.to_path_buf(),
+                bytes: output.into_inner(),
             },
         });
     }
@@ -1222,9 +1259,47 @@ mod tests {
             no_symlinks: false,
             erf_type: None,
             root: None,
+            user: None,
             language: None,
             paths,
         }
+    }
+
+    #[test]
+    fn erf_metadata_restores_original_resource_casing() -> Result<(), String> {
+        let lower = resman::ResolvedResRef::from_filename("repute.fac")
+            .map_err(|error| error.to_string())?;
+        let original = resman::ResolvedResRef::from_filename_preserving_case("Repute.fac")
+            .map_err(|error| error.to_string())?;
+        let metadata = ErfPackMetadata {
+            source:                PathBuf::new(),
+            source_sha256:         String::new(),
+            file_type:             "MOD ".to_string(),
+            file_version:          erf::ErfVersion::V1,
+            build_year:            0,
+            build_day:             0,
+            str_ref:               -1,
+            loc_strings:           std::collections::BTreeMap::new(),
+            oid:                   None,
+            resource_list_padding: 0,
+            entry_order:           vec![original.into()],
+            entry_algorithms:      std::collections::BTreeMap::new(),
+            file_sha256s:          std::collections::BTreeMap::new(),
+        };
+        let sources = apply_erf_entry_order(
+            Some(&metadata),
+            vec![PackSourceEntry {
+                rr:     lower.into(),
+                source: PackSourceKind::GeneratedBytes {
+                    path:  PathBuf::from("repute.fac.json"),
+                    bytes: Vec::new(),
+                },
+            }],
+        );
+
+        let source = sources.first().expect("ordered source");
+        assert_eq!(source.rr.res_ref(), "Repute");
+        Ok(())
     }
 
     #[test]

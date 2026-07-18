@@ -1,4 +1,4 @@
-use std::{fs, path::Path};
+use std::{fs, io::Cursor, path::Path};
 
 use nwnrs_nwpkg::{
     ProjectKind, write_erf_pack_metadata, write_key_pack_metadata, write_project_manifest,
@@ -298,6 +298,17 @@ fn write_unpacked_archive_entry(
             .map_err(|error| format!("failed to write {}: {error}", target.display()));
     }
 
+    if detect_kind(Path::new(&resolved.to_file())) == Some(Kind::Gff) {
+        let target = destination.join(format!("{}.json", resolved.to_file()));
+        ensure_output_file_ready(&target, force)?;
+        let root = gff::read_gff_root(&mut Cursor::new(data))
+            .map_err(|error| format!("failed to parse archive entry {rr} as GFF: {error}"))?;
+        let rendered = gff::gff_root_to_json_bytes(&root)
+            .map_err(|error| format!("failed to serialize archive entry {rr}: {error}"))?;
+        return fs::write(&target, rendered)
+            .map_err(|error| format!("failed to write {}: {error}", target.display()));
+    }
+
     let target = unpacked_raw_target(destination, &resolved.to_file(), resolved.res_ext());
     ensure_output_file_ready(&target, force)?;
     fs::write(&target, data)
@@ -417,6 +428,7 @@ mod tests {
             no_symlinks:         false,
             erf_type:            None,
             root:                None,
+            user:                None,
             language:            None,
             paths:               vec![directory.clone(), repacked.clone()],
         })

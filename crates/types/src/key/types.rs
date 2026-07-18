@@ -23,6 +23,12 @@ pub(crate) const HEADER_SIZE: u64 = 64;
 /// The upper bits identify the owning BIF and the lower bits identify the
 /// variable resource within that BIF.
 pub type ResId = u32;
+
+/// Maximum number of variable resources addressable by one BIF.
+///
+/// A BIF-local resource identifier stores the full variable-table index in its
+/// lower 20 bits and mirrors the low 12 bits of that index in its upper bits.
+pub const MAX_VARIABLE_RESOURCES_PER_BIF: usize = 1 << 20;
 /// Callback used to open a referenced BIF by filename.
 pub type BifResolver =
     Arc<dyn Fn(&str) -> io::Result<Option<SharedReadSeek>> + Send + Sync + 'static>;
@@ -184,7 +190,7 @@ impl fmt::Debug for BifHandle {
 #[derive(Debug, Clone)]
 pub(crate) struct KeyEntry {
     pub res_id: ResId,
-    pub sha1:   SecureHash,
+    pub sha1:   Sha1Digest,
 }
 
 /// Decoded contents of a KEY file together with lazy BIF resolvers.
@@ -418,7 +424,9 @@ pub struct KeyBifEntry {
     pub directory:         String,
     /// Basename of the emitted BIF, without the `.bif` suffix.
     pub name:              String,
-    /// Exact filename/path spelling to emit into the KEY file and on disk.
+    /// Exact filename/path spelling to emit into the KEY file.
+    ///
+    /// When present, archive-preserving writes also use this as the disk path.
     pub recorded_filename: Option<String>,
     /// Raw file-table drive flags.
     pub drives:            u16,
@@ -428,4 +436,4 @@ pub struct KeyBifEntry {
     pub entries:           Vec<ResRef>,
 }
 
-pub(crate) type WriteBifResult = (usize, Vec<(ResRef, SecureHash)>);
+pub(crate) type WriteBifResult = Vec<(ResRef, Sha1Digest)>;

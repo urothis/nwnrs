@@ -1,15 +1,11 @@
 #![forbid(unsafe_code)]
 #![doc = include_str!("README.md")]
 
-mod io;
-mod repository_io;
-mod repository_types;
-mod types;
+mod manifest;
+mod repository;
 
-pub use io::*;
-pub use repository_io::*;
-pub use repository_types::*;
-pub use types::*;
+pub use manifest::*;
+pub use repository::*;
 
 /// Common imports for consumers of this crate.
 pub mod prelude {

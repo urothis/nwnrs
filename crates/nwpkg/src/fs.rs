@@ -6,7 +6,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::{PROJECT_LOCK_FILENAME, PROJECT_MANIFEST_FILENAME};
+use crate::{PACKAGE_LOCK_FILENAME, PROJECT_MANIFEST_FILENAME};
 
 pub(crate) struct DirEntryInfo {
     pub(crate) file_name: String,
@@ -88,6 +88,6 @@ pub(crate) fn normalize_key_bif_filename(filename: &str) -> String {
 pub fn is_project_control_file(path: &Path) -> bool {
     matches!(
         path.file_name().and_then(OsStr::to_str),
-        Some(PROJECT_LOCK_FILENAME | PROJECT_MANIFEST_FILENAME)
+        Some(PACKAGE_LOCK_FILENAME | PROJECT_MANIFEST_FILENAME)
     )
 }

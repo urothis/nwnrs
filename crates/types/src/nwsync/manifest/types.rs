@@ -17,7 +17,7 @@ pub enum ManifestError {
     /// Resource reference parsing failed.
     ResRef(ResRefError),
     /// SHA-1 parsing failed.
-    ParseSecureHash(ParseSecureHashError),
+    ParseSha1Digest(ParseSha1DigestError),
     /// The manifest was invalid.
     Message(String),
 }
@@ -33,7 +33,7 @@ impl fmt::Display for ManifestError {
         match self {
             Self::Io(error) => error.fmt(f),
             Self::ResRef(error) => error.fmt(f),
-            Self::ParseSecureHash(error) => error.fmt(f),
+            Self::ParseSha1Digest(error) => error.fmt(f),
             Self::Message(message) => f.write_str(message),
         }
     }
@@ -53,9 +53,9 @@ impl From<ResRefError> for ManifestError {
     }
 }
 
-impl From<ParseSecureHashError> for ManifestError {
-    fn from(value: ParseSecureHashError) -> Self {
-        Self::ParseSecureHash(value)
+impl From<ParseSha1DigestError> for ManifestError {
+    fn from(value: ParseSha1DigestError) -> Self {
+        Self::ParseSha1Digest(value)
     }
 }
 
@@ -66,7 +66,7 @@ pub type ManifestResult<T> = Result<T, ManifestError>;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ManifestEntry {
     /// The content hash stored for this entry.
-    pub sha1:       SecureHash,
+    pub sha1:       Sha1Digest,
     /// The uncompressed payload size.
     pub size:       u32,
     /// The resource reference exposed by this entry.
@@ -80,7 +80,7 @@ pub struct ManifestEntry {
 impl ManifestEntry {
     /// Creates a new manifest entry.
     #[must_use]
-    pub fn new(sha1: SecureHash, size: u32, resref: ResRef) -> Self {
+    pub fn new(sha1: Sha1Digest, size: u32, resref: ResRef) -> Self {
         let mut raw_resref = [0_u8; 16];
         let bytes = resref.res_ref().as_bytes();
         let count = bytes.len().min(raw_resref.len());
@@ -197,7 +197,7 @@ impl Manifest {
     /// Returns the deduplicated size keyed by hash.
     #[must_use]
     pub fn deduplicated_size(&self) -> i64 {
-        let mut unique = HashMap::<SecureHash, u32>::new();
+        let mut unique = HashMap::<Sha1Digest, u32>::new();
         for entry in &self.entries {
             unique.entry(entry.sha1).or_insert(entry.size);
         }

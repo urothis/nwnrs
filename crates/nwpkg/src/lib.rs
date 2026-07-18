@@ -21,5 +21,5 @@ pub use manifest::{ProjectManifest, read_project_manifest, write_project_manifes
 /// Canonical `nwproject.toml` filename.
 pub const PROJECT_MANIFEST_FILENAME: &str = "nwproject.toml";
 
-/// Canonical `nwproject.lock` filename.
-pub const PROJECT_LOCK_FILENAME: &str = "nwproject.lock";
+/// Canonical `nwpkg.lock` filename.
+pub const PACKAGE_LOCK_FILENAME: &str = "nwpkg.lock";

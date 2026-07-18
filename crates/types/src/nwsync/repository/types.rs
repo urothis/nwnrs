@@ -25,7 +25,7 @@ pub enum ResNWSyncError {
     /// `SQLite` access failed.
     Sqlite(rusqlite::Error),
     /// SHA-1 parsing failed.
-    ParseSecureHash(ParseSecureHashError),
+    ParseSha1Digest(ParseSha1DigestError),
     /// Resource reference parsing failed.
     ResRef(ResRefError),
     /// Resource manager setup failed.
@@ -47,7 +47,7 @@ impl fmt::Display for ResNWSyncError {
         match self {
             Self::Io(error) => error.fmt(f),
             Self::Sqlite(error) => error.fmt(f),
-            Self::ParseSecureHash(error) => error.fmt(f),
+            Self::ParseSha1Digest(error) => error.fmt(f),
             Self::ResRef(error) => error.fmt(f),
             Self::ResMan(error) => error.fmt(f),
             Self::Compression(error) => error.fmt(f),
@@ -70,9 +70,9 @@ impl From<rusqlite::Error> for ResNWSyncError {
     }
 }
 
-impl From<ParseSecureHashError> for ResNWSyncError {
-    fn from(value: ParseSecureHashError) -> Self {
-        Self::ParseSecureHash(value)
+impl From<ParseSha1DigestError> for ResNWSyncError {
+    fn from(value: ParseSha1DigestError) -> Self {
+        Self::ParseSha1Digest(value)
     }
 }
 
@@ -100,9 +100,9 @@ pub type ResNWSyncResult<T> = Result<T, ResNWSyncError>;
 type ShardId = i64;
 pub(crate) const DEFAULT_SHARD_ID: ShardId = 1;
 /// SHA-1 identifier for a manifest row.
-pub type ManifestSha1 = SecureHash;
+pub type ManifestSha1 = Sha1Digest;
 /// SHA-1 identifier for a resource payload row.
-pub type ResRefSha1 = SecureHash;
+pub type ResRefSha1 = Sha1Digest;
 
 #[derive(Debug, Clone)]
 pub(crate) struct NWSyncShard {
@@ -143,7 +143,7 @@ impl NWSync {
         let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
         let mut manifests = Vec::new();
         for row in rows {
-            manifests.push(nwnrs_types::checksums::parse_secure_hash(&row?)?);
+            manifests.push(nwnrs_types::checksums::parse_sha1_digest(&row?)?);
         }
         Ok(manifests)
     }

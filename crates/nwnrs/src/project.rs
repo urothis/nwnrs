@@ -378,7 +378,7 @@ mod tests {
         .expect("scaffold utc project");
 
         assert!(target.join("nwproject.toml").is_file());
-        assert!(target.join("nwproject.lock").is_file());
+        assert!(target.join("nwpkg.lock").is_file());
         assert!(target.join(format!("{expected_name}.utc")).is_file());
 
         let metadata = read_resource_pack_metadata(&target)

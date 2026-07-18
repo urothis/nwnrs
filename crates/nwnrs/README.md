@@ -66,7 +66,7 @@ cargo run -p nwnrs -- nwsync write path/to/resources/ output.manifest
 These commands scaffold project directories with:
 
 - `nwproject.toml`
-- `nwproject.lock`
+- `nwpkg.lock`
 - starter source content appropriate for the requested kind
 
 Use `new` when you want a fresh directory. Use `init` when you want to turn an
@@ -104,7 +104,7 @@ That includes:
 - packing directories into ERF-family archives such as `hak`, `mod`, and `nwm`
 - rebuilding KEY/BIF sets
 - preserving original archive ordering and reuse opportunities when
-  `nwproject.lock` metadata allows it
+  `nwpkg.lock` metadata allows it
 
 ### `compile`
 
@@ -179,7 +179,7 @@ The `nwsync` command family provides repository and manifest utilities:
 `nwnrs` relies on the `nwnrs-nwpkg` crate for project control files:
 
 - `nwproject.toml` describes project identity, kind, and source root
-- `nwproject.lock` stores repack metadata that helps preserve archive structure
+- `nwpkg.lock` stores repack metadata that helps preserve archive structure
   and reuse original content when possible
 
 That metadata is what makes unpack-edit-repack workflows more faithful than a
