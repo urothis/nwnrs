@@ -1,0 +1,34 @@
+name: Module checks
+
+on:
+    pull_request:
+        paths:
+            - module/**
+            - crates/nwnrs/**
+            - crates/nwpkg/**
+            - crates/types/**
+            - Cargo.toml
+            - Cargo.lock
+            - .github/workflows/module-check.yml
+
+jobs:
+    check:
+        runs-on: ubuntu-latest
+        timeout-minutes: 30
+        permissions:
+            contents: read
+        steps:
+            - uses: actions/checkout@v6.0.3
+              with:
+                  persist-credentials: false
+            - uses: ./.github/actions/setup-rust
+            - name: Test module packaging support
+              run: |
+                  cargo test --locked --package nwnrs-types gff::json --lib
+                  cargo test --locked --package nwnrs-nwpkg
+                  cargo test --locked --package nwnrs
+            - name: Build module
+              run: |
+                  cargo run --locked --package nwnrs -- pack --force \
+                    module "$RUNNER_TEMP/nwnrs.mod"
+                  test -s "$RUNNER_TEMP/nwnrs.mod"

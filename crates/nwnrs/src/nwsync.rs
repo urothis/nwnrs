@@ -36,7 +36,7 @@ pub(crate) fn run_nwsync_print(cmd: NwsyncPrintCmd) -> Result<(), String> {
 
         if let Some(manifest) = cmd.manifest {
             debug!("printing specific manifest");
-            let manifest_sha1: checksums::SecureHash = manifest
+            let manifest_sha1: checksums::Sha1Digest = manifest
                 .parse()
                 .map_err(|error| format!("invalid manifest sha1 {manifest}: {error}"))?;
             let manifest =
@@ -132,7 +132,7 @@ pub(crate) fn run_nwsync_write(cmd: NwsyncWriteCmd) -> Result<(), String> {
         let data = fs::read(&path)
             .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
 
-        let sha1 = checksums::secure_hash(&data);
+        let sha1 = checksums::sha1_digest(&data);
         let size = u32::try_from(data.len()).map_err(|_error| {
             format!(
                 "file {} is too large ({} bytes > u32::MAX)",
@@ -309,7 +309,7 @@ pub(crate) fn run_nwsync_fetch(cmd: NwsyncFetchCmd) -> Result<(), String> {
 }
 
 struct FetchSummary {
-    manifest_sha1: checksums::SecureHash,
+    manifest_sha1: checksums::Sha1Digest,
     downloaded:    usize,
     skipped:       usize,
 }
@@ -322,7 +322,7 @@ async fn fetch_manifest_repository(url: &str, output: &Path) -> Result<FetchSumm
         .map_err(|error| format!("failed to build http client: {error}"))?;
 
     let manifest_bytes = fetch_bytes(&client, &manifest_url).await?;
-    let manifest_sha1 = checksums::secure_hash(&manifest_bytes);
+    let manifest_sha1 = checksums::sha1_digest(&manifest_bytes);
     if let Some(url_sha1) = manifest_sha1_from_url(&manifest_url)
         && url_sha1 != manifest_sha1
     {
@@ -431,7 +431,7 @@ fn manifest_repository_base_url(manifest_url: &Url) -> Result<Url, String> {
     Ok(base)
 }
 
-fn manifest_sha1_from_url(url: &Url) -> Option<checksums::SecureHash> {
+fn manifest_sha1_from_url(url: &Url) -> Option<checksums::Sha1Digest> {
     let last = url
         .path_segments()
         .and_then(|mut segments| segments.rfind(|segment| !segment.is_empty()))?;
@@ -441,7 +441,7 @@ fn manifest_sha1_from_url(url: &Url) -> Option<checksums::SecureHash> {
 
 fn manifest_entry_data_url(
     base_url: &Url,
-    sha1: checksums::SecureHash,
+    sha1: checksums::Sha1Digest,
     hash_tree_depth: usize,
 ) -> Result<Url, String> {
     let sha1_hex = sha1.to_string();
@@ -476,7 +476,7 @@ fn manifest_entry_data_url(
 
 #[cfg(test)]
 mod tests {
-    use nwnrs_types::prelude::checksums::parse_secure_hash;
+    use nwnrs_types::prelude::checksums::parse_sha1_digest;
     use reqwest::Url;
 
     use super::{manifest_entry_data_url, manifest_repository_base_url};
@@ -502,7 +502,7 @@ mod tests {
             Ok(value) => value,
             Err(error) => panic!("parse base: {error}"),
         };
-        let sha1 = match parse_secure_hash("0123456789012345678901234567890123456789") {
+        let sha1 = match parse_sha1_digest("0123456789012345678901234567890123456789") {
             Ok(value) => value,
             Err(error) => panic!("parse sha1: {error}"),
         };

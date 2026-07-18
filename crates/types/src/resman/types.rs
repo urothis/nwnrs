@@ -135,7 +135,7 @@ pub(crate) enum ResBacking {
 pub(crate) struct ResMutableState {
     pub cached: bool,
     pub cache:  Vec<u8>,
-    pub sha1:   SecureHash,
+    pub sha1:   Sha1Digest,
 }
 
 pub(crate) struct ResInner {
@@ -191,7 +191,7 @@ impl Res {
         compression: ExoResFileCompressionType,
         compressed_buf_algorithm: Option<Algorithm>,
         uncompressed_size: usize,
-        sha1: SecureHash,
+        sha1: Sha1Digest,
     ) -> Self {
         Self::new(
             origin,
@@ -221,7 +221,7 @@ impl Res {
         compression: ExoResFileCompressionType,
         compressed_buf_algorithm: Option<Algorithm>,
         uncompressed_size: usize,
-        sha1: SecureHash,
+        sha1: Sha1Digest,
     ) -> Self {
         Self::new(
             origin,
@@ -247,7 +247,7 @@ impl Res {
         compression: ExoResFileCompressionType,
         compressed_buf_algorithm: Option<Algorithm>,
         uncompressed_size: usize,
-        sha1: SecureHash,
+        sha1: Sha1Digest,
     ) -> Self {
         let effective_uncompressed =
             if compression == ExoResFileCompressionType::None && uncompressed_size == 0 {
@@ -402,15 +402,15 @@ impl Res {
     /// Returns [`ResManError`] if the payload cannot be read or the state lock
     /// is poisoned.
     #[instrument(level = "debug", skip_all, err, fields(resref = %self.inner.resref))]
-    pub fn sha1(&self) -> ResManResult<SecureHash> {
+    pub fn sha1(&self) -> ResManResult<Sha1Digest> {
         {
             let state = self.lock_state()?;
-            if state.sha1 != EMPTY_SECURE_HASH {
+            if state.sha1 != EMPTY_SHA1_DIGEST {
                 return Ok(state.sha1);
             }
         }
 
-        let digest = secure_hash(self.read_all(CachePolicy::Use)?);
+        let digest = sha1_digest(self.read_all(CachePolicy::Use)?);
         let mut state = self.lock_state()?;
         state.sha1 = digest;
         Ok(digest)

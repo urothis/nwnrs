@@ -38,7 +38,7 @@ default = [
     "twoda",
     "txi",
 ]
-checksums = ["dep:md5", "dep:sha1"]
+checksums = ["dep:md5", "dep:sha1", "dep:sha2"]
 compressedbuf = ["io", "dep:flate2", "dep:zstd"]
 dds = ["resman", "dep:texpresso"]
 encoding = ["dep:codepage", "dep:encoding_rs"]
@@ -52,7 +52,14 @@ erf = [
     "dep:indexmap",
 ]
 exo = []
-gff = ["encoding", "io", "localization", "resman"]
+gff = [
+    "encoding",
+    "io",
+    "localization",
+    "resman",
+    "dep:base64",
+    "dep:serde_json",
+]
 install = [
     "checksums",
     "erf",
@@ -96,6 +103,7 @@ twoda = ["encoding", "resman"]
 txi = ["resman"]
 
 [dependencies]
+base64 = { workspace = true, optional = true }
 codepage = { workspace = true, optional = true }
 encoding_rs = { workspace = true, optional = true }
 flate2 = { workspace = true, optional = true }
@@ -106,6 +114,7 @@ rusqlite = { workspace = true, optional = true }
 serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
 sha1 = { workspace = true, optional = true }
+sha2 = { workspace = true, optional = true }
 texpresso = { workspace = true, optional = true }
 tracing.workspace = true
 zstd = { workspace = true, optional = true }

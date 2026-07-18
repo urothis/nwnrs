@@ -29,8 +29,8 @@ pub(crate) struct DirEntryInfo {
 pub(crate) fn detect_kind(path: &Path) -> Option<Kind> {
     let extension = path.extension()?.to_str()?.to_ascii_lowercase();
     Some(match extension.as_str() {
-        "gff" | "are" | "bic" | "dlg" | "git" | "ifo" | "itp" | "jrl" | "utc" | "utd" | "ute"
-        | "uti" | "utm" | "utp" | "uts" | "utt" | "utw" => Kind::Gff,
+        "gff" | "are" | "bic" | "dlg" | "fac" | "gic" | "git" | "gui" | "ifo" | "itp" | "jrl"
+        | "utc" | "utd" | "ute" | "uti" | "utm" | "utp" | "uts" | "utt" | "utw" => Kind::Gff,
         "ncs" => Kind::Ncs,
         "mdl" => Kind::Model,
         "dds" | "plt" | "tga" => Kind::Texture,

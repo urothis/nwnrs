@@ -136,7 +136,7 @@ mod tests {
     use std::{fs, time::SystemTime};
 
     use super::new_default_resman;
-    use crate::{checksums::EMPTY_SECURE_HASH, install::resolve_language_root};
+    use crate::{checksums::EMPTY_SHA1_DIGEST, install::resolve_language_root};
 
     fn unique_test_dir(prefix: &str) -> std::path::PathBuf {
         let nanos = SystemTime::now()
@@ -212,7 +212,7 @@ mod tests {
             &[],
             &[],
             &[],
-            &[EMPTY_SECURE_HASH],
+            &[EMPTY_SHA1_DIGEST],
         )
         .expect_err("builder should fail");
         assert!(err.to_string().contains("is not a directory"));

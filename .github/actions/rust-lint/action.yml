@@ -32,9 +32,9 @@ runs:
       shell: bash
       run: |
         if [ "${{ inputs.workspace }}" = "true" ]; then
-          cargo clippy --workspace -- -D warnings
+          cargo clippy --workspace --all-targets -- -D warnings
         else
-          cargo clippy -- -D warnings
+          cargo clippy --all-targets -- -D warnings
         fi
 
     - name: Run rustdoc checks

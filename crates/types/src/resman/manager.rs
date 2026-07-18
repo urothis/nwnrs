@@ -16,7 +16,7 @@ use crate::resman::prelude::*;
 /// ```
 /// use std::{collections::HashMap, io::Cursor, sync::Arc, time::SystemTime};
 ///
-/// use nwnrs_types::checksums::EMPTY_SECURE_HASH;
+/// use nwnrs_types::checksums::EMPTY_SHA1_DIGEST;
 /// use nwnrs_types::exo::ExoResFileCompressionType;
 /// use nwnrs_types::resman::{
 ///     CachePolicy, Res, ResContainer, ResMan, ResManError, ResManResult, new_res_origin,
@@ -74,7 +74,7 @@ use crate::resman::prelude::*;
 ///         ExoResFileCompressionType::None,
 ///         None,
 ///         bytes.len(),
-///         EMPTY_SECURE_HASH,
+///         EMPTY_SHA1_DIGEST,
 ///     )
 /// }
 ///
@@ -251,7 +251,7 @@ impl ResMan {
 mod tests {
     use std::{collections::HashMap, io::Cursor, sync::Arc, time::SystemTime};
 
-    use nwnrs_types::{checksums::EMPTY_SECURE_HASH, exo::ExoResFileCompressionType};
+    use nwnrs_types::{checksums::EMPTY_SHA1_DIGEST, exo::ExoResFileCompressionType};
 
     use crate::resman::{
         CachePolicy, Res, ResContainer, ResMan, ResManError, ResManResult, ResRef, ResType,
@@ -305,7 +305,7 @@ mod tests {
             ExoResFileCompressionType::None,
             None,
             bytes.len(),
-            EMPTY_SECURE_HASH,
+            EMPTY_SHA1_DIGEST,
         )
     }
 

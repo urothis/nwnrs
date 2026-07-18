@@ -157,9 +157,9 @@ where
         }
 
         let sha1 = if version == KeyBifVersion::E1 {
-            read_secure_hash(&mut reader)?
+            read_sha1_digest(&mut reader)?
         } else {
-            EMPTY_SECURE_HASH
+            EMPTY_SHA1_DIGEST
         };
 
         let rr = ResRef::new(res_ref_raw, ResType(res_type))?;
@@ -301,7 +301,7 @@ pub fn write_key_and_bif<F>(
     mut writer: F,
 ) -> KeyResult<()>
 where
-    F: FnMut(&ResRef, &mut dyn Write) -> KeyResult<(usize, SecureHash)>,
+    F: FnMut(&ResRef, &mut dyn Write) -> KeyResult<(usize, Sha1Digest)>,
 {
     if exocomp != ExoResFileCompressionType::None && version != KeyBifVersion::E1 {
         return Err(KeyError::msg("Compression requires E1"));
@@ -315,17 +315,15 @@ where
     let mut filenames = std::io::Cursor::new(Vec::new());
     let mut bif_results = Vec::with_capacity(bifs.len());
 
-    for (bif_idx, bif) in bifs.iter().enumerate() {
+    for bif in bifs {
         let filename_for_bif = build_bif_filename(bif_prefix, bif);
-        let normalized_filename = normalize_bif_filename(&filename_for_bif);
-        let bif_path = dest_dir.join(&normalized_filename);
+        let bif_path = dest_dir.join(build_bif_disk_filename(bif));
         if let Some(parent) = bif_path.parent() {
             fs::create_dir_all(parent)?;
         }
         let bif_file = File::create(&bif_path)?;
         let mut bif_writer = BufWriter::new(bif_file);
         let written = write_bif(
-            bif_idx,
             version,
             exocomp,
             compalg,
@@ -335,12 +333,23 @@ where
             &mut writer,
         )?;
         bif_writer.flush()?;
-        let bif_disk_size = written.0;
         bif_results.push(written);
 
+        // Match neverwinter.nim's writeBif cursor position after it backfills
+        // the variable-resource table. Despite the field's historical name,
+        // this is not the physical BIF size.
+        let bif_table_size = match version {
+            KeyBifVersion::V1 => bif.entries.len().checked_mul(16),
+            KeyBifVersion::E1 => bif
+                .entries
+                .len()
+                .checked_mul(24)
+                .and_then(|size| size.checked_add(24)),
+        }
+        .ok_or_else(|| KeyError::msg("BIF KEY file-table size exceeds usize"))?;
         write_u32(
             &mut file_table,
-            to_u32_usize(bif_disk_size.saturating_sub(20), "BIF disk size")?,
+            to_u32_usize(bif_table_size, "BIF variable resource table size")?,
         )?;
         write_u32(
             &mut file_table,
@@ -415,7 +424,7 @@ where
             if version == KeyBifVersion::E1 {
                 let sha1 = bif_results
                     .get(bif_idx)
-                    .and_then(|result| result.1.get(res_idx))
+                    .and_then(|result| result.get(res_idx))
                     .map(|entry| &entry.1)
                     .ok_or_else(|| KeyError::msg("missing E1 SHA entry for packed resource"))?;
                 key_writer.write_all(sha1.as_bytes())?;
@@ -433,7 +442,6 @@ where
 }
 
 fn write_bif<F>(
-    bif_idx: usize,
     version: KeyBifVersion,
     exocomp: ExoResFileCompressionType,
     compalg: Algorithm,
@@ -443,8 +451,16 @@ fn write_bif<F>(
     entry_writer: &mut F,
 ) -> KeyResult<crate::key::WriteBifResult>
 where
-    F: FnMut(&ResRef, &mut dyn Write) -> KeyResult<(usize, SecureHash)>,
+    F: FnMut(&ResRef, &mut dyn Write) -> KeyResult<(usize, Sha1Digest)>,
 {
+    if entries.len() > crate::key::MAX_VARIABLE_RESOURCES_PER_BIF {
+        return Err(KeyError::msg(format!(
+            "BIF contains {} variable resources; maximum is {}",
+            entries.len(),
+            crate::key::MAX_VARIABLE_RESOURCES_PER_BIF
+        )));
+    }
+
     writer.seek(SeekFrom::Start(0))?;
     writer.write_all(b"BIFF")?;
     match version {
@@ -465,13 +481,15 @@ where
 
     let entry_size = match version {
         KeyBifVersion::V1 => 16_usize,
-        KeyBifVersion::E1 => 24_usize,
+        // neverwinter.nim reserves an additional 20 bytes per E1 entry even
+        // though its backfill cursor writes only the six u32 metadata fields.
+        KeyBifVersion::E1 => 44_usize,
     };
     writer.write_all(&vec![0_u8; entry_size * entries.len()])?;
     let var_table_start = u64::from(variable_table_offset);
 
     let mut entry_meta =
-        indexmap::IndexMap::<ResRef, (usize, usize, SecureHash), RandomState>::with_hasher(
+        indexmap::IndexMap::<ResRef, (usize, usize, Sha1Digest), RandomState>::with_hasher(
             RandomState::new(),
         );
     let mut sha_entries = Vec::with_capacity(entries.len());
@@ -506,7 +524,8 @@ where
         + u64::try_from(entries.len().saturating_mul(entry_size))
             .map_err(|_error| KeyError::msg("BIF variable table size exceeds 64-bit range"))?;
     for (idx, resref) in entries.iter().enumerate() {
-        let id = (to_u32_len(bif_idx, "BIF index")? << 20) + to_u32_len(idx, "BIF resource id")?;
+        let resource_index = to_u32_len(idx, "BIF resource index")?;
+        let id = resource_index.wrapping_shl(20) | resource_index;
         let (uncompressed_size, compressed_size, _) = entry_meta
             .get(resref)
             .ok_or_else(|| KeyError::msg(format!("missing written entry metadata for {resref}")))?;
@@ -528,10 +547,7 @@ where
     }
     writer.seek(SeekFrom::Start(end))?;
 
-    Ok((
-        usize::try_from(end).map_err(|_error| KeyError::msg("BIF size exceeds usize"))?,
-        sha_entries,
-    ))
+    Ok(sha_entries)
 }
 
 /// Writes a KEY/BIF resource set using provenance preserved on a loaded
@@ -599,7 +615,7 @@ pub fn write_key_table_archive(
                 .get(rr)
                 .ok_or_else(|| io::Error::other(format!("missing payload for {rr}")))?;
             io.write_all(bytes)?;
-            Ok((bytes.len(), secure_hash(bytes)))
+            Ok((bytes.len(), sha1_digest(bytes)))
         },
     )
 }
@@ -630,6 +646,22 @@ fn build_bif_filename(bif_prefix: &str, bif: &crate::key::KeyBifEntry) -> String
         format!("{}.bif", bif.name)
     } else {
         format!("{}\\{}.bif", prefix, bif.name)
+    }
+}
+
+fn build_bif_disk_filename(bif: &crate::key::KeyBifEntry) -> String {
+    if let Some(filename) = &bif.recorded_filename {
+        return normalize_bif_filename(filename);
+    }
+
+    let filename = format!("{}.bif", bif.name);
+    if bif.directory.is_empty() {
+        filename
+    } else {
+        Path::new(&bif.directory)
+            .join(filename)
+            .to_string_lossy()
+            .into_owned()
     }
 }
 
@@ -678,10 +710,10 @@ fn read_fixed_string<R: Read + ?Sized>(reader: &mut R, size: usize) -> io::Resul
     String::from_utf8(bytes).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
 }
 
-fn read_secure_hash<R: Read + ?Sized>(reader: &mut R) -> io::Result<SecureHash> {
+fn read_sha1_digest<R: Read + ?Sized>(reader: &mut R) -> io::Result<Sha1Digest> {
     let mut bytes = [0_u8; 20];
     reader.read_exact(&mut bytes)?;
-    Ok(SecureHash::new(bytes))
+    Ok(Sha1Digest::new(bytes))
 }
 
 fn read_u16<R: Read + ?Sized>(reader: &mut R) -> io::Result<u16> {
@@ -764,10 +796,14 @@ mod tests {
         let beta: ResRef = ResolvedResRef::from_filename("beta.utc")
             .expect("beta resref")
             .into();
+        let gamma: ResRef = ResolvedResRef::from_filename("gamma.uti")
+            .expect("gamma resref")
+            .into();
 
         let payloads: HashMap<ResRef, Vec<u8>> = HashMap::from([
             (alpha.clone(), b"alpha-bytes".to_vec()),
             (beta.clone(), b"beta-bytes".to_vec()),
+            (gamma.clone(), b"gamma-bytes".to_vec()),
         ]);
 
         write_key_and_bif(
@@ -784,7 +820,7 @@ mod tests {
                     recorded_filename: Some("Data\\First.BIF".to_string()),
                     drives:            7,
                     bif_oid:           Some("fedcba987654321001234567".to_string()),
-                    entries:           vec![alpha.clone()],
+                    entries:           vec![alpha.clone(), beta.clone()],
                 },
                 KeyBifEntry {
                     directory:         String::new(),
@@ -792,7 +828,7 @@ mod tests {
                     recorded_filename: Some("Data\\Second.BIF".to_string()),
                     drives:            9,
                     bif_oid:           Some("fedcba987654321001234567".to_string()),
-                    entries:           vec![beta.clone()],
+                    entries:           vec![gamma.clone()],
                 },
             ],
             2025,
@@ -801,12 +837,42 @@ mod tests {
             |rr, io| {
                 let bytes = payloads.get(rr).expect("payload for resref");
                 io.write_all(bytes)?;
-                Ok((bytes.len(), nwnrs_types::checksums::secure_hash(bytes)))
+                Ok((bytes.len(), nwnrs_types::checksums::sha1_digest(bytes)))
             },
         )
         .expect("write key+bif");
 
         let key_path = source_dir.join("chitin.key");
+        let key_bytes = fs::read(&key_path).expect("read raw key");
+        let first_bif_table_size = u32::from_le_bytes(
+            key_bytes
+                .get(64..68)
+                .expect("first KEY file-table size bytes")
+                .try_into()
+                .expect("first KEY file-table size field"),
+        );
+        let second_bif_table_size = u32::from_le_bytes(
+            key_bytes
+                .get(76..80)
+                .expect("second KEY file-table size bytes")
+                .try_into()
+                .expect("second KEY file-table size field"),
+        );
+        assert_eq!(first_bif_table_size, 72);
+        assert_eq!(second_bif_table_size, 48);
+
+        let first_bif_bytes =
+            fs::read(source_dir.join("Data/First.BIF")).expect("read raw first BIF");
+        let second_bif_resource_id = u32::from_le_bytes(
+            first_bif_bytes
+                .get(68..72)
+                .expect("second BIF variable-resource id bytes")
+                .try_into()
+                .expect("second BIF variable-resource id"),
+        );
+        assert_eq!(second_bif_resource_id, 0x0010_0001);
+        assert_eq!((4096_u32.wrapping_shl(20)) | 4096, 0x0000_1000);
+
         let key = read_key_table_from_file(&key_path).expect("read key");
         assert_eq!(
             key.bifs(),
@@ -817,11 +883,11 @@ mod tests {
         );
         assert_eq!(key.raw_oid(), Some("fedcba987654321001234567"));
         assert_eq!(
-            key.demand(&beta)
+            key.demand(&gamma)
                 .expect("demand second bif resource")
                 .read_all(CachePolicy::Bypass)
                 .expect("read second bif resource"),
-            b"beta-bytes"
+            b"gamma-bytes"
         );
 
         write_key_table_archive(&key, &output_dir, "chitin").expect("rewrite key archive");

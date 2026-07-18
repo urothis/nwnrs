@@ -67,7 +67,7 @@ pub fn open_nwsync(path: impl AsRef<Path>) -> ResNWSyncResult<NWSync> {
         let mut shard_stmt = conn.prepare("select sha1 from resrefs")?;
         let resref_rows = shard_stmt.query_map([], |row| row.get::<_, String>(0))?;
         for sha1 in resref_rows {
-            let sha1 = parse_secure_hash(&sha1?)?;
+            let sha1 = parse_sha1_digest(&sha1?)?;
             if shardmap.insert(sha1, shard_id).is_some() {
                 return Err(ResNWSyncError::msg(format!(
                     "duplicate shard mapping for {sha1}"
@@ -160,7 +160,7 @@ pub fn new_resnwsync_manifest(
         })?;
         let rr = ResRef::new(resref_name, ResType(restype))?;
         contents.insert(rr.clone());
-        sha1map.insert(rr, parse_secure_hash(&resref_sha1)?);
+        sha1map.insert(rr, parse_sha1_digest(&resref_sha1)?);
     }
 
     let result = ResNWSyncManifest {
@@ -218,7 +218,7 @@ mod tests {
     };
 
     use nwnrs_types::{
-        checksums::secure_hash,
+        checksums::sha1_digest,
         resman::{ResRef, ResType},
     };
 
@@ -253,8 +253,8 @@ mod tests {
             Ok(value) => value,
             Err(error) => panic!("beta resref: {error}"),
         };
-        let alpha_sha1 = secure_hash(b"alpha");
-        let beta_sha1 = secure_hash(b"beta");
+        let alpha_sha1 = sha1_digest(b"alpha");
+        let beta_sha1 = sha1_digest(b"beta");
         if let Err(error) = repo.put_resref_data(alpha_sha1, b"alpha") {
             panic!("insert alpha: {error}");
         }
@@ -264,7 +264,7 @@ mod tests {
 
         let mut manifest = Manifest::default();
         manifest.add_entry(ManifestEntry::new(alpha_sha1, 5, alpha.clone()));
-        let manifest_sha1 = secure_hash(b"manifest");
+        let manifest_sha1 = sha1_digest(b"manifest");
         if let Err(error) = repo.put_manifest(manifest_sha1, &manifest, 123) {
             panic!("insert manifest: {error}");
         }

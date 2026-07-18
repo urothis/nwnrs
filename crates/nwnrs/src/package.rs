@@ -71,13 +71,22 @@ pub(crate) fn run_package(options: PackageOptions) -> Result<(), String> {
             .then_with(|| left.rr.cmp(&right.rr))
     });
 
-    let bifs = entries
-        .chunks(PACKAGE_FILES_PER_BIF)
-        .enumerate()
-        .map(|(index, chunk)| KeyPackageBif {
-            directory: String::new(),
-            name:      format!("pkg{index}"),
-            entries:   chunk.iter().map(|entry| entry.rr.clone()).collect(),
+    let bif_count = 1 + entries.len() / PACKAGE_FILES_PER_BIF;
+    let entries_per_bif = entries.len() / bif_count;
+    let bifs_with_extra_entry = entries.len() % bif_count;
+    let mut remaining_entries = entries.iter();
+    let bifs = (0..bif_count)
+        .map(|index| {
+            let entry_count = entries_per_bif + usize::from(index < bifs_with_extra_entry);
+            KeyPackageBif {
+                directory: String::new(),
+                name:      format!("pkg{index}"),
+                entries:   remaining_entries
+                    .by_ref()
+                    .take(entry_count)
+                    .map(|entry| entry.rr.clone())
+                    .collect(),
+            }
         })
         .collect::<Vec<_>>();
     let payloads = entries
@@ -126,7 +135,7 @@ fn collect_package_entries(resman: &mut resman::ResMan) -> Result<Vec<PackageEnt
         };
 
         result.push(PackageEntry {
-            sort_key: resolved_resource_name(&rr).to_ascii_lowercase(),
+            sort_key: resolved_resource_name(&rr).to_ascii_uppercase(),
             rr,
             bytes,
         });
@@ -288,8 +297,8 @@ mod tests {
             fs::read(second.join("nwn_base.key")).expect("read second key")
         );
         assert_eq!(
-            fs::read(first.join("data").join("pkg0.bif")).expect("read first bif"),
-            fs::read(second.join("data").join("pkg0.bif")).expect("read second bif")
+            fs::read(first.join("pkg0.bif")).expect("read first bif"),
+            fs::read(second.join("pkg0.bif")).expect("read second bif")
         );
 
         let _ = fs::remove_dir_all(temp_dir);
@@ -313,8 +322,13 @@ mod tests {
             vec!["data\\pkg0.bif".to_string(), "data\\pkg1.bif".to_string()]
         );
         assert_eq!(key.contents().len(), 5001);
-        assert!(destination.join("data").join("pkg0.bif").is_file());
-        assert!(destination.join("data").join("pkg1.bif").is_file());
+        let bif_contents = key.bif_contents().expect("read packaged bif contents");
+        let first_bif = bif_contents.first().expect("first packaged bif");
+        let second_bif = bif_contents.get(1).expect("second packaged bif");
+        assert_eq!(first_bif.resources.len(), 2501);
+        assert_eq!(second_bif.resources.len(), 2500);
+        assert!(destination.join("pkg0.bif").is_file());
+        assert!(destination.join("pkg1.bif").is_file());
 
         let _ = fs::remove_dir_all(temp_dir);
     }

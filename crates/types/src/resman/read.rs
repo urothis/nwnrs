@@ -142,7 +142,7 @@ pub fn read_resfile_as(path: impl AsRef<Path>, resref: ResRef) -> ResFileResult<
             ExoResFileCompressionType::None,
             None,
             usize::try_from(io_size.max(0)).unwrap_or(usize::MAX),
-            EMPTY_SECURE_HASH,
+            EMPTY_SHA1_DIGEST,
         ),
     };
     debug!(io_size, "read resource file");
@@ -181,7 +181,7 @@ pub fn read_resmemfile(
             ExoResFileCompressionType::None,
             None,
             len,
-            EMPTY_SECURE_HASH,
+            EMPTY_SHA1_DIGEST,
         ),
     };
     debug!(len, "wrapped in-memory resource");
@@ -221,7 +221,7 @@ fn new_spawner_res(
         ExoResFileCompressionType::None,
         None,
         usize::try_from(io_size.max(0)).unwrap_or(usize::MAX),
-        EMPTY_SECURE_HASH,
+        EMPTY_SHA1_DIGEST,
     )
 }
 

@@ -241,6 +241,26 @@ impl ResolvedResRef {
             .ok_or_else(|| ResRefError::Message(format!("'{filename}' is not a resolvable resref")))
     }
 
+    /// Resolves a filename while preserving the resource-name casing.
+    ///
+    /// This is intended for package metadata that must reproduce the original
+    /// archive spelling. Normal resource lookup should use
+    /// [`Self::from_filename`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ResRefError`] if `filename` cannot be parsed as a resolvable
+    /// resource reference.
+    pub fn from_filename_preserving_case(filename: &str) -> Result<Self, ResRefError> {
+        let (base, extension) = filename.rsplit_once('.').ok_or_else(|| {
+            ResRefError::Message(format!("'{filename}' is not a resolvable resref"))
+        })?;
+        let res_type = lookup_res_type(&extension.to_ascii_lowercase()).ok_or_else(|| {
+            ResRefError::Message(format!("'{filename}' is not a resolvable resref"))
+        })?;
+        Self::new(base.to_string(), res_type)
+    }
+
     /// Returns the unresolved base resource reference.
     #[must_use]
     pub fn base(&self) -> &ResRef {
@@ -327,5 +347,13 @@ mod tests {
         assert_eq!(resolved.res_ref(), "hello");
         assert_eq!(resolved.to_file(), "hello.2da");
         assert!(ResolvedResRef::try_from_filename("invalid.nope").is_none());
+    }
+
+    #[test]
+    fn metadata_filename_resolution_preserves_resource_case() {
+        let resolved = ResolvedResRef::from_filename_preserving_case("Repute.FAC")
+            .unwrap_or_else(|error| panic!("resolve filename: {error}"));
+        assert_eq!(resolved.res_ref(), "Repute");
+        assert_eq!(resolved.to_file(), "Repute.fac");
     }
 }

@@ -1,0 +1,20 @@
+name: Docker checks
+
+on:
+    pull_request:
+        paths:
+            - docker/**
+            - .github/workflows/docker*.yml
+
+jobs:
+    check:
+        runs-on: ubuntu-latest
+        timeout-minutes: 30
+        permissions:
+            contents: read
+        steps:
+            - uses: actions/checkout@v6.0.3
+              with:
+                  persist-credentials: false
+            - name: Check scripts
+              run: bash -n docker/scripts/*.sh
