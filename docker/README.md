@@ -1,81 +1,98 @@
-# Supervised nwserver container image
+# nwnrs container image
 
-This directory builds the Neverwinter Nights dedicated server image published
-as `ghcr.io/urothis/nwserver`. The image supports `linux/amd64` and
-`linux/arm64` from one multi-architecture tag.
+This directory builds the multi-architecture Neverwinter Nights: EE dedicated
+server image published as `ghcr.io/urothis/nwnrs`. It supports `linux/amd64`
+and `linux/arm64`.
 
-The repository never downloads proprietary game assets. An internal asset
-process stages an installation and a trusted manifest; this project verifies
-that contract, packages a reduced resource view with the current Rust `nwnrs`
-CLI as E1 KEY/BIF data with Zlib compression, builds the default module
-from its source-controlled project, and builds the container.
+The image contains prepared game resources, the NWServer binary,
+`nwnrs-runtime-sys`, and the supervisor-only `nwnrs` executable. Its final
+stage is a pinned, shell-free Distroless image running as the non-root
+`nwserver` account (`1000:0`).
 
-## Trusted asset contract
+## Run
 
-Preparation requires both an install root and a JSON manifest. Channel and
-version are read only from the manifest, so they cannot drift away from the
-asset hashes they describe.
-
-The covered file set is exactly:
-
-- both `bin/linux-x86/nwserver-linux` and
-  `bin/linux-arm64/nwserver-linux`;
-- every regular file below `data`, `lang/en/data`, and `ovr`.
-
-Symlinks in the covered directories are rejected. Every listed SHA-256 is
-verified, duplicate paths are rejected, and the manifest must describe the
-covered file set exactly. The two server executables are also checked for the
-expected 64-bit little-endian ELF architecture.
-
-Manifest schema 1 has this shape:
-
-```json
-{
-  "schema": 1,
-  "version": "8193.37.17",
-  "channel": "stable",
-  "files": [
-    {
-      "path": "bin/linux-x86/nwserver-linux",
-      "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-    }
-  ]
-}
-```
-
-`channel` must be `stable`, `development`, or `preview`. `databuild.txt` is not
-a trusted version source and is deliberately not used. The internal asset
-process should emit the manifest as part of staging. For local development,
-the equivalent no-download helper is:
+The preferred interface is the full `nwnrs` CLI on the host:
 
 ```bash
-docker/scripts/write-asset-manifest.sh \
-  /path/to/Neverwinter\ Nights \
-  /path/to/nwserver-assets.json \
-  8193.37.17 \
-  stable
+nwnrs run --docker \
+  --docker-image ghcr.io/urothis/nwnrs:stable \
+  --docker-arg pull=always
 ```
 
-## Preparing and building locally
+The equivalent direct Docker command is:
 
-Build `nwnrs`, then create the ignored `docker/data` context:
+```bash
+docker run --rm \
+  --read-only \
+  --cap-drop ALL \
+  --security-opt no-new-privileges=true \
+  --tmpfs /nwn/run:uid=1000,gid=0,mode=0770 \
+  --tmpfs /tmp:uid=1000,gid=0,mode=1777 \
+  --publish 5121:5121/udp \
+  --volume nwserver-home:/nwn/home \
+  ghcr.io/urothis/nwnrs:stable
+```
+
+The supervisor prepares the server filesystem, injects the runtime, selects
+the matching target pack, follows server logs, forwards signals, and preserves
+configuration across restarts. Ctrl-C requests a graceful NWServer shutdown.
+
+## Storage and configuration
+
+| Path | Purpose |
+| --- | --- |
+| `/nwn/data` | Read-only prepared game data and NWServer binaries |
+| `/nwn/runtime` | Read-only runtime library and target packs |
+| `/nwn/home` | Persistent modules, saves, vaults, configuration, and crash logs |
+| `/nwn/run` | Per-launch writable NWServer user directory |
+
+Keep `/nwn/home` on a named volume or bind mount writable by `1000:0`.
+Generated `cryptographic_secret` and `settings.tml` files are copied back
+atomically. Existing `nwn.ini` and `nwnplayer.ini` files are imported at
+startup.
+
+Common settings are provided through `NWN_*` environment variables, including
+`NWN_PORT`, `NWN_SERVERNAME`, `NWN_MODULE`, `NWN_MAXCLIENTS`,
+`NWN_PUBLICSERVER`, `NWN_NWSYNCURL`, and `NWN_NWSYNCHASH`. Set
+`NWN_TAIL_LOGS=n` to disable server-log following and `NWNRS_COLOR` to `auto`,
+`always`, or `never`.
+
+Passwords are accepted only through mounted files. Use
+`NWN_PLAYERPASSWORD_FILE`, `NWN_DMPASSWORD_FILE`, or
+`NWN_ADMINPASSWORD_FILE`; plaintext password environment variables are not
+supported.
+
+## Build locally
+
+The repository does not download proprietary assets. Start with a staged NWN
+installation containing both Linux server binaries and the required game data.
+Then generate the artifact manifest and prepared build context:
 
 ```bash
 cargo build --release --package nwnrs
+
+docker/scripts/write-asset-manifest.sh \
+  /path/to/Neverwinter\ Nights \
+  target/nwserver-assets.json \
+  8193.37.17 \
+  stable
+
 docker/scripts/prepare-context.sh \
   /path/to/Neverwinter\ Nights \
-  /path/to/nwserver-assets.json \
+  target/nwserver-assets.json \
   docker/data \
   target/release/nwnrs
 ```
 
-Preparation records the input-manifest SHA-256, the exact `nwnrs` executable
-SHA-256, both original server hashes, and a digest of every prepared image
-payload. It also records the resource-package version and compression
-algorithm. The image exposes these as `/nwn/data/asset-manifest.json`,
-`/nwn/data/SHA256SUMS`, and `/nwn/data/build-info.json`.
+Both generated locations are ignored by Git. The manifest is nevertheless
+included in the final image for future artifact inspection, together with the
+prepared payload checksums and build information:
 
-Build a local platform image with:
+- `/nwn/data/asset-manifest.json`
+- `/nwn/data/SHA256SUMS`
+- `/nwn/data/build-info.json`
+
+Build the current platform image from the repository root:
 
 ```bash
 docker buildx build \
@@ -87,148 +104,19 @@ docker buildx build \
   .
 ```
 
-The repository root is the Docker build context, constrained by the root
-`.dockerignore`. A multi-stage builder compiles `nwnrs` with only its
-`supervisor` feature plus `nwnrs-runtime-sys`; the full asset-preparation CLI
-and the Rust toolchain do not enter the final image. The Debian base is pinned
-by digest. Updating it is an intentional source change, not an implicit
-consequence of rebuilding later.
+## Publish
 
-## Publishing
+`.github/workflows/docker.yml` publishes a combined AMD64 and ARM64 image to
+GHCR. It runs on the internal `nwserver-assets` runner and accepts the staged
+install path, NWN version, and release channel.
 
-The root `Build and publish nwserver image` GitHub workflow is manually
-dispatchable and reusable through `workflow_call`. It must run on an internal
-self-hosted runner labeled `nwserver-assets`, with absolute paths to the staged
-install and trusted manifest. It builds the repository's current Rust CLI and
-does not run Steam, Nim, or any game-asset download action.
+Each build publishes three tags:
 
-Every successful run pushes one `linux/amd64` + `linux/arm64` manifest to GHCR
-with these tags:
+- mutable channel: `stable`, `development`, or `preview`;
+- mutable version and channel: `8193.37.17-stable`;
+- immutable version, channel, and UTC build time:
+  `8193.37.18-preview-20260718T234217Z`.
 
-- the mutable channel, such as `stable`;
-- the immutable channel-qualified version, such as `8193.37.17-stable`;
-- the unqualified version for stable releases only, such as `8193.37.17`.
-
-The image includes OCI source, revision, creation time, version, vendor,
-asset-manifest digest, and prepared-payload digest labels. BuildKit also
-publishes provenance and an SBOM. There is no Docker Hub path.
-
-## Running
-
-The full host CLI delegates to the active Docker context:
-
-```bash
-nwnrs run --docker
-```
-
-The supervisor-only executable inside the image does not include this mode, so
-there is no Docker-in-Docker path. The CLI defaults to the locally built
-`nwserver:local` tag with registry pulling disabled. Select a published image
-and its pull policy explicitly, for example:
-
-```bash
-nwnrs run --docker \
-  --docker-image ghcr.io/urothis/nwserver:stable \
-  --docker-arg pull=always
-```
-
-The equivalent direct Docker command is:
-
-```bash
-docker run --rm \
-  --publish 5121:5121/udp \
-  --volume nwserver-home:/nwn/home \
-  --env NWN_MODULE=nwnrs \
-  ghcr.io/urothis/nwserver:stable
-```
-
-The default identity is `1000:0`. The writable home and runtime directories
-are group-writable by GID 0, so orchestrators can assign another non-root UID:
-
-```bash
-docker run --rm --user 10001:0 --volume nwserver-home:/nwn/home \
-  ghcr.io/urothis/nwserver:stable
-```
-
-A custom UID must retain GID 0, and bind-mounted host directories must grant
-that group write access. The server image does not require root at runtime.
-
-Common non-secret settings include `NWN_PORT`, `NWN_SERVERNAME`, `NWN_MODULE`,
-`NWN_MAXCLIENTS`, `NWN_PUBLICSERVER`, `NWN_NWSYNCURL`, and `NWN_NWSYNCHASH`.
-The entrypoint launches the server through the slim `nwnrs` supervisor, which
-selects the exact target pack, injects `nwnrs-runtime-sys`, forwards signals,
-and renders console and server-log output through `tracing`. Set
-`NWN_TAIL_LOGS` to a value other than `y` to disable file-log following, or set
-`NWNRS_COLOR` to `auto`, `always`, or `never`. `NWN_EXTRA_ARGS` is split on
-whitespace; pass container command arguments directly when a value must retain
-spaces.
-
-Passwords are file-only. Plaintext password environment variables are not
-supported. Mount a secret and point the matching variable at it:
-
-```bash
-docker run --rm \
-  --mount type=bind,source=/secure/admin-password,target=/run/secrets/admin-password,readonly \
-  --env NWN_ADMINPASSWORD_FILE=/run/secrets/admin-password \
-  ghcr.io/urothis/nwserver:stable
-```
-
-The supported variables are `NWN_PLAYERPASSWORD_FILE`, `NWN_DMPASSWORD_FILE`,
-and `NWN_ADMINPASSWORD_FILE`. The dedicated server ultimately receives these
-values as command arguments, so processes with permission to inspect another
-process inside the same container may still see them.
-
-The entrypoint persists generated `cryptographic_secret` and `settings.tml`
-atomically to `/nwn/home`, including later updates to `settings.tml`. Legacy
-`nwn.ini` and `nwnplayer.ini` files in that volume are imported at startup.
-
-## Module source
-
-`nwnrs` has editable source under the repository-root `module` directory. All
-GFF-family resources use the canonical `neverwinter.nim` JSON representation.
-Its `nwpkg.lock` preserves the archive layout and source hashes needed for a
-reproducible build. Binary MOD files are ignored by Git. If the lock's local
-source path exists and still matches, `nwpkg` may reuse that binary
-byte-for-byte; otherwise `nwnrs pack` rebuilds the MOD from the module project.
-The source project is excluded from the Docker build context, and only the
-prepared `docker/data/mod/nwnrs.mod` is copied into the image.
-
-To verify that source independently:
-
-```bash
-cargo run --package nwnrs -- pack --force \
-  module /tmp/nwnrs.mod
-```
-
-## Validation and early runtime milestone
-
-The Docker pull-request check validates the container scripts independently:
-
-```bash
-bash -n docker/scripts/*.sh
-cargo clippy --locked --package nwnrs --all-targets \
-  --no-default-features --features supervisor -- -D warnings
-```
-
-The module pull-request check owns the Rust packaging tests and verifies that
-the source-controlled project builds into a non-empty MOD:
-
-```bash
-cargo test --package nwnrs-types gff::json --lib
-cargo test --package nwnrs-nwpkg
-cargo test --package nwnrs
-cargo run --package nwnrs -- pack --force module /tmp/nwnrs.mod
-test -s /tmp/nwnrs.mod
-```
-
-There is intentionally no timer-based smoke test or guessed health check.
-Container health checks remain deferred until the runtime can report readiness
-from verified engine state.
-
-## Licensing
-
-The container tooling in this directory retains the MIT license from the
-original `nwserver` project. The surrounding `nwnrs` repository is
-GPL-3.0-only. Neverwinter Nights binaries and game data are not licensed by
-this repository and remain subject to their owner's terms; consequently, the
-published image does not claim a blanket MIT OCI license.
+The timestamp format is `YYYYMMDDTHHMMSSZ`. Published images also include OCI
+metadata, provenance, an SBOM, the source asset-manifest digest, and the
+prepared-payload digest.

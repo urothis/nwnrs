@@ -1,8 +1,12 @@
 use std::{
     fs,
-    io::{BufRead as _, Read as _, Write as _},
+    io::{BufRead as _, Read as _, Seek as _, Write as _},
     path::{Path, PathBuf},
     process::{Command as ProcessCommand, ExitCode, Stdio},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 use nwnrs_runtime::{
@@ -43,8 +47,8 @@ enum ServerLogKind {
 
 #[cfg(unix)]
 struct LogFollower {
-    child:  tokio::process::Child,
-    relays: Vec<tokio::task::JoinHandle<()>>,
+    stop:  Arc<AtomicBool>,
+    relay: Option<std::thread::JoinHandle<()>>,
 }
 
 struct LaunchPlan {
@@ -56,6 +60,8 @@ struct LaunchPlan {
     platform:          Platform,
     log_paths:         Option<[PathBuf; 2]>,
     color:             ColorMode,
+    #[cfg(target_os = "linux")]
+    container:         Option<crate::container::ContainerState>,
 }
 
 #[cfg(feature = "tooling")]
@@ -68,6 +74,9 @@ struct DockerLaunchPlan {
 pub(crate) fn run_server(command: RunCmd) -> Result<ExitCode, String> {
     #[cfg(feature = "tooling")]
     if command.docker {
+        if command.container {
+            return Err("--docker and --container cannot be used together".to_string());
+        }
         return DockerLaunchPlan::prepare(command)?.execute();
     }
     let plan = LaunchPlan::prepare(command)?;
@@ -78,18 +87,16 @@ impl LaunchPlan {
     fn prepare(command: RunCmd) -> Result<Self, String> {
         #[cfg(feature = "tooling")]
         validate_native_options(&command)?;
-        #[cfg(feature = "tooling")]
+        #[cfg(target_os = "linux")]
+        let (command, container) = prepare_container_command(command)?;
+        #[cfg(not(target_os = "linux"))]
+        let command = validate_non_linux_container_mode(command)?;
         let runtime_path = command.runtime.ok_or_else(|| {
             "native mode requires --runtime; use --docker to start the container image".to_string()
         })?;
-        #[cfg(not(feature = "tooling"))]
-        let runtime_path = command.runtime;
-        #[cfg(feature = "tooling")]
         let targets = command.targets.ok_or_else(|| {
             "native mode requires --targets; use --docker to start the container image".to_string()
         })?;
-        #[cfg(not(feature = "tooling"))]
-        let targets = command.targets;
         let (server_path, server_args) = command
             .arguments
             .split_first()
@@ -135,6 +142,8 @@ impl LaunchPlan {
             platform: server.platform,
             log_paths,
             color: command.color,
+            #[cfg(target_os = "linux")]
+            container,
         })
     }
 
@@ -166,27 +175,64 @@ impl LaunchPlan {
         }
     }
 
+    fn backup_container_configuration(&self) {
+        #[cfg(target_os = "linux")]
+        if let Some(container) = &self.container {
+            container.backup_configuration();
+        }
+    }
+
+    fn finalize_container(&mut self) {
+        #[cfg(target_os = "linux")]
+        if let Some(container) = &mut self.container {
+            container.finalize();
+        }
+    }
+
     #[cfg(unix)]
-    fn log_follower_commands(&self) -> Vec<(ServerLogKind, ProcessCommand)> {
+    fn log_follower_paths(&self) -> Vec<(ServerLogKind, PathBuf)> {
         let Some(paths) = self.log_paths.as_ref() else {
             return Vec::new();
         };
         [ServerLogKind::Output, ServerLogKind::Error]
             .into_iter()
             .zip(paths)
-            .map(|(kind, path)| {
-                let mut command = ProcessCommand::new("tail");
-                command
-                    .arg("-n")
-                    .arg("0")
-                    .arg("-F")
-                    .arg(path)
-                    .stdout(Stdio::piped())
-                    .stderr(Stdio::piped());
-                isolate_process_group(&mut command);
-                (kind, command)
-            })
+            .map(|(kind, path)| (kind, path.clone()))
             .collect()
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn prepare_container_command(
+    mut command: RunCmd,
+) -> Result<(RunCmd, Option<crate::container::ContainerState>), String> {
+    if !command.container {
+        return Ok((command, None));
+    }
+    if command.runtime.is_some() || command.targets.is_some() || command.working_directory.is_some()
+    {
+        return Err(
+            "--runtime, --targets, and --working-directory cannot override container mode"
+                .to_string(),
+        );
+    }
+    let launch = crate::container::ContainerLaunch::prepare(&command.arguments)?;
+    command.runtime = Some(launch.runtime);
+    command.targets = Some(launch.targets);
+    command.working_directory = Some(launch.working_directory);
+    command.arguments = std::iter::once(launch.server.to_string_lossy().into_owned())
+        .chain(launch.server_args)
+        .collect();
+    command.no_tail_logs |= !launch.tail_logs;
+    Ok((command, Some(launch.state)))
+}
+
+#[cfg(not(target_os = "linux"))]
+fn validate_non_linux_container_mode(command: RunCmd) -> Result<RunCmd, String> {
+    if command.container {
+        Err("--container is supported only by the Linux image".to_string())
+    } else {
+        Ok(command)
     }
 }
 
@@ -253,7 +299,15 @@ impl DockerLaunchPlan {
             .docker_arg
             .iter()
             .any(|argument| argument.starts_with("pull="));
-        let mut args = vec!["run".to_string(), "--rm".to_string()];
+        let mut args = vec![
+            "run".to_string(),
+            "--rm".to_string(),
+            "--read-only".to_string(),
+            "--cap-drop=ALL".to_string(),
+            "--security-opt=no-new-privileges=true".to_string(),
+            "--tmpfs=/nwn/run:uid=1000,gid=0,mode=0770".to_string(),
+            "--tmpfs=/tmp:uid=1000,gid=0,mode=1777".to_string(),
+        ];
         if !has_pull_policy {
             args.push("--pull=never".to_string());
         }
@@ -495,7 +549,7 @@ fn execute(_plan: LaunchPlan) -> Result<ExitCode, String> {
 }
 
 #[cfg(unix)]
-async fn supervise(plan: LaunchPlan) -> Result<ExitCode, String> {
+async fn supervise(mut plan: LaunchPlan) -> Result<ExitCode, String> {
     use tokio::{signal::unix, time};
 
     let mut terminate = unix::signal(unix::SignalKind::terminate())
@@ -518,7 +572,7 @@ async fn supervise(plan: LaunchPlan) -> Result<ExitCode, String> {
         working_directory = %plan.working_directory.display(),
         "resolved launch artifacts"
     );
-    let mut log_followers = start_log_followers(&plan).await?;
+    let mut log_followers = start_log_followers(&plan)?;
     if let Some(paths) = plan.log_paths.as_ref() {
         let [output_path, error_path] = paths;
         info!(
@@ -537,7 +591,7 @@ async fn supervise(plan: LaunchPlan) -> Result<ExitCode, String> {
     let mut server = match command.spawn() {
         Ok(child) => child,
         Err(error) => {
-            stop_log_followers(&mut log_followers).await;
+            stop_log_followers(&mut log_followers);
             return Err(format!(
                 "failed to start server {}: {error}",
                 plan.server.display()
@@ -547,19 +601,19 @@ async fn supervise(plan: LaunchPlan) -> Result<ExitCode, String> {
     let Some(server_input) = server.stdin.take() else {
         forward_signal(&server, nix::sys::signal::Signal::SIGKILL);
         let _ = server.wait();
-        stop_log_followers(&mut log_followers).await;
+        stop_log_followers(&mut log_followers);
         return Err("failed to open the supervised server standard input pipe".to_string());
     };
     let Some(server_output) = server.stdout.take() else {
         forward_signal(&server, nix::sys::signal::Signal::SIGKILL);
         let _ = server.wait();
-        stop_log_followers(&mut log_followers).await;
+        stop_log_followers(&mut log_followers);
         return Err("failed to open the supervised server standard output pipe".to_string());
     };
     let Some(server_error) = server.stderr.take() else {
         forward_signal(&server, nix::sys::signal::Signal::SIGKILL);
         let _ = server.wait();
-        stop_log_followers(&mut log_followers).await;
+        stop_log_followers(&mut log_followers);
         return Err("failed to open the supervised server standard error pipe".to_string());
     };
     info!(
@@ -575,9 +629,15 @@ async fn supervise(plan: LaunchPlan) -> Result<ExitCode, String> {
     let mut shutdown_requested_at = None;
     let mut wait_interval = time::interval(std::time::Duration::from_millis(50));
     wait_interval.set_missed_tick_behavior(time::MissedTickBehavior::Skip);
+    let mut configuration_backup = Box::pin(time::sleep(std::time::Duration::from_secs(10)));
+    let mut configuration_backed_up = false;
 
     let status = loop {
         tokio::select! {
+            () = &mut configuration_backup, if !configuration_backed_up => {
+                plan.backup_container_configuration();
+                configuration_backed_up = true;
+            }
             _ = wait_interval.tick() => {
                 match server.try_wait() {
                     Ok(Some(status)) => break Ok(status),
@@ -620,7 +680,8 @@ async fn supervise(plan: LaunchPlan) -> Result<ExitCode, String> {
     let _ = input_writer.join();
     let _ = console_relay.join();
     let _ = error_relay.join();
-    stop_log_followers(&mut log_followers).await;
+    stop_log_followers(&mut log_followers);
+    plan.finalize_container();
     match status {
         Ok(status) if status.success() => {
             info!(target: "nwnrs::launcher", "NWServer exited successfully");
@@ -639,67 +700,126 @@ async fn supervise(plan: LaunchPlan) -> Result<ExitCode, String> {
 }
 
 #[cfg(unix)]
-async fn start_log_followers(plan: &LaunchPlan) -> Result<Vec<LogFollower>, String> {
-    use tokio::{
-        io::{AsyncBufReadExt as _, BufReader},
-        process::Command as TokioCommand,
-    };
-
+fn start_log_followers(plan: &LaunchPlan) -> Result<Vec<LogFollower>, String> {
     let mut followers = Vec::new();
-    for (kind, command) in plan.log_follower_commands() {
-        let mut command = TokioCommand::from(command);
-        let mut child = match command.spawn() {
-            Ok(child) => child,
+    for (kind, path) in plan.log_follower_paths() {
+        let stop = Arc::new(AtomicBool::new(false));
+        let thread_stop = Arc::clone(&stop);
+        let relay = match std::thread::Builder::new()
+            .name(format!("nwnrs-log-{}", path.display()))
+            .spawn(move || follow_server_log(&path, kind, &thread_stop))
+        {
+            Ok(relay) => relay,
             Err(error) => {
-                stop_log_followers(&mut followers).await;
-                return Err(format!("failed to start server log follower: {error}"));
+                stop_log_followers(&mut followers);
+                return Err(format!(
+                    "failed to start server log follower thread: {error}"
+                ));
             }
         };
-        let (Some(stdout), Some(stderr)) = (child.stdout.take(), child.stderr.take()) else {
-            followers.push(LogFollower {
-                child,
-                relays: Vec::new(),
-            });
-            stop_log_followers(&mut followers).await;
-            return Err("failed to open server log follower pipes".to_string());
-        };
-        let output_relay = tokio::spawn(async move {
-            let mut lines = BufReader::new(stdout).lines();
-            loop {
-                match lines.next_line().await {
-                    Ok(Some(line)) if line.is_empty() => {}
-                    Ok(Some(line)) => match kind {
-                        ServerLogKind::Output => {
-                            info!(target: "nwnrs::server", "{line}");
-                        }
-                        ServerLogKind::Error => {
-                            tracing::error!(target: "nwnrs::server", "{line}");
-                        }
-                    },
-                    Ok(None) => break,
-                    Err(error) => {
-                        tracing::warn!(
-                            target: "nwnrs::launcher",
-                            %error,
-                            "failed to read followed server log"
-                        );
-                        break;
-                    }
-                }
-            }
-        });
-        let diagnostic_relay = tokio::spawn(async move {
-            let mut lines = BufReader::new(stderr).lines();
-            while let Ok(Some(line)) = lines.next_line().await {
-                tracing::debug!(target: "nwnrs::launcher", "tail: {line}");
-            }
-        });
         followers.push(LogFollower {
-            child,
-            relays: vec![output_relay, diagnostic_relay],
+            stop,
+            relay: Some(relay),
         });
     }
     Ok(followers)
+}
+
+#[cfg(unix)]
+fn follow_server_log(path: &Path, kind: ServerLogKind, stop: &AtomicBool) {
+    use std::{
+        fs::File,
+        io::{BufReader, SeekFrom},
+        os::unix::fs::MetadataExt as _,
+        time::Duration,
+    };
+
+    let skip_existing = path.is_file();
+    let mut first_open = true;
+    let mut reader = None;
+    let mut identity = None;
+    let mut position = 0_u64;
+    while !stop.load(Ordering::Relaxed) {
+        if reader.is_none() {
+            match File::open(path) {
+                Ok(file) => {
+                    let metadata = match file.metadata() {
+                        Ok(metadata) => metadata,
+                        Err(error) => {
+                            tracing::warn!(target: "nwnrs::launcher", path = %path.display(), %error, "failed to inspect followed server log");
+                            std::thread::sleep(Duration::from_millis(100));
+                            continue;
+                        }
+                    };
+                    let mut new_reader = BufReader::new(file);
+                    let start = if first_open && skip_existing {
+                        SeekFrom::End(0)
+                    } else {
+                        SeekFrom::Start(0)
+                    };
+                    match new_reader.seek(start) {
+                        Ok(offset) => position = offset,
+                        Err(error) => {
+                            tracing::warn!(target: "nwnrs::launcher", path = %path.display(), %error, "failed to seek followed server log");
+                            std::thread::sleep(Duration::from_millis(100));
+                            continue;
+                        }
+                    }
+                    identity = Some((metadata.dev(), metadata.ino()));
+                    reader = Some(new_reader);
+                    first_open = false;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    std::thread::sleep(Duration::from_millis(100));
+                    continue;
+                }
+                Err(error) => {
+                    tracing::warn!(target: "nwnrs::launcher", path = %path.display(), %error, "failed to open followed server log");
+                    std::thread::sleep(Duration::from_millis(250));
+                    continue;
+                }
+            }
+        }
+
+        let Some(active_reader) = reader.as_mut() else {
+            continue;
+        };
+        let mut line = String::new();
+        match active_reader.read_line(&mut line) {
+            Ok(0) => {
+                let replaced_or_truncated = fs::metadata(path).is_ok_and(|metadata| {
+                    identity != Some((metadata.dev(), metadata.ino())) || metadata.len() < position
+                });
+                if replaced_or_truncated {
+                    reader = None;
+                    identity = None;
+                    position = 0;
+                } else {
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+            }
+            Ok(bytes) => {
+                position = position.saturating_add(bytes as u64);
+                let line = line.trim_end_matches(['\r', '\n']);
+                if line.is_empty() {
+                    continue;
+                }
+                match kind {
+                    ServerLogKind::Output => info!(target: "nwnrs::server", "{line}"),
+                    ServerLogKind::Error => {
+                        tracing::error!(target: "nwnrs::server", "{line}");
+                    }
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(error) => {
+                tracing::warn!(target: "nwnrs::launcher", path = %path.display(), %error, "failed to read followed server log");
+                reader = None;
+                identity = None;
+                position = 0;
+            }
+        }
+    }
 }
 
 #[cfg(unix)]
@@ -901,36 +1021,13 @@ fn forward_signal(server: &std::process::Child, signal: nix::sys::signal::Signal
 }
 
 #[cfg(unix)]
-async fn stop_log_followers(log_followers: &mut Vec<LogFollower>) {
-    use std::time::Duration;
-
-    use nix::{
-        errno::Errno,
-        sys::signal::{Signal, killpg},
-        unistd::Pid,
-    };
-    use tokio::time::timeout;
-    use tracing::warn;
-
+fn stop_log_followers(log_followers: &mut Vec<LogFollower>) {
     while let Some(mut follower) = log_followers.pop() {
-        if let Some(process_id) = follower.child.id()
-            && let Ok(process_id) = i32::try_from(process_id)
-            && let Err(error) = killpg(Pid::from_raw(process_id), Signal::SIGTERM)
-            && error != Errno::ESRCH
+        follower.stop.store(true, Ordering::Relaxed);
+        if let Some(relay) = follower.relay.take()
+            && relay.join().is_err()
         {
-            warn!(process_id, %error, "failed to stop server log follower");
-        }
-        if timeout(Duration::from_secs(2), follower.child.wait())
-            .await
-            .is_err()
-        {
-            let _ = follower.child.start_kill();
-            let _ = follower.child.wait().await;
-        }
-        for mut relay in follower.relays {
-            if timeout(Duration::from_secs(1), &mut relay).await.is_err() {
-                relay.abort();
-            }
+            tracing::warn!(target: "nwnrs::launcher", "server log follower thread panicked");
         }
     }
 }
@@ -989,6 +1086,7 @@ mod tests {
     #[test]
     fn prepares_attached_docker_run_with_managed_defaults() {
         let command = RunCmd {
+            container:         false,
             docker:            true,
             docker_image:      DEFAULT_DOCKER_IMAGE.to_string(),
             docker_name:       Some("test-server".to_string()),
@@ -1010,6 +1108,11 @@ mod tests {
             vec![
                 "run",
                 "--rm",
+                "--read-only",
+                "--cap-drop=ALL",
+                "--security-opt=no-new-privileges=true",
+                "--tmpfs=/nwn/run:uid=1000,gid=0,mode=0770",
+                "--tmpfs=/tmp:uid=1000,gid=0,mode=1777",
                 "--pull=never",
                 "--interactive",
                 "--tty",
@@ -1035,6 +1138,7 @@ mod tests {
     #[test]
     fn native_mode_rejects_docker_options_without_flag() {
         let command = RunCmd {
+            container:         false,
             docker:            false,
             docker_image:      DEFAULT_DOCKER_IMAGE.to_string(),
             docker_name:       Some("unexpected".to_string()),
@@ -1067,6 +1171,7 @@ mod tests {
         write_target_pack(&root, &identity)?;
 
         let plan = LaunchPlan::prepare(RunCmd {
+            container: false,
             #[cfg(feature = "tooling")]
             docker: false,
             #[cfg(feature = "tooling")]
@@ -1081,14 +1186,8 @@ mod tests {
             docker_arg: Vec::new(),
             color: ColorMode::Never,
             no_tail_logs: true,
-            #[cfg(feature = "tooling")]
             runtime: Some(runtime),
-            #[cfg(not(feature = "tooling"))]
-            runtime,
-            #[cfg(feature = "tooling")]
             targets: Some(root.clone()),
-            #[cfg(not(feature = "tooling"))]
-            targets: root.clone(),
             working_directory: Some(root.clone()),
             arguments: vec![
                 server.to_string_lossy().into_owned(),

@@ -7,6 +7,8 @@ compile_error!("nwnrs requires the supervisor feature, the tooling feature, or b
 mod args;
 #[cfg(feature = "tooling")]
 mod compile;
+#[cfg(all(feature = "supervisor", target_os = "linux"))]
+mod container;
 #[cfg(feature = "tooling")]
 mod convert;
 #[cfg(feature = "tooling")]

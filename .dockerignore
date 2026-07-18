@@ -6,8 +6,6 @@
 !crates/**
 !docker/
 !docker/Dockerfile
-!docker/scripts/
-!docker/scripts/run-server.sh
-!docker/scripts/prep-nwn-ini.awk
+!docker/passwd
 !docker/data/
 !docker/data/**

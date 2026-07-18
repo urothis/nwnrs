@@ -29,6 +29,8 @@ jobs:
             - name: Check scripts
               run: bash -n docker/scripts/*.sh
             - name: Check supervisor-only CLI
-              run: >-
-                  cargo clippy --locked --package nwnrs --all-targets
-                  --no-default-features --features supervisor -- -D warnings
+              run: |
+                  cargo clippy --locked --package nwnrs --all-targets \
+                    --no-default-features --features supervisor -- -D warnings
+                  cargo test --locked --package nwnrs --all-targets \
+                    --no-default-features --features supervisor

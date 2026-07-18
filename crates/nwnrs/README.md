@@ -260,11 +260,17 @@ Docker mode is compiled only when both the `supervisor` and `tooling` features
 are present. The supervisor-only executable inside the image has no Docker
 flag, Docker dependency, or Docker-in-Docker behavior.
 
+Host Docker mode applies a read-only root filesystem, drops all Linux
+capabilities, enables `no-new-privileges`, and mounts writable tmpfs instances
+at `/nwn/run` and `/tmp`. These defaults can still be replaced by invoking
+Docker directly when an unusual deployment requires a different policy.
+
 The Docker image builds this supervisor-only executable and
-`nwnrs-runtime-sys` in a repository-root multi-stage build. Its entrypoint
-retains the small amount of volume/configuration setup that belongs to the
-container, then delegates process supervision, runtime injection, target-pack
-selection, signal handling, and log rendering to `nwnrs run`.
+`nwnrs-runtime-sys` in a repository-root multi-stage build. The shell-free
+distroless entrypoint invokes the internal `nwnrs run --container` mode, which
+owns volume/configuration setup, process supervision, runtime injection,
+target-pack selection, signal handling, crash-log preservation, and native
+server-log following.
 
 Once injected, the runtime installs the read-only NWScript bridge described by
 the source-controlled `module/nwnrs.nss` include. The initial functions report

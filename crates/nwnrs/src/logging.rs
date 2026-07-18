@@ -8,7 +8,7 @@ pub(crate) fn init_tracing(color: ColorMode) {
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_error| {
         EnvFilter::new(
             "warn,nwnrs::launcher=info,nwnrs::console=info,nwnrs::server=info,nwnrs::runtime=info,\
-             nwnrs::script=info",
+             nwnrs::script=info,nwnrs::container=info",
         )
     });
     let _ = tracing_subscriber::fmt()

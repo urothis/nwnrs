@@ -1,4 +1,4 @@
-name: Build and publish nwserver image
+name: Build and publish nwnrs image
 
 on:
     workflow_dispatch:
@@ -7,23 +7,36 @@ on:
                 description: Absolute path to the internally staged NWN install
                 required: true
                 type: string
-            asset_manifest:
-                description: Absolute path to its trusted asset manifest
+            version:
+                description: NWN version recorded in the generated artifact manifest
                 required: true
                 type: string
+            channel:
+                description: Image release channel
+                required: true
+                type: choice
+                default: stable
+                options:
+                    - stable
+                    - development
+                    - preview
     workflow_call:
         inputs:
             asset_root:
                 description: Absolute path to the internally staged NWN install
                 required: true
                 type: string
-            asset_manifest:
-                description: Absolute path to its trusted asset manifest
+            version:
+                description: NWN version recorded in the generated artifact manifest
+                required: true
+                type: string
+            channel:
+                description: Image release channel
                 required: true
                 type: string
 
 concurrency:
-    group: nwserver-image-${{ inputs.asset_manifest }}
+    group: nwnrs-image-${{ inputs.channel }}
     cancel-in-progress: false
 
 jobs:
@@ -46,12 +59,25 @@ jobs:
             - name: Build asset-preparation CLI
               run: cargo build --locked --release --package nwnrs
 
-            - name: Prepare verified Docker context
+            - name: Generate image build identity
+              id: build
+              run: |
+                  echo "created=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
+                  echo "tag_timestamp=$(date -u +'%Y%m%dT%H%M%SZ')" >> "$GITHUB_OUTPUT"
+
+            - name: Generate manifest and prepare verified Docker context
               id: context
               env:
                   ASSET_ROOT: ${{ inputs.asset_root }}
-                  ASSET_MANIFEST: ${{ inputs.asset_manifest }}
+                  ASSET_MANIFEST: ${{ runner.temp }}/nwserver-assets-${{ github.run_id }}-${{ github.run_attempt }}.json
+                  NWN_VERSION: ${{ inputs.version }}
+                  NWN_CHANNEL: ${{ inputs.channel }}
               run: |
+                  docker/scripts/write-asset-manifest.sh \
+                    "$ASSET_ROOT" \
+                    "$ASSET_MANIFEST" \
+                    "$NWN_VERSION" \
+                    "$NWN_CHANNEL"
                   docker/scripts/prepare-context.sh \
                     "$ASSET_ROOT" \
                     "$ASSET_MANIFEST" \
@@ -81,16 +107,18 @@ jobs:
               id: metadata
               uses: docker/metadata-action@v6.0.0
               with:
-                  images: ghcr.io/urothis/nwserver
+                  images: ghcr.io/urothis/nwnrs
                   tags: |
                       type=raw,value=${{ steps.context.outputs.channel }}
                       type=raw,value=${{ steps.context.outputs.version }}-${{ steps.context.outputs.channel }}
-                      type=raw,value=${{ steps.context.outputs.version }},enable=${{ steps.context.outputs.channel == 'stable' }}
+                      type=raw,value=${{ steps.context.outputs.version }}-${{ steps.context.outputs.channel }}-${{ steps.build.outputs.tag_timestamp }}
                   labels: |
-                      org.opencontainers.image.title=nwserver
+                      org.opencontainers.image.title=nwnrs
                       org.opencontainers.image.description=Supervised multi-architecture Neverwinter Nights dedicated server
-                      io.github.urothis.nwserver.asset-manifest.sha256=${{ steps.context.outputs.asset_manifest_sha256 }}
-                      io.github.urothis.nwserver.prepared-manifest.sha256=${{ steps.context.outputs.prepared_manifest_sha256 }}
+                      org.opencontainers.image.created=${{ steps.build.outputs.created }}
+                      org.opencontainers.image.version=${{ steps.context.outputs.version }}-${{ steps.context.outputs.channel }}-${{ steps.build.outputs.tag_timestamp }}
+                      io.github.urothis.nwnrs.asset-manifest.sha256=${{ steps.context.outputs.asset_manifest_sha256 }}
+                      io.github.urothis.nwnrs.prepared-manifest.sha256=${{ steps.context.outputs.prepared_manifest_sha256 }}
 
             - name: Build and push image
               uses: docker/build-push-action@v7.2.0
@@ -103,17 +131,19 @@ jobs:
                   labels: ${{ steps.metadata.outputs.labels }}
                   build-args: |
                       NWN_VERSION=${{ steps.context.outputs.version }}
-                      OCI_CREATED=${{ fromJSON(steps.metadata.outputs.json).labels['org.opencontainers.image.created'] }}
+                      OCI_CREATED=${{ steps.build.outputs.created }}
                       OCI_REVISION=${{ github.sha }}
                       OCI_SOURCE=${{ github.server_url }}/${{ github.repository }}
-                      OCI_VERSION=${{ steps.context.outputs.version }}
+                      OCI_VERSION=${{ steps.context.outputs.version }}-${{ steps.context.outputs.channel }}-${{ steps.build.outputs.tag_timestamp }}
                       ASSET_MANIFEST_SHA256=${{ steps.context.outputs.asset_manifest_sha256 }}
                       PREPARED_MANIFEST_SHA256=${{ steps.context.outputs.prepared_manifest_sha256 }}
-                  cache-from: type=gha,scope=nwserver
-                  cache-to: type=gha,mode=max,scope=nwserver
+                  cache-from: type=gha,scope=nwnrs
+                  cache-to: type=gha,mode=max,scope=nwnrs
                   provenance: mode=max
                   sbom: true
 
             - name: Remove prepared proprietary context
               if: always()
-              run: rm -rf -- docker/data docker/data.lock
+              env:
+                  ASSET_MANIFEST: ${{ runner.temp }}/nwserver-assets-${{ github.run_id }}-${{ github.run_attempt }}.json
+              run: rm -rf -- docker/data docker/data.lock "$ASSET_MANIFEST"

@@ -71,6 +71,10 @@ pub(crate) enum Command {
 #[argh(subcommand, name = "run")]
 /// start an NWN server under nwnrs supervision
 pub(crate) struct RunCmd {
+    #[argh(switch)]
+    /// configure and supervise the bundled server inside its container image
+    pub(crate) container: bool,
+
     #[cfg(feature = "tooling")]
     #[argh(switch)]
     /// start the supervised server image through the local Docker CLI
@@ -111,23 +115,11 @@ pub(crate) struct RunCmd {
 
     #[argh(option)]
     /// native mode: path to the injected runtime dylib or shared object
-    #[cfg(feature = "tooling")]
     pub(crate) runtime: Option<PathBuf>,
 
     #[argh(option)]
     /// native mode: root directory containing exact runtime target packs
-    #[cfg(feature = "tooling")]
     pub(crate) targets: Option<PathBuf>,
-
-    #[cfg(not(feature = "tooling"))]
-    #[argh(option)]
-    /// path to the injected nwnrs runtime dylib or shared object
-    pub(crate) runtime: PathBuf,
-
-    #[cfg(not(feature = "tooling"))]
-    #[argh(option)]
-    /// root directory containing exact runtime target packs
-    pub(crate) targets: PathBuf,
 
     #[argh(option)]
     /// server working directory; defaults to the server binary directory
@@ -999,7 +991,7 @@ mod supervisor_tests {
     use super::{Cli, Command};
 
     #[test]
-    fn parses_run_command_and_preserves_server_arguments() {
+    fn parses_run_command_and_preserves_server_arguments() -> Result<(), String> {
         let cli = Cli::from_args(
             &["nwnrs"],
             &[
@@ -1014,25 +1006,47 @@ mod supervisor_tests {
                 "nwnrs",
             ],
         )
-        .unwrap_or_else(|error| panic!("parse run args: {error:?}"));
+        .map_err(|error| format!("parse run args: {error:?}"))?;
 
         let Command::Run(command) = cli.command;
-        assert_eq!(command.runtime, PathBuf::from("libnwnrs_runtime.so"));
-        assert_eq!(command.targets, PathBuf::from("crates/runtime/targets"));
+        assert_eq!(command.runtime, Some(PathBuf::from("libnwnrs_runtime.so")));
+        assert_eq!(
+            command.targets,
+            Some(PathBuf::from("crates/runtime/targets"))
+        );
+        assert!(!command.container);
         assert_eq!(command.color, super::ColorMode::Auto);
         assert!(!command.no_tail_logs);
         assert_eq!(
             command.arguments,
             vec!["/opt/nwn/nwserver", "-module", "nwnrs"]
         );
+        Ok(())
     }
 
     #[test]
-    fn rejects_docker_mode_in_supervisor_only_build() {
+    fn rejects_docker_mode_in_supervisor_only_build() -> Result<(), String> {
         let result = Cli::from_args(&["nwnrs"], &["run", "--docker"]);
-        let Err(error) = result else {
-            panic!("supervisor-only build unexpectedly accepted --docker");
-        };
+        let error = result
+            .err()
+            .ok_or_else(|| "supervisor-only build unexpectedly accepted --docker".to_string())?;
         assert!(error.output.contains("--docker"));
+        Ok(())
+    }
+
+    #[test]
+    fn parses_container_mode_without_native_paths() -> Result<(), String> {
+        let cli = Cli::from_args(
+            &["nwnrs"],
+            &["run", "--container", "--", "-module", "custom"],
+        )
+        .map_err(|error| format!("parse container args: {error:?}"))?;
+
+        let Command::Run(command) = cli.command;
+        assert!(command.container);
+        assert_eq!(command.runtime, None);
+        assert_eq!(command.targets, None);
+        assert_eq!(command.arguments, vec!["-module", "custom"]);
+        Ok(())
     }
 }
