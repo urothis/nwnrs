@@ -17,8 +17,8 @@ but owns the language pipeline itself.
 
 - `source` and `preprocess`: source loading and include handling
 - `lexer`, `token`, and `parser`: tokenization and syntax construction
-- `ast`, `hir`, `sema`, and `ir`: progressively richer semantic and lowered
-  program forms
+- `ast`, `sema`, and `hir`: syntax, semantic analysis, and the lowered program
+  form consumed directly by code generation
 - `opt` and `codegen`: optimization and NCS emission
 - `ncs`, `ndb`, and `nwasm`: binary artifact support plus text asm and disasm
 - `vm`: lightweight bytecode execution and action-command test harness
@@ -93,7 +93,14 @@ but owns the language pipeline itself.
 - `AssignmentOp`
 - `VarDeclarator`
 - `MagicLiteral`
+- `Literal`
 - `NamedItem`
+- `ScriptString`
+
+`ScriptString` stores the exact bytes carried by source literals, NCS
+constants, folded expressions, and VM string values. It deliberately does not
+select UTF-8 or a legacy code page; callers can request UTF-8 with
+`ScriptString::as_str` when their boundary requires text.
 
 ### Semantic and lowered representations
 
@@ -129,20 +136,9 @@ but owns the language pipeline itself.
 - `HirReturnStmt`
 - `HirSwitchStmt`
 - `HirLowerError`
-- `IrModule`
-- `IrFunction`
-- `IrBlock`
-- `IrBlockId`
-- `IrInstruction`
-- `IrTerminator`
-- `IrValueId`
-- `IrLocalId`
-- `IrGlobal`
-- `IrLowerError`
 - `analyze_script`
 - `analyze_script_with_options`
 - `lower_to_hir`
-- `lower_hir_to_ir`
 
 ### Builtins and language specification
 
@@ -154,6 +150,8 @@ but owns the language pipeline itself.
 - `BuiltinConstant`
 - `BuiltinValue`
 - `DEFAULT_LANGSPEC_SCRIPT_NAME`
+- `NW_SCRIPT_BINARY_RES_TYPE`
+- `NW_SCRIPT_DEBUG_RES_TYPE`
 - `NW_SCRIPT_SOURCE_RES_TYPE`
 - `load_langspec`
 - `parse_langspec`
@@ -167,11 +165,23 @@ but owns the language pipeline itself.
 - `CompileError`
 - `CodegenError`
 - `CompilerErrorCode`
+- `MAX_COMPILER_IDENTIFIERS`
+- `MAX_COMPILER_RUNTIME_CELLS`
+- `OptimizationFlag`
+- `OptimizationFlags`
 - `OptimizationLevel`
 - `compile_script`
 - `compile_script_with_source_map`
 - `compile_source_bundle`
 - `compile_hir_to_ncs`
+
+The three native optimization passes can be selected independently with
+`OptimizationFlags`. The `OptimizationLevel` convenience presets map O1 to
+unreachable-function removal, O2 additionally to constant dead-branch
+removal, and O3 additionally to instruction melding. When a source map is
+supplied, every flag combination emits matching NDB metadata.
+Compiler-limit failures expose their upstream-aligned code through
+`CodegenError::code`.
 
 ### Artifacts: `NCS`, `NDB`, and asm
 
@@ -225,12 +235,22 @@ but owns the language pipeline itself.
 - `compile_file_with_host`
 - `FileSystemScriptResolver`
 - `DirectoryCompilerHost`
+- `SharedScriptResolver`
 - `BatchCompileOptions`
 - `BatchCompileEntry`
 - `BatchCompileStatus`
 - `BatchCompileReport`
 - `BatchCompileError`
+- `GraphvizOutputFormat`
+- `format_source_aware_driver_error`
 - `compile_paths`
+
+`compile_paths` accepts files and directory trees, preserves relative output
+paths, supports bounded parallel workers, validates output collisions before
+writing, and can consult a shared fallback resolver after local source roots.
+This is the same public batch path consumed by the `nwnrs compile` command.
+Graphviz output can remain DOT source or be rendered through the `dot`
+executable as SVG, PNG, or PDF while preserving the same directory hierarchy.
 
 ### Graphviz
 
@@ -255,14 +275,16 @@ but owns the language pipeline itself.
 - `VmError`
 - `VmSourceLocation`
 
-For compiled scripts that include user-function calls, prefer the `NDB`-backed
-execution path (`VmScript::from_bytes_with_ndb`, `Vm::run_bytes_with_ndb`, or
-`Vm::run_function_bytes`) so the VM can recover callee stack layouts. The
-direct named-function runner also boots global initializers automatically for
+Normal compiled scripts use the native callee-clean function ABI and run
+without `NDB` metadata. The direct named-function runner uses `NDB` to locate
+the requested function and describe its arguments and return value; it also
+boots global initializers automatically for
 `main()` and `StartingConditional()` entry loaders. The debugger-oriented VM
 surface also supports single-step execution plus `step_over`, `step_out`,
 `run_until_offset`, `run_until_function`, and `run_until_line` when attached
-`NDB` metadata is available.
+`NDB` metadata is available. `VmRunOptions` can bound instructions, recursion,
+and stack cells; budget failures and division by zero map back to the matching
+native `CompilerErrorCode` through `VmError::code()`.
 
 ## VM Spec
 
@@ -293,12 +315,11 @@ host-driven execution. This section documents the behavior implemented in
   instruction a stable byte offset.
 - Relative branches and call targets are resolved from the current
   instruction's byte offset.
-- `VmScript::attach_ndb` adds function ranges, source line mappings, and
-  callee stack-shape metadata.
-- Compiled scripts that use user-function calls should normally execute
-  through one of the `*_with_ndb` entry points. `JSR` works without `NDB`, but
-  the VM cannot recover callee argument and return widths for call-frame
-  cleanup.
+- `VmScript::attach_ndb` adds function ranges and source line mappings. NDB
+  file-relative offsets are normalized to code-section-relative VM offsets at
+  this boundary.
+- Compiled user functions follow the native callee-clean ABI, so ordinary
+  execution does not require NDB metadata.
 
 ### Stack And Frame Conventions
 
@@ -317,9 +338,9 @@ host-driven execution. This section documents the behavior implemented in
   `+1` or `-1`.
 - `DESTRUCT` removes part of a struct-shaped stack region and compacts the
   surviving cells down.
-- `RET` pops one return frame. When `NDB` metadata supplied a callee shape for
-  the matching `JSR`, the VM drops argument cells and preserves only the
-  return-value prefix.
+- `RET` pops one return frame. Compiler-emitted `MOVSP` instructions remove
+  parameters and locals before `RET`, preserving any caller-allocated return
+  slot.
 
 ### Instruction Semantics
 
@@ -334,14 +355,15 @@ host-driven execution. This section documents the behavior implemented in
 
 Unsupported auxcodes, invalid operand type combinations, and unimplemented
 behavior return `VmError::Unsupported` rather than silently approximating
-native behavior. Division or modulus by zero currently also reports
-`VmError::Unsupported`.
+native behavior. Division or modulus by zero reports `VmError::DivideByZero`
+with the native `VmDivideByZero` diagnostic mapping.
 
 ### Runtime Values
 
 - `int` values are `i32`.
 - `float` values are `f32`.
-- `string` values are decoded as UTF-8 from `CONST` payloads.
+- `string` values preserve the exact bytes from `CONST` payloads in
+  `ScriptString`.
 - `object` values are opaque `u32` ids.
 - Engine-structure defaults come from `Vm::define_engine_structure`, falling
   back to zeroed words for most indices and empty text for index `7`.
@@ -376,9 +398,8 @@ native behavior. Division or modulus by zero currently also reports
   loader (`main` or `StartingConditional`) until the loader's first
   instruction is patched to `RET`, then it keeps only the initialized globals
   frame.
-- Direct calls currently support `int`, `float`, `string`, `object`, and
-  engine-structure arguments and return values.
-- Struct-valued direct-call arguments and returns are rejected during setup.
+- Direct calls support scalar, object, string, engine-structure, and recursively
+  represented `VmValue::Struct` arguments and return values.
 
 ### Debugger Surface
 
@@ -403,9 +424,40 @@ native behavior. Division or modulus by zero currently also reports
 - the crate intentionally exposes multiple representations instead of
   pretending parsing and compilation are one stage
 - `LangSpec` is part of normal compilation, not an optional afterthought
-- HIR and IR are real public control points
+- HIR is the lowered public control point consumed by code generation
 - `nwasm` is both an artifact boundary and a debugging surface
 - source loading and include handling are operationally significant
+- focused installation-backed tests compare compilation and runtime behavior
+  against matching shipped source and bytecode
+
+## Reference Compiler Parity Audit
+
+On 2026-07-17, every unique NSS resource exposed by the standard NWN
+installation resource manager was compiled independently with both the current
+reference C++ compiler used by `neverwinter.nim` and this Rust compiler at O1.
+The installation contained 4,144 unique NSS resources. The reference compiler
+accepted 4,000 of them, and all 4,000 Rust NCS outputs were byte-for-byte
+identical to the corresponding reference-compiler outputs.
+
+The remaining 144 resources were exempt from byte comparison because the
+reference compiler did not produce NCS output for them:
+
+- 92 returned `-623` because they are include or library sources without a
+  `main()` or `StartingConditional()` entrypoint.
+- 25 returned `-582` for declarations without a type.
+- 15 returned `-622` for undefined identifiers.
+- 7 returned `-566` for an unknown compiler state in malformed legacy input.
+- 1 returned `-6804` for a case label jumping over a declaration.
+- 1 returned `-617` for a function definition/implementation mismatch.
+- 1 returned `-603` for a missing included file.
+- 1 returned `-567` for an invalid declaration type; this is `nwscript.nss`,
+  the compiler language specification rather than an executable script.
+- 1 returned `-565` while parsing a malformed variable list.
+
+These are reference-compiler rejections, not Rust-only exclusions. With no
+reference NCS bytes, they cannot participate in a byte-equality comparison.
+The exhaustive audit is recorded here as validation evidence; it is not kept as
+an integration test or coupled to the untracked reference source tree.
 
 ## See also
 
@@ -417,6 +469,6 @@ native behavior. Division or modulus by zero currently also reports
 
 ## Why This Crate Exists
 
-The point of `nwnrs-types` is to make the language subsystem inspectable and
-operable at every meaningful stage, from raw source bundle through lowered IR
+The point of `nwnrs-nwscript` is to make the language subsystem inspectable and
+operable at every meaningful stage, from raw source bundle through lowered HIR
 and into bytecode and debug artifacts.

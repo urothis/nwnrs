@@ -409,6 +409,7 @@ mod tests {
             langspec:            None,
             include_dir:         Vec::new(),
             optimization:        crate::compile::DEFAULT_OPTIMIZATION.to_string(),
+            optimization_flag:   Vec::new(),
             jobs:                None,
             data_version:        "V1".to_string(),
             data_compression:    "none".to_string(),

@@ -180,7 +180,7 @@ pub enum CompilerErrorCode {
     UnterminatedStringConstant = -4855,
     /// The script did not define the conditional entry function.
     NoFunctionIntscInScript = -5182,
-    /// The conditional entry function must return `void`.
+    /// The conditional entry function must return `int`.
     FunctionIntscMustHaveVoidReturnValue = -5183,
     /// The conditional entry function must not take parameters.
     FunctionIntscMustHaveNoParameters = -5184,

@@ -1,8 +1,8 @@
-use std::{collections::HashMap, error::Error, fmt, str};
+use std::{collections::HashMap, error::Error, fmt};
 
 use crate::{
-    CompilerErrorCode, NcsAuxCode, NcsInstruction, NcsOpcode, NcsReadError, Ndb, NdbFunction,
-    NdbType, decode_ncs_instructions,
+    CompilerErrorCode, NCS_BINARY_HEADER_SIZE, NcsAuxCode, NcsInstruction, NcsOpcode, NcsReadError,
+    Ndb, NdbFunction, NdbType, ScriptString, decode_ncs_instructions,
 };
 
 /// One opaque object id visible to the VM runtime.
@@ -24,8 +24,8 @@ pub enum VmValue {
     Int(i32),
     /// Floating-point value.
     Float(f32),
-    /// UTF-8 string value.
-    String(String),
+    /// Encoding-neutral NWScript string value.
+    String(ScriptString),
     /// Object id value.
     Object(VmObjectId),
     /// One opaque engine-structure value.
@@ -35,6 +35,8 @@ pub enum VmValue {
         /// Runtime payload.
         value: VmEngineStructureValue,
     },
+    /// One user-defined structure represented by its declared field values.
+    Struct(Vec<VmValue>),
 }
 
 impl VmValue {
@@ -49,6 +51,7 @@ impl VmValue {
             Self::EngineStructure {
                 ..
             } => "engine structure",
+            Self::Struct(_) => "struct",
         }
     }
 }
@@ -140,6 +143,25 @@ pub enum VmError {
         /// Maximum instruction count allowed for the run.
         limit:  usize,
     },
+    /// One VM run exceeded the configured call-depth budget.
+    RecursionLimitExceeded {
+        /// Current return-frame depth.
+        depth: usize,
+        /// Maximum permitted return-frame depth.
+        limit: usize,
+    },
+    /// One VM run exceeded the configured runtime-stack budget.
+    StackLimitExceeded {
+        /// Current runtime stack size in cells.
+        cells: usize,
+        /// Maximum permitted runtime stack size in cells.
+        limit: usize,
+    },
+    /// An arithmetic instruction attempted division or modulus by zero.
+    DivideByZero {
+        /// Byte offset of the failing instruction.
+        offset: usize,
+    },
 }
 
 impl VmError {
@@ -179,7 +201,16 @@ impl VmError {
             } => None,
             Self::InstructionLimitExceeded {
                 ..
-            } => None,
+            } => Some(CompilerErrorCode::VmTooManyInstructions),
+            Self::RecursionLimitExceeded {
+                ..
+            } => Some(CompilerErrorCode::VmTooManyLevelsOfRecursion),
+            Self::StackLimitExceeded {
+                ..
+            } => Some(CompilerErrorCode::VmStackOverflow),
+            Self::DivideByZero {
+                ..
+            } => Some(CompilerErrorCode::VmDivideByZero),
         }
     }
 }
@@ -251,6 +282,17 @@ impl fmt::Display for VmError {
                 "VM instruction limit of {} exceeded before byte {}",
                 limit, offset
             ),
+            Self::RecursionLimitExceeded {
+                depth,
+                limit,
+            } => write!(f, "VM recursion depth {depth} exceeds limit {limit}"),
+            Self::StackLimitExceeded {
+                cells,
+                limit,
+            } => write!(f, "VM stack size {cells} exceeds limit {limit}"),
+            Self::DivideByZero {
+                offset,
+            } => write!(f, "VM division by zero at byte {offset}"),
         }
     }
 }
@@ -284,12 +326,6 @@ struct VmProgramInstruction {
     instruction: NcsInstruction,
 }
 
-#[derive(Debug, Clone, Copy)]
-struct VmFunctionShape {
-    arg_cells:    usize,
-    return_cells: usize,
-}
-
 #[derive(Debug, Clone)]
 struct VmFunctionDebug {
     label: String,
@@ -307,22 +343,14 @@ struct VmSourceLineDebug {
 }
 
 #[derive(Debug, Clone, Copy)]
-struct VmCallCleanup {
-    arg_cells:    usize,
-    return_cells: usize,
-}
-
-#[derive(Debug, Clone, Copy)]
 struct VmReturnFrame {
-    target:  usize,
-    cleanup: Option<VmCallCleanup>,
+    target: usize,
 }
 
 #[derive(Debug, Clone)]
 struct VmProgram {
     instructions:     Vec<VmProgramInstruction>,
     offsets_to_index: HashMap<usize, usize>,
-    function_shapes:  HashMap<usize, VmFunctionShape>,
     functions:        Vec<VmFunctionDebug>,
     source_lines:     Vec<VmSourceLineDebug>,
 }
@@ -349,7 +377,6 @@ impl VmProgram {
         Self {
             instructions: decoded,
             offsets_to_index,
-            function_shapes: HashMap::new(),
             functions: Vec::new(),
             source_lines: Vec::new(),
         }
@@ -362,38 +389,17 @@ impl VmProgram {
     }
 
     fn attach_ndb(&mut self, ndb: &Ndb) -> Result<(), VmError> {
-        self.function_shapes.clear();
         self.functions.clear();
         self.source_lines.clear();
         for function in &ndb.functions {
-            let start =
-                usize::try_from(function.binary_start).map_err(|_error| VmError::Setup {
-                    message: format!(
-                        "function {:?} start offset exceeds usize range",
-                        function.label
-                    ),
-                })?;
-            let end = usize::try_from(function.binary_end).map_err(|_error| VmError::Setup {
-                message: format!(
-                    "function {:?} end offset exceeds usize range",
-                    function.label
-                ),
-            })?;
-            self.function_shapes.insert(
-                start,
-                VmFunctionShape {
-                    arg_cells:    function
-                        .args
-                        .iter()
-                        .map(cells_for_ndb_type)
-                        .try_fold(0usize, |total, cells| cells.map(|cells| total + cells))?,
-                    return_cells: if function.return_type == NdbType::Void {
-                        0
-                    } else {
-                        cells_for_ndb_type(&function.return_type)?
-                    },
-                },
-            );
+            let start = ndb_code_offset(
+                function.binary_start,
+                &format!("function {:?} start", function.label),
+            )?;
+            let end = ndb_code_offset(
+                function.binary_end,
+                &format!("function {:?} end", function.label),
+            )?;
             self.functions.push(VmFunctionDebug {
                 label: function.label.to_string(),
                 start,
@@ -401,18 +407,14 @@ impl VmProgram {
             });
         }
         for line in &ndb.lines {
-            let start = usize::try_from(line.binary_start).map_err(|_error| VmError::Setup {
-                message: format!(
-                    "line mapping {}:{} start offset exceeds usize range",
-                    line.file_num, line.line_num
-                ),
-            })?;
-            let end = usize::try_from(line.binary_end).map_err(|_error| VmError::Setup {
-                message: format!(
-                    "line mapping {}:{} end offset exceeds usize range",
-                    line.file_num, line.line_num
-                ),
-            })?;
+            let start = ndb_code_offset(
+                line.binary_start,
+                &format!("line mapping {}:{} start", line.file_num, line.line_num),
+            )?;
+            let end = ndb_code_offset(
+                line.binary_end,
+                &format!("line mapping {}:{} end", line.file_num, line.line_num),
+            )?;
             let file = ndb.files.get(line.file_num).ok_or_else(|| VmError::Setup {
                 message: format!(
                     "line mapping {}:{} references missing file index {}",
@@ -449,6 +451,15 @@ fn contains_debug_offset(offset: usize, start: usize, end: usize) -> bool {
     } else {
         (start..end).contains(&offset)
     }
+}
+
+fn ndb_code_offset(offset: u32, description: &str) -> Result<usize, VmError> {
+    usize::try_from(offset)
+        .ok()
+        .and_then(|offset| offset.checked_sub(NCS_BINARY_HEADER_SIZE))
+        .ok_or_else(|| VmError::Setup {
+            message: format!("{description} offset {offset} is before the NCS code section"),
+        })
 }
 
 /// One debugger-visible source location derived from attached `NDB` metadata.
@@ -598,13 +609,11 @@ impl VmScript {
         }
     }
 
-    /// Attaches one `NDB` debug table so the VM can recover user-function frame
-    /// shapes.
+    /// Attaches one `NDB` debug table for function and source-line debugging.
     ///
     /// # Errors
     ///
-    /// Returns [`VmError`] if one function record uses unsupported stack
-    /// metadata.
+    /// Returns [`VmError`] if one debug record contains an invalid code offset.
     pub fn attach_ndb(&mut self, ndb: &Ndb) -> Result<(), VmError> {
         self.program.attach_ndb(ndb)
     }
@@ -802,28 +811,14 @@ impl VmScript {
             })?;
         expect_argument_count(function, args.len())?;
 
-        self.ip = usize::try_from(function.binary_start).map_err(|_error| VmError::Setup {
-            message: format!("function {name:?} start offset exceeds usize range"),
-        })?;
+        self.ip = ndb_code_offset(function.binary_start, &format!("function {name:?} start"))?;
         let preserved_sp = self.sp;
         let preserved_bp = self.bp;
         self.sp = preserved_sp;
         self.bp = preserved_bp;
         self.ret.clear();
         self.ret.push(VmReturnFrame {
-            target:  usize::MAX,
-            cleanup: Some(VmCallCleanup {
-                arg_cells:    function
-                    .args
-                    .iter()
-                    .map(cells_for_ndb_type)
-                    .try_fold(0usize, |total, cells| cells.map(|cells| total + cells))?,
-                return_cells: if function.return_type == NdbType::Void {
-                    0
-                } else {
-                    cells_for_ndb_type(&function.return_type)?
-                },
-            }),
+            target: usize::MAX
         });
         self.save_ip = 0;
         self.save_sp = 0;
@@ -837,17 +832,20 @@ impl VmScript {
             self.bp = 0;
         }
         if function.return_type != NdbType::Void {
-            self.push(default_value_for_ndb_type(&function.return_type)?);
+            for value in default_values_for_ndb_type(ndb, &function.return_type)? {
+                self.push(value);
+            }
         }
         for (expected, actual) in function.args.iter().zip(args) {
-            validate_entry_argument(expected, actual)?;
-            self.push(actual.clone());
+            for value in flatten_entry_argument(ndb, expected, actual)? {
+                self.push(value);
+            }
         }
         Ok(())
     }
 
-    /// Reads one scalar/object/string/engine-structure return value after a
-    /// direct function call.
+    /// Reads one return value, including recursively represented structures,
+    /// after a direct function call.
     ///
     /// # Errors
     ///
@@ -864,14 +862,21 @@ impl VmScript {
         if function.return_type == NdbType::Void {
             return Ok(None);
         }
-        validate_supported_ndb_value_type(&function.return_type, "return type", None)?;
-        self.stack
-            .last()
-            .cloned()
+        let width = cells_for_ndb_type(ndb, &function.return_type)?;
+        let start = self
+            .sp
+            .checked_sub(width)
             .ok_or_else(|| VmError::StackUnderflow {
                 message: format!("function {name:?} return slot is missing"),
-            })
-            .map(Some)
+            })?;
+        let cells = self
+            .stack
+            .get(start..self.sp)
+            .ok_or_else(|| VmError::StackUnderflow {
+                message: format!("function {name:?} return slot is incomplete"),
+            })?;
+        let mut cells = cells.iter();
+        inflate_ndb_value(ndb, &function.return_type, &mut cells).map(Some)
     }
 
     /// Requests that this script abort once control returns to the VM
@@ -903,7 +908,7 @@ impl VmScript {
     }
 
     /// Pushes one string value.
-    pub fn push_string(&mut self, value: impl Into<String>) {
+    pub fn push_string(&mut self, value: impl Into<ScriptString>) {
         self.push(VmValue::String(value.into()));
     }
 
@@ -979,7 +984,7 @@ impl VmScript {
     /// # Errors
     ///
     /// Returns [`VmError`] if the stack top is not a string.
-    pub fn pop_string(&mut self) -> Result<String, VmError> {
+    pub fn pop_string(&mut self) -> Result<ScriptString, VmError> {
         match self.pop()? {
             VmValue::String(value) => Ok(value),
             other => Err(VmError::TypeMismatch {
@@ -1119,7 +1124,11 @@ pub type VmTraceHook = dyn Fn(&VmScript, &VmTraceEvent) + 'static;
 pub struct VmRunOptions {
     /// Maximum number of instructions that may execute before the VM aborts
     /// with an error.
-    pub max_instructions: Option<usize>,
+    pub max_instructions:    Option<usize>,
+    /// Maximum number of active return frames.
+    pub max_recursion_depth: Option<usize>,
+    /// Maximum runtime stack size in 32-bit cells.
+    pub max_stack_cells:     Option<usize>,
 }
 
 /// One result returned after executing exactly one instruction.
@@ -1259,8 +1268,7 @@ impl Vm {
 
         if script.ret.is_empty() {
             script.ret.push(VmReturnFrame {
-                target:  HALT_IP,
-                cleanup: None,
+                target: HALT_IP
             });
         }
 
@@ -1288,16 +1296,7 @@ impl Vm {
             NcsOpcode::Jsr => {
                 let target = jump_target(decoded.offset, read_i32(&decoded, 0)?)?;
                 script.ret.push(VmReturnFrame {
-                    target:  next_ip,
-                    cleanup: script
-                        .program
-                        .function_shapes
-                        .get(&target)
-                        .copied()
-                        .map(|shape| VmCallCleanup {
-                            arg_cells:    shape.arg_cells,
-                            return_cells: shape.return_cells,
-                        }),
+                    target: next_ip
                 });
                 script.ip = target;
             }
@@ -1319,9 +1318,6 @@ impl Vm {
                 let frame = script.ret.pop().ok_or_else(|| VmError::StackUnderflow {
                     message: "attempted to return without a return frame".to_string(),
                 })?;
-                if let Some(cleanup) = frame.cleanup {
-                    cleanup_call_frame(script, cleanup)?;
-                }
                 if frame.target == HALT_IP {
                     return Ok(VmStepOutcome::Halted);
                 }
@@ -1547,7 +1543,9 @@ impl Vm {
                 let rhs = script.pop_int()?;
                 let lhs = script.pop_int()?;
                 if rhs == 0 {
-                    return unsupported(&decoded, "modulus by zero");
+                    return Err(VmError::DivideByZero {
+                        offset: decoded.offset,
+                    });
                 }
                 script.push_int(lhs % rhs);
                 script.ip = next_ip;
@@ -1628,6 +1626,7 @@ impl Vm {
             if script.ip == offset {
                 return Ok(VmStepOutcome::Running);
             }
+            check_run_limits(script, options)?;
             if let Some(limit) = options.max_instructions
                 && instructions_executed >= limit
             {
@@ -1670,6 +1669,7 @@ impl Vm {
 
         let return_offset = script.ip + instruction.encoded_len();
         let depth = script.ret.len();
+        check_run_limits(script, options)?;
         match self.step(script)? {
             VmStepOutcome::Running => {}
             outcome => return Ok(outcome),
@@ -1680,6 +1680,7 @@ impl Vm {
             if script.ip == return_offset && script.ret.len() == depth {
                 return Ok(VmStepOutcome::Running);
             }
+            check_run_limits(script, options)?;
             if let Some(limit) = options.max_instructions
                 && instructions_executed >= limit
             {
@@ -1713,6 +1714,7 @@ impl Vm {
         let depth = script.ret.len();
         let mut instructions_executed = 0usize;
         loop {
+            check_run_limits(script, options)?;
             if let Some(limit) = options.max_instructions
                 && instructions_executed >= limit
             {
@@ -1807,6 +1809,7 @@ impl Vm {
         let mut instructions_executed = 0usize;
 
         loop {
+            check_run_limits(script, options)?;
             if let Some(limit) = options.max_instructions
                 && instructions_executed >= limit
             {
@@ -1879,9 +1882,8 @@ impl Vm {
     /// Decodes one script, attaches one `NDB` table, runs it, and returns the
     /// finished runtime state.
     ///
-    /// This is the recommended path for compiled scripts that contain
-    /// user-function calls, because the VM uses `NDB` metadata to recover
-    /// callee stack shapes.
+    /// Normal user-function calls do not require `NDB`; this variant adds
+    /// function names and source locations for debugger operations.
     ///
     /// # Errors
     ///
@@ -2018,9 +2020,10 @@ impl Vm {
             .ok_or_else(|| VmError::Setup {
                 message: format!("missing NDB entry for {entry_name:?}"),
             })?;
-        let entry_start = usize::try_from(entry.binary_start).map_err(|_error| VmError::Setup {
-            message: format!("entry function {entry_name:?} start offset exceeds usize range"),
-        })?;
+        let entry_start = ndb_code_offset(
+            entry.binary_start,
+            &format!("entry function {entry_name:?} start"),
+        )?;
 
         let mut bootstrap =
             VmScript::from_instructions(Vec::new(), format!("{}#bootstrap", script.label));
@@ -2036,6 +2039,34 @@ impl Vm {
             });
         };
         instruction.instruction = NcsInstruction {
+            opcode:  NcsOpcode::Ret,
+            auxcode: NcsAuxCode::None,
+            extra:   Vec::new(),
+        };
+        let global_cleanup = bootstrap
+            .program
+            .instructions
+            .windows(2)
+            .position(|window| {
+                let [restore, cleanup] = window else {
+                    return false;
+                };
+                restore.offset < entry_start
+                    && restore.instruction.opcode == NcsOpcode::RestoreBasePointer
+                    && cleanup.instruction.opcode == NcsOpcode::ModifyStackPointer
+            })
+            .map(|index| index + 1)
+            .ok_or_else(|| VmError::Setup {
+                message: "global loader is missing its post-entry stack cleanup".to_string(),
+            })?;
+        let cleanup = bootstrap
+            .program
+            .instructions
+            .get_mut(global_cleanup)
+            .ok_or_else(|| VmError::Setup {
+                message: "global loader cleanup index is out of bounds".to_string(),
+            })?;
+        cleanup.instruction = NcsInstruction {
             opcode:  NcsOpcode::Ret,
             auxcode: NcsAuxCode::None,
             extra:   Vec::new(),
@@ -2112,7 +2143,7 @@ fn global_stack_cells(ndb: &Ndb) -> Result<usize, VmError> {
                         variable.label
                     ),
                 })?;
-            let width = cells_for_ndb_type(&variable.ty)?;
+            let width = cells_for_ndb_type(ndb, &variable.ty)?;
             Ok(cells.max(start + width))
         })
 }
@@ -2125,7 +2156,7 @@ fn loader_prefix_cells(ndb: &Ndb) -> Result<usize, VmError> {
     else {
         return Ok(0);
     };
-    cells_for_ndb_type(&retval.ty)
+    cells_for_ndb_type(ndb, &retval.ty)
 }
 
 fn expect_argument_count(function: &NdbFunction, actual: usize) -> Result<(), VmError> {
@@ -2142,48 +2173,45 @@ fn expect_argument_count(function: &NdbFunction, actual: usize) -> Result<(), Vm
     Ok(())
 }
 
-fn validate_supported_ndb_value_type(
-    ty: &NdbType,
-    role: &str,
-    index: Option<usize>,
-) -> Result<(), VmError> {
-    match ty {
-        NdbType::Float
-        | NdbType::Int
-        | NdbType::Void
-        | NdbType::Object
-        | NdbType::String
-        | NdbType::EngineStructure(_) => Ok(()),
-        NdbType::Struct(struct_index) => Err(VmError::Setup {
-            message: match index {
-                Some(index) => format!(
-                    "unsupported direct-call {role} at position {index}: struct t{struct_index:04}"
-                ),
-                None => format!("unsupported direct-call {role}: struct t{struct_index:04}"),
-            },
-        }),
-        NdbType::Unknown | NdbType::Raw(_) => Err(VmError::Setup {
-            message: match index {
-                Some(index) => format!("unsupported direct-call {role} at position {index}: {ty}"),
-                None => format!("unsupported direct-call {role}: {ty}"),
-            },
-        }),
-    }
-}
-
-fn validate_entry_argument(expected: &NdbType, actual: &VmValue) -> Result<(), VmError> {
-    validate_supported_ndb_value_type(expected, "argument type", None)?;
+fn flatten_entry_argument(
+    ndb: &Ndb,
+    expected: &NdbType,
+    actual: &VmValue,
+) -> Result<Vec<VmValue>, VmError> {
     match (expected, actual) {
         (NdbType::Int, VmValue::Int(_))
         | (NdbType::Float, VmValue::Float(_))
         | (NdbType::String, VmValue::String(_))
-        | (NdbType::Object, VmValue::Object(_)) => Ok(()),
+        | (NdbType::Object, VmValue::Object(_)) => Ok(vec![actual.clone()]),
         (
             NdbType::EngineStructure(expected),
             VmValue::EngineStructure {
                 index, ..
             },
-        ) if expected == index => Ok(()),
+        ) if expected == index => Ok(vec![actual.clone()]),
+        (NdbType::Struct(struct_index), VmValue::Struct(values)) => {
+            let structure = ndb
+                .structs
+                .get(*struct_index)
+                .ok_or_else(|| VmError::Setup {
+                    message: format!("NDB references missing structure t{struct_index:04}"),
+                })?;
+            if structure.fields.len() != values.len() {
+                return Err(VmError::Setup {
+                    message: format!(
+                        "struct {} expects {} fields, got {}",
+                        structure.label,
+                        structure.fields.len(),
+                        values.len()
+                    ),
+                });
+            }
+            let mut flattened = Vec::new();
+            for (field, value) in structure.fields.iter().zip(values) {
+                flattened.extend(flatten_entry_argument(ndb, &field.ty, value)?);
+            }
+            Ok(flattened)
+        }
         _ => Err(VmError::Setup {
             message: format!(
                 "argument type mismatch: expected {}, got {}",
@@ -2194,24 +2222,69 @@ fn validate_entry_argument(expected: &NdbType, actual: &VmValue) -> Result<(), V
     }
 }
 
-fn default_value_for_ndb_type(ty: &NdbType) -> Result<VmValue, VmError> {
-    validate_supported_ndb_value_type(ty, "return type", None)?;
+fn default_values_for_ndb_type(ndb: &Ndb, ty: &NdbType) -> Result<Vec<VmValue>, VmError> {
     Ok(match ty {
-        NdbType::Float => VmValue::Float(0.0),
-        NdbType::Int => VmValue::Int(0),
+        NdbType::Float => vec![VmValue::Float(0.0)],
+        NdbType::Int => vec![VmValue::Int(0)],
         NdbType::Void => {
             return Err(VmError::Setup {
                 message: "void return slots are not materialized".to_string(),
             });
         }
-        NdbType::Object => VmValue::Object(0),
-        NdbType::String => VmValue::String(String::new()),
-        NdbType::EngineStructure(index) => VmValue::EngineStructure {
+        NdbType::Object => vec![VmValue::Object(0)],
+        NdbType::String => vec![VmValue::String(ScriptString::default())],
+        NdbType::EngineStructure(index) => vec![VmValue::EngineStructure {
             index: *index,
             value: default_engine_structure_value(*index),
-        },
-        NdbType::Struct(_) | NdbType::Unknown | NdbType::Raw(_) => unreachable!(),
+        }],
+        NdbType::Struct(struct_index) => {
+            let structure = ndb
+                .structs
+                .get(*struct_index)
+                .ok_or_else(|| VmError::Setup {
+                    message: format!("NDB references missing structure t{struct_index:04}"),
+                })?;
+            let mut values = Vec::new();
+            for field in &structure.fields {
+                values.extend(default_values_for_ndb_type(ndb, &field.ty)?);
+            }
+            values
+        }
+        NdbType::Unknown | NdbType::Raw(_) => {
+            return Err(VmError::Setup {
+                message: format!("unsupported NDB runtime type {ty}"),
+            });
+        }
     })
+}
+
+fn inflate_ndb_value<'a>(
+    ndb: &Ndb,
+    ty: &NdbType,
+    cells: &mut impl Iterator<Item = &'a VmValue>,
+) -> Result<VmValue, VmError> {
+    if let NdbType::Struct(struct_index) = ty {
+        let structure = ndb
+            .structs
+            .get(*struct_index)
+            .ok_or_else(|| VmError::Setup {
+                message: format!("NDB references missing structure t{struct_index:04}"),
+            })?;
+        let mut values = Vec::with_capacity(structure.fields.len());
+        for field in &structure.fields {
+            values.push(inflate_ndb_value(ndb, &field.ty, cells)?);
+        }
+        return Ok(VmValue::Struct(values));
+    }
+
+    let value = cells
+        .next()
+        .cloned()
+        .ok_or_else(|| VmError::StackUnderflow {
+            message: format!("missing runtime cell for NDB type {ty}"),
+        })?;
+    flatten_entry_argument(ndb, ty, &value)?;
+    Ok(value)
 }
 
 fn read_u8(decoded: &VmProgramInstruction, start: usize) -> Result<u8, VmError> {
@@ -2260,17 +2333,22 @@ fn read_f32(decoded: &VmProgramInstruction, start: usize) -> Result<f32, VmError
     Ok(f32::from_bits(read_u32(decoded, start)?))
 }
 
-fn read_ncs_string(decoded: &VmProgramInstruction) -> Result<String, VmError> {
+fn read_ncs_string(decoded: &VmProgramInstruction) -> Result<ScriptString, VmError> {
     let length = usize::from(read_u16(decoded, 0)?);
     let window = decoded
         .instruction
         .extra
         .get(2..2 + length)
         .ok_or_else(|| invalid_extra(decoded, "string payload shorter than declared length"))?;
-    let value = str::from_utf8(window).map_err(|error| {
-        invalid_extra(decoded, &format!("invalid UTF-8 string payload: {error}"))
-    })?;
-    Ok(value.to_string())
+    Ok(ScriptString::new(window.to_vec()))
+}
+
+fn read_ncs_text(decoded: &VmProgramInstruction) -> Result<String, VmError> {
+    let value = read_ncs_string(decoded)?;
+    value
+        .as_str()
+        .map(str::to_owned)
+        .map_err(|error| invalid_extra(decoded, &format!("invalid UTF-8 text payload: {error}")))
 }
 
 fn relative_stack_cell(
@@ -2372,7 +2450,7 @@ fn consume_abort_request(script: &mut VmScript) -> bool {
     false
 }
 
-fn cells_for_ndb_type(ty: &NdbType) -> Result<usize, VmError> {
+fn cells_for_ndb_type(ndb: &Ndb, ty: &NdbType) -> Result<usize, VmError> {
     Ok(match ty {
         NdbType::Float
         | NdbType::Int
@@ -2380,11 +2458,17 @@ fn cells_for_ndb_type(ty: &NdbType) -> Result<usize, VmError> {
         | NdbType::String
         | NdbType::EngineStructure(_) => 1,
         NdbType::Void => 0,
-        NdbType::Struct(struct_index) => {
-            return Err(VmError::Setup {
-                message: format!("unsupported VM function metadata for struct t{struct_index:04}"),
-            });
-        }
+        NdbType::Struct(struct_index) => ndb
+            .structs
+            .get(*struct_index)
+            .ok_or_else(|| VmError::Setup {
+                message: format!("NDB references missing structure t{struct_index:04}"),
+            })?
+            .fields
+            .iter()
+            .try_fold(0usize, |total, field| {
+                cells_for_ndb_type(ndb, &field.ty).map(|width| total + width)
+            })?,
         NdbType::Unknown | NdbType::Raw(_) => {
             return Err(VmError::Setup {
                 message: format!("unsupported VM function metadata type {ty}"),
@@ -2393,36 +2477,22 @@ fn cells_for_ndb_type(ty: &NdbType) -> Result<usize, VmError> {
     })
 }
 
-fn cleanup_call_frame(script: &mut VmScript, cleanup: VmCallCleanup) -> Result<(), VmError> {
-    let frame_cells = cleanup.arg_cells + cleanup.return_cells;
-    let frame_start =
-        script
-            .sp
-            .checked_sub(frame_cells)
-            .ok_or_else(|| VmError::StackUnderflow {
-                message: format!(
-                    "attempted to clean up {} call-frame cells from stack with only {} values",
-                    frame_cells, script.sp
-                ),
-            })?;
-    if cleanup.return_cells == 0 {
-        return script.set_stack_pointer(frame_start);
+fn check_run_limits(script: &VmScript, options: VmRunOptions) -> Result<(), VmError> {
+    if let Some(limit) = options.max_recursion_depth
+        && script.ret.len() > limit
+    {
+        return Err(VmError::RecursionLimitExceeded {
+            depth: script.ret.len(),
+            limit,
+        });
     }
-
-    let return_end = frame_start + cleanup.return_cells;
-    let return_values = script
-        .stack
-        .get(frame_start..return_end)
-        .ok_or_else(|| VmError::StackUnderflow {
-            message: format!(
-                "missing {} return cells in call frame starting at {}",
-                cleanup.return_cells, frame_start
-            ),
-        })?
-        .to_vec();
-    script.set_stack_pointer(frame_start)?;
-    for value in return_values {
-        script.push(value);
+    if let Some(limit) = options.max_stack_cells
+        && script.stack.len() > limit
+    {
+        return Err(VmError::StackLimitExceeded {
+            cells: script.stack.len(),
+            limit,
+        });
     }
     Ok(())
 }
@@ -2435,7 +2505,7 @@ fn push_default_value(
     match decoded.instruction.auxcode {
         NcsAuxCode::TypeInteger => script.push_int(0),
         NcsAuxCode::TypeFloat => script.push_float(0.0),
-        NcsAuxCode::TypeString => script.push_string(String::new()),
+        NcsAuxCode::TypeString => script.push_string(ScriptString::default()),
         NcsAuxCode::TypeObject => script.push_object(0),
         aux => {
             let Some(index) = engine_structure_index(aux) else {
@@ -2461,7 +2531,7 @@ fn push_constant_value(
                 return unsupported(decoded, "CONST does not support this auxcode");
             };
             let value = if index == 7 {
-                VmEngineStructureValue::Text(read_ncs_string(decoded)?)
+                VmEngineStructureValue::Text(read_ncs_text(decoded)?)
             } else {
                 VmEngineStructureValue::Word(read_u32(decoded, 0)?)
             };
@@ -2596,7 +2666,7 @@ fn apply_add(script: &mut VmScript, decoded: &VmProgramInstruction) -> Result<()
         (VmValue::Float(lhs), VmValue::Int(rhs)) => script.push_float(lhs + rhs as f32),
         (VmValue::Float(lhs), VmValue::Float(rhs)) => script.push_float(lhs + rhs),
         (VmValue::String(lhs), VmValue::String(rhs)) => {
-            script.push_string(format!("{lhs}{rhs}"));
+            script.push_string(lhs.concat(&rhs));
         }
         _ => {
             return unsupported(
@@ -2659,7 +2729,9 @@ fn apply_div(script: &mut VmScript, decoded: &VmProgramInstruction) -> Result<()
     if decoded.instruction.auxcode == NcsAuxCode::TypeTypeVectorFloat {
         let rhs = script.pop_float()?;
         if rhs == 0.0 {
-            return unsupported(decoded, "division by zero");
+            return Err(VmError::DivideByZero {
+                offset: decoded.offset,
+            });
         }
         let lhs = script.pop_vector()?;
         script.push_vector([lhs[0] / rhs, lhs[1] / rhs, lhs[2] / rhs]);
@@ -2670,25 +2742,33 @@ fn apply_div(script: &mut VmScript, decoded: &VmProgramInstruction) -> Result<()
     match (lhs, rhs) {
         (VmValue::Int(lhs), VmValue::Int(rhs)) => {
             if rhs == 0 {
-                return unsupported(decoded, "division by zero");
+                return Err(VmError::DivideByZero {
+                    offset: decoded.offset,
+                });
             }
             script.push_int(lhs / rhs);
         }
         (VmValue::Int(lhs), VmValue::Float(rhs)) => {
             if rhs == 0.0 {
-                return unsupported(decoded, "division by zero");
+                return Err(VmError::DivideByZero {
+                    offset: decoded.offset,
+                });
             }
             script.push_float(lhs as f32 / rhs);
         }
         (VmValue::Float(lhs), VmValue::Int(rhs)) => {
             if rhs == 0 {
-                return unsupported(decoded, "division by zero");
+                return Err(VmError::DivideByZero {
+                    offset: decoded.offset,
+                });
             }
             script.push_float(lhs / rhs as f32);
         }
         (VmValue::Float(lhs), VmValue::Float(rhs)) => {
             if rhs == 0.0 {
-                return unsupported(decoded, "division by zero");
+                return Err(VmError::DivideByZero {
+                    offset: decoded.offset,
+                });
             }
             script.push_float(lhs / rhs);
         }
@@ -2854,6 +2934,33 @@ mod tests {
         runtime.run(&vm)?;
 
         assert_eq!(*called.borrow(), Some(42));
+        Ok(())
+    }
+
+    #[test]
+    fn preserves_non_utf8_script_strings_through_compile_and_vm()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let langspec = parse_langspec("nwscript", "void Capture(string sValue);")?;
+        let script = parse_text(
+            SourceId::new(101),
+            r#"void main() { Capture("\xFF\x80"); }"#,
+            Some(&langspec),
+        )?;
+        let artifacts = compile_script(&script, Some(&langspec), CompileOptions::default())?;
+
+        let captured = Rc::new(RefCell::new(None));
+        let mut vm = Vm::new();
+        {
+            let captured = Rc::clone(&captured);
+            vm.define_simple_command(0, move |script| {
+                *captured.borrow_mut() = Some(script.pop_string()?.into_bytes());
+                Ok(())
+            });
+        }
+        let mut runtime = VmScript::from_bytes(&artifacts.ncs, "raw-string")?;
+        runtime.run(&vm)?;
+
+        assert_eq!(*captured.borrow(), Some(vec![0xff, 0x80]));
         Ok(())
     }
 
@@ -3263,7 +3370,8 @@ int Twice(int x) {
     }
 
     #[test]
-    fn executes_compiled_user_function_calls() -> Result<(), Box<dyn std::error::Error>> {
+    fn executes_compiled_user_function_calls_without_ndb() -> Result<(), Box<dyn std::error::Error>>
+    {
         let source = br#"
             int AddOne(int nValue) {
                 return nValue + 1;
@@ -3273,20 +3381,14 @@ int Twice(int x) {
                 PrintInteger(AddOne(41));
             }
         "#;
-        let mut source_map = SourceMap::new();
-        let root_id = source_map.add_file("user_call_main.nss".to_string(), source.to_vec());
         let langspec = parse_langspec("nwscript", "void PrintInteger(int n);")?;
-        let script = parse_text(root_id, std::str::from_utf8(source)?, Some(&langspec))?;
-        let artifacts = compile_script_with_source_map(
-            &script,
-            &source_map,
-            root_id,
+        let script = parse_text(
+            SourceId::new(0),
+            std::str::from_utf8(source)?,
             Some(&langspec),
-            CompileOptions::default(),
         )?;
-        let ndb = read_ndb(&mut std::io::Cursor::new(
-            artifacts.ndb.clone().ok_or("missing ndb")?,
-        ))?;
+        let artifacts = compile_script(&script, Some(&langspec), CompileOptions::default())?;
+        assert!(artifacts.ndb.is_none());
 
         let seen = Rc::new(RefCell::new(Vec::new()));
         let mut vm = Vm::new();
@@ -3298,9 +3400,33 @@ int Twice(int x) {
             });
         }
 
-        vm.run_bytes_with_ndb(&artifacts.ncs, "user-call-main", &ndb)?;
+        vm.run_bytes(&artifacts.ncs, "user-call-main")?;
 
         assert_eq!(&*seen.borrow(), &[42]);
+        Ok(())
+    }
+
+    #[test]
+    fn compiled_builtin_arguments_follow_native_stack_order()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let langspec = parse_langspec("nwscript", "void Assert(int condition, string message);")?;
+        let script = parse_text(
+            SourceId::new(0),
+            "void main() { Assert(7, \"seven\"); }",
+            Some(&langspec),
+        )?;
+        let artifacts = compile_script(&script, Some(&langspec), CompileOptions::default())?;
+
+        let mut vm = Vm::new();
+        vm.define_command(0, |script, _command, argc| {
+            assert_eq!(argc, 2);
+            assert_eq!(script.pop_int()?, 7);
+            assert_eq!(script.pop_string()?.as_bytes(), b"seven");
+            Ok(())
+        });
+
+        let mut runtime = VmScript::from_bytes(&artifacts.ncs, "builtin-argument-order")?;
+        runtime.run(&vm)?;
         Ok(())
     }
 
@@ -3607,17 +3733,103 @@ int Twice(int x) {
                 "budget-main",
                 VmRunOptions {
                     max_instructions: Some(16),
+                    ..VmRunOptions::default()
                 },
             )
             .expect_err("infinite loop should exceed instruction budget");
 
         assert!(matches!(
-            error,
+            &error,
             super::VmError::InstructionLimitExceeded {
                 limit: 16,
                 ..
             }
         ));
+        assert_eq!(
+            error.code(),
+            Some(crate::CompilerErrorCode::VmTooManyInstructions)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn maps_division_by_zero_to_native_error_code() -> Result<(), Box<dyn std::error::Error>> {
+        let instructions = vec![
+            NcsInstruction {
+                opcode:  NcsOpcode::Constant,
+                auxcode: NcsAuxCode::TypeInteger,
+                extra:   1_i32.to_be_bytes().to_vec(),
+            },
+            NcsInstruction {
+                opcode:  NcsOpcode::Constant,
+                auxcode: NcsAuxCode::TypeInteger,
+                extra:   0_i32.to_be_bytes().to_vec(),
+            },
+            NcsInstruction {
+                opcode:  NcsOpcode::Div,
+                auxcode: NcsAuxCode::TypeTypeIntegerInteger,
+                extra:   Vec::new(),
+            },
+        ];
+        let mut script = VmScript::from_instructions(instructions, "divide-zero");
+        let error = script
+            .run(&Vm::new())
+            .expect_err("division by zero should fail");
+        assert!(matches!(error, super::VmError::DivideByZero { .. }));
+        assert_eq!(error.code(), Some(crate::CompilerErrorCode::VmDivideByZero));
+        Ok(())
+    }
+
+    #[test]
+    fn maps_stack_and_recursion_budgets_to_native_error_codes()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let stack_program = vec![
+            NcsInstruction {
+                opcode:  NcsOpcode::Constant,
+                auxcode: NcsAuxCode::TypeInteger,
+                extra:   1_i32.to_be_bytes().to_vec(),
+            },
+            NcsInstruction {
+                opcode:  NcsOpcode::Ret,
+                auxcode: NcsAuxCode::None,
+                extra:   Vec::new(),
+            },
+        ];
+        let mut stack_script = VmScript::from_instructions(stack_program, "stack-limit");
+        let stack_error = Vm::new()
+            .run_with_options(
+                &mut stack_script,
+                VmRunOptions {
+                    max_stack_cells: Some(0),
+                    ..VmRunOptions::default()
+                },
+            )
+            .expect_err("stack limit should fail");
+        assert_eq!(
+            stack_error.code(),
+            Some(crate::CompilerErrorCode::VmStackOverflow)
+        );
+
+        let recursive = parse_text(
+            SourceId::new(0),
+            "void recurse() { recurse(); } void main() { recurse(); }",
+            None,
+        )?;
+        let artifacts = compile_script(&recursive, None, CompileOptions::default())?;
+        let recursion_error = Vm::new()
+            .run_bytes_with_options(
+                &artifacts.ncs,
+                "recursion-limit",
+                VmRunOptions {
+                    max_recursion_depth: Some(1),
+                    ..VmRunOptions::default()
+                },
+            )
+            .expect_err("recursion limit should fail");
+        assert_eq!(
+            recursion_error.code(),
+            Some(crate::CompilerErrorCode::VmTooManyLevelsOfRecursion)
+        );
         Ok(())
     }
 
@@ -3665,7 +3877,54 @@ int Twice(int x) {
     }
 
     #[test]
-    fn rejects_direct_function_calls_for_scripts_with_globals()
+    fn runs_struct_arguments_and_returns_from_ndb() -> Result<(), Box<dyn std::error::Error>> {
+        let source = br#"
+            struct Pair {
+                int first;
+                int second;
+            };
+
+            struct Pair Swap(struct Pair value) {
+                struct Pair result;
+                result.first = value.second;
+                result.second = value.first;
+                return result;
+            }
+
+            void main() {}
+        "#;
+        let mut source_map = SourceMap::new();
+        let root_id = source_map.add_file("direct_struct.nss".to_string(), source.to_vec());
+        let script = parse_text(root_id, std::str::from_utf8(source)?, None)?;
+        let artifacts = compile_script_with_source_map(
+            &script,
+            &source_map,
+            root_id,
+            None,
+            CompileOptions::default(),
+        )?;
+        let ndb = read_ndb(&mut std::io::Cursor::new(
+            artifacts.ndb.clone().ok_or("missing ndb")?,
+        ))?;
+
+        let vm = Vm::new();
+        let runtime = vm.run_function_bytes(
+            &artifacts.ncs,
+            "direct-struct",
+            &ndb,
+            "Swap",
+            &[VmValue::Struct(vec![VmValue::Int(10), VmValue::Int(20)])],
+        )?;
+
+        assert_eq!(
+            runtime.function_return_value(&ndb, "Swap")?,
+            Some(VmValue::Struct(vec![VmValue::Int(20), VmValue::Int(10)]))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn runs_direct_function_calls_after_bootstrapping_globals()
     -> Result<(), Box<dyn std::error::Error>> {
         let source = br#"
             int GLOBAL = 1;

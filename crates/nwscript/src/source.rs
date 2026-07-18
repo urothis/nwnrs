@@ -7,9 +7,15 @@ use crate::CompilerErrorCode;
 
 /// The built-in NWN resource type used for `NWScript` source files.
 pub const NW_SCRIPT_SOURCE_RES_TYPE: ResType = ResType(2009);
+/// The built-in NWN resource type used for compiled `NWScript` bytecode.
+pub const NW_SCRIPT_BINARY_RES_TYPE: ResType = ResType(2010);
+/// The built-in NWN resource type used for `NWScript` debug metadata.
+pub const NW_SCRIPT_DEBUG_RES_TYPE: ResType = ResType(2064);
 
 /// The upstream default include-depth limit.
 pub const DEFAULT_MAX_INCLUDE_DEPTH: usize = 16;
+/// Maximum distinct source files tracked by the native compiler.
+pub const MAX_SOURCE_FILES: usize = 512;
 
 /// Errors returned while resolving or loading source files.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -76,6 +82,19 @@ impl SourceError {
             code: CompilerErrorCode::IncludeTooManyLevels,
             message: format!(
                 "include depth exceeded the configured maximum of {max_include_depth} while \
+                 loading {script_name:?}"
+            ),
+            script_name,
+        }
+    }
+
+    /// Creates an error for exceeding the native source-file table.
+    pub fn too_many_source_files(script_name: impl Into<String>) -> Self {
+        let script_name = script_name.into();
+        Self::Compiler {
+            code: CompilerErrorCode::IncludeTooManyLevels,
+            message: format!(
+                "source file table exceeded the native maximum of {MAX_SOURCE_FILES} while \
                  loading {script_name:?}"
             ),
             script_name,

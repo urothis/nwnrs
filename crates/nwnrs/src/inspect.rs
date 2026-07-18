@@ -6,6 +6,7 @@ use tracing::{debug, info, instrument};
 
 use crate::{
     args::InspectCmd,
+    compile::build_install_script_resolver,
     util::{Kind, detect_kind, write_stdout_line},
 };
 
@@ -131,12 +132,18 @@ fn inspect_ncs(cmd: &InspectCmd) -> Result<(), String> {
     let path = &cmd.path;
     let bytes =
         fs::read(path).map_err(|error| format!("failed to read {}: {error}", path.display()))?;
-    let langspec = load_langspec_for_ncs(cmd);
+    let install_resolver = build_install_script_resolver(
+        cmd.root.as_deref(),
+        cmd.user.as_deref(),
+        &cmd.language,
+        cmd.load_ovr,
+    )?;
+    let langspec = load_langspec_for_ncs(cmd, install_resolver.as_deref())?;
     let ndb = load_ndb_for_ncs(cmd)?;
     let source_files = ndb
         .as_ref()
         .filter(|_| !cmd.no_source_weave)
-        .map(|ndb| load_adjacent_source_files(path, ndb))
+        .map(|ndb| load_source_files(path, ndb, install_resolver.as_deref()))
         .unwrap_or_default();
     let rendered = nwscript::render_ncs_disassembly_with_ndb(
         &bytes,
@@ -156,16 +163,31 @@ fn inspect_ncs(cmd: &InspectCmd) -> Result<(), String> {
     write_stdout_line(&rendered)
 }
 
-fn load_langspec_for_ncs(cmd: &InspectCmd) -> Option<nwscript::LangSpec> {
+fn load_langspec_for_ncs(
+    cmd: &InspectCmd,
+    install_resolver: Option<&(dyn nwscript::ScriptResolver + Send + Sync)>,
+) -> Result<Option<nwscript::LangSpec>, String> {
     if cmd.no_langspec {
-        return None;
+        return Ok(None);
     }
-    let candidate = cmd
-        .langspec
-        .clone()
-        .or_else(|| cmd.path.parent().map(|parent| parent.join("nwscript.nss")))?;
-    let bytes = fs::read(candidate).ok()?;
-    nwscript::parse_langspec_bytes("nwscript.nss", &bytes).ok()
+    let bytes = if let Some(candidate) = &cmd.langspec {
+        fs::read(candidate)
+            .map_err(|error| format!("failed to read {}: {error}", candidate.display()))?
+    } else {
+        let Some(resolver) = install_resolver else {
+            return Ok(None);
+        };
+        resolver
+            .resolve_script_bytes(
+                nwscript::DEFAULT_LANGSPEC_SCRIPT_NAME,
+                nwscript::NW_SCRIPT_SOURCE_RES_TYPE,
+            )
+            .map_err(|error| format!("failed to resolve installed nwscript.nss: {error}"))?
+            .ok_or_else(|| "installed nwscript.nss could not be resolved".to_string())?
+    };
+    nwscript::parse_langspec_bytes("nwscript.nss", &bytes)
+        .map(Some)
+        .map_err(|error| format!("failed to parse nwscript.nss: {error}"))
 }
 
 fn load_ndb_for_ncs(cmd: &InspectCmd) -> Result<Option<nwscript::Ndb>, String> {
@@ -188,7 +210,11 @@ fn load_ndb_for_ncs(cmd: &InspectCmd) -> Result<Option<nwscript::Ndb>, String> {
         .map_err(|error| format!("failed to parse {}: {error}", candidate.display()))
 }
 
-fn load_adjacent_source_files(path: &Path, ndb: &nwscript::Ndb) -> BTreeMap<String, Vec<String>> {
+fn load_source_files(
+    path: &Path,
+    ndb: &nwscript::Ndb,
+    install_resolver: Option<&(dyn nwscript::ScriptResolver + Send + Sync)>,
+) -> BTreeMap<String, Vec<String>> {
     let mut files = BTreeMap::new();
     let Some(parent) = path.parent() else {
         return files;
@@ -196,9 +222,18 @@ fn load_adjacent_source_files(path: &Path, ndb: &nwscript::Ndb) -> BTreeMap<Stri
 
     for file in &ndb.files {
         let candidate = parent.join(format!("{}.nss", file.name));
-        let Ok(text) = fs::read_to_string(candidate) else {
+        let bytes = fs::read(&candidate).ok().or_else(|| {
+            install_resolver.and_then(|resolver| {
+                resolver
+                    .resolve_script_bytes(&file.name, nwscript::NW_SCRIPT_SOURCE_RES_TYPE)
+                    .ok()
+                    .flatten()
+            })
+        });
+        let Some(bytes) = bytes else {
             continue;
         };
+        let text = String::from_utf8_lossy(&bytes);
         files.insert(
             file.name.clone(),
             text.lines().map(str::to_string).collect(),
@@ -279,6 +314,10 @@ mod tests {
             no_offsets:        false,
             no_langspec:       false,
             langspec:          None,
+            root:              None,
+            user:              None,
+            language:          "english".to_string(),
+            load_ovr:          false,
             path:              Path::new("unsupported.xyz").to_path_buf(),
         })
         .expect_err("inspect should fail");
@@ -335,6 +374,10 @@ mod tests {
             no_offsets: false,
             no_langspec: false,
             langspec: None,
+            root: None,
+            user: None,
+            language: "english".to_string(),
+            load_ovr: false,
             path,
         })
         .expect("ncs inspect should succeed");

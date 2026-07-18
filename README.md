@@ -30,7 +30,9 @@ Usage:
 ```bash
 nwnrs new --kind utc my_creature
 nwnrs inspect path/to/file.utc
-nwnrs pack --debug path/to/script.nss out/script.ncs
+nwnrs compile -g -o out/script.ncs path/to/script.nss
+nwnrs compile -R -d out scripts/
+nwnrs compile -R -d out --graphviz graphs scripts/
 nwnrs convert input.png output.tga
 nwnrs convert path/to/model.mdl out/model_ascii.mdl
 nwnrs convert out/model_ascii.mdl rebuilt/model.mdl

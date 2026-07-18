@@ -1,8 +1,8 @@
 use std::{error::Error, fmt};
 
 use crate::{
-    CodegenError, CompileArtifacts, CompileError, CompileOptions, DEFAULT_LANGSPEC_SCRIPT_NAME,
-    LangSpec, LangSpecError, OptimizationLevel, PreprocessError, Script, ScriptResolver,
+    CompileArtifacts, CompileError, CompileOptions, DEFAULT_LANGSPEC_SCRIPT_NAME, LangSpec,
+    LangSpecError, OptimizationFlags, OptimizationLevel, PreprocessError, Script, ScriptResolver,
     SourceBundle, SourceError, SourceLoadOptions, compile_script, compile_script_with_source_map,
     graphviz::render_script_graphviz, load_langspec, load_source_bundle, parse_source_bundle,
 };
@@ -138,15 +138,27 @@ impl<'a> CompilerSession<'a> {
         self.options.emit_debug = state;
     }
 
-    /// Returns the current optimization level.
+    /// Returns the current independent optimization flags.
     #[must_use]
-    pub fn optimization_level(&self) -> OptimizationLevel {
-        self.options.compile.optimization
+    pub fn optimization_flags(&self) -> OptimizationFlags {
+        self.options.compile.optimizations
     }
 
-    /// Updates the optimization level without recreating the session.
+    /// Updates independent optimization flags without recreating the session.
+    pub fn set_optimization_flags(&mut self, optimizations: OptimizationFlags) {
+        self.options.compile.optimizations = optimizations;
+    }
+
+    /// Returns the standard O-level matching the current flags, when one
+    /// exists.
+    #[must_use]
+    pub fn optimization_level(&self) -> Option<OptimizationLevel> {
+        self.optimization_flags().level()
+    }
+
+    /// Updates the optimization flags from one standard O-level.
     pub fn set_optimization_level(&mut self, optimization: OptimizationLevel) {
-        self.options.compile.optimization = optimization;
+        self.set_optimization_flags(optimization.into());
     }
 
     /// Returns the current source-load options.
@@ -227,12 +239,9 @@ impl<'a> CompilerSession<'a> {
     ) -> Result<PreparedScript, CompilerSessionError> {
         let langspec = self.ensure_langspec_loaded()?.clone();
         let bundle = load_source_bundle(self.resolver, script_name, self.options.source_load)?;
-        let script = parse_source_bundle(&bundle, Some(&langspec)).map_err(|error| {
-            CompilerSessionError::Compile(CompileError::Codegen(CodegenError {
-                span:    None,
-                message: format!("failed to parse source bundle during compile: {error}"),
-            }))
-        })?;
+        let script = parse_source_bundle(&bundle, Some(&langspec))
+            .map_err(CompileError::from)
+            .map_err(CompilerSessionError::Compile)?;
         Ok(PreparedScript {
             langspec,
             bundle,
@@ -297,7 +306,7 @@ mod tests {
         session.set_optimization_level(OptimizationLevel::O1);
         let artifacts = session.compile_script_name("main")?;
         assert!(!artifacts.ncs.is_empty());
-        assert!(artifacts.ndb.is_none());
+        assert!(artifacts.ndb.is_some());
         Ok(())
     }
 }

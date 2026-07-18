@@ -142,8 +142,15 @@ impl<'a, R: ScriptResolver + ?Sized> SourceBundleLoader<'a, R> {
     }
 
     fn load_script(&mut self, script_name: &str) -> Result<SourceId, PreprocessError> {
-        if let Some(existing) = self.source_map.get_by_name(script_name) {
-            return Ok(existing.id);
+        let normalized = script_name.to_ascii_lowercase();
+        if self.active_stack.contains(&normalized) {
+            return Err(SourceError::include_recursive(script_name).into());
+        }
+        if let Some(source) = self.source_map.get_by_name(script_name) {
+            return Ok(source.id);
+        }
+        if self.source_map.len() >= crate::MAX_SOURCE_FILES {
+            return Err(SourceError::too_many_source_files(script_name).into());
         }
         if self.active_stack.len() >= self.options.max_include_depth {
             return Err(SourceError::include_too_many_levels(
@@ -158,11 +165,6 @@ impl<'a, R: ScriptResolver + ?Sized> SourceBundleLoader<'a, R> {
             .resolve_script_bytes(script_name, self.options.res_type)?
             .filter(|bytes| !bytes.is_empty())
             .ok_or_else(|| SourceError::file_not_found(script_name))?;
-
-        let normalized = script_name.to_ascii_lowercase();
-        if self.active_stack.contains(&normalized) {
-            return Err(SourceError::include_recursive(script_name).into());
-        }
 
         let source_id = self.source_map.next_id();
         let source_file = SourceFile::new(source_id, script_name, contents);
@@ -376,7 +378,8 @@ mod tests {
     }
 
     #[test]
-    fn loads_transitive_includes_and_ignores_duplicate_files() {
+    fn ignores_duplicate_files_reached_through_transitive_includes()
+    -> Result<(), Box<dyn std::error::Error>> {
         let mut resolver = InMemoryScriptResolver::new();
         resolver.insert_source(
             "root",
@@ -392,23 +395,20 @@ int UTIL = 1;"#,
         );
         resolver.insert_source("common", "int COMMON = 2;");
 
-        let bundle = load_source_bundle(&resolver, "root", SourceLoadOptions::default());
-        let names = bundle.ok().map(|bundle| {
-            bundle
-                .source_order
-                .iter()
-                .filter_map(|id| bundle.source_map.get(*id).map(|file| file.name.clone()))
-                .collect::<Vec<_>>()
-        });
+        let bundle = load_source_bundle(&resolver, "root", SourceLoadOptions::default())?;
+        let preprocessed = preprocess_source_bundle(&bundle)?;
 
+        assert_eq!(bundle.source_map.len(), 3);
+        assert_eq!(bundle.include_edges.len(), 4);
         assert_eq!(
-            names,
-            Some(vec![
-                "root".to_string(),
-                "util".to_string(),
-                "common".to_string(),
-            ])
+            preprocessed
+                .tokens
+                .iter()
+                .filter(|token| token.text == "COMMON")
+                .count(),
+            1
         );
+        Ok(())
     }
 
     #[test]
@@ -461,6 +461,38 @@ int UTIL = 1;"#,
         let count = bundle.ok().map(|bundle| bundle.source_map.len());
 
         assert_eq!(count, Some(2));
+    }
+
+    #[test]
+    fn rejects_recursive_includes_before_reusing_the_loaded_source() {
+        let mut resolver = InMemoryScriptResolver::new();
+        resolver.insert_source("root", r#"#include "root""#);
+
+        let code = load_source_bundle(&resolver, "root", SourceLoadOptions::default())
+            .err()
+            .and_then(|error| match error {
+                super::PreprocessError::Source(source) => source.code(),
+                super::PreprocessError::Lex(_) => None,
+            });
+
+        assert_eq!(code, Some(CompilerErrorCode::IncludeRecursive));
+    }
+
+    #[test]
+    fn reuses_the_same_include_when_loaded_twice() -> Result<(), Box<dyn std::error::Error>> {
+        let mut resolver = InMemoryScriptResolver::new();
+        resolver.insert_source("root", "#include \"util\"\n#include \"UTIL\"");
+        resolver.insert_source("util", "void helper() {}");
+
+        let bundle = load_source_bundle(&resolver, "root", SourceLoadOptions::default())?;
+
+        assert_eq!(bundle.source_map.len(), 2);
+        assert_eq!(bundle.include_edges.len(), 2);
+        assert_eq!(
+            bundle.include_edges.first().map(|edge| edge.to),
+            bundle.include_edges.last().map(|edge| edge.to)
+        );
+        Ok(())
     }
 
     #[test]

@@ -6,7 +6,7 @@ use nwnrs_nwscript::prelude::*;
 
 mod support;
 
-use support::{load_nss_bytes, skip_if_game_resources_unavailable, test_error};
+use support::{load_ncs_bytes, load_nss_bytes, skip_if_game_resources_unavailable, test_error};
 
 type TestResult = Result<(), Box<dyn Error>>;
 
@@ -20,14 +20,6 @@ const NEGATIVE_SCRIPTS: &[(&str, &str)] = &[
     (
         "nw_d2_inl9.nss",
         "expected failure: template placeholder expression <<PLACE THE CONDITIONAL HERE>>",
-    ),
-    (
-        "x2_inc_banter.nss",
-        "expected failure: unexpected backtick character in source",
-    ),
-    (
-        "x0_inc_skills.nss",
-        "expected failure: declaration and implementation return types differ",
     ),
 ];
 
@@ -61,15 +53,15 @@ impl ScriptResolver for InstallScriptResolver {
     }
 }
 
-fn load_langspec_remote() -> Result<LangSpec, Box<dyn Error>> {
+fn load_installed_langspec() -> Result<LangSpec, Box<dyn Error>> {
     let langspec_source = load_nss_bytes("nwscript.nss")?;
     let langspec = parse_langspec_bytes("nwscript.nss", &langspec_source)?;
     Ok(langspec)
 }
 
 #[test]
-fn smoke_remote_script_parses_and_analyzes() -> TestResult {
-    let langspec = match load_langspec_remote() {
+fn installed_script_parses_and_analyzes() -> TestResult {
+    let langspec = match load_installed_langspec() {
         Ok(value) => value,
         Err(error) => return skip_if_game_resources_unavailable(error),
     };
@@ -83,8 +75,8 @@ fn smoke_remote_script_parses_and_analyzes() -> TestResult {
 }
 
 #[test]
-fn smoke_remote_script_compiles_to_deterministic_ncs() -> TestResult {
-    let langspec = match load_langspec_remote() {
+fn installed_script_compiles_to_deterministic_ncs() -> TestResult {
+    let langspec = match load_installed_langspec() {
         Ok(value) => value,
         Err(error) => return skip_if_game_resources_unavailable(error),
     };
@@ -102,9 +94,99 @@ fn smoke_remote_script_compiles_to_deterministic_ncs() -> TestResult {
     Ok(())
 }
 
+fn run_less_than_quarter_hit_points(
+    ncs: &[u8],
+    langspec: &LangSpec,
+    current_hit_points: i32,
+    maximum_hit_points: i32,
+) -> Result<i32, Box<dyn Error>> {
+    let command_id = |name: &str| {
+        langspec
+            .functions
+            .iter()
+            .position(|function| function.name == name)
+            .and_then(|index| u16::try_from(index).ok())
+            .ok_or_else(|| test_error(format!("missing builtin function {name}")))
+    };
+    let mut vm = Vm::new();
+    vm.define_command(
+        command_id("GetCurrentHitPoints")?,
+        move |script, _, argc| {
+            for _ in 0..argc {
+                script.pop()?;
+            }
+            script.push_int(current_hit_points);
+            Ok(())
+        },
+    );
+    vm.define_command(command_id("GetMaxHitPoints")?, move |script, _, argc| {
+        for _ in 0..argc {
+            script.pop()?;
+        }
+        script.push_int(maximum_hit_points);
+        Ok(())
+    });
+    let mut runtime = VmScript::from_bytes(ncs, "xp1_less25hp")?;
+    runtime.run(&vm)?;
+    match runtime.stack().last() {
+        Some(VmValue::Int(value)) => Ok(*value),
+        other => Err(test_error(format!(
+            "conditional script did not leave an integer result: {other:?}"
+        ))
+        .into()),
+    }
+}
+
 #[test]
-fn smoke_remote_script_compiles_to_parseable_ndb() -> TestResult {
-    let langspec = match load_langspec_remote() {
+fn install_backed_reference_ncs_matches_every_optimization_combination() -> TestResult {
+    let langspec = match load_installed_langspec() {
+        Ok(value) => value,
+        Err(error) => return skip_if_game_resources_unavailable(error),
+    };
+    let source = match load_nss_bytes(POSITIVE_SCRIPT) {
+        Ok(source) => source,
+        Err(error) => return skip_if_game_resources_unavailable(error),
+    };
+    let reference_ncs = match load_ncs_bytes("xp1_less25hp.ncs") {
+        Ok(ncs) => ncs,
+        Err(error) => return skip_if_game_resources_unavailable(error),
+    };
+    let script = parse_bytes(SourceId::new(3), &source, Some(&langspec))?;
+
+    assert!(!decode_ncs_instructions(&reference_ncs)?.is_empty());
+    for bits in 0..=OptimizationFlags::O3.bits() {
+        let optimizations = OptimizationFlags::from_bits(bits)
+            .ok_or_else(|| test_error(format!("invalid optimization bits {bits:#04x}")))?;
+        let compiled_ncs = compile_script(
+            &script,
+            Some(&langspec),
+            CompileOptions {
+                optimizations,
+                ..CompileOptions::default()
+            },
+        )?
+        .ncs;
+
+        assert_eq!(
+            compiled_ncs, reference_ncs,
+            "bytecode mismatch for optimization bits {bits:#04x}"
+        );
+
+        for (current, maximum) in [(20, 100), (25, 100), (30, 100), (0, 1)] {
+            assert_eq!(
+                run_less_than_quarter_hit_points(&compiled_ncs, &langspec, current, maximum)?,
+                run_less_than_quarter_hit_points(&reference_ncs, &langspec, current, maximum)?,
+                "runtime mismatch for optimization bits {bits:#04x}, current={current}, \
+                 maximum={maximum}",
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn installed_script_compiles_to_parseable_ndb() -> TestResult {
+    let langspec = match load_installed_langspec() {
         Ok(value) => value,
         Err(error) => return skip_if_game_resources_unavailable(error),
     };
@@ -146,13 +228,13 @@ fn smoke_remote_script_compiles_to_parseable_ndb() -> TestResult {
 }
 
 #[test]
-fn negative_remote_scripts_fail_at_the_current_frontend_boundary() -> TestResult {
-    let langspec = match load_langspec_remote() {
+fn installed_negative_scripts_fail_at_the_expected_frontend_boundary() -> TestResult {
+    let langspec = match load_installed_langspec() {
         Ok(value) => value,
         Err(error) => return skip_if_game_resources_unavailable(error),
     };
 
-    for (index, (path, _reason)) in NEGATIVE_SCRIPTS.iter().enumerate() {
+    for (index, (path, reason)) in NEGATIVE_SCRIPTS.iter().enumerate() {
         let source = match load_nss_bytes(path) {
             Ok(source) => source,
             Err(error) => return skip_if_game_resources_unavailable(error),
@@ -190,7 +272,7 @@ fn negative_remote_scripts_fail_at_the_current_frontend_boundary() -> TestResult
 
                 assert!(
                     compile_failed,
-                    "negative script unexpectedly compiled: {path}"
+                    "negative script unexpectedly compiled: {path}; {reason}"
                 );
             }
         }
@@ -200,8 +282,8 @@ fn negative_remote_scripts_fail_at_the_current_frontend_boundary() -> TestResult
 }
 
 #[test]
-fn include_backed_script_parses_through_remote_resolver() -> TestResult {
-    let langspec = match load_langspec_remote() {
+fn include_backed_script_parses_through_install_resolver() -> TestResult {
+    let langspec = match load_installed_langspec() {
         Ok(value) => value,
         Err(error) => return skip_if_game_resources_unavailable(error),
     };
@@ -217,8 +299,8 @@ fn include_backed_script_parses_through_remote_resolver() -> TestResult {
 }
 
 #[test]
-fn include_backed_script_semantically_analyzes_through_remote_resolver() -> TestResult {
-    let langspec = match load_langspec_remote() {
+fn include_backed_script_semantically_analyzes_through_install_resolver() -> TestResult {
+    let langspec = match load_installed_langspec() {
         Ok(value) => value,
         Err(error) => return skip_if_game_resources_unavailable(error),
     };
@@ -236,7 +318,7 @@ fn include_backed_script_semantically_analyzes_through_remote_resolver() -> Test
 
 #[test]
 fn include_backed_script_compiles_to_valid_ncs() -> TestResult {
-    let langspec = match load_langspec_remote() {
+    let langspec = match load_installed_langspec() {
         Ok(value) => value,
         Err(error) => return skip_if_game_resources_unavailable(error),
     };
@@ -255,7 +337,7 @@ fn include_backed_script_compiles_to_valid_ncs() -> TestResult {
 
 #[test]
 fn include_backed_script_compiles_to_parseable_ndb() -> TestResult {
-    let langspec = match load_langspec_remote() {
+    let langspec = match load_installed_langspec() {
         Ok(value) => value,
         Err(error) => return skip_if_game_resources_unavailable(error),
     };

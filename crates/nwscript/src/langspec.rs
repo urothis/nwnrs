@@ -3,7 +3,7 @@ use std::{collections::HashMap, error::Error, fmt};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    CompilerErrorCode, Keyword, LexerError, ScriptResolver, SourceError, SourceFile,
+    CompilerErrorCode, Keyword, LexerError, ScriptResolver, ScriptString, SourceError, SourceFile,
     SourceLoadOptions, SourceMap, Span, Token, TokenKind,
     int_literal::{parse_wrapping_decimal_i32, parse_wrapping_prefixed_i32},
     lex_source, load_source_bundle,
@@ -41,7 +41,7 @@ pub enum BuiltinValue {
     /// Floating-point literal.
     Float(f32),
     /// String literal.
-    String(String),
+    String(ScriptString),
     /// Raw object-id sentinel used for builtin object defaults such as
     /// `OBJECT_TYPE_INVALID`.
     ObjectId(i32),
@@ -525,9 +525,7 @@ impl<'a> LangSpecParser<'a> {
             .advance()
             .ok_or_else(|| LangSpecError::parse("unexpected EOF while parsing float value"))?;
         let value = match token.kind {
-            TokenKind::Float => token.text.parse::<f32>().map_err(|error| {
-                LangSpecError::parse(format!("invalid float literal {:?}: {error}", token.text))
-            })?,
+            TokenKind::Float => crate::float_literal::parse_upstream_float_literal(&token.text),
             TokenKind::Integer => token.text.parse::<f32>().map_err(|error| {
                 LangSpecError::parse(format!("invalid numeric literal {:?}: {error}", token.text))
             })?,
@@ -557,12 +555,12 @@ impl<'a> LangSpecParser<'a> {
         Ok(sign * value)
     }
 
-    fn parse_string_like_value(&mut self) -> Result<String, LangSpecError> {
+    fn parse_string_like_value(&mut self) -> Result<ScriptString, LangSpecError> {
         let token = self
             .advance()
             .ok_or_else(|| LangSpecError::parse("unexpected EOF while parsing string value"))?;
         match token.kind {
-            TokenKind::String => Ok(token.text),
+            TokenKind::String => Ok(ScriptString::from_lexed_text(&token.text)),
             TokenKind::Identifier => match self.constant_values.get(&token.text) {
                 Some(BuiltinValue::String(value)) => Ok(value.clone()),
                 Some(_) => Err(LangSpecError::parse(format!(
@@ -824,8 +822,8 @@ effect EffectDamage(int nAmount);
             defaults,
             Some(vec![
                 Some(BuiltinValue::Int(0)),
-                Some(BuiltinValue::Float(3_141_592.0_f32 / 1_000_000.0_f32)),
-                Some(BuiltinValue::String("hello".to_string())),
+                Some(BuiltinValue::Float(3.141_591_5)),
+                Some(BuiltinValue::String("hello".into())),
                 Some(BuiltinValue::ObjectSelf),
                 Some(BuiltinValue::ObjectId(32767)),
                 Some(BuiltinValue::LocationInvalid),

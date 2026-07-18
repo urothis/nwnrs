@@ -1116,7 +1116,7 @@ impl<'a> Parser<'a> {
         };
 
         self.advance();
-        let expr = self.parse_postfix_expression()?;
+        let expr = self.parse_unary_expression()?;
         if matches!(token.kind, TokenKind::Plus) {
             return Ok(expr);
         }
@@ -1322,18 +1322,15 @@ impl<'a> Parser<'a> {
             }
             TokenKind::Float => {
                 self.advance();
-                let value = token.text.parse::<f32>().map_err(|_error| {
-                    ParserError::new(
-                        CompilerErrorCode::BadConstantType,
-                        token.span,
-                        format!("invalid floating-point literal {:?}", token.text),
-                    )
-                })?;
+                let value = crate::float_literal::parse_upstream_float_literal(&token.text);
                 (token.span, Literal::Float(value))
             }
             TokenKind::String => {
                 self.advance();
-                (token.span, Literal::String(token.text))
+                (
+                    token.span,
+                    Literal::String(crate::ScriptString::from_lexed_text(&token.text)),
+                )
             }
             TokenKind::LeftSquareBracket => self.parse_vector_literal()?,
             TokenKind::Keyword(Keyword::ObjectSelf) => {
@@ -1434,13 +1431,7 @@ impl<'a> Parser<'a> {
                     "vector literal cannot contain more than three elements",
                 ));
             }
-            let value = token.text.parse::<f32>().map_err(|_error| {
-                ParserError::new(
-                    CompilerErrorCode::ParsingConstantVector,
-                    token.span,
-                    format!("invalid vector component {:?}", token.text),
-                )
-            })?;
+            let value = crate::float_literal::parse_upstream_float_literal(&token.text);
             let Some(slot) = values.get_mut(count) else {
                 return Err(ParserError::new(
                     CompilerErrorCode::ParsingConstantVector,
@@ -1837,6 +1828,29 @@ mod tests {
                 .into());
             }
         }
+        Ok(())
+    }
+
+    #[test]
+    fn parses_chained_prefix_unary_operators() -> Result<(), Box<dyn std::error::Error>> {
+        let script = parse_text(
+            SourceId::new(30),
+            "void main() { int a = 1; int b = !!~-+a; }",
+            Some(&test_langspec()),
+        )?;
+
+        let function = match script.items.first() {
+            Some(TopLevelItem::Function(function)) => function,
+            other => {
+                return Err(
+                    std::io::Error::other(format!("expected function, got {other:?}")).into(),
+                );
+            }
+        };
+        assert_eq!(
+            function.body.as_ref().map(|body| body.statements.len()),
+            Some(2)
+        );
         Ok(())
     }
 

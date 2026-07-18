@@ -683,7 +683,7 @@ fn extra_string_for_instruction(
             NcsAuxCode::TypeEngst2 => Ok(read_u32(extra, offset, instruction)?.to_string()),
             NcsAuxCode::TypeEngst7 => {
                 let value = decode_prefixed_string(extra, offset, instruction)?;
-                Ok(value.escape_default().to_string())
+                Ok(escape_nwasm_bytes(&value))
             }
             _ => Ok(String::new()),
         },
@@ -968,7 +968,7 @@ fn parse_constant_operand(
                 message: format!("string operand too long: {} bytes", value.len()),
             })?;
             Ok(ParsedAsmOperand::Bytes(
-                [length.to_be_bytes().as_slice(), value.as_bytes()].concat(),
+                [length.to_be_bytes().as_slice(), value.as_slice()].concat(),
             ))
         }
         NcsAuxCode::TypeInteger => parse_single_number_bytes::<i32>(extra, line),
@@ -1250,12 +1250,13 @@ fn parse_usize_like(input: &str) -> Option<usize> {
     })
 }
 
-fn unescape_nwasm_string(input: &str, line: usize) -> Result<String, NcsAsmError> {
+fn unescape_nwasm_string(input: &str, line: usize) -> Result<Vec<u8>, NcsAsmError> {
     let mut chars = input.chars().peekable();
-    let mut output = String::new();
+    let mut output = Vec::new();
     while let Some(ch) = chars.next() {
         if ch != '\\' {
-            output.push(ch);
+            let mut encoded = [0_u8; 4];
+            output.extend_from_slice(ch.encode_utf8(&mut encoded).as_bytes());
             continue;
         }
         let escaped = chars.next().ok_or_else(|| NcsAsmError::Parse {
@@ -1263,13 +1264,13 @@ fn unescape_nwasm_string(input: &str, line: usize) -> Result<String, NcsAsmError
             message: "dangling string escape".to_string(),
         })?;
         match escaped {
-            '\\' => output.push('\\'),
-            '\'' => output.push('\''),
-            '"' => output.push('"'),
-            'n' => output.push('\n'),
-            'r' => output.push('\r'),
-            't' => output.push('\t'),
-            '0' => output.push('\0'),
+            '\\' => output.push(b'\\'),
+            '\'' => output.push(b'\''),
+            '"' => output.push(b'"'),
+            'n' => output.push(b'\n'),
+            'r' => output.push(b'\r'),
+            't' => output.push(b'\t'),
+            '0' => output.push(b'\0'),
             'x' => {
                 let hi = chars.next().ok_or_else(|| NcsAsmError::Parse {
                     line,
@@ -1285,7 +1286,7 @@ fn unescape_nwasm_string(input: &str, line: usize) -> Result<String, NcsAsmError
                         message: format!("invalid \\x escape: {error}"),
                     }
                 })?;
-                output.push(char::from(value));
+                output.push(value);
             }
             'u' => {
                 if chars.next() != Some('{') {
@@ -1314,7 +1315,8 @@ fn unescape_nwasm_string(input: &str, line: usize) -> Result<String, NcsAsmError
                     line,
                     message: format!("invalid unicode scalar value {value:#x}"),
                 })?;
-                output.push(ch);
+                let mut encoded = [0_u8; 4];
+                output.extend_from_slice(ch.encode_utf8(&mut encoded).as_bytes());
             }
             other => {
                 return Err(NcsAsmError::Parse {
@@ -1327,17 +1329,25 @@ fn unescape_nwasm_string(input: &str, line: usize) -> Result<String, NcsAsmError
     Ok(output)
 }
 
-fn truncate_nwasm_string(value: &str, max_string_length: usize) -> String {
-    let escaped = value
-        .chars()
-        .take(max_string_length)
-        .flat_map(char::escape_default)
-        .collect::<String>();
+fn truncate_nwasm_string(value: &[u8], max_string_length: usize) -> String {
+    let escaped = escape_nwasm_bytes(
+        value
+            .get(..value.len().min(max_string_length))
+            .unwrap_or(value),
+    );
     if value.len() > max_string_length {
         format!("{escaped}..{}", value.len())
     } else {
         escaped
     }
+}
+
+fn escape_nwasm_bytes(value: &[u8]) -> String {
+    value
+        .iter()
+        .flat_map(|byte| std::ascii::escape_default(*byte))
+        .map(char::from)
+        .collect()
 }
 
 fn collect_jump_labels(instructions: &[NcsInstruction]) -> BTreeMap<usize, String> {
@@ -1492,7 +1502,7 @@ fn decode_prefixed_string(
     extra: &[u8],
     offset: usize,
     instruction: &NcsInstruction,
-) -> Result<String, NcsAsmError> {
+) -> Result<Vec<u8>, NcsAsmError> {
     let length = usize::from(read_u16(extra, offset, instruction)?);
     let payload = extra
         .get(2..2 + length)
@@ -1502,7 +1512,7 @@ fn decode_prefixed_string(
             auxcode: instruction.auxcode,
             message: format!("expected {length} string bytes"),
         })?;
-    Ok(String::from_utf8_lossy(payload).to_string())
+    Ok(payload.to_vec())
 }
 
 fn read_u8_part(
@@ -1851,7 +1861,7 @@ mod tests {
             NcsInstruction {
                 opcode:  NcsOpcode::Constant,
                 auxcode: NcsAuxCode::TypeString,
-                extra:   [6_u16.to_be_bytes().as_slice(), b"hi\\n[]"].concat(),
+                extra:   [8_u16.to_be_bytes().as_slice(), b"hi\\n[]\xff\x80"].concat(),
             },
             NcsInstruction {
                 opcode:  NcsOpcode::AssignmentBase,

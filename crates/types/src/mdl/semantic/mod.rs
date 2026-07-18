@@ -3041,10 +3041,12 @@ fn parse_static_emitter_controller(
         .map(|value| parse_legacy_f32(value))
         .collect::<Option<Vec<_>>>();
     let keys = match values {
-        Some(values) if values.len() == expected_values => vec![SemanticEmitterKey {
-            time: 0.0,
-            values,
-        }],
+        Some(values) if values.len() == expected_values => {
+            vec![SemanticEmitterKey {
+                time: 0.0,
+                values,
+            }]
+        }
         _ => {
             diagnostics.push(ModelDiagnostic {
                 kind:    ModelDiagnosticKind::MalformedValue,
