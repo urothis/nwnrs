@@ -2,6 +2,8 @@
 #![doc = include_str!("../README.md")]
 
 mod bridge;
+mod identity;
+mod platform;
 
 use std::{
     env,
@@ -13,9 +15,12 @@ use std::{
 };
 
 pub use bridge::{
-    BridgeError, BridgeErrorCode, BridgeFunction, BridgeResult, BridgeValue, EventContext,
-    ScriptBridge, ScriptLog, ScriptLogLevel, ServerSnapshot, Vector, event_name,
+    AdministrationCommand, BannedLists, BridgeError, BridgeErrorCode, BridgeFunction, BridgeResult,
+    BridgeValue, EventContext, HostCommandResult, HostQuery, HostValue, RuntimeHost, ScriptBridge,
+    ScriptLog, ScriptLogLevel, Vector, event_name,
 };
+pub use identity::{BinaryIdentity, FileSha256};
+pub use platform::{Architecture, OperatingSystem, Platform};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
@@ -29,6 +34,8 @@ pub const ABI_SNAPSHOT_SCHEMA_VERSION: u32 = 1;
 pub const NWSCRIPT_BRIDGE_CAPABILITY_VERSION: u32 = 1;
 /// Version of the optional server-state capability.
 pub const SERVER_STATE_CAPABILITY_VERSION: u32 = 1;
+/// Version of the optional administration capability.
+pub const ADMINISTRATION_CAPABILITY_VERSION: u32 = 1;
 /// Version of the optional event-context capability.
 pub const EVENT_CONTEXT_CAPABILITY_VERSION: u32 = 1;
 /// Enables initialization when set to `1` in an injected process.
@@ -71,206 +78,6 @@ impl Error for RuntimeError {}
 
 /// A result returned by runtime identification and configuration operations.
 pub type RuntimeResult<T> = Result<T, RuntimeError>;
-
-/// An operating system supported by the native runtime.
-///
-/// ```
-/// assert_eq!(nwnrs_runtime::OperatingSystem::Linux.to_string(), "linux");
-/// ```
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum OperatingSystem {
-    /// Apple macOS.
-    Macos,
-    /// GNU/Linux.
-    Linux,
-}
-
-impl fmt::Display for OperatingSystem {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Macos => formatter.write_str("macos"),
-            Self::Linux => formatter.write_str("linux"),
-        }
-    }
-}
-
-/// A CPU architecture supported by the native runtime.
-///
-/// ```
-/// assert_eq!(nwnrs_runtime::Architecture::Aarch64.to_string(), "aarch64");
-/// ```
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub enum Architecture {
-    /// The 64-bit ARM architecture.
-    #[serde(rename = "aarch64")]
-    Aarch64,
-    /// The 64-bit x86 architecture.
-    #[serde(rename = "x86_64")]
-    X86_64,
-}
-
-impl fmt::Display for Architecture {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Aarch64 => formatter.write_str("aarch64"),
-            Self::X86_64 => formatter.write_str("x86_64"),
-        }
-    }
-}
-
-/// A supported operating-system and CPU-architecture pair.
-///
-/// ```
-/// use nwnrs_runtime::{Architecture, OperatingSystem, Platform};
-/// let platform = Platform {
-///     os: OperatingSystem::Linux,
-///     architecture: Architecture::X86_64,
-/// };
-/// assert_eq!(platform.to_string(), "linux-x86_64");
-/// ```
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct Platform {
-    /// The executable operating system.
-    pub os:           OperatingSystem,
-    /// The executable CPU architecture.
-    pub architecture: Architecture,
-}
-
-impl Platform {
-    /// Returns the platform on which this crate was compiled.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when compiled for an unsupported operating system or
-    /// architecture.
-    ///
-    /// ```
-    /// let platform = nwnrs_runtime::Platform::host()?;
-    /// assert!(!platform.directory_name().is_empty());
-    /// # Ok::<(), nwnrs_runtime::RuntimeError>(())
-    /// ```
-    pub fn host() -> RuntimeResult<Self> {
-        let os = if cfg!(target_os = "macos") {
-            OperatingSystem::Macos
-        } else if cfg!(target_os = "linux") {
-            OperatingSystem::Linux
-        } else {
-            return Err(RuntimeError::new(format!(
-                "unsupported host operating system: {}",
-                env::consts::OS
-            )));
-        };
-
-        let architecture = if cfg!(target_arch = "aarch64") {
-            Architecture::Aarch64
-        } else if cfg!(target_arch = "x86_64") {
-            Architecture::X86_64
-        } else {
-            return Err(RuntimeError::new(format!(
-                "unsupported host architecture: {}",
-                env::consts::ARCH
-            )));
-        };
-
-        Ok(Self {
-            os,
-            architecture,
-        })
-    }
-
-    /// Returns the target-pack directory component for this platform.
-    ///
-    /// ```
-    /// use nwnrs_runtime::{Architecture, OperatingSystem, Platform};
-    /// let platform = Platform {
-    ///     os: OperatingSystem::Macos,
-    ///     architecture: Architecture::Aarch64,
-    /// };
-    /// assert_eq!(platform.directory_name(), "macos-aarch64");
-    /// ```
-    #[must_use]
-    pub fn directory_name(self) -> String {
-        format!("{}-{}", self.os, self.architecture)
-    }
-}
-
-impl fmt::Display for Platform {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "{}-{}", self.os, self.architecture)
-    }
-}
-
-/// The stable SHA-256 identity of one file.
-///
-/// ```
-/// let digest: Option<nwnrs_runtime::FileSha256> = None;
-/// assert!(digest.is_none());
-/// ```
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub struct FileSha256([u8; 32]);
-
-impl fmt::Display for FileSha256 {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for byte in self.0 {
-            write!(formatter, "{byte:02x}")?;
-        }
-        Ok(())
-    }
-}
-
-/// The identity and platform encoded by one native executable file.
-///
-/// ```no_run
-/// let identity = nwnrs_runtime::BinaryIdentity::read(std::env::current_exe()?)?;
-/// assert_eq!(identity.sha256.to_string().len(), 64);
-/// # Ok::<(), Box<dyn std::error::Error>>(())
-/// ```
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct BinaryIdentity {
-    /// Canonical path to the binary.
-    pub path:     PathBuf,
-    /// SHA-256 of the complete binary file.
-    pub sha256:   FileSha256,
-    /// Platform encoded in the ELF or Mach-O header.
-    pub platform: Platform,
-}
-
-impl BinaryIdentity {
-    /// Reads and identifies an ELF or Mach-O binary.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the path cannot be canonicalized or read, or when
-    /// its binary format, architecture, or operating system is unsupported.
-    ///
-    /// ```no_run
-    /// let identity = nwnrs_runtime::BinaryIdentity::read("/path/to/nwserver")?;
-    /// assert_eq!(identity.sha256.to_string().len(), 64);
-    /// # Ok::<(), nwnrs_runtime::RuntimeError>(())
-    /// ```
-    pub fn read(path: impl AsRef<Path>) -> RuntimeResult<Self> {
-        let requested = path.as_ref();
-        let path = fs::canonicalize(requested).map_err(|error| {
-            RuntimeError::new(format!(
-                "failed to resolve binary {}: {error}",
-                requested.display()
-            ))
-        })?;
-        let mut file = File::open(&path).map_err(|error| {
-            RuntimeError::new(format!("failed to open binary {}: {error}", path.display()))
-        })?;
-        let platform = read_platform(&mut file, &path)?;
-        let sha256 = file_sha256(&path)?;
-
-        Ok(Self {
-            path,
-            sha256,
-            platform,
-        })
-    }
-}
 
 /// Metadata binding one target pack to one exact server binary.
 ///
@@ -418,23 +225,77 @@ pub struct EngineClassLayouts {
     /// Offset of `CVirtualMachineCmdImplementer::m_pVM`.
     pub command_implementer_vm_offset: u64,
     /// Offset of `CAppManager::m_pServerExoApp`.
-    pub app_manager_server_offset:     u64,
+    pub app_manager_server_offset: u64,
     /// Offset of `CServerInfo::m_sModuleName`.
-    pub server_info_module_offset:     u64,
+    pub server_info_module_offset: u64,
+    /// Offset of `CServerInfo::m_JoiningRestrictions`.
+    pub server_info_joining_restrictions_offset: u64,
+    /// Offset of `CServerInfo::m_PlayOptions`.
+    pub server_info_play_options_offset: u64,
+    /// Offset of `CServerInfo::m_PersistantWorldOptions`.
+    pub server_info_persistent_world_options_offset: u64,
+    /// Offset of `CPersistantWorldOptions::bServerVaultByPlayerName`.
+    pub persistent_world_options_server_vault_by_player_name_offset: u64,
+    /// Offset of `CJoiningRestrictions::nMinLevel`.
+    pub joining_restrictions_min_level_offset: u64,
+    /// Offset of `CJoiningRestrictions::nMaxLevel`.
+    pub joining_restrictions_max_level_offset: u64,
+    /// Offset of `CServerExoApp::m_pcExoAppInternal`.
+    pub server_exo_app_internal_offset: u64,
+    /// Offset of `CServerExoAppInternal::m_lstBannedListIP`.
+    pub internal_banned_ip_list_offset: u64,
+    /// Offset of `CServerExoAppInternal::m_lstBannedListCDKey`.
+    pub internal_banned_cd_key_list_offset: u64,
+    /// Offset of `CServerExoAppInternal::m_lstBannedListPlayerName`.
+    pub internal_banned_player_name_list_offset: u64,
+    /// Offset of `CNWSModule::m_lstTURDList`.
+    pub module_turd_list_offset: u64,
+    /// Offset of `CNWSPlayerTURD::m_sCommunityName`.
+    pub player_turd_community_name_offset: u64,
+    /// Offset of `CNWSPlayerTURD::m_lsFirstName`.
+    pub player_turd_first_name_offset: u64,
+    /// Offset of `CNWSPlayerTURD::m_lsLastName`.
+    pub player_turd_last_name_offset: u64,
+    /// Offset of `CExoLinkedListInternal::pHead`.
+    pub linked_list_head_offset: u64,
+    /// Offset of `CExoLinkedListInternal::m_nCount`.
+    pub linked_list_count_offset: u64,
+    /// Offset of `CExoLinkedListNode::pNext`.
+    pub linked_list_node_next_offset: u64,
+    /// Offset of `CExoLinkedListNode::pObject`.
+    pub linked_list_node_object_offset: u64,
+    /// Offset of `CNWSPlayer::m_nPlayerID`.
+    pub player_id_offset: u64,
+    /// Offset of `CNWSPlayer::m_resFileName`.
+    pub player_file_name_offset: u64,
+    /// Complete size of `CResRef`.
+    pub player_file_name_size: u64,
+    /// Offset of `CNetLayerPlayerInfo::m_cCDKey`.
+    pub net_layer_player_info_cd_key_offset: u64,
+    /// Offset of `CNetLayerPlayerCDKeyInfo::sPublic`.
+    pub player_cd_key_public_offset: u64,
+    /// Offset of `CExoBase::m_pcExoAliasList`.
+    pub exo_base_alias_list_offset: u64,
+    /// Offset of `CNWSCreature::m_pStats`.
+    pub creature_stats_offset: u64,
+    /// Offset of `CNWSCreatureStats::m_lsFirstName`.
+    pub creature_stats_first_name_offset: u64,
+    /// Offset of `CNWSCreatureStats::m_lsLastName`.
+    pub creature_stats_last_name_offset: u64,
     /// Offset of `CVirtualMachine::m_nRecursionLevel`.
-    pub vm_recursion_level_offset:     u64,
+    pub vm_recursion_level_offset: u64,
     /// Offset of `CVirtualMachine::m_pVirtualMachineScript`.
-    pub vm_script_array_offset:        u64,
+    pub vm_script_array_offset: u64,
     /// Number of virtual-machine script slots.
-    pub vm_script_slot_count:          u32,
+    pub vm_script_slot_count: u32,
     /// Complete size of `CVirtualMachineScript`.
-    pub vm_script_size:                u64,
+    pub vm_script_size: u64,
     /// Alignment of `CVirtualMachineScript`.
-    pub vm_script_alignment:           u64,
+    pub vm_script_alignment: u64,
     /// Offset of `CVirtualMachineScript::m_sScriptName`.
-    pub vm_script_name_offset:         u64,
+    pub vm_script_name_offset: u64,
     /// Offset of `CVirtualMachineScript::m_nScriptEventID`.
-    pub vm_script_event_id_offset:     u64,
+    pub vm_script_event_id_offset: u64,
 }
 
 /// Complete native layouts used by one exact target pack.
@@ -488,6 +349,8 @@ pub enum Capability {
     NwscriptBridge,
     /// Live server module and player state.
     ServerState,
+    /// Runtime administration controls.
+    Administration,
     /// Current VM event-script context.
     EventContext,
 }
@@ -503,6 +366,7 @@ impl Capability {
         match self {
             Self::NwscriptBridge => "nwscript_bridge",
             Self::ServerState => "server_state",
+            Self::Administration => "administration",
             Self::EventContext => "event_context",
         }
     }
@@ -520,6 +384,7 @@ impl Capability {
         match name {
             "nwscript_bridge" => Some(Self::NwscriptBridge),
             "server_state" => Some(Self::ServerState),
+            "administration" => Some(Self::Administration),
             "event_context" => Some(Self::EventContext),
             _ => None,
         }
@@ -589,6 +454,74 @@ pub struct ServerStateTarget {
     pub get_udp_port:            TargetAddress,
 }
 
+/// Exact engine entry points and globals used by server administration.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AdministrationTarget {
+    /// Capability contract version.
+    pub version: u32,
+    /// `CNetLayer::GetSessionName`.
+    pub get_session_name: TargetAddress,
+    /// `CNetLayer::SetSessionName`.
+    pub set_session_name: TargetAddress,
+    /// `CNetLayer::GetPlayerPassword`.
+    pub get_player_password: TargetAddress,
+    /// `CNetLayer::SetPlayerPassword`.
+    pub set_player_password: TargetAddress,
+    /// `CNetLayer::GetGameMasterPassword`.
+    pub get_game_master_password: TargetAddress,
+    /// `CNetLayer::SetGameMasterPassword`.
+    pub set_game_master_password: TargetAddress,
+    /// Address of `g_bEnableCombatDebugging`.
+    pub enable_combat_debugging: TargetAddress,
+    /// Address of `g_bEnableSavingThrowDebugging`.
+    pub enable_saving_throw_debugging: TargetAddress,
+    /// Address of `g_bEnableMovementSpeedDebugging`.
+    pub enable_movement_speed_debugging: TargetAddress,
+    /// Address of `g_bEnableHitDieDebugging`.
+    pub enable_hit_die_debugging: TargetAddress,
+    /// Address of `g_bExitProgram`.
+    pub exit_program: TargetAddress,
+    /// `CServerExoApp::AddIPToBannedList`.
+    pub add_banned_ip: TargetAddress,
+    /// `CServerExoApp::RemoveIPFromBannedList`.
+    pub remove_banned_ip: TargetAddress,
+    /// `CServerExoApp::AddCDKeyToBannedList`.
+    pub add_banned_cd_key: TargetAddress,
+    /// `CServerExoApp::RemoveCDKeyFromBannedList`.
+    pub remove_banned_cd_key: TargetAddress,
+    /// `CServerExoApp::AddPlayerNameToBannedList`.
+    pub add_banned_player_name: TargetAddress,
+    /// `CServerExoApp::RemovePlayerNameFromBannedList`.
+    pub remove_banned_player_name: TargetAddress,
+    /// Address of global `g_pRules` storage.
+    pub rules: TargetAddress,
+    /// `CNWRules::ReloadAll`.
+    pub reload_rules: TargetAddress,
+    /// `CServerExoApp::GetModule`.
+    pub get_module: TargetAddress,
+    /// `CExoLocString::GetStringLoc`.
+    pub get_loc_string: TargetAddress,
+    /// `CExoLinkedListInternal::Remove`.
+    pub remove_linked_list_node: TargetAddress,
+    /// `CServerExoAppInternal::MainLoop`.
+    pub main_loop: TargetAddress,
+    /// `CServerExoApp::GetClientObjectByObjectId`.
+    pub get_client_object_by_object_id: TargetAddress,
+    /// `CServerExoApp::GetCreatureByGameObjectID`.
+    pub get_creature_by_game_object_id: TargetAddress,
+    /// `CNWSPlayer::GetPlayerName`.
+    pub get_player_name: TargetAddress,
+    /// `CNetLayer::GetPlayerInfo`.
+    pub get_player_info: TargetAddress,
+    /// `CNetLayer::DisconnectPlayer`.
+    pub disconnect_player: TargetAddress,
+    /// Address of global `g_pExoBase` storage.
+    pub exo_base: TargetAddress,
+    /// `CExoAliasList::GetAliasPath`.
+    pub get_alias_path: TargetAddress,
+}
+
 /// Capability marker for reading the active event-script layout.
 ///
 /// ```
@@ -625,6 +558,8 @@ pub struct TargetPack {
     pub bridge:         BridgeTarget,
     /// Exact native ABI required to read live server state.
     pub server_state:   Option<ServerStateTarget>,
+    /// Exact native ABI required for administration operations.
+    pub administration: Option<AdministrationTarget>,
     /// Exact native ABI required to observe existing event scripts.
     pub events:         Option<EventTarget>,
 }
@@ -643,6 +578,10 @@ impl TargetPack {
             Capability::NwscriptBridge => self.bridge.version,
             Capability::ServerState => self
                 .server_state
+                .as_ref()
+                .map_or(0, |target| target.version),
+            Capability::Administration => self
+                .administration
                 .as_ref()
                 .map_or(0, |target| target.version),
             Capability::EventContext => self.events.as_ref().map_or(0, |target| target.version),
@@ -856,6 +795,21 @@ fn validate_target_pack_metadata(pack: &TargetPack) -> RuntimeResult<()> {
             validate_target_address("server_state", name, address)?;
         }
     }
+    if let Some(administration) = pack.administration.as_ref() {
+        if pack.server_state.is_none() {
+            return Err(RuntimeError::new(
+                "target pack administration capability requires server_state",
+            ));
+        }
+        validate_capability_version(
+            "administration",
+            administration.version,
+            ADMINISTRATION_CAPABILITY_VERSION,
+        )?;
+        for (name, address) in administration_addresses(administration) {
+            validate_target_address("administration", name, address)?;
+        }
+    }
     if let Some(events) = pack.events.as_ref() {
         validate_capability_version(
             "event_context",
@@ -927,6 +881,129 @@ fn validate_layouts(layouts: &AbiLayouts) -> RuntimeResult<()> {
             8,
         ),
         (
+            "server_info_joining_restrictions_offset",
+            classes.server_info_joining_restrictions_offset,
+            4,
+        ),
+        (
+            "server_info_play_options_offset",
+            classes.server_info_play_options_offset,
+            4,
+        ),
+        (
+            "server_info_persistent_world_options_offset",
+            classes.server_info_persistent_world_options_offset,
+            4,
+        ),
+        (
+            "persistent_world_options_server_vault_by_player_name_offset",
+            classes.persistent_world_options_server_vault_by_player_name_offset,
+            4,
+        ),
+        (
+            "joining_restrictions_min_level_offset",
+            classes.joining_restrictions_min_level_offset,
+            4,
+        ),
+        (
+            "joining_restrictions_max_level_offset",
+            classes.joining_restrictions_max_level_offset,
+            4,
+        ),
+        (
+            "server_exo_app_internal_offset",
+            classes.server_exo_app_internal_offset,
+            8,
+        ),
+        (
+            "internal_banned_ip_list_offset",
+            classes.internal_banned_ip_list_offset,
+            8,
+        ),
+        (
+            "internal_banned_cd_key_list_offset",
+            classes.internal_banned_cd_key_list_offset,
+            8,
+        ),
+        (
+            "internal_banned_player_name_list_offset",
+            classes.internal_banned_player_name_list_offset,
+            8,
+        ),
+        (
+            "module_turd_list_offset",
+            classes.module_turd_list_offset,
+            8,
+        ),
+        (
+            "player_turd_community_name_offset",
+            classes.player_turd_community_name_offset,
+            8,
+        ),
+        (
+            "player_turd_first_name_offset",
+            classes.player_turd_first_name_offset,
+            8,
+        ),
+        (
+            "player_turd_last_name_offset",
+            classes.player_turd_last_name_offset,
+            8,
+        ),
+        (
+            "linked_list_head_offset",
+            classes.linked_list_head_offset,
+            8,
+        ),
+        (
+            "linked_list_count_offset",
+            classes.linked_list_count_offset,
+            4,
+        ),
+        (
+            "linked_list_node_next_offset",
+            classes.linked_list_node_next_offset,
+            8,
+        ),
+        (
+            "linked_list_node_object_offset",
+            classes.linked_list_node_object_offset,
+            8,
+        ),
+        ("player_id_offset", classes.player_id_offset, 4),
+        (
+            "player_file_name_offset",
+            classes.player_file_name_offset,
+            1,
+        ),
+        ("player_file_name_size", classes.player_file_name_size, 1),
+        (
+            "net_layer_player_info_cd_key_offset",
+            classes.net_layer_player_info_cd_key_offset,
+            8,
+        ),
+        (
+            "player_cd_key_public_offset",
+            classes.player_cd_key_public_offset,
+            8,
+        ),
+        (
+            "exo_base_alias_list_offset",
+            classes.exo_base_alias_list_offset,
+            8,
+        ),
+        ("creature_stats_offset", classes.creature_stats_offset, 8),
+        (
+            "creature_stats_first_name_offset",
+            classes.creature_stats_first_name_offset,
+            8,
+        ),
+        (
+            "creature_stats_last_name_offset",
+            classes.creature_stats_last_name_offset,
+            8,
+        ),
+        (
             "vm_recursion_level_offset",
             classes.vm_recursion_level_offset,
             4,
@@ -949,6 +1026,11 @@ fn validate_layouts(layouts: &AbiLayouts) -> RuntimeResult<()> {
     if classes.vm_script_slot_count == 0 {
         return Err(RuntimeError::new(
             "target pack VM script slot count must be greater than zero",
+        ));
+    }
+    if classes.player_file_name_size != 17 {
+        return Err(RuntimeError::new(
+            "target pack CResRef size must match the 17-byte Unified layout",
         ));
     }
     if classes.vm_script_alignment != 8 {
@@ -1089,6 +1171,76 @@ fn server_state_addresses(server_state: &ServerStateTarget) -> [(&'static str, &
             &server_state.get_session_max_players,
         ),
         ("get_udp_port", &server_state.get_udp_port),
+    ]
+}
+
+fn administration_addresses(
+    administration: &AdministrationTarget,
+) -> [(&'static str, &TargetAddress); 30] {
+    [
+        ("get_session_name", &administration.get_session_name),
+        ("set_session_name", &administration.set_session_name),
+        ("get_player_password", &administration.get_player_password),
+        ("set_player_password", &administration.set_player_password),
+        (
+            "get_game_master_password",
+            &administration.get_game_master_password,
+        ),
+        (
+            "set_game_master_password",
+            &administration.set_game_master_password,
+        ),
+        (
+            "enable_combat_debugging",
+            &administration.enable_combat_debugging,
+        ),
+        (
+            "enable_saving_throw_debugging",
+            &administration.enable_saving_throw_debugging,
+        ),
+        (
+            "enable_movement_speed_debugging",
+            &administration.enable_movement_speed_debugging,
+        ),
+        (
+            "enable_hit_die_debugging",
+            &administration.enable_hit_die_debugging,
+        ),
+        ("exit_program", &administration.exit_program),
+        ("add_banned_ip", &administration.add_banned_ip),
+        ("remove_banned_ip", &administration.remove_banned_ip),
+        ("add_banned_cd_key", &administration.add_banned_cd_key),
+        ("remove_banned_cd_key", &administration.remove_banned_cd_key),
+        (
+            "add_banned_player_name",
+            &administration.add_banned_player_name,
+        ),
+        (
+            "remove_banned_player_name",
+            &administration.remove_banned_player_name,
+        ),
+        ("rules", &administration.rules),
+        ("reload_rules", &administration.reload_rules),
+        ("get_module", &administration.get_module),
+        ("get_loc_string", &administration.get_loc_string),
+        (
+            "remove_linked_list_node",
+            &administration.remove_linked_list_node,
+        ),
+        ("main_loop", &administration.main_loop),
+        (
+            "get_client_object_by_object_id",
+            &administration.get_client_object_by_object_id,
+        ),
+        (
+            "get_creature_by_game_object_id",
+            &administration.get_creature_by_game_object_id,
+        ),
+        ("get_player_name", &administration.get_player_name),
+        ("get_player_info", &administration.get_player_info),
+        ("disconnect_player", &administration.disconnect_player),
+        ("exo_base", &administration.exo_base),
+        ("get_alias_path", &administration.get_alias_path),
     ]
 }
 
@@ -1429,6 +1581,7 @@ mod tests {
             layouts:        fixture_layouts(),
             bridge:         fixture_bridge_target(),
             server_state:   Some(fixture_server_state_target()),
+            administration: None,
             events:         Some(fixture_event_target()),
         };
         let pack_directory = root.join(identity.platform.directory_name());
@@ -1634,15 +1787,42 @@ mod tests {
             },
             classes:      EngineClassLayouts {
                 command_implementer_vm_offset: 0,
-                app_manager_server_offset:     8,
-                server_info_module_offset:     8,
-                vm_recursion_level_offset:     36,
-                vm_script_array_offset:        40,
-                vm_script_slot_count:          8,
-                vm_script_size:                152,
-                vm_script_alignment:           8,
-                vm_script_name_offset:         24,
-                vm_script_event_id_offset:     72,
+                app_manager_server_offset: 8,
+                server_info_module_offset: 8,
+                server_info_joining_restrictions_offset: 136,
+                server_info_play_options_offset: 252,
+                server_info_persistent_world_options_offset: 404,
+                persistent_world_options_server_vault_by_player_name_offset: 16,
+                joining_restrictions_min_level_offset: 104,
+                joining_restrictions_max_level_offset: 108,
+                server_exo_app_internal_offset: 8,
+                internal_banned_ip_list_offset: 65920,
+                internal_banned_cd_key_list_offset: 65936,
+                internal_banned_player_name_list_offset: 65952,
+                module_turd_list_offset: 112,
+                player_turd_community_name_offset: 752,
+                player_turd_first_name_offset: 768,
+                player_turd_last_name_offset: 784,
+                linked_list_head_offset: 0,
+                linked_list_count_offset: 16,
+                linked_list_node_next_offset: 8,
+                linked_list_node_object_offset: 16,
+                player_id_offset: 72,
+                player_file_name_offset: 181,
+                player_file_name_size: 17,
+                net_layer_player_info_cd_key_offset: 136,
+                player_cd_key_public_offset: 0,
+                exo_base_alias_list_offset: 32,
+                creature_stats_offset: 2760,
+                creature_stats_first_name_offset: 72,
+                creature_stats_last_name_offset: 88,
+                vm_recursion_level_offset: 36,
+                vm_script_array_offset: 40,
+                vm_script_slot_count: 8,
+                vm_script_size: 152,
+                vm_script_alignment: 8,
+                vm_script_name_offset: 24,
+                vm_script_event_id_offset: 72,
             },
         }
     }

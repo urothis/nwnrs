@@ -1059,6 +1059,7 @@ name = "nwnrs-runtime"
 version = "0.0.1"
 dependencies = [
  "serde",
+ "serde_json",
  "sha2",
  "toml",
 ]
@@ -1067,8 +1068,10 @@ dependencies = [
 name = "nwnrs-runtime-sys"
 version = "0.0.1"
 dependencies = [
+ "cc",
  "frida-gum-sys",
  "nwnrs-runtime",
+ "toml",
  "tracing",
  "tracing-subscriber",
 ]

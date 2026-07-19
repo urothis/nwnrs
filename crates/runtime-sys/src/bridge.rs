@@ -12,15 +12,16 @@ use std::{
 };
 
 use nwnrs_runtime::{
-    BridgeError, BridgeErrorCode, BridgeFunction, BridgeValue, EventContext, RuntimeContext,
-    ScriptBridge, ScriptLog, ScriptLogLevel, ServerSnapshot, Vector,
+    BridgeError, BridgeErrorCode, BridgeValue, RuntimeContext, ScriptBridge, ScriptLog,
+    ScriptLogLevel, Vector,
 };
 
 use super::{
     RUNTIME_CONTEXT,
+    adapter::NativeRuntimeHost,
     engine::{
         Engine, EngineThreadToken,
-        abi::{FunctionManagement, ObjectId},
+        abi::{FunctionManagement, MainLoop, ObjectId},
     },
     write_diagnostic,
 };
@@ -43,6 +44,7 @@ const NWNX_POP_VECTOR: i32 = 1171;
 
 static ENGINE: OnceLock<Engine> = OnceLock::new();
 static FUNCTION_MANAGEMENT_ORIGINAL: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
+static MAIN_LOOP_ORIGINAL: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
 
 thread_local! {
     static SCRIPT_BRIDGE: RefCell<ScriptBridge> = RefCell::new(ScriptBridge::default());
@@ -92,6 +94,7 @@ pub fn install_nwscript_bridge(context: &RuntimeContext) -> Result<(), BridgeIns
     }
     let engine = resolved?;
     let hook_target = engine.hook_target();
+    let main_loop_hook_target = engine.administration_main_loop_hook_target();
     if ENGINE.set(engine).is_err() {
         return Err(BridgeInstallError::new(
             "NWScript bridge was initialized more than once",
@@ -103,13 +106,22 @@ pub fn install_nwscript_bridge(context: &RuntimeContext) -> Result<(), BridgeIns
     if interceptor.is_null() {
         return Err(BridgeInstallError::new("Frida Gum returned no interceptor"));
     }
-    let hook = HookSpec {
+    let bridge_hook = HookSpec {
         name:        "NWScript bridge",
         target:      hook_target,
         replacement: function_management_replacement as FunctionManagement as *const () as usize,
         original:    &FUNCTION_MANAGEMENT_ORIGINAL,
     };
-    let result = install_hooks(interceptor, &[hook]);
+    let mut hooks = vec![bridge_hook];
+    if let Some(target) = main_loop_hook_target {
+        hooks.push(HookSpec {
+            name: "deferred administration",
+            target,
+            replacement: main_loop_replacement as MainLoop as *const () as usize,
+            original: &MAIN_LOOP_ORIGINAL,
+        });
+    }
+    let result = install_hooks(interceptor, &hooks);
     release_interceptor(interceptor);
     result
 }
@@ -190,6 +202,32 @@ pub(crate) extern "C" fn function_management_replacement(
         handle_function_management(commands, command, parameters)
     }))
     .unwrap_or(VM_FAKE_ABORT_SCRIPT)
+}
+
+pub(crate) extern "C" fn main_loop_replacement(server_internal: *mut c_void) -> i32 {
+    panic::catch_unwind(AssertUnwindSafe(|| {
+        if let Some(engine) = ENGINE.get() {
+            // SAFETY: the replacement runs synchronously on the NWServer main
+            // loop thread and does not retain the callback token.
+            let thread = unsafe { EngineThreadToken::new() };
+            if let Err(error) = engine.process_deferred_administration(&thread) {
+                write_diagnostic(&error.to_string());
+            }
+        }
+        call_original_main_loop(server_internal)
+    }))
+    .unwrap_or_default()
+}
+
+fn call_original_main_loop(server_internal: *mut c_void) -> i32 {
+    let original = MAIN_LOOP_ORIGINAL.load(Ordering::Acquire);
+    if original.is_null() {
+        return 0;
+    }
+    // SAFETY: Gum published the exact MainLoop trampoline before enabling the
+    // replacement, and the receiver belongs to this engine callback.
+    let original = unsafe { std::mem::transmute::<*mut c_void, MainLoop>(original) };
+    original(server_internal)
 }
 
 fn handle_function_management(commands: *mut c_void, command: i32, parameters: i32) -> i32 {
@@ -281,21 +319,7 @@ fn handle_call(engine: &Engine, thread: &EngineThreadToken, vm: *mut c_void) -> 
     let Some(context) = RUNTIME_CONTEXT.get() else {
         return VM_FAKE_ABORT_SCRIPT;
     };
-    let parsed = BridgeFunction::from_name(function);
-    let server = match server_snapshot_for_call(engine, thread, context, parsed) {
-        Ok(value) => value,
-        Err(error) => return record_engine_error(error),
-    };
-    let event = if parsed.is_some_and(|function| {
-        function.required_capability() == Some(nwnrs_runtime::Capability::EventContext)
-    }) {
-        match engine.event_context(thread, vm) {
-            Ok(value) => value,
-            Err(error) => return record_engine_error(error),
-        }
-    } else {
-        EventContext::default()
-    };
+    let mut host = NativeRuntimeHost::new(engine, thread, vm);
     let result = SCRIPT_BRIDGE.try_with(|bridge| {
         let mut bridge = bridge.try_borrow_mut().map_err(|_error| {
             BridgeError::new(
@@ -303,7 +327,7 @@ fn handle_call(engine: &Engine, thread: &EngineThreadToken, vm: *mut c_void) -> 
                 "NWScript bridge call was reentrant",
             )
         })?;
-        bridge.call(namespace, function, context, &server, &event)?;
+        bridge.call(namespace, function, context, &mut host)?;
         Ok::<_, BridgeError>(bridge.take_logs())
     });
     match result {
@@ -319,38 +343,6 @@ fn handle_call(engine: &Engine, thread: &EngineThreadToken, vm: *mut c_void) -> 
         }
         Err(_) => VM_FAKE_ABORT_SCRIPT,
     }
-}
-
-fn server_snapshot_for_call(
-    engine: &Engine,
-    thread: &EngineThreadToken,
-    context: &RuntimeContext,
-    function: Option<BridgeFunction>,
-) -> Result<ServerSnapshot, BridgeInstallError> {
-    let needs_snapshot = function.is_some_and(|function| {
-        function.required_capability() == Some(nwnrs_runtime::Capability::ServerState)
-    });
-    if !needs_snapshot {
-        return Ok(ServerSnapshot::default());
-    }
-    if context
-        .target
-        .pack
-        .capability_version(nwnrs_runtime::Capability::ServerState)
-        == 0
-    {
-        return Ok(ServerSnapshot::default());
-    }
-    Ok(ServerSnapshot {
-        module_name:  engine.module_name(thread)?,
-        player_count: engine.player_count(thread)?,
-        max_players:  engine.max_players(thread)?,
-        udp_port:     engine.udp_port(thread)?,
-    })
-}
-
-fn record_engine_error(error: BridgeInstallError) -> i32 {
-    record_error(BridgeError::new(BridgeErrorCode::Engine, error.to_string()))
 }
 
 fn record_error(error: BridgeError) -> i32 {

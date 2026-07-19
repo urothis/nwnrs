@@ -1,5 +1,5 @@
 /// @file nwnrs.nss
-/// @brief Server identity, live state, event context, and structured logging.
+/// @brief Server identity, live state, administration, event context, and structured logging.
 
 const string NWNRS_NAMESPACE = "NWNRS"; ///< @private
 
@@ -7,6 +7,7 @@ const int NWNRS_API_VERSION = 1;
 
 const string NWNRS_CAPABILITY_NWSCRIPT_BRIDGE = "nwscript_bridge";
 const string NWNRS_CAPABILITY_SERVER_STATE = "server_state";
+const string NWNRS_CAPABILITY_ADMINISTRATION = "administration";
 const string NWNRS_CAPABILITY_EVENT_CONTEXT = "event_context";
 
 const int NWNRS_ERROR_NONE = 0;
@@ -22,6 +23,32 @@ const int NWNRS_LOG_LEVEL_DEBUG = 1;
 const int NWNRS_LOG_LEVEL_INFO = 2;
 const int NWNRS_LOG_LEVEL_WARN = 3;
 const int NWNRS_LOG_LEVEL_ERROR = 4;
+
+// Administration play options supported by the live server.
+const int NWNRS_PLAY_OPTION_PVP_SETTING = 10; // 0 = none, 1 = party, 2 = full
+const int NWNRS_PLAY_OPTION_PAUSE_AND_PLAY = 11;
+const int NWNRS_PLAY_OPTION_ONE_PARTY_ONLY = 12;
+const int NWNRS_PLAY_OPTION_ENFORCE_LEGAL_CHARACTERS = 13;
+const int NWNRS_PLAY_OPTION_ITEM_LEVEL_RESTRICTIONS = 14;
+const int NWNRS_PLAY_OPTION_CDKEY_BANLIST_ALLOWLIST = 15;
+const int NWNRS_PLAY_OPTION_DISALLOW_SHOUTING = 16;
+const int NWNRS_PLAY_OPTION_SHOW_DM_JOIN_MESSAGE = 17;
+const int NWNRS_PLAY_OPTION_BACKUP_SAVED_CHARACTERS = 18;
+const int NWNRS_PLAY_OPTION_AUTO_FAIL_SAVE_ON_1 = 19;
+const int NWNRS_PLAY_OPTION_VALIDATE_SPELLS = 20;
+const int NWNRS_PLAY_OPTION_EXAMINE_EFFECTS = 21;
+const int NWNRS_PLAY_OPTION_EXAMINE_CHALLENGE_RATING = 22;
+const int NWNRS_PLAY_OPTION_USE_MAX_HITPOINTS = 23;
+const int NWNRS_PLAY_OPTION_RESTORE_SPELLS_USES = 24;
+const int NWNRS_PLAY_OPTION_RESET_ENCOUNTER_SPAWN_POOL = 25;
+const int NWNRS_PLAY_OPTION_HIDE_HITPOINTS_GAINED = 26;
+const int NWNRS_PLAY_OPTION_PLAYER_PARTY_CONTROL = 27;
+const int NWNRS_PLAY_OPTION_SHOW_PLAYER_JOIN_MESSAGES = 28;
+
+const int NWNRS_DEBUG_COMBAT = 0;
+const int NWNRS_DEBUG_SAVING_THROW = 1;
+const int NWNRS_DEBUG_MOVEMENT_SPEED = 2;
+const int NWNRS_DEBUG_HIT_DIE = 3;
 
 /// Returns TRUE when the nwnrs NWScript bridge is installed.
 int NWNRS_GetIsAvailable();
@@ -75,6 +102,99 @@ int NWNRS_GetMaxPlayers();
 
 /// Returns the active UDP port on which the server is listening.
 int NWNRS_GetServerPort();
+
+// Administration
+
+/// Returns the server name advertised by the network session.
+string NWNRS_GetServerName();
+
+/// Changes the server name advertised by the network session.
+void NWNRS_SetServerName(string sName);
+
+/// Changes the active module's advertised name.
+void NWNRS_SetModuleName(string sName);
+
+/// Returns TRUE when a player password is configured without exposing it.
+int NWNRS_GetIsPlayerPasswordSet();
+
+/// Sets the password required for player connections.
+void NWNRS_SetPlayerPassword(string sPassword);
+
+/// Removes the password required for player connections.
+void NWNRS_ClearPlayerPassword();
+
+/// Returns TRUE when a DM password is configured without exposing it.
+int NWNRS_GetIsDMPasswordSet();
+
+/// Sets the password required for DM connections.
+void NWNRS_SetDMPassword(string sPassword);
+
+/// Removes the password required for DM connections.
+void NWNRS_ClearDMPassword();
+
+/// Returns the minimum permitted character level.
+int NWNRS_GetMinLevel();
+
+/// Sets the minimum permitted character level, from 1 through 255.
+void NWNRS_SetMinLevel(int nLevel);
+
+/// Returns the maximum permitted character level.
+int NWNRS_GetMaxLevel();
+
+/// Sets the maximum permitted character level, from 1 through 255.
+void NWNRS_SetMaxLevel(int nLevel);
+
+/// Returns one NWNRS_PLAY_OPTION_* value.
+int NWNRS_GetPlayOption(int nOption);
+
+/// Changes one NWNRS_PLAY_OPTION_* value.
+void NWNRS_SetPlayOption(int nOption, int nValue);
+
+/// Returns one NWNRS_DEBUG_* toggle.
+int NWNRS_GetDebugValue(int nDebugType);
+
+/// Changes one NWNRS_DEBUG_* toggle to FALSE or TRUE.
+void NWNRS_SetDebugValue(int nDebugType, int bEnabled);
+
+/// Requests graceful server shutdown after the current bridge call returns.
+void NWNRS_RequestShutdown();
+
+/// Returns {"ip_addresses":[],"cd_keys":[],"player_names":[]}.
+json NWNRS_GetBannedList();
+
+/// Adds an IP address to the persistent engine ban list.
+void NWNRS_AddBannedIP(string sAddress);
+
+/// Removes an IP address from the persistent engine ban list.
+void NWNRS_RemoveBannedIP(string sAddress);
+
+/// Adds a public CD key to the persistent engine ban list.
+void NWNRS_AddBannedCDKey(string sKey);
+
+/// Removes a public CD key from the persistent engine ban list.
+void NWNRS_RemoveBannedCDKey(string sKey);
+
+/// Adds a player account name to the persistent engine ban list.
+void NWNRS_AddBannedPlayerName(string sPlayerName);
+
+/// Removes a player account name from the persistent engine ban list.
+void NWNRS_RemoveBannedPlayerName(string sPlayerName);
+
+/// Reloads the engine rules tables from the active resource manager.
+void NWNRS_ReloadRules();
+
+/// Disconnects oPC and removes its active server-vault BIC after this script call.
+/// When bPreserveBackup is TRUE, preserves the BIC as the first available
+/// .deletedN file. The operation also removes the matching in-memory TURD.
+void NWNRS_DeletePlayerCharacter(
+    object oPC,
+    int bPreserveBackup = TRUE,
+    string sKickMessage = ""
+);
+
+/// Removes a disconnected player's in-memory TURD by account and character name.
+/// Returns TRUE when a matching TURD was found and removed.
+int NWNRS_DeleteTURD(string sPlayerName, string sCharacterName);
 
 /// Returns TRUE while an engine module, area, or object event script is running.
 int NWNRS_GetIsInEvent();
@@ -196,6 +316,182 @@ int NWNRS_GetMaxPlayers()
 int NWNRS_GetServerPort()
 {
     NWNXCall(NWNRS_NAMESPACE, "GetServerPort");
+    return NWNXPopInt();
+}
+
+string NWNRS_GetServerName()
+{
+    NWNXCall(NWNRS_NAMESPACE, "GetServerName");
+    return NWNXPopString();
+}
+
+void NWNRS_SetServerName(string sName)
+{
+    NWNXPushString(sName);
+    NWNXCall(NWNRS_NAMESPACE, "SetServerName");
+}
+
+void NWNRS_SetModuleName(string sName)
+{
+    NWNXPushString(sName);
+    NWNXCall(NWNRS_NAMESPACE, "SetModuleName");
+}
+
+int NWNRS_GetIsPlayerPasswordSet()
+{
+    NWNXCall(NWNRS_NAMESPACE, "GetIsPlayerPasswordSet");
+    return NWNXPopInt();
+}
+
+void NWNRS_SetPlayerPassword(string sPassword)
+{
+    NWNXPushString(sPassword);
+    NWNXCall(NWNRS_NAMESPACE, "SetPlayerPassword");
+}
+
+void NWNRS_ClearPlayerPassword()
+{
+    NWNXCall(NWNRS_NAMESPACE, "ClearPlayerPassword");
+}
+
+int NWNRS_GetIsDMPasswordSet()
+{
+    NWNXCall(NWNRS_NAMESPACE, "GetIsDmPasswordSet");
+    return NWNXPopInt();
+}
+
+void NWNRS_SetDMPassword(string sPassword)
+{
+    NWNXPushString(sPassword);
+    NWNXCall(NWNRS_NAMESPACE, "SetDmPassword");
+}
+
+void NWNRS_ClearDMPassword()
+{
+    NWNXCall(NWNRS_NAMESPACE, "ClearDmPassword");
+}
+
+int NWNRS_GetMinLevel()
+{
+    NWNXCall(NWNRS_NAMESPACE, "GetMinLevel");
+    return NWNXPopInt();
+}
+
+void NWNRS_SetMinLevel(int nLevel)
+{
+    NWNXPushInt(nLevel);
+    NWNXCall(NWNRS_NAMESPACE, "SetMinLevel");
+}
+
+int NWNRS_GetMaxLevel()
+{
+    NWNXCall(NWNRS_NAMESPACE, "GetMaxLevel");
+    return NWNXPopInt();
+}
+
+void NWNRS_SetMaxLevel(int nLevel)
+{
+    NWNXPushInt(nLevel);
+    NWNXCall(NWNRS_NAMESPACE, "SetMaxLevel");
+}
+
+int NWNRS_GetPlayOption(int nOption)
+{
+    NWNXPushInt(nOption);
+    NWNXCall(NWNRS_NAMESPACE, "GetPlayOption");
+    return NWNXPopInt();
+}
+
+void NWNRS_SetPlayOption(int nOption, int nValue)
+{
+    NWNXPushInt(nValue);
+    NWNXPushInt(nOption);
+    NWNXCall(NWNRS_NAMESPACE, "SetPlayOption");
+}
+
+int NWNRS_GetDebugValue(int nDebugType)
+{
+    NWNXPushInt(nDebugType);
+    NWNXCall(NWNRS_NAMESPACE, "GetDebugValue");
+    return NWNXPopInt();
+}
+
+void NWNRS_SetDebugValue(int nDebugType, int bEnabled)
+{
+    NWNXPushInt(bEnabled);
+    NWNXPushInt(nDebugType);
+    NWNXCall(NWNRS_NAMESPACE, "SetDebugValue");
+}
+
+void NWNRS_RequestShutdown()
+{
+    NWNXCall(NWNRS_NAMESPACE, "RequestShutdown");
+}
+
+json NWNRS_GetBannedList()
+{
+    NWNXCall(NWNRS_NAMESPACE, "GetBannedList");
+    return JsonParse(NWNXPopString());
+}
+
+void NWNRS_AddBannedIP(string sAddress)
+{
+    NWNXPushString(sAddress);
+    NWNXCall(NWNRS_NAMESPACE, "AddBannedIp");
+}
+
+void NWNRS_RemoveBannedIP(string sAddress)
+{
+    NWNXPushString(sAddress);
+    NWNXCall(NWNRS_NAMESPACE, "RemoveBannedIp");
+}
+
+void NWNRS_AddBannedCDKey(string sKey)
+{
+    NWNXPushString(sKey);
+    NWNXCall(NWNRS_NAMESPACE, "AddBannedCdKey");
+}
+
+void NWNRS_RemoveBannedCDKey(string sKey)
+{
+    NWNXPushString(sKey);
+    NWNXCall(NWNRS_NAMESPACE, "RemoveBannedCdKey");
+}
+
+void NWNRS_AddBannedPlayerName(string sPlayerName)
+{
+    NWNXPushString(sPlayerName);
+    NWNXCall(NWNRS_NAMESPACE, "AddBannedPlayerName");
+}
+
+void NWNRS_RemoveBannedPlayerName(string sPlayerName)
+{
+    NWNXPushString(sPlayerName);
+    NWNXCall(NWNRS_NAMESPACE, "RemoveBannedPlayerName");
+}
+
+void NWNRS_ReloadRules()
+{
+    NWNXCall(NWNRS_NAMESPACE, "ReloadRules");
+}
+
+void NWNRS_DeletePlayerCharacter(
+    object oPC,
+    int bPreserveBackup = TRUE,
+    string sKickMessage = ""
+)
+{
+    NWNXPushString(sKickMessage);
+    NWNXPushInt(bPreserveBackup);
+    NWNXPushObject(oPC);
+    NWNXCall(NWNRS_NAMESPACE, "DeletePlayerCharacter");
+}
+
+int NWNRS_DeleteTURD(string sPlayerName, string sCharacterName)
+{
+    NWNXPushString(sCharacterName);
+    NWNXPushString(sPlayerName);
+    NWNXCall(NWNRS_NAMESPACE, "DeleteTURD");
     return NWNXPopInt();
 }
 

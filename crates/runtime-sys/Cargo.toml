@@ -11,6 +11,7 @@ documentation = "https://docs.rs/nwnrs-runtime-sys"
 readme = "README.md"
 keywords = ["nwn", "neverwinter-nights", "frida", "instrumentation"]
 categories = ["external-ffi-bindings", "game-development"]
+build = "build.rs"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
@@ -20,6 +21,12 @@ frida-gum-sys.workspace = true
 nwnrs-runtime = { path = "../runtime", version = "0.0.1" }
 tracing.workspace = true
 tracing-subscriber.workspace = true
+
+[build-dependencies]
+cc.workspace = true
+
+[dev-dependencies]
+toml.workspace = true
 
 # This is the workspace's one native boundary, so it cannot inherit the
 # workspace-wide `unsafe_code = "deny"`. Keep the remaining policy explicit.

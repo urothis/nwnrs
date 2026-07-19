@@ -4,6 +4,10 @@ The isolated native boundary for the injected nwnrs runtime. This crate owns
 Frida Gum calls, process-loader initialization, native callbacks, and the small
 amount of unsafe code required by those interfaces.
 
+It contains no NWScript API policy: argument validation, function semantics,
+return-state management, and administration command construction remain in
+the safe `nwnrs-runtime` crate.
+
 The boundary is split into typed engine modules for VM stack transport,
 server state, event context, engine strings, native addresses, and VM-thread
 access. Resolved addresses are converted to their exact function types once.
@@ -15,10 +19,19 @@ At injected startup it resolves the exact target pack's minimal VM ABI and
 replaces `ExecuteCommandNWNXFunctionManagement`. Integer, float, object,
 string, and vector stack operations are copied across the native boundary;
 the safe `nwnrs-runtime` crate owns dispatch and return state. Hash-specific
-server accessors supply the live module name, player count, and maximum
-players on the same server thread as the NWScript call. The network-layer
-snapshot also exposes the active UDP listening port, which base NWScript does
-not provide.
+server accessors implement its `RuntimeHost` contract and read only the value
+requested by each call. Mutations execute synchronously, so native failures
+belong to the same bridge call. These accessors expose the live module name,
+player count, maximum players, and active UDP port, which base NWScript does
+not provide. Administration mutations use separately verified engine methods
+and field offsets; TURD recovery traverses the engine-owned linked list and
+removes only an exact community-name and full-character-name match.
+Player-character deletion is prepared during the NWScript callback using only
+owned identity and path data, then drained through a separately verified main
+loop hook. The deferred operation disconnects the player, creates a unique
+byte-identical `.deletedN` hard-link backup when requested, removes the active
+BIC, and cleans the matching TURD without retaining an engine pointer between
+ticks.
 
 The same exact target pack records the live `CVirtualMachineScript` layout.
 During each NWScript bridge call, the runtime copies the current script name,
@@ -34,4 +47,10 @@ Build and execute the platform interception probe with:
 
 ```console
 cargo run -p nwnrs-runtime-sys --example frida-probe
+```
+
+Run the complete injected-runtime fixture with:
+
+```console
+crates/runtime-sys/scripts/test-native-runtime.sh
 ```

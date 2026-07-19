@@ -19,6 +19,12 @@ pub(crate) type GetPlayerList = extern "C" fn(*mut c_void) -> *const c_void;
 pub(crate) type GetNetLayer = extern "C" fn(*mut c_void) -> *mut c_void;
 pub(crate) type GetSessionMaxPlayers = extern "C" fn(*mut c_void) -> u32;
 pub(crate) type GetUdpPort = extern "C" fn(*mut c_void) -> u32;
+pub(crate) type GetModule = extern "C" fn(*mut c_void) -> *mut c_void;
+pub(crate) type RemoveLinkedListNode = extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void;
+pub(crate) type MainLoop = extern "C" fn(*mut c_void) -> i32;
+pub(crate) type GetClientObjectByObjectId = extern "C" fn(*mut c_void, u32) -> *mut c_void;
+pub(crate) type GetCreatureByGameObjectId = extern "C" fn(*mut c_void, u32) -> *mut c_void;
+pub(crate) type GetPlayerInfo = extern "C" fn(*mut c_void, u32) -> *mut c_void;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct ObjectId(u32);

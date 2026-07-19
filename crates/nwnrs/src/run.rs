@@ -1410,6 +1410,7 @@ mod tests {
             layouts:        target_layouts(),
             bridge:         bridge_target(),
             server_state:   Some(server_state_target()),
+            administration: None,
             events:         Some(event_target()),
         };
         let directory = root.join(platform.directory_name());
@@ -1497,15 +1498,50 @@ mod tests {
             },
             classes:      EngineClassLayouts {
                 command_implementer_vm_offset: 0,
-                app_manager_server_offset:     8,
-                server_info_module_offset:     8,
-                vm_recursion_level_offset:     36,
-                vm_script_array_offset:        40,
-                vm_script_slot_count:          8,
-                vm_script_size:                if cfg!(target_os = "linux") { 152 } else { 136 },
-                vm_script_alignment:           8,
-                vm_script_name_offset:         24,
-                vm_script_event_id_offset:     72,
+                app_manager_server_offset: 8,
+                server_info_module_offset: 8,
+                server_info_joining_restrictions_offset: 136,
+                server_info_play_options_offset: 252,
+                server_info_persistent_world_options_offset: 404,
+                persistent_world_options_server_vault_by_player_name_offset: 16,
+                joining_restrictions_min_level_offset: 104,
+                joining_restrictions_max_level_offset: 108,
+                server_exo_app_internal_offset: 8,
+                internal_banned_ip_list_offset: 65920,
+                internal_banned_cd_key_list_offset: 65936,
+                internal_banned_player_name_list_offset: 65952,
+                module_turd_list_offset: 112,
+                player_turd_community_name_offset: if cfg!(target_os = "linux") {
+                    768
+                } else {
+                    752
+                },
+                player_turd_first_name_offset: if cfg!(target_os = "linux") { 784 } else { 768 },
+                player_turd_last_name_offset: if cfg!(target_os = "linux") { 800 } else { 784 },
+                linked_list_head_offset: 0,
+                linked_list_count_offset: 16,
+                linked_list_node_next_offset: 8,
+                linked_list_node_object_offset: 16,
+                player_id_offset: 72,
+                player_file_name_offset: 181,
+                player_file_name_size: 17,
+                net_layer_player_info_cd_key_offset: 136,
+                player_cd_key_public_offset: 0,
+                exo_base_alias_list_offset: 32,
+                creature_stats_offset: if cfg!(target_os = "linux") {
+                    2824
+                } else {
+                    2760
+                },
+                creature_stats_first_name_offset: 72,
+                creature_stats_last_name_offset: 88,
+                vm_recursion_level_offset: 36,
+                vm_script_array_offset: 40,
+                vm_script_slot_count: 8,
+                vm_script_size: if cfg!(target_os = "linux") { 152 } else { 136 },
+                vm_script_alignment: 8,
+                vm_script_name_offset: 24,
+                vm_script_event_id_offset: 72,
             },
         }
     }

@@ -1,5 +1,6 @@
 pub(crate) mod abi;
 mod address;
+mod administration;
 mod event;
 mod server;
 mod string;
@@ -9,8 +10,11 @@ mod vm;
 use std::ffi::c_void;
 
 use address::Resolver;
+use administration::AdministrationEngine;
 use event::EventEngine;
-use nwnrs_runtime::{EventContext, RuntimeContext};
+use nwnrs_runtime::{
+    AdministrationCommand, BannedLists, EventContext, HostCommandResult, RuntimeContext,
+};
 use server::ServerEngine;
 pub(crate) use thread::EngineThreadToken;
 use vm::VirtualMachineEngine;
@@ -18,9 +22,10 @@ use vm::VirtualMachineEngine;
 use crate::bridge::BridgeInstallError;
 
 pub(crate) struct Engine {
-    vm:     VirtualMachineEngine,
-    server: Option<ServerEngine>,
-    event:  Option<EventEngine>,
+    vm:             VirtualMachineEngine,
+    server:         Option<ServerEngine>,
+    administration: Option<AdministrationEngine>,
+    event:          Option<EventEngine>,
 }
 
 impl Engine {
@@ -56,15 +61,39 @@ impl Engine {
             .as_ref()
             .map(|_| EventEngine::from_layouts(&layouts.classes))
             .transpose()?;
+        let administration = context
+            .target
+            .pack
+            .administration
+            .as_ref()
+            .map(|target| AdministrationEngine::resolve(&resolver, target, &layouts.classes))
+            .transpose()?;
         Ok(Self {
             vm,
             server,
+            administration,
             event,
         })
     }
 
     pub(crate) fn hook_target(&self) -> usize {
         self.vm.hook_target()
+    }
+
+    pub(crate) fn administration_main_loop_hook_target(&self) -> Option<usize> {
+        self.administration
+            .as_ref()
+            .map(AdministrationEngine::main_loop_hook_target)
+    }
+
+    pub(crate) fn process_deferred_administration(
+        &self,
+        thread: &EngineThreadToken,
+    ) -> Result<(), BridgeInstallError> {
+        if let Some(administration) = &self.administration {
+            administration.process_deferred(thread, self.server()?)?;
+        }
+        Ok(())
     }
 
     pub(crate) fn virtual_machine(
@@ -104,6 +133,70 @@ impl Engine {
         self.server()?.udp_port(thread)
     }
 
+    pub(crate) fn server_name(
+        &self,
+        thread: &EngineThreadToken,
+    ) -> Result<Vec<u8>, BridgeInstallError> {
+        self.administration()?.server_name(thread, self.server()?)
+    }
+
+    pub(crate) fn player_password_is_set(
+        &self,
+        thread: &EngineThreadToken,
+    ) -> Result<bool, BridgeInstallError> {
+        self.administration()?
+            .player_password_is_set(thread, self.server()?)
+    }
+
+    pub(crate) fn dm_password_is_set(
+        &self,
+        thread: &EngineThreadToken,
+    ) -> Result<bool, BridgeInstallError> {
+        self.administration()?
+            .dm_password_is_set(thread, self.server()?)
+    }
+
+    pub(crate) fn min_level(&self, thread: &EngineThreadToken) -> Result<i32, BridgeInstallError> {
+        self.administration()?.min_level(thread, self.server()?)
+    }
+
+    pub(crate) fn max_level(&self, thread: &EngineThreadToken) -> Result<i32, BridgeInstallError> {
+        self.administration()?.max_level(thread, self.server()?)
+    }
+
+    pub(crate) fn play_option(
+        &self,
+        thread: &EngineThreadToken,
+        option: i32,
+    ) -> Result<i32, BridgeInstallError> {
+        self.administration()?
+            .play_option(thread, self.server()?, option)
+    }
+
+    pub(crate) fn debug_value(
+        &self,
+        thread: &EngineThreadToken,
+        debug_type: i32,
+    ) -> Result<i32, BridgeInstallError> {
+        self.administration()?.debug_value(thread, debug_type)
+    }
+
+    pub(crate) fn banned_lists(
+        &self,
+        thread: &EngineThreadToken,
+    ) -> Result<BannedLists, BridgeInstallError> {
+        self.administration()?.banned_lists(thread, self.server()?)
+    }
+
+    pub(crate) fn execute_administration(
+        &self,
+        thread: &EngineThreadToken,
+        command: &AdministrationCommand,
+    ) -> Result<HostCommandResult, BridgeInstallError> {
+        self.administration()?
+            .execute(thread, self.server()?, command)
+    }
+
     pub(crate) fn event_context(
         &self,
         thread: &EngineThreadToken,
@@ -118,6 +211,12 @@ impl Engine {
     fn server(&self) -> Result<&ServerEngine, BridgeInstallError> {
         self.server.as_ref().ok_or_else(|| {
             BridgeInstallError::new("target pack does not provide the server_state capability")
+        })
+    }
+
+    fn administration(&self) -> Result<&AdministrationEngine, BridgeInstallError> {
+        self.administration.as_ref().ok_or_else(|| {
+            BridgeInstallError::new("target pack does not provide the administration capability")
         })
     }
 }

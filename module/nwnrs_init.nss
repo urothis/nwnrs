@@ -15,6 +15,7 @@ void main()
         return;
     }
     if (!NWNRS_HasCapability(NWNRS_CAPABILITY_SERVER_STATE) ||
+        !NWNRS_HasCapability(NWNRS_CAPABILITY_ADMINISTRATION) ||
         !NWNRS_HasCapability(NWNRS_CAPABILITY_EVENT_CONTEXT))
     {
         NWNRS_Log("nwnrs target pack lacks module initialization capabilities", NWNRS_LOG_LEVEL_ERROR);
@@ -31,7 +32,15 @@ void main()
     jServer = JsonObjectSet(jServer, "platform", JsonString(NWNRS_GetServerPlatform()));
     jServer = JsonObjectSet(jServer, "operating_system", JsonString(NWNRS_GetServerOperatingSystem()));
     jServer = JsonObjectSet(jServer, "architecture", JsonString(NWNRS_GetServerArchitecture()));
+    jServer = JsonObjectSet(jServer, "name", JsonString(NWNRS_GetServerName()));
     jServer = JsonObjectSet(jServer, "port", JsonInt(NWNRS_GetServerPort()));
+
+    json jAccess = JsonObject();
+    jAccess = JsonObjectSet(jAccess, "player_password", JsonBool(NWNRS_GetIsPlayerPasswordSet()));
+    jAccess = JsonObjectSet(jAccess, "dm_password", JsonBool(NWNRS_GetIsDMPasswordSet()));
+    jAccess = JsonObjectSet(jAccess, "minimum_level", JsonInt(NWNRS_GetMinLevel()));
+    jAccess = JsonObjectSet(jAccess, "maximum_level", JsonInt(NWNRS_GetMaxLevel()));
+    jServer = JsonObjectSet(jServer, "access", jAccess);
 
     json jPlayers = JsonObject();
     jPlayers = JsonObjectSet(jPlayers, "current", JsonInt(NWNRS_GetPlayerCount()));

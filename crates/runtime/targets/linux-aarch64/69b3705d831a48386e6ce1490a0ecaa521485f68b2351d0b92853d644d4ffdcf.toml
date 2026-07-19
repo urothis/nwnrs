@@ -41,6 +41,33 @@ z_offset = 8
 command_implementer_vm_offset = 16
 app_manager_server_offset = 8
 server_info_module_offset = 8
+server_info_joining_restrictions_offset = 136
+server_info_play_options_offset = 252
+server_info_persistent_world_options_offset = 404
+persistent_world_options_server_vault_by_player_name_offset = 16
+joining_restrictions_min_level_offset = 104
+joining_restrictions_max_level_offset = 108
+server_exo_app_internal_offset = 8
+internal_banned_ip_list_offset = 65920
+internal_banned_cd_key_list_offset = 65936
+internal_banned_player_name_list_offset = 65952
+module_turd_list_offset = 112
+player_turd_community_name_offset = 768
+player_turd_first_name_offset = 784
+player_turd_last_name_offset = 800
+linked_list_head_offset = 0
+linked_list_count_offset = 16
+linked_list_node_next_offset = 8
+linked_list_node_object_offset = 16
+player_id_offset = 72
+player_file_name_offset = 181
+player_file_name_size = 17
+net_layer_player_info_cd_key_offset = 136
+player_cd_key_public_offset = 0
+exo_base_alias_list_offset = 32
+creature_stats_offset = 2824
+creature_stats_first_name_offset = 72
+creature_stats_last_name_offset = 88
 vm_recursion_level_offset = 36
 vm_script_array_offset = 40
 vm_script_slot_count = 8
@@ -111,3 +138,96 @@ symbol = "_ZN9CNetLayer10GetUDPPortEv"
 
 [events]
 version = 1
+
+[administration]
+version = 1
+
+[administration.get_session_name]
+symbol = "_ZN9CNetLayer14GetSessionNameEv"
+
+[administration.set_session_name]
+symbol = "_ZN9CNetLayer14SetSessionNameE10CExoString"
+
+[administration.get_player_password]
+symbol = "_ZN9CNetLayer17GetPlayerPasswordEv"
+
+[administration.set_player_password]
+symbol = "_ZN9CNetLayer17SetPlayerPasswordE10CExoString"
+
+[administration.get_game_master_password]
+symbol = "_ZN9CNetLayer21GetGameMasterPasswordEv"
+
+[administration.set_game_master_password]
+symbol = "_ZN9CNetLayer21SetGameMasterPasswordE10CExoString"
+
+[administration.enable_combat_debugging]
+symbol = "g_bEnableCombatDebugging"
+
+[administration.enable_saving_throw_debugging]
+symbol = "g_bEnableSavingThrowDebugging"
+
+[administration.enable_movement_speed_debugging]
+symbol = "g_bEnableMovementSpeedDebugging"
+
+[administration.enable_hit_die_debugging]
+symbol = "g_bEnableHitDieDebugging"
+
+[administration.exit_program]
+symbol = "g_bExitProgram"
+
+[administration.add_banned_ip]
+symbol = "_ZN13CServerExoApp17AddIPToBannedListE10CExoString"
+
+[administration.remove_banned_ip]
+symbol = "_ZN13CServerExoApp22RemoveIPFromBannedListE10CExoString"
+
+[administration.add_banned_cd_key]
+symbol = "_ZN13CServerExoApp20AddCDKeyToBannedListE10CExoString"
+
+[administration.remove_banned_cd_key]
+symbol = "_ZN13CServerExoApp25RemoveCDKeyFromBannedListE10CExoString"
+
+[administration.add_banned_player_name]
+symbol = "_ZN13CServerExoApp25AddPlayerNameToBannedListE10CExoString"
+
+[administration.remove_banned_player_name]
+symbol = "_ZN13CServerExoApp30RemovePlayerNameFromBannedListE10CExoString"
+
+[administration.rules]
+symbol = "g_pRules"
+
+[administration.reload_rules]
+symbol = "_ZN8CNWRules9ReloadAllEv"
+
+[administration.get_module]
+symbol = "_ZN13CServerExoApp9GetModuleEv"
+
+[administration.get_loc_string]
+symbol = "_ZNK13CExoLocString12GetStringLocEiP10CExoStringh"
+
+[administration.remove_linked_list_node]
+symbol = "_ZN22CExoLinkedListInternal6RemoveEP18CExoLinkedListNode"
+
+[administration.main_loop]
+symbol = "_ZN21CServerExoAppInternal8MainLoopEv"
+
+[administration.get_client_object_by_object_id]
+symbol = "_ZN13CServerExoApp25GetClientObjectByObjectIdEj"
+
+[administration.get_creature_by_game_object_id]
+symbol = "_ZN13CServerExoApp25GetCreatureByGameObjectIDEj"
+
+[administration.get_player_name]
+symbol = "_ZN10CNWSPlayer13GetPlayerNameEv"
+
+[administration.get_player_info]
+symbol = "_ZN9CNetLayer13GetPlayerInfoEj"
+
+[administration.disconnect_player]
+symbol = "_ZN9CNetLayer16DisconnectPlayerEjjiRK10CExoString"
+
+[administration.exo_base]
+symbol = "g_pExoBase"
+
+[administration.get_alias_path]
+symbol = "_ZNK13CExoAliasList12GetAliasPathERK10CExoStringi"

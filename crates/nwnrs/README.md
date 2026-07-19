@@ -272,11 +272,12 @@ owns volume/configuration setup, process supervision, runtime injection,
 target-pack selection, signal handling, crash-log preservation, and native
 server-log following.
 
-Once injected, the runtime installs the read-only NWScript bridge described by
-the source-controlled `module/nwnrs.nss` include. The initial functions report
-runtime version, exact server SHA-256, target build, operating system,
-architecture, live module name, player count, maximum players, and the active
-module/area/object event context. No HTTP or metrics service is started.
+Once injected, the runtime installs the NWScript bridge described by the
+source-controlled `module/nwnrs.nss` include. It reports runtime identity,
+server state, and active module/area/object event context, and exposes validated
+administration operations such as session settings, ban lists, graceful
+shutdown, rules reload, TURD recovery, and deferred server-vault character
+deletion. No HTTP or metrics service is started.
 
 ## Common Workflows
 

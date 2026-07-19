@@ -48,4 +48,4 @@ jobs:
             - name: Run Frida Gum interception probe
               run: cargo run --locked --package nwnrs-runtime-sys --example frida-probe
             - name: Test launcher and injected runtime
-              run: crates/runtime/scripts/test-native-runtime.sh
+              run: crates/runtime-sys/scripts/test-native-runtime.sh

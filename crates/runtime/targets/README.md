@@ -13,8 +13,8 @@ contains four kinds of evidence:
 - `server`: exact binary identity and human-readable build;
 - `source`: the full Unified commit and its NWN build tuple;
 - `layouts`: compiler-measured sizes, alignments, and member offsets;
-- versioned capability blocks: `bridge`, optional `server_state`, and optional
-  `events`.
+- versioned capability blocks: `bridge`, optional `server_state`, optional
+  `administration`, and optional `events`.
 
 An absent optional block means that capability is unavailable. A present block
 must be complete and use the one contract version supported by this runtime.

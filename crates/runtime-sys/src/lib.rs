@@ -1,5 +1,6 @@
 #![doc = include_str!("../README.md")]
 
+mod adapter;
 mod bridge;
 mod engine;
 

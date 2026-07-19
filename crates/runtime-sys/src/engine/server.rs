@@ -155,7 +155,7 @@ impl ServerEngine {
         })
     }
 
-    fn server_exo_app(&self) -> Result<*mut c_void, BridgeInstallError> {
+    pub(crate) fn server_exo_app(&self) -> Result<*mut c_void, BridgeInstallError> {
         // SAFETY: the address identifies global CAppManager* storage in the
         // exact executable selected before hooks were installed.
         let manager = unsafe { (self.app_manager.get() as *const *mut c_void).read() };
@@ -164,6 +164,26 @@ impl ServerEngine {
             self.app_manager_server_offset,
             "CAppManager::m_pServerExoApp",
         )
+    }
+
+    pub(crate) fn server_info(&self) -> Result<*mut c_void, BridgeInstallError> {
+        let server_info = (self.get_server_info)(self.server_exo_app()?);
+        if server_info.is_null() {
+            return Err(BridgeInstallError::new(
+                "CServerExoApp::GetServerInfo returned null",
+            ));
+        }
+        Ok(server_info.cast_mut())
+    }
+
+    pub(crate) fn net_layer(&self) -> Result<*mut c_void, BridgeInstallError> {
+        let network = (self.get_net_layer)(self.server_exo_app()?);
+        if network.is_null() {
+            return Err(BridgeInstallError::new(
+                "CServerExoApp::GetNetLayer returned null",
+            ));
+        }
+        Ok(network)
     }
 }
 

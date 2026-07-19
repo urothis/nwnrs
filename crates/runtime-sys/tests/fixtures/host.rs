@@ -1,15 +1,28 @@
 //! Native fixture process used to verify injected NWScript bridge calls.
 
-use std::{ffi::c_void, slice};
+use std::{
+    ffi::c_void,
+    fs,
+    os::unix::ffi::OsStrExt as _,
+    slice,
+};
 
 unsafe extern "C" {
     fn malloc(size: usize) -> *mut c_void;
     fn free(pointer: *mut c_void);
+    fn nwnrs_fixture_admin_init(
+        net_layer: *mut c_void,
+        server_vault: *const u8,
+        server_vault_length: usize,
+    );
+    fn nwnrs_fixture_reset_turd();
+    fn nwnrs_fixture_admin_keep_symbols() -> *mut c_void;
 }
 
 const NWNX_GET_IS_AVAILABLE: i32 = 1151;
 const NWNX_CALL: i32 = 1152;
 const NWNX_PUSH_INTEGER: i32 = 1153;
+const NWNX_PUSH_OBJECT: i32 = 1155;
 const NWNX_PUSH_STRING: i32 = 1156;
 const NWNX_POP_INTEGER: i32 = 1167;
 const NWNX_POP_STRING: i32 = 1170;
@@ -79,6 +92,21 @@ struct ServerExoApp {
     server_info: *mut ServerInfo,
     player_list: *mut PlayerList,
     net_layer:   *mut NetLayer,
+    internal:    *mut ServerInternal,
+}
+
+#[repr(C)]
+struct StringList {
+    elements: *mut CExoString,
+    count:    i32,
+    capacity: i32,
+}
+
+#[repr(C)]
+struct ServerInternal {
+    banned_ip_addresses: StringList,
+    banned_cd_keys:      StringList,
+    banned_player_names: StringList,
 }
 
 #[repr(C)]
@@ -87,6 +115,11 @@ struct ServerInfo {
     server_mode:       i16,
     padding:           [u8; 2],
     module_name:       CExoString,
+    before_joining:    [u8; 112],
+    joining:           [i32; 29],
+    play_options:      [i32; 29],
+    before_persistent: [u8; 36],
+    persistent_world_options: [i32; 5],
 }
 
 #[repr(C)]
@@ -100,6 +133,9 @@ struct PlayerList {
 struct NetLayer {
     max_players: u32,
     udp_port:    u32,
+    session_name: CExoString,
+    player_password: CExoString,
+    dm_password: CExoString,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -114,6 +150,17 @@ struct ObservedEvent {
 
 #[unsafe(no_mangle)]
 pub static mut nwnrs_fixture_app_manager: *mut c_void = std::ptr::null_mut();
+
+unsafe extern "C" {
+    static mut nwnrs_fixture_enable_combat_debugging: i32;
+    static mut nwnrs_fixture_enable_saving_throw_debugging: i32;
+    static mut nwnrs_fixture_enable_movement_speed_debugging: i32;
+    static mut nwnrs_fixture_enable_hit_die_debugging: i32;
+    static mut nwnrs_fixture_exit_program: i32;
+    static mut nwnrs_fixture_rules: *mut c_void;
+    static mut nwnrs_fixture_disconnect_count: i32;
+    static mut nwnrs_fixture_disconnect_reason_length: u32;
+}
 
 #[repr(C)]
 pub struct CExoString {
@@ -359,6 +406,11 @@ pub extern "C" fn nwnrs_fixture_get_udp_port(net_layer: *mut c_void) -> u32 {
     unsafe { (*net_layer.cast::<NetLayer>()).udp_port }
 }
 
+#[unsafe(no_mangle)]
+pub extern "C" fn nwnrs_fixture_main_loop(_server_internal: *mut c_void) -> i32 {
+    1
+}
+
 fn pop_value(vm: *mut c_void) -> Option<Value> {
     if vm.is_null() {
         return None;
@@ -441,6 +493,74 @@ fn call_without_result(commands: &mut Commands, vm: &mut VirtualMachine, functio
     assert_eq!(call(commands, NWNX_CALL), 0);
 }
 
+fn call_with_string(commands: &mut Commands, vm: &mut VirtualMachine, function: &str, value: &str) {
+    vm.stack.push(Value::String(value.to_string()));
+    assert_eq!(call(commands, NWNX_PUSH_STRING), 0);
+    call_without_result(commands, vm, function);
+}
+
+fn call_with_integer(commands: &mut Commands, vm: &mut VirtualMachine, function: &str, value: i32) {
+    vm.stack.push(Value::Integer(value));
+    assert_eq!(call(commands, NWNX_PUSH_INTEGER), 0);
+    call_without_result(commands, vm, function);
+}
+
+fn call_integer_with_integer(
+    commands: &mut Commands,
+    vm: &mut VirtualMachine,
+    function: &str,
+    value: i32,
+) -> i32 {
+    vm.stack.push(Value::Integer(value));
+    assert_eq!(call(commands, NWNX_PUSH_INTEGER), 0);
+    call_integer(commands, vm, function)
+}
+
+fn call_with_two_integers(
+    commands: &mut Commands,
+    vm: &mut VirtualMachine,
+    function: &str,
+    first: i32,
+    second: i32,
+) {
+    vm.stack.push(Value::Integer(second));
+    assert_eq!(call(commands, NWNX_PUSH_INTEGER), 0);
+    vm.stack.push(Value::Integer(first));
+    assert_eq!(call(commands, NWNX_PUSH_INTEGER), 0);
+    call_without_result(commands, vm, function);
+}
+
+fn call_delete_player_character(
+    commands: &mut Commands,
+    vm: &mut VirtualMachine,
+    object_id: u32,
+    preserve_backup: bool,
+    kick_message: &str,
+) {
+    vm.stack.push(Value::String(kick_message.to_string()));
+    assert_eq!(call(commands, NWNX_PUSH_STRING), 0);
+    vm.stack
+        .push(Value::Integer(i32::from(preserve_backup)));
+    assert_eq!(call(commands, NWNX_PUSH_INTEGER), 0);
+    vm.stack.push(Value::Object(object_id));
+    assert_eq!(call(commands, NWNX_PUSH_OBJECT), 0);
+    call_without_result(commands, vm, "DeletePlayerCharacter");
+}
+
+fn call_integer_with_two_strings(
+    commands: &mut Commands,
+    vm: &mut VirtualMachine,
+    function: &str,
+    first: &str,
+    second: &str,
+) -> i32 {
+    vm.stack.push(Value::String(second.to_string()));
+    assert_eq!(call(commands, NWNX_PUSH_STRING), 0);
+    vm.stack.push(Value::String(first.to_string()));
+    assert_eq!(call(commands, NWNX_PUSH_STRING), 0);
+    call_integer(commands, vm, function)
+}
+
 fn observe_current_event(commands: &mut Commands, vm: &mut VirtualMachine) -> ObservedEvent {
     ObservedEvent {
         name:        call_string(commands, vm, "GetCurrentEvent"),
@@ -483,11 +603,29 @@ fn assert_fixture_layout() {
     assert_eq!(std::mem::size_of::<VirtualMachineScript>(), expected_stride);
     assert_eq!(std::mem::offset_of!(VirtualMachineScript, script_name), 24);
     assert_eq!(std::mem::offset_of!(VirtualMachineScript, event_id), 72);
+    assert_eq!(std::mem::offset_of!(ServerInfo, module_name), 8);
+    assert_eq!(std::mem::offset_of!(ServerInfo, joining), 136);
+    assert_eq!(std::mem::offset_of!(ServerInfo, play_options), 252);
+    assert_eq!(std::mem::offset_of!(ServerInfo, persistent_world_options), 404);
 }
 
 fn main() {
     assert_fixture_layout();
     keep_abi_symbols();
+    // SAFETY: this only creates linker-visible references to fixture symbols.
+    unsafe {
+        std::hint::black_box(nwnrs_fixture_admin_keep_symbols());
+    }
+    let server_vault = std::env::temp_dir().join(format!(
+        "nwnrs-runtime-native-fixture-{}",
+        std::process::id()
+    ));
+    fs::create_dir(&server_vault).expect("create isolated fixture server vault");
+    let player_vault = server_vault.join("fixture-player");
+    fs::create_dir(&player_vault).expect("create fixture player vault");
+    let player_character = player_vault.join("fixturechar.bic");
+    fs::write(&player_character, b"fixture character").expect("write fixture character");
+
     let mut module_name_bytes = b"fixture-module\0".to_vec();
     let mut server_info = ServerInfo {
         data_changed_flags: 0,
@@ -498,6 +636,24 @@ fn main() {
             string_length: 14,
             buffer_length: 15,
         },
+        before_joining:    [0; 112],
+        joining:           {
+            let mut values = [0; 29];
+            values[26] = 1;
+            values[27] = 40;
+            values
+        },
+        play_options:      {
+            let mut values = [0; 29];
+            values[10] = 2;
+            values
+        },
+        before_persistent: [0; 36],
+        persistent_world_options: {
+            let mut values = [0; 5];
+            values[4] = 1;
+            values
+        },
     };
     let mut player_list = PlayerList {
         elements: std::ptr::null_mut(),
@@ -507,12 +663,36 @@ fn main() {
     let mut net_layer = NetLayer {
         max_players: 64,
         udp_port:    5121,
+        session_name: empty_exo_string(),
+        player_password: empty_exo_string(),
+        dm_password: empty_exo_string(),
     };
+    // SAFETY: the C++ fixture initializes the three CExoString fields using
+    // the same exact layout asserted by the runtime ABI probe.
+    unsafe {
+        nwnrs_fixture_admin_init(
+            (&raw mut net_layer).cast(),
+            server_vault.as_os_str().as_bytes().as_ptr(),
+            server_vault.as_os_str().as_bytes().len(),
+        );
+    }
     let mut server = ServerExoApp {
         server_info: &raw mut server_info,
         player_list: &raw mut player_list,
         net_layer:   &raw mut net_layer,
+        internal:    std::ptr::null_mut(),
     };
+    let empty_list = || StringList {
+        elements: std::ptr::null_mut(),
+        count: 0,
+        capacity: 0,
+    };
+    let mut server_internal = ServerInternal {
+        banned_ip_addresses: empty_list(),
+        banned_cd_keys: empty_list(),
+        banned_player_names: empty_list(),
+    };
+    server.internal = &raw mut server_internal;
     let mut app_manager = AppManager {
         client_exo_app: std::ptr::null_mut(),
         server_exo_app: (&raw mut server).cast(),
@@ -533,6 +713,7 @@ fn main() {
     assert_eq!(call_integer(&mut commands, &mut vm, "GetApiVersion"), 1);
     assert_eq!(call_capability_version(&mut commands, &mut vm, "nwscript_bridge"), 1);
     assert_eq!(call_capability_version(&mut commands, &mut vm, "server_state"), 1);
+    assert_eq!(call_capability_version(&mut commands, &mut vm, "administration"), 1);
     assert_eq!(call_capability_version(&mut commands, &mut vm, "event_context"), 1);
     assert_eq!(call_has_capability(&mut commands, &mut vm, "server_state", 1), 1);
     assert_eq!(call_has_capability(&mut commands, &mut vm, "server_state", 2), 0);
@@ -565,6 +746,180 @@ fn main() {
     assert_eq!(call_integer(&mut commands, &mut vm, "GetPlayerCount"), 3);
     assert_eq!(call_integer(&mut commands, &mut vm, "GetMaxPlayers"), 64);
     assert_eq!(call_integer(&mut commands, &mut vm, "GetServerPort"), 5121);
+    assert_eq!(
+        call_string(&mut commands, &mut vm, "GetServerName"),
+        "fixture server"
+    );
+    assert_eq!(
+        call_integer(&mut commands, &mut vm, "GetIsPlayerPasswordSet"),
+        1
+    );
+    assert_eq!(call_integer(&mut commands, &mut vm, "GetIsDmPasswordSet"), 0);
+    assert_eq!(call_integer(&mut commands, &mut vm, "GetMinLevel"), 1);
+    assert_eq!(call_integer(&mut commands, &mut vm, "GetMaxLevel"), 40);
+    assert_eq!(
+        call_integer_with_integer(&mut commands, &mut vm, "GetPlayOption", 10),
+        2
+    );
+    assert_eq!(
+        call_integer_with_integer(&mut commands, &mut vm, "GetDebugValue", 1),
+        1
+    );
+    assert_eq!(
+        call_string(&mut commands, &mut vm, "GetBannedList"),
+        "{\"ip_addresses\":[],\"cd_keys\":[],\"player_names\":[]}"
+    );
+
+    call_with_string(&mut commands, &mut vm, "SetServerName", "renamed server");
+    assert_eq!(
+        call_string(&mut commands, &mut vm, "GetServerName"),
+        "renamed server"
+    );
+    call_without_result(&mut commands, &mut vm, "ClearPlayerPassword");
+    assert_eq!(
+        call_integer(&mut commands, &mut vm, "GetIsPlayerPasswordSet"),
+        0
+    );
+    call_with_string(&mut commands, &mut vm, "SetDmPassword", "dm secret");
+    assert_eq!(call_integer(&mut commands, &mut vm, "GetIsDmPasswordSet"), 1);
+    call_with_integer(&mut commands, &mut vm, "SetMinLevel", 5);
+    call_with_integer(&mut commands, &mut vm, "SetMaxLevel", 35);
+    assert_eq!(call_integer(&mut commands, &mut vm, "GetMinLevel"), 5);
+    assert_eq!(call_integer(&mut commands, &mut vm, "GetMaxLevel"), 35);
+    call_with_two_integers(&mut commands, &mut vm, "SetPlayOption", 14, 1);
+    assert_eq!(
+        call_integer_with_integer(&mut commands, &mut vm, "GetPlayOption", 14),
+        1
+    );
+    call_with_two_integers(&mut commands, &mut vm, "SetDebugValue", 0, 1);
+    assert_eq!(
+        call_integer_with_integer(&mut commands, &mut vm, "GetDebugValue", 0),
+        1
+    );
+    call_with_string(&mut commands, &mut vm, "AddBannedIp", "192.0.2.1");
+    call_with_string(&mut commands, &mut vm, "RemoveBannedIp", "192.0.2.1");
+    call_with_string(&mut commands, &mut vm, "AddBannedCdKey", "fixture-key");
+    call_with_string(
+        &mut commands,
+        &mut vm,
+        "RemoveBannedCdKey",
+        "fixture-key",
+    );
+    call_with_string(
+        &mut commands,
+        &mut vm,
+        "AddBannedPlayerName",
+        "fixture-player",
+    );
+    call_with_string(
+        &mut commands,
+        &mut vm,
+        "RemoveBannedPlayerName",
+        "fixture-player",
+    );
+    call_without_result(&mut commands, &mut vm, "ReloadRules");
+    assert_eq!(
+        call_integer_with_two_strings(
+            &mut commands,
+            &mut vm,
+            "DeleteTURD",
+            "fixture-player",
+            "Fixture Character",
+        ),
+        1
+    );
+    assert_eq!(
+        call_integer_with_two_strings(
+            &mut commands,
+            &mut vm,
+            "DeleteTURD",
+            "fixture-player",
+            "Fixture Character",
+        ),
+        0
+    );
+    // SAFETY: this restores only the fixture-owned linked-list state.
+    unsafe {
+        nwnrs_fixture_reset_turd();
+    }
+    call_delete_player_character(&mut commands, &mut vm, 0x0bad_f00d, true, "invalid");
+    assert_eq!(call_integer(&mut commands, &mut vm, "GetLastErrorCode"), 5);
+    assert!(
+        call_string(&mut commands, &mut vm, "GetLastErrorMessage")
+            .contains("not controlled by a connected player")
+    );
+    assert!(player_character.is_file());
+    call_delete_player_character(
+        &mut commands,
+        &mut vm,
+        0x0102_0304,
+        true,
+        "fixture kick",
+    );
+    assert!(player_character.is_file());
+    // The Frida replacement drains deferred administration work before it
+    // calls this original fixture main loop.
+    let run_main_loop = std::hint::black_box(
+        nwnrs_fixture_main_loop as extern "C" fn(*mut c_void) -> i32,
+    );
+    assert_eq!(run_main_loop((&raw mut server_internal).cast()), 1);
+    assert!(!player_character.exists());
+    let player_backup = player_vault.join("fixturechar.bic.deleted0");
+    assert_eq!(
+        fs::read(&player_backup).expect("read preserved fixture character"),
+        b"fixture character"
+    );
+    // SAFETY: the C++ fixture globals are written only on this thread.
+    unsafe {
+        assert_eq!(
+            std::ptr::read_volatile(&raw const nwnrs_fixture_disconnect_count),
+            1
+        );
+        assert_eq!(
+            std::ptr::read_volatile(&raw const nwnrs_fixture_disconnect_reason_length),
+            12
+        );
+    }
+    assert_eq!(
+        call_integer_with_two_strings(
+            &mut commands,
+            &mut vm,
+            "DeleteTURD",
+            "fixture-player",
+            "Fixture Character",
+        ),
+        0
+    );
+
+    let cd_key_vault = server_vault.join("fixture-key");
+    fs::create_dir(&cd_key_vault).expect("create fixture CD-key vault");
+    let cd_key_character = cd_key_vault.join("fixturechar.bic");
+    fs::write(&cd_key_character, b"second fixture character")
+        .expect("write second fixture character");
+    server_info.persistent_world_options[4] = 0;
+    std::hint::black_box(&server_info.persistent_world_options);
+    // SAFETY: these are fixture-owned globals used on this one thread.
+    unsafe {
+        nwnrs_fixture_reset_turd();
+        nwnrs_fixture_disconnect_count = 0;
+        nwnrs_fixture_disconnect_reason_length = 0;
+    }
+    call_delete_player_character(&mut commands, &mut vm, 0x0102_0304, false, "");
+    assert!(cd_key_character.is_file());
+    assert_eq!(run_main_loop((&raw mut server_internal).cast()), 1);
+    assert!(!cd_key_character.exists());
+    assert!(!cd_key_vault.join("fixturechar.bic.deleted0").exists());
+    // SAFETY: the C++ fixture globals are written only on this thread.
+    unsafe {
+        assert_eq!(
+            std::ptr::read_volatile(&raw const nwnrs_fixture_disconnect_count),
+            1
+        );
+        assert_eq!(
+            std::ptr::read_volatile(&raw const nwnrs_fixture_disconnect_reason_length),
+            0
+        );
+    }
     assert_eq!(call_integer(&mut commands, &mut vm, "GetIsInEvent"), 0);
     assert_eq!(call_integer(&mut commands, &mut vm, "GetCurrentEventId"), -1);
     assert_eq!(call_integer(&mut commands, &mut vm, "GetCurrentEventDepth"), 0);
@@ -613,6 +968,10 @@ fn main() {
             is_in_event: 1,
         }
     );
+    call_without_result(&mut commands, &mut vm, "RequestShutdown");
+    // SAFETY: the fixture global remains live until process exit.
+    assert_eq!(unsafe { nwnrs_fixture_exit_program }, 1);
+    fs::remove_dir_all(&server_vault).expect("remove isolated fixture server vault");
 }
 
 fn keep_abi_symbols() {
@@ -632,5 +991,12 @@ fn keep_abi_symbols() {
     std::hint::black_box(nwnrs_fixture_get_net_layer as *const ());
     std::hint::black_box(nwnrs_fixture_get_session_max_players as *const ());
     std::hint::black_box(nwnrs_fixture_get_udp_port as *const ());
+    std::hint::black_box(nwnrs_fixture_main_loop as *const ());
     std::hint::black_box(&raw const nwnrs_fixture_app_manager);
+    std::hint::black_box(&raw const nwnrs_fixture_enable_combat_debugging);
+    std::hint::black_box(&raw const nwnrs_fixture_enable_saving_throw_debugging);
+    std::hint::black_box(&raw const nwnrs_fixture_enable_movement_speed_debugging);
+    std::hint::black_box(&raw const nwnrs_fixture_enable_hit_die_debugging);
+    std::hint::black_box(&raw const nwnrs_fixture_exit_program);
+    std::hint::black_box(&raw const nwnrs_fixture_rules);
 }
