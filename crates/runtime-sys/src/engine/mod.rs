@@ -66,7 +66,14 @@ impl Engine {
             .pack
             .administration
             .as_ref()
-            .map(|target| AdministrationEngine::resolve(&resolver, target, &layouts.classes))
+            .map(|target| {
+                AdministrationEngine::resolve(
+                    &resolver,
+                    target,
+                    &context.target.pack.bridge,
+                    &layouts.classes,
+                )
+            })
             .transpose()?;
         Ok(Self {
             vm,

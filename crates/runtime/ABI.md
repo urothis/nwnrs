@@ -81,6 +81,15 @@ crates/runtime/scripts/verify-unified-abi.sh \
   target/unified-abi.toml
 ```
 
+On Windows, compile the same probe with MSVC and verify the Windows target pack
+with:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
+  crates\runtime\scripts\verify-unified-abi.ps1 `
+  sources\unified target\unified-abi.toml
+```
+
 ## Real-server acceptance
 
 For every new exact-hash pack, build the source-controlled module and start the
@@ -101,3 +110,6 @@ proprietary binaries:
 ```bash
 crates/runtime-sys/scripts/test-native-runtime.sh
 ```
+
+The Windows equivalent is
+`crates\runtime-sys\scripts\test-native-runtime.ps1`.

@@ -6,7 +6,7 @@ use nwnrs_runtime::{
     ADMINISTRATION_CAPABILITY_VERSION, AbiLayouts, AdministrationTarget, BinaryIdentity,
     BridgeTarget, CExoStringLayout, EVENT_CONTEXT_CAPABILITY_VERSION, EngineClassLayouts,
     EventTarget, NWSCRIPT_BRIDGE_CAPABILITY_VERSION, OperatingSystem, PlayerListLayout,
-    RUNTIME_API_VERSION, SERVER_STATE_CAPABILITY_VERSION, ServerStateTarget,
+    RUNTIME_API_VERSION, SERVER_STATE_CAPABILITY_VERSION, ServerStateTarget, ShutdownTarget,
     TARGET_PACK_SCHEMA_VERSION, TargetAddress, TargetPack, TargetServer, TargetSource,
     VectorLayout,
 };
@@ -23,6 +23,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let script_size = match identity.platform.os {
         OperatingSystem::Macos => 136,
         OperatingSystem::Linux => 152,
+        OperatingSystem::Windows => 160,
     };
     let pack = TargetPack {
         schema_version: TARGET_PACK_SCHEMA_VERSION,
@@ -77,7 +78,9 @@ fn main() -> Result<(), Box<dyn Error>> {
                 "nwnrs_fixture_enable_movement_speed_debugging",
             ),
             enable_hit_die_debugging: symbol("nwnrs_fixture_enable_hit_die_debugging"),
-            exit_program: symbol("nwnrs_fixture_exit_program"),
+            shutdown: ShutdownTarget::ExitFlag {
+                address: symbol("nwnrs_fixture_exit_program"),
+            },
             add_banned_ip: symbol("nwnrs_fixture_add_banned_ip"),
             remove_banned_ip: symbol("nwnrs_fixture_remove_banned_ip"),
             add_banned_cd_key: symbol("nwnrs_fixture_add_banned_cd_key"),

@@ -54,3 +54,12 @@ Run the complete injected-runtime fixture with:
 ```console
 crates/runtime-sys/scripts/test-native-runtime.sh
 ```
+
+On Windows, the MSVC-built fixture exercises PE target selection, suspended
+process startup, DLL initialization, native calling conventions, bridge calls,
+administration operations, and clean shutdown:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
+  crates\runtime-sys\scripts\test-native-runtime.ps1
+```

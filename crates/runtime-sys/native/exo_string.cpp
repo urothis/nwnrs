@@ -32,6 +32,10 @@ struct CExoString {
 };
 
 using GetString = CExoString (*)(void*);
+#if defined(_WIN32)
+using GetStringWindows = CExoString* (*)(void*, CExoString*);
+#endif
+using FreeStringBuffer = void (*)(void*);
 using GetLocString = std::int32_t (*)(const void*, std::int32_t, CExoString*, std::uint8_t);
 using GetAliasPath = const CExoString& (*)(const void*, const CExoString&, std::int32_t);
 using SetStringBool = std::int32_t (*)(void*, CExoString);
@@ -45,21 +49,44 @@ using DisconnectPlayer = std::int32_t (*)(
 
 } // namespace
 
+namespace {
+
+void release_engine_string(CExoString& value, void* free_address) {
+    if (value.string != nullptr) {
+        reinterpret_cast<FreeStringBuffer>(free_address)(value.string);
+        value.string = nullptr;
+        value.length = 0;
+        value.capacity = 0;
+    }
+}
+
+} // namespace
+
 extern "C" std::size_t nwnrs_engine_get_string(
     void* address,
+    void* free_address,
     void* object,
     char* output,
     std::size_t capacity) {
+    CExoString value;
+#if defined(_WIN32)
+    const auto function = reinterpret_cast<GetStringWindows>(address);
+    function(object, &value);
+#else
     const auto function = reinterpret_cast<GetString>(address);
-    const CExoString value = function(object);
+    value = function(object);
+#endif
     if (value.length != 0 && output != nullptr && capacity >= value.length) {
         std::copy_n(value.string, value.length, output);
     }
-    return value.length;
+    const auto length = value.length;
+    release_engine_string(value, free_address);
+    return length;
 }
 
 extern "C" std::size_t nwnrs_engine_get_loc_string(
     void* address,
+    void* free_address,
     const void* object,
     char* output,
     std::size_t capacity) {
@@ -69,7 +96,9 @@ extern "C" std::size_t nwnrs_engine_get_loc_string(
     if (value.length != 0 && output != nullptr && capacity >= value.length) {
         std::copy_n(value.string, value.length, output);
     }
-    return value.length;
+    const auto length = value.length;
+    release_engine_string(value, free_address);
+    return length;
 }
 
 extern "C" std::size_t nwnrs_engine_get_alias_path(

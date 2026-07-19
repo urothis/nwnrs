@@ -1,14 +1,16 @@
+#[cfg(unix)]
+use std::os::unix::ffi::OsStringExt as _;
 use std::{
     collections::VecDeque,
     ffi::{OsString, c_void},
     fs, mem,
-    os::unix::ffi::{OsStrExt as _, OsStringExt as _},
     path::{Path, PathBuf},
     sync::Mutex,
 };
 
 use nwnrs_runtime::{
-    AdministrationCommand, AdministrationTarget, BannedLists, EngineClassLayouts, HostCommandResult,
+    AdministrationCommand, AdministrationTarget, BannedLists, BridgeTarget, EngineClassLayouts,
+    HostCommandResult, ShutdownTarget,
 };
 
 use super::{
@@ -31,9 +33,16 @@ const MAX_TURD_COUNT: usize = 100_000;
 const MAX_DEFERRED_ADMINISTRATION_COMMANDS: usize = 1_024;
 const DELETE_CHARACTER_STRING_REFERENCE: u32 = 10_392;
 
+#[derive(Clone, Copy)]
+enum ShutdownOperation {
+    ExitFlag(usize),
+    CurrentThreadMessageQueue,
+}
+
 unsafe extern "C" {
     fn nwnrs_engine_get_string(
         address: *mut c_void,
+        free_address: *mut c_void,
         object: *mut c_void,
         output: *mut u8,
         capacity: usize,
@@ -53,6 +62,7 @@ unsafe extern "C" {
     fn nwnrs_engine_replace_string(destination: *mut c_void, value: *const u8, length: usize);
     fn nwnrs_engine_get_loc_string(
         address: *mut c_void,
+        free_address: *mut c_void,
         object: *const c_void,
         output: *mut u8,
         capacity: usize,
@@ -88,6 +98,7 @@ struct DeferredPlayerCharacterDeletion {
 
 pub(crate) struct AdministrationEngine {
     get_session_name: usize,
+    free_exo_string_buffer: usize,
     set_session_name: usize,
     get_player_password: usize,
     set_player_password: usize,
@@ -97,7 +108,7 @@ pub(crate) struct AdministrationEngine {
     enable_saving_throw_debugging: usize,
     enable_movement_speed_debugging: usize,
     enable_hit_die_debugging: usize,
-    exit_program: usize,
+    shutdown: ShutdownOperation,
     server_info_module_offset: usize,
     server_info_joining_offset: usize,
     server_info_play_options_offset: usize,
@@ -152,6 +163,7 @@ impl AdministrationEngine {
     pub(crate) fn resolve(
         resolver: &Resolver,
         target: &AdministrationTarget,
+        bridge: &BridgeTarget,
         layouts: &EngineClassLayouts,
     ) -> Result<Self, BridgeInstallError> {
         let resolve = |name, address| {
@@ -161,6 +173,13 @@ impl AdministrationEngine {
         };
         Ok(Self {
             get_session_name: resolve("get_session_name", &target.get_session_name)?,
+            free_exo_string_buffer: resolver
+                .resolve::<GlobalStorage>(
+                    "bridge",
+                    "free_exo_string_buffer",
+                    &bridge.free_exo_string_buffer,
+                )?
+                .get(),
             set_session_name: resolve("set_session_name", &target.set_session_name)?,
             get_player_password: resolve("get_player_password", &target.get_player_password)?,
             set_player_password: resolve("set_player_password", &target.set_player_password)?,
@@ -188,7 +207,14 @@ impl AdministrationEngine {
                 "enable_hit_die_debugging",
                 &target.enable_hit_die_debugging,
             )?,
-            exit_program: resolve("exit_program", &target.exit_program)?,
+            shutdown: match &target.shutdown {
+                ShutdownTarget::ExitFlag {
+                    address,
+                } => ShutdownOperation::ExitFlag(resolve("shutdown.address", address)?),
+                ShutdownTarget::CurrentThreadMessageQueue => {
+                    ShutdownOperation::CurrentThreadMessageQueue
+                }
+            },
             server_info_module_offset: checked_offset(
                 "server_info_module_offset",
                 layouts.server_info_module_offset,
@@ -595,10 +621,13 @@ impl AdministrationEngine {
         validate_path_component(&player_directory, "server-vault player directory")?;
 
         let mut file = self.server_vault_path()?;
-        file.push(OsString::from_vec(player_directory.clone()));
+        file.push(engine_os_string(
+            player_directory.clone(),
+            "server-vault player directory",
+        )?);
         let mut bic_name = file_name;
         bic_name.extend_from_slice(b".bic");
-        file.push(OsString::from_vec(bic_name));
+        file.push(engine_os_string(bic_name, "player character filename")?);
         ensure_regular_file(&file)?;
 
         let character_name = self.player_character_name(server, object_id)?;
@@ -767,7 +796,10 @@ impl AdministrationEngine {
             ));
         }
         output.truncate(length);
-        Ok(PathBuf::from(OsString::from_vec(output)))
+        Ok(PathBuf::from(engine_os_string(
+            output,
+            "SERVERVAULT alias",
+        )?))
     }
 
     fn player_character_name(
@@ -860,6 +892,7 @@ impl AdministrationEngine {
         let length = unsafe {
             nwnrs_engine_get_loc_string(
                 self.get_loc_string_address as *mut c_void,
+                self.free_exo_string_buffer as *mut c_void,
                 object,
                 output.as_mut_ptr(),
                 output.len(),
@@ -972,9 +1005,14 @@ impl AdministrationEngine {
                 };
                 write_global_i32(address, *value, "debug toggle")?;
             }
-            AdministrationCommand::RequestShutdown => {
-                write_global_i32(self.exit_program, 1, "g_bExitProgram")?;
-            }
+            AdministrationCommand::RequestShutdown => match self.shutdown {
+                ShutdownOperation::ExitFlag(address) => {
+                    write_global_i32(address, 1, "server exit flag")?;
+                }
+                ShutdownOperation::CurrentThreadMessageQueue => {
+                    request_current_thread_shutdown()?;
+                }
+            },
             AdministrationCommand::AddBannedIp(value) => {
                 self.call_server_string(self.add_banned_ip, server.server_exo_app()?, value);
             }
@@ -1051,6 +1089,7 @@ impl AdministrationEngine {
         let length = unsafe {
             nwnrs_engine_get_string(
                 address as *mut c_void,
+                self.free_exo_string_buffer as *mut c_void,
                 object,
                 output.as_mut_ptr(),
                 output.len(),
@@ -1073,7 +1112,13 @@ impl AdministrationEngine {
         // SAFETY: the exact target address is a compiler-verified CExoString
         // getter. A null output requests only the returned string length.
         let length = unsafe {
-            nwnrs_engine_get_string(address as *mut c_void, object, std::ptr::null_mut(), 0)
+            nwnrs_engine_get_string(
+                address as *mut c_void,
+                self.free_exo_string_buffer as *mut c_void,
+                object,
+                std::ptr::null_mut(),
+                0,
+            )
         };
         if length > MAX_ENGINE_STRING_BYTES {
             Err(BridgeInstallError::new(format!(
@@ -1236,10 +1281,9 @@ fn ensure_regular_file(file: &Path) -> Result<(), BridgeInstallError> {
 
 fn backup_and_remove(file: &Path) -> std::io::Result<PathBuf> {
     for index in 0..10_000_u32 {
-        let mut bytes = file.as_os_str().as_bytes().to_vec();
-        bytes.extend_from_slice(b".deleted");
-        bytes.extend_from_slice(index.to_string().as_bytes());
-        let backup = PathBuf::from(OsString::from_vec(bytes));
+        let mut backup = file.as_os_str().to_os_string();
+        backup.push(format!(".deleted{index}"));
+        let backup = PathBuf::from(backup);
         match fs::hard_link(file, &backup) {
             Ok(()) => {
                 fs::remove_file(file)?;
@@ -1253,6 +1297,18 @@ fn backup_and_remove(file: &Path) -> std::io::Result<PathBuf> {
         std::io::ErrorKind::AlreadyExists,
         "no unused .deleted backup name remains",
     ))
+}
+
+#[cfg(unix)]
+fn engine_os_string(bytes: Vec<u8>, _name: &str) -> Result<OsString, BridgeInstallError> {
+    Ok(OsString::from_vec(bytes))
+}
+
+#[cfg(windows)]
+fn engine_os_string(bytes: Vec<u8>, name: &str) -> Result<OsString, BridgeInstallError> {
+    String::from_utf8(bytes)
+        .map(OsString::from)
+        .map_err(|_error| BridgeInstallError::new(format!("{name} is not valid UTF-8")))
 }
 
 fn checked_offset(name: &str, value: u64) -> Result<usize, BridgeInstallError> {
@@ -1335,4 +1391,22 @@ fn write_global_i32(address: usize, value: i32, name: &str) -> Result<(), Bridge
         (address as *mut i32).write(value);
     }
     Ok(())
+}
+
+#[cfg(windows)]
+fn request_current_thread_shutdown() -> Result<(), BridgeInstallError> {
+    // SAFETY: administration commands execute synchronously on the engine
+    // thread. PostQuitMessage posts WM_QUIT to that current thread's queue and
+    // does not retain any Rust-owned data.
+    unsafe {
+        windows_sys::Win32::UI::WindowsAndMessaging::PostQuitMessage(0);
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn request_current_thread_shutdown() -> Result<(), BridgeInstallError> {
+    Err(BridgeInstallError::new(
+        "current-thread message-queue shutdown is available only on Windows",
+    ))
 }

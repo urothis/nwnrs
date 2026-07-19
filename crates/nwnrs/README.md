@@ -24,7 +24,7 @@ cover, and how they fit together with `nwnrs-types`, `nwnrs-nwscript`, and
 - unpack existing resources and archives into editable source trees
 - work with `NWSync` manifests and repositories
 - build slim install-backed KEY/BIF package views for deployment workflows
-- identify and launch native macOS or Linux servers with the exact matching
+- identify and launch native macOS, Linux, or Windows servers with the exact matching
   nwnrs runtime target pack
 
 ## Quick Start
@@ -62,6 +62,10 @@ cargo run -p nwnrs -- nwsync prune path/to/repository
 cargo run -p nwnrs -- nwsync write path/to/resources/ output.manifest
 cargo run -p nwnrs -- run --runtime target/debug/libnwnrs_runtime_sys.dylib --targets crates/runtime/targets -- /path/to/nwserver -module module_name
 ```
+
+The equivalent Windows runtime path is
+`target\debug\nwnrs_runtime_sys.dll`, and the server path ends in
+`nwserver.exe`.
 
 The default build enables both Cargo features:
 
@@ -182,16 +186,21 @@ The `nwsync` command family provides repository and manifest utilities:
 
 ### `run`
 
-`run` is the native macOS and Linux launcher. It computes the complete server
-SHA-256, reads its Mach-O or ELF architecture, selects only the exact matching
-target pack, validates the runtime library architecture, and supervises the
-server process. macOS uses `DYLD_INSERT_LIBRARIES`; Linux uses `LD_PRELOAD`.
+`run` is the native macOS, Linux, and Windows launcher. It computes the
+complete server SHA-256, reads its Mach-O, ELF, or PE architecture, selects
+only the exact matching target pack, validates the runtime library
+architecture, and supervises the server process. macOS uses
+`DYLD_INSERT_LIBRARIES`; Linux uses `LD_PRELOAD`. Windows creates the server
+suspended, loads and initializes the matching runtime DLL, and resumes the
+primary thread only after initialization succeeds.
 
 The launcher mirrors new output from `logs.0/nwserverLog1.txt` and
 `logs.0/nwserverError1.txt` to its own output, forwards `TERM` and `HUP` to the
 server, cleans up the log follower, and returns the server's exit status.
-Terminal `INT` (`Ctrl-C`) sends NWServer's native interactive `quit` command to
-stop the server cleanly. A second `Ctrl-C` forces the server to terminate.
+Terminal `INT` (`Ctrl-C`) requests a clean NWServer shutdown. On Unix this
+sends the native interactive `quit` command; on Windows it posts `WM_QUIT` to
+the server's primary thread. Typing `quit` at the Windows launcher prompt uses
+the same path. A second shutdown request forces the server to terminate.
 Interactive terminal input is otherwise proxied directly to NWServer. The
 launcher obtains the log root from the last forwarded
 `-userdirectory` option, or uses normal NWN user-directory discovery when that

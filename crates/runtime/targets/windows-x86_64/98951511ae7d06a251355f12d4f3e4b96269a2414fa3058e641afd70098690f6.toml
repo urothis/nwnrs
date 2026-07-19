@@ -1,13 +1,13 @@
-# Neverwinter Nights 8193.37-17 Linux x86-64.
+# Neverwinter Nights 8193.37-17 Windows x86-64.
 schema_version = 2
 runtime_api = 1
 
 [server]
-sha256 = "d6d952826b671fc62c376dca912e87f1aa45d4aa81c620e912ceb4d8e051111d"
+sha256 = "98951511ae7d06a251355f12d4f3e4b96269a2414fa3058e641afd70098690f6"
 build = "8193.37-17 [26c6e573]"
 
 [server.platform]
-os = "linux"
+os = "windows"
 architecture = "x86_64"
 
 [source]
@@ -52,9 +52,9 @@ internal_banned_ip_list_offset = 65920
 internal_banned_cd_key_list_offset = 65936
 internal_banned_player_name_list_offset = 65952
 module_turd_list_offset = 112
-player_turd_community_name_offset = 768
-player_turd_first_name_offset = 784
-player_turd_last_name_offset = 800
+player_turd_community_name_offset = 776
+player_turd_first_name_offset = 792
+player_turd_last_name_offset = 808
 linked_list_head_offset = 0
 linked_list_count_offset = 16
 linked_list_node_next_offset = 8
@@ -65,13 +65,13 @@ player_file_name_size = 17
 net_layer_player_info_cd_key_offset = 136
 player_cd_key_public_offset = 0
 exo_base_alias_list_offset = 32
-creature_stats_offset = 2824
+creature_stats_offset = 2768
 creature_stats_first_name_offset = 72
 creature_stats_last_name_offset = 88
 vm_recursion_level_offset = 36
 vm_script_array_offset = 40
 vm_script_slot_count = 8
-vm_script_size = 152
+vm_script_size = 160
 vm_script_alignment = 8
 vm_script_name_offset = 24
 vm_script_event_id_offset = 72
@@ -80,61 +80,61 @@ vm_script_event_id_offset = 72
 version = 1
 
 [bridge.function_management]
-symbol = "_ZN26CNWSVirtualMachineCommands36ExecuteCommandNWNXFunctionManagementEii"
+offset = 0x00529550
 
 [bridge.stack_pop_integer]
-symbol = "_ZN15CVirtualMachine15StackPopIntegerEPi"
+offset = 0x001125d0
 
 [bridge.stack_push_integer]
-symbol = "_ZN15CVirtualMachine16StackPushIntegerEi"
+offset = 0x001128d0
 
 [bridge.stack_pop_float]
-symbol = "_ZN15CVirtualMachine13StackPopFloatEPf"
+offset = 0x00112580
 
 [bridge.stack_push_float]
-symbol = "_ZN15CVirtualMachine14StackPushFloatEf"
+offset = 0x00112870
 
 [bridge.stack_pop_object]
-symbol = "_ZN15CVirtualMachine14StackPopObjectEPj"
+offset = 0x00112620
 
 [bridge.stack_push_object]
-symbol = "_ZN15CVirtualMachine15StackPushObjectEj"
+offset = 0x00112930
 
 [bridge.stack_pop_string]
-symbol = "_ZN15CVirtualMachine14StackPopStringEP10CExoString"
+offset = 0x00112670
 
 [bridge.stack_push_string]
-symbol = "_ZN15CVirtualMachine15StackPushStringERK10CExoString"
+offset = 0x00112a10
 
 [bridge.stack_pop_vector]
-symbol = "_ZN15CVirtualMachine14StackPopVectorEP6Vector"
+offset = 0x00112710
 
 [bridge.stack_push_vector]
-symbol = "_ZN15CVirtualMachine15StackPushVectorE6Vector"
+offset = 0x00112a80
 
 [bridge.free_exo_string_buffer]
-symbol = "_ZdaPv"
+offset = 0x006d96ec
 
 [server_state]
 version = 1
 
 [server_state.app_manager]
-symbol = "g_pAppManager"
+offset = 0x00b4a900
 
 [server_state.get_server_info]
-symbol = "_ZN13CServerExoApp13GetServerInfoEv"
+offset = 0x004ef4d0
 
 [server_state.get_player_list]
-symbol = "_ZN13CServerExoApp13GetPlayerListEv"
+offset = 0x004ef440
 
 [server_state.get_net_layer]
-symbol = "_ZN13CServerExoApp11GetNetLayerEv"
+offset = 0x004ef390
 
 [server_state.get_session_max_players]
-symbol = "_ZN9CNetLayer20GetSessionMaxPlayersEv"
+offset = 0x000c3390
 
 [server_state.get_udp_port]
-symbol = "_ZN9CNetLayer10GetUDPPortEv"
+offset = 0x000c33d0
 
 [events]
 version = 1
@@ -143,94 +143,91 @@ version = 1
 version = 1
 
 [administration.get_session_name]
-symbol = "_ZN9CNetLayer14GetSessionNameEv"
+offset = 0x000c33a0
 
 [administration.set_session_name]
-symbol = "_ZN9CNetLayer14SetSessionNameE10CExoString"
+offset = 0x000c38c0
 
 [administration.get_player_password]
-symbol = "_ZN9CNetLayer17GetPlayerPasswordEv"
+offset = 0x000c32b0
 
 [administration.set_player_password]
-symbol = "_ZN9CNetLayer17SetPlayerPasswordE10CExoString"
+offset = 0x000c3790
 
 [administration.get_game_master_password]
-symbol = "_ZN9CNetLayer21GetGameMasterPasswordEv"
+offset = 0x000c31c0
 
 [administration.set_game_master_password]
-symbol = "_ZN9CNetLayer21SetGameMasterPasswordE10CExoString"
+offset = 0x000c3650
 
 [administration.enable_combat_debugging]
-symbol = "g_bEnableCombatDebugging"
+offset = 0x00b5de28
 
 [administration.enable_saving_throw_debugging]
-symbol = "g_bEnableSavingThrowDebugging"
+offset = 0x00b5de2c
 
 [administration.enable_movement_speed_debugging]
-symbol = "g_bEnableMovementSpeedDebugging"
+offset = 0x00b5de30
 
 [administration.enable_hit_die_debugging]
-symbol = "g_bEnableHitDieDebugging"
+offset = 0x00b5de34
 
 [administration.shutdown]
-strategy = "exit_flag"
-
-[administration.shutdown.address]
-symbol = "g_bExitProgram"
+strategy = "current_thread_message_queue"
 
 [administration.add_banned_ip]
-symbol = "_ZN13CServerExoApp17AddIPToBannedListE10CExoString"
+offset = 0x004eea40
 
 [administration.remove_banned_ip]
-symbol = "_ZN13CServerExoApp22RemoveIPFromBannedListE10CExoString"
+offset = 0x004ef930
 
 [administration.add_banned_cd_key]
-symbol = "_ZN13CServerExoApp20AddCDKeyToBannedListE10CExoString"
+offset = 0x004ee9a0
 
 [administration.remove_banned_cd_key]
-symbol = "_ZN13CServerExoApp25RemoveCDKeyFromBannedListE10CExoString"
+offset = 0x004ef8a0
 
 [administration.add_banned_player_name]
-symbol = "_ZN13CServerExoApp25AddPlayerNameToBannedListE10CExoString"
+offset = 0x004eeac0
 
 [administration.remove_banned_player_name]
-symbol = "_ZN13CServerExoApp30RemovePlayerNameFromBannedListE10CExoString"
+offset = 0x004ef9c0
 
 [administration.rules]
-symbol = "g_pRules"
+offset = 0x00b4a908
 
 [administration.reload_rules]
-symbol = "_ZN8CNWRules9ReloadAllEv"
+offset = 0x00240790
 
 [administration.get_module]
-symbol = "_ZN13CServerExoApp9GetModuleEv"
+offset = 0x004ef240
 
 [administration.get_loc_string]
-symbol = "_ZNK13CExoLocString12GetStringLocEiP10CExoStringh"
+offset = 0x00079dd0
 
 [administration.remove_linked_list_node]
-symbol = "_ZN22CExoLinkedListInternal6RemoveEP18CExoLinkedListNode"
+offset = 0x00079460
 
 [administration.main_loop]
-symbol = "_ZN21CServerExoAppInternal8MainLoopEv"
+offset = 0x004faee0
 
 [administration.get_client_object_by_object_id]
-symbol = "_ZN13CServerExoApp25GetClientObjectByObjectIdEj"
+offset = 0x004eeef0
 
 [administration.get_creature_by_game_object_id]
-symbol = "_ZN13CServerExoApp25GetCreatureByGameObjectIDEj"
+offset = 0x004eef30
 
 [administration.get_player_name]
-symbol = "_ZN10CNWSPlayer13GetPlayerNameEv"
+offset = 0x0044e570
 
 [administration.get_player_info]
-symbol = "_ZN9CNetLayer13GetPlayerInfoEj"
+offset = 0x000c3280
 
 [administration.disconnect_player]
-symbol = "_ZN9CNetLayer16DisconnectPlayerEjjiRK10CExoString"
+offset = 0x000c2d20
 
 [administration.exo_base]
-symbol = "g_pExoBase"
+offset = 0x00b4a8f0
 
 [administration.get_alias_path]
-symbol = "_ZNK13CExoAliasList12GetAliasPathERK10CExoStringi"
+offset = 0x00076e70

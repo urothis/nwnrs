@@ -28,6 +28,8 @@ jobs:
                       runner: ubuntu-24.04
                     - name: Linux ARM64
                       runner: ubuntu-24.04-arm
+                    - name: Windows x86_64
+                      runner: windows-2022
         steps:
             - uses: actions/checkout@v6.0.3
               with:
@@ -40,12 +42,37 @@ jobs:
                   path: sources/unified
                   persist-credentials: false
             - uses: ./.github/actions/setup-rust
-            - name: Verify target layouts from Unified
+            - name: Configure LLVM on Windows
+              if: runner.os == 'Windows'
+              shell: pwsh
+              run: |
+                  $llvm = 'C:\Program Files\LLVM\bin'
+                  if (-not (Test-Path -LiteralPath (Join-Path $llvm 'libclang.dll'))) {
+                      throw "libclang.dll is unavailable in $llvm"
+                  }
+                  $llvm | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+                  "LIBCLANG_PATH=$llvm" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+            - name: Verify target layouts from Unified on Unix
+              if: runner.os != 'Windows'
               run: |
                   crates/runtime/scripts/verify-unified-abi.sh \
                     sources/unified \
                     target/unified-abi.toml
+            - name: Verify target layouts from Unified on Windows
+              if: runner.os == 'Windows'
+              shell: pwsh
+              run: >-
+                  powershell.exe -NoProfile -ExecutionPolicy Bypass
+                  -File crates/runtime/scripts/verify-unified-abi.ps1
+                  sources/unified target/unified-abi.toml
             - name: Run Frida Gum interception probe
               run: cargo run --locked --package nwnrs-runtime-sys --example frida-probe
-            - name: Test launcher and injected runtime
+            - name: Test launcher and injected runtime on Unix
+              if: runner.os != 'Windows'
               run: crates/runtime-sys/scripts/test-native-runtime.sh
+            - name: Test launcher and injected runtime on Windows
+              if: runner.os == 'Windows'
+              shell: pwsh
+              run: >-
+                  powershell.exe -NoProfile -ExecutionPolicy Bypass
+                  -File crates/runtime-sys/scripts/test-native-runtime.ps1

@@ -18,7 +18,7 @@ categories = [
 
 [features]
 default = ["supervisor", "tooling"]
-supervisor = ["dep:nix", "dep:nwnrs-runtime", "dep:tokio"]
+supervisor = ["dep:nix", "dep:nwnrs-runtime", "dep:nwnrs-runtime-sys", "dep:tokio"]
 tooling = [
     "dep:image",
     "dep:nwnrs-nwpkg",
@@ -42,6 +42,9 @@ tracing-subscriber.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 nix = { workspace = true, optional = true }
+
+[target.'cfg(windows)'.dependencies]
+nwnrs-runtime-sys = { path = "../runtime-sys", version = "0.0.1", optional = true }
 
 [dev-dependencies]
 toml.workspace = true

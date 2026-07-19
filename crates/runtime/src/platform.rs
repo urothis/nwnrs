@@ -14,6 +14,8 @@ pub enum OperatingSystem {
     Macos,
     /// GNU/Linux.
     Linux,
+    /// Microsoft Windows.
+    Windows,
 }
 
 impl fmt::Display for OperatingSystem {
@@ -21,6 +23,7 @@ impl fmt::Display for OperatingSystem {
         match self {
             Self::Macos => formatter.write_str("macos"),
             Self::Linux => formatter.write_str("linux"),
+            Self::Windows => formatter.write_str("windows"),
         }
     }
 }
@@ -67,6 +70,8 @@ impl Platform {
             OperatingSystem::Macos
         } else if cfg!(target_os = "linux") {
             OperatingSystem::Linux
+        } else if cfg!(target_os = "windows") {
+            OperatingSystem::Windows
         } else {
             return Err(RuntimeError::new(format!(
                 "unsupported host operating system: {}",

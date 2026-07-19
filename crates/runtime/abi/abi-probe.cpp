@@ -51,6 +51,8 @@ int main()
     constexpr const char* operatingSystem = "macos";
 #elif defined(__linux__)
     constexpr const char* operatingSystem = "linux";
+#elif defined(_WIN32)
+    constexpr const char* operatingSystem = "windows";
 #else
 #error "unsupported ABI probe operating system"
 #endif

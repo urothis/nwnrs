@@ -43,6 +43,8 @@ nwnrs run --runtime path/to/libnwnrs_runtime_sys.dylib --targets crates/runtime/
 nwnrs run --docker -- -module module_name
 ```
 
+On Windows, pass `nwnrs_runtime_sys.dll` and the native `nwserver.exe` instead.
+
 ### Rust
 
 ```toml

@@ -3,7 +3,6 @@
 use std::{
     ffi::c_void,
     fs,
-    os::unix::ffi::OsStrExt as _,
     slice,
 };
 
@@ -26,7 +25,13 @@ const NWNX_PUSH_OBJECT: i32 = 1155;
 const NWNX_PUSH_STRING: i32 = 1156;
 const NWNX_POP_INTEGER: i32 = 1167;
 const NWNX_POP_STRING: i32 = 1170;
-const VM_SCRIPT_IMPLEMENTATION_BYTES: usize = if cfg!(target_os = "linux") { 76 } else { 60 };
+const VM_SCRIPT_IMPLEMENTATION_BYTES: usize = if cfg!(target_os = "linux") {
+    76
+} else if cfg!(target_os = "windows") {
+    84
+} else {
+    60
+};
 
 #[derive(Debug)]
 enum Value {
@@ -597,7 +602,13 @@ fn set_event(vm: &mut VirtualMachine, level: usize, id: i32, script_name: &mut [
 }
 
 fn assert_fixture_layout() {
-    let expected_stride = if cfg!(target_os = "linux") { 152 } else { 136 };
+    let expected_stride = if cfg!(target_os = "linux") {
+        152
+    } else if cfg!(target_os = "windows") {
+        160
+    } else {
+        136
+    };
     assert_eq!(std::mem::offset_of!(VirtualMachine, recursion_level), 36);
     assert_eq!(std::mem::offset_of!(VirtualMachine, scripts), 40);
     assert_eq!(std::mem::size_of::<VirtualMachineScript>(), expected_stride);
@@ -669,11 +680,12 @@ fn main() {
     };
     // SAFETY: the C++ fixture initializes the three CExoString fields using
     // the same exact layout asserted by the runtime ABI probe.
+    let server_vault_text = server_vault.to_string_lossy();
     unsafe {
         nwnrs_fixture_admin_init(
             (&raw mut net_layer).cast(),
-            server_vault.as_os_str().as_bytes().as_ptr(),
-            server_vault.as_os_str().as_bytes().len(),
+            server_vault_text.as_bytes().as_ptr(),
+            server_vault_text.len(),
         );
     }
     let mut server = ServerExoApp {
@@ -733,7 +745,7 @@ fn main() {
     );
     assert!(matches!(
         call_string(&mut commands, &mut vm, "GetServerOperatingSystem").as_str(),
-        "macos" | "linux"
+        "macos" | "linux" | "windows"
     ));
     assert!(matches!(
         call_string(&mut commands, &mut vm, "GetServerArchitecture").as_str(),

@@ -1,0 +1,49 @@
+EXPORTS
+    nwnrs_fixture_function_management
+    nwnrs_fixture_stack_pop_integer
+    nwnrs_fixture_stack_push_integer
+    nwnrs_fixture_stack_pop_float
+    nwnrs_fixture_stack_push_float
+    nwnrs_fixture_stack_pop_object
+    nwnrs_fixture_stack_push_object
+    nwnrs_fixture_stack_pop_string
+    nwnrs_fixture_stack_push_string
+    nwnrs_fixture_stack_pop_vector
+    nwnrs_fixture_stack_push_vector
+    nwnrs_fixture_free_exo_string_buffer
+    nwnrs_fixture_app_manager DATA
+    nwnrs_fixture_get_server_info
+    nwnrs_fixture_get_player_list
+    nwnrs_fixture_get_net_layer
+    nwnrs_fixture_get_session_max_players
+    nwnrs_fixture_get_udp_port
+    nwnrs_fixture_get_session_name
+    nwnrs_fixture_set_session_name
+    nwnrs_fixture_get_player_password
+    nwnrs_fixture_set_player_password
+    nwnrs_fixture_get_game_master_password
+    nwnrs_fixture_set_game_master_password
+    nwnrs_fixture_enable_combat_debugging DATA
+    nwnrs_fixture_enable_saving_throw_debugging DATA
+    nwnrs_fixture_enable_movement_speed_debugging DATA
+    nwnrs_fixture_enable_hit_die_debugging DATA
+    nwnrs_fixture_exit_program DATA
+    nwnrs_fixture_add_banned_ip
+    nwnrs_fixture_remove_banned_ip
+    nwnrs_fixture_add_banned_cd_key
+    nwnrs_fixture_remove_banned_cd_key
+    nwnrs_fixture_add_banned_player_name
+    nwnrs_fixture_remove_banned_player_name
+    nwnrs_fixture_rules DATA
+    nwnrs_fixture_reload_rules
+    nwnrs_fixture_get_module
+    nwnrs_fixture_get_loc_string
+    nwnrs_fixture_remove_linked_list_node
+    nwnrs_fixture_main_loop
+    nwnrs_fixture_get_client_object_by_object_id
+    nwnrs_fixture_get_creature_by_game_object_id
+    nwnrs_fixture_get_player_name
+    nwnrs_fixture_get_player_info
+    nwnrs_fixture_disconnect_player
+    nwnrs_fixture_exo_base DATA
+    nwnrs_fixture_get_alias_path

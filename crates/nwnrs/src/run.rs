@@ -1,6 +1,8 @@
+#[cfg(any(unix, feature = "tooling"))]
+use std::io::Read as _;
 use std::{
     fs,
-    io::{BufRead as _, Read as _, Seek as _, Write as _},
+    io::{BufRead as _, Seek as _, Write as _},
     path::{Path, PathBuf},
     process::{Command as ProcessCommand, ExitCode, Stdio},
     sync::{
@@ -20,7 +22,7 @@ use crate::args::{ColorMode, RunCmd};
 const LINUX_PRELOAD: &str = "LD_PRELOAD";
 const MACOS_PRELOAD: &str = "DYLD_INSERT_LIBRARIES";
 const RUNTIME_COLOR: &str = "NWNRS_COLOR";
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 const DUPLICATE_SHUTDOWN_SIGNAL_WINDOW: std::time::Duration = std::time::Duration::from_millis(500);
 #[cfg(feature = "tooling")]
 const DEFAULT_DOCKER_HOME: &str = "nwserver-home";
@@ -31,21 +33,21 @@ const DEFAULT_DOCKER_PUBLISH: &str = "5121:5121/udp";
 #[cfg(feature = "tooling")]
 const DOCKER_DAEMON_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 enum ServerInput {
     Data(Vec<u8>),
     End,
     Shutdown,
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 #[derive(Clone, Copy)]
 enum ServerLogKind {
     Output,
     Error,
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 struct LogFollower {
     stop:  Arc<AtomicBool>,
     relay: Option<std::thread::JoinHandle<()>>,
@@ -160,21 +162,23 @@ impl LaunchPlan {
             .env(ENV_SUPERVISED, "1")
             .env(ENV_TARGET_PACK, &self.target_pack)
             .env(RUNTIME_COLOR, self.color.as_str())
-            .env(self.preload_variable(), &self.runtime)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        match self.platform.os {
+            OperatingSystem::Macos => {
+                command.env(MACOS_PRELOAD, &self.runtime);
+            }
+            OperatingSystem::Linux => {
+                command.env(LINUX_PRELOAD, &self.runtime);
+            }
+            OperatingSystem::Windows => {}
+        }
         isolate_process_group(&mut command);
         command
     }
 
-    fn preload_variable(&self) -> &'static str {
-        match self.platform.os {
-            OperatingSystem::Macos => MACOS_PRELOAD,
-            OperatingSystem::Linux => LINUX_PRELOAD,
-        }
-    }
-
+    #[cfg(unix)]
     fn backup_container_configuration(&self) {
         #[cfg(target_os = "linux")]
         if let Some(container) = &self.container {
@@ -182,6 +186,7 @@ impl LaunchPlan {
         }
     }
 
+    #[cfg(unix)]
     fn finalize_container(&mut self) {
         #[cfg(target_os = "linux")]
         if let Some(container) = &mut self.container {
@@ -189,7 +194,7 @@ impl LaunchPlan {
         }
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     fn log_follower_paths(&self) -> Vec<(ServerLogKind, PathBuf)> {
         let Some(paths) = self.log_paths.as_ref() else {
             return Vec::new();
@@ -493,11 +498,15 @@ fn default_user_directory() -> Result<PathBuf, String> {
         }
     }
 
-    let home = std::env::var_os("HOME").map(PathBuf::from).ok_or_else(|| {
-        "HOME is unavailable; pass -userdirectory to nwserver, set NWN_HOME, or pass \
-         --no-tail-logs to nwnrs run"
-            .to_string()
-    })?;
+    let home_variable = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+    let home = std::env::var_os(home_variable)
+        .map(PathBuf::from)
+        .ok_or_else(|| {
+            format!(
+                "{home_variable} is unavailable; pass -userdirectory to nwserver, set NWN_HOME, \
+                 or pass --no-tail-logs to nwnrs run"
+            )
+        })?;
     let candidates = if cfg!(target_os = "macos") {
         vec![
             home.join("Documents").join("Neverwinter Nights"),
@@ -505,6 +514,8 @@ fn default_user_directory() -> Result<PathBuf, String> {
                 .join("Application Support")
                 .join("Neverwinter Nights"),
         ]
+    } else if cfg!(windows) {
+        vec![home.join("Documents").join("Neverwinter Nights")]
     } else {
         vec![home.join(".local").join("share").join("Neverwinter Nights")]
     };
@@ -543,9 +554,192 @@ fn execute(plan: LaunchPlan) -> Result<ExitCode, String> {
     runtime.block_on(supervise(plan))
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+fn execute(plan: LaunchPlan) -> Result<ExitCode, String> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|error| format!("failed to initialize launcher supervision: {error}"))?;
+    runtime.block_on(supervise_windows(plan))
+}
+
+#[cfg(not(any(unix, windows)))]
 fn execute(_plan: LaunchPlan) -> Result<ExitCode, String> {
-    Err("the native runtime launcher currently supports only macOS and Linux".to_string())
+    Err("the native runtime launcher does not support this operating system".to_string())
+}
+
+#[cfg(windows)]
+async fn supervise_windows(plan: LaunchPlan) -> Result<ExitCode, String> {
+    use nwnrs_runtime_sys::spawn_injected_windows;
+    use tokio::{signal::windows, time};
+
+    let mut interrupt =
+        windows::ctrl_c().map_err(|error| format!("failed to listen for CTRL_C: {error}"))?;
+    let mut break_signal = windows::ctrl_break()
+        .map_err(|error| format!("failed to listen for CTRL_BREAK: {error}"))?;
+    info!(
+        target: "nwnrs::launcher",
+        platform = %plan.platform,
+        "starting NWServer"
+    );
+    tracing::debug!(
+        target: "nwnrs::launcher",
+        server = %plan.server.display(),
+        runtime = %plan.runtime.display(),
+        target_pack = %plan.target_pack.display(),
+        working_directory = %plan.working_directory.display(),
+        "resolved launch artifacts"
+    );
+
+    let mut log_followers = start_log_followers(&plan)?;
+    let mut command = plan.command();
+    let (mut server, control) = match spawn_injected_windows(&mut command, &plan.runtime) {
+        Ok(process) => process,
+        Err(error) => {
+            stop_log_followers(&mut log_followers);
+            return Err(format!(
+                "failed to start injected server {}: {error}",
+                plan.server.display()
+            ));
+        }
+    };
+    let pipes = (|| {
+        Ok::<_, String>((
+            take_windows_pipe(&mut server, |child| child.stdin.take(), "input")?,
+            take_windows_pipe(&mut server, |child| child.stdout.take(), "output")?,
+            take_windows_pipe(&mut server, |child| child.stderr.take(), "error")?,
+        ))
+    })();
+    let (server_input, server_output, server_error) = match pipes {
+        Ok(pipes) => pipes,
+        Err(error) => {
+            stop_log_followers(&mut log_followers);
+            return Err(error);
+        }
+    };
+    info!(
+        target: "nwnrs::launcher",
+        process_id = server.id(),
+        "NWServer process started and runtime initialized"
+    );
+
+    let (input_sender, input_receiver) = std::sync::mpsc::channel();
+    let (shutdown_sender, mut shutdown_receiver) = tokio::sync::mpsc::unbounded_channel();
+    start_windows_terminal_input_relay(input_sender.clone(), shutdown_sender);
+    let input_writer = start_server_input_writer(server_input, input_receiver);
+    let console_relay = start_server_console_relay(server_output);
+    let error_relay = start_server_error_relay(server_error);
+    let mut shutdown_requested_at = None;
+    let mut wait_interval = time::interval(std::time::Duration::from_millis(50));
+    wait_interval.set_missed_tick_behavior(time::MissedTickBehavior::Skip);
+
+    let status = loop {
+        tokio::select! {
+            _ = wait_interval.tick() => {
+                match server.try_wait() {
+                    Ok(Some(status)) => break Ok(status),
+                    Ok(None) => {}
+                    Err(error) => break Err(format!(
+                        "failed while waiting for server {}: {error}",
+                        plan.server.display()
+                    )),
+                }
+            }
+            received = interrupt.recv() => {
+                if received.is_some() {
+                    request_windows_shutdown(
+                        &mut server,
+                        control,
+                        &input_sender,
+                        &mut shutdown_requested_at,
+                    );
+                }
+            }
+            received = break_signal.recv() => {
+                if received.is_some() {
+                    request_windows_shutdown(
+                        &mut server,
+                        control,
+                        &input_sender,
+                        &mut shutdown_requested_at,
+                    );
+                }
+            }
+            request = shutdown_receiver.recv() => {
+                if request.is_some() {
+                    request_windows_shutdown(
+                        &mut server,
+                        control,
+                        &input_sender,
+                        &mut shutdown_requested_at,
+                    );
+                }
+            }
+        }
+    };
+
+    let _ = input_sender.send(ServerInput::End);
+    let _ = input_writer.join();
+    let _ = console_relay.join();
+    let _ = error_relay.join();
+    stop_log_followers(&mut log_followers);
+    match status {
+        Ok(status) if status.success() => {
+            info!(target: "nwnrs::launcher", "NWServer exited successfully");
+            Ok(windows_exit_status_code(status))
+        }
+        Ok(status) => {
+            tracing::warn!(target: "nwnrs::launcher", %status, "NWServer exited unsuccessfully");
+            Ok(windows_exit_status_code(status))
+        }
+        Err(error) => Err(error),
+    }
+}
+
+#[cfg(windows)]
+fn take_windows_pipe<T>(
+    server: &mut std::process::Child,
+    take: impl FnOnce(&mut std::process::Child) -> Option<T>,
+    name: &str,
+) -> Result<T, String> {
+    if let Some(pipe) = take(server) {
+        return Ok(pipe);
+    }
+    let _ = server.kill();
+    let _ = server.wait();
+    Err(format!(
+        "failed to open the supervised server standard {name} pipe"
+    ))
+}
+
+#[cfg(windows)]
+fn request_windows_shutdown(
+    server: &mut std::process::Child,
+    control: nwnrs_runtime_sys::WindowsProcessControl,
+    input_sender: &std::sync::mpsc::Sender<ServerInput>,
+    shutdown_requested_at: &mut Option<std::time::Instant>,
+) {
+    if let Some(requested_at) = *shutdown_requested_at {
+        if requested_at.elapsed() < DUPLICATE_SHUTDOWN_SIGNAL_WINDOW {
+            tracing::debug!(target: "nwnrs::launcher", "ignoring duplicate shutdown signal");
+            return;
+        }
+        tracing::warn!(target: "nwnrs::launcher", "forcing NWServer to terminate after repeated shutdown request");
+        if let Err(error) = server.kill()
+            && error.kind() != std::io::ErrorKind::InvalidInput
+        {
+            tracing::warn!(%error, "failed to terminate NWServer");
+        }
+        return;
+    }
+    *shutdown_requested_at = Some(std::time::Instant::now());
+    info!(target: "nwnrs::launcher", "requesting graceful NWServer shutdown");
+    if let Err(error) = control.request_graceful_shutdown() {
+        tracing::warn!(%error, "WM_QUIT failed; falling back to the native quit command");
+        if input_sender.send(ServerInput::Shutdown).is_err() {
+            tracing::warn!(target: "nwnrs::launcher", "server input relay is unavailable");
+        }
+    }
 }
 
 #[cfg(unix)]
@@ -699,7 +893,7 @@ async fn supervise(mut plan: LaunchPlan) -> Result<ExitCode, String> {
     }
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn start_log_followers(plan: &LaunchPlan) -> Result<Vec<LogFollower>, String> {
     let mut followers = Vec::new();
     for (kind, path) in plan.log_follower_paths() {
@@ -822,6 +1016,85 @@ fn follow_server_log(path: &Path, kind: ServerLogKind, stop: &AtomicBool) {
     }
 }
 
+#[cfg(windows)]
+fn follow_server_log(path: &Path, kind: ServerLogKind, stop: &AtomicBool) {
+    use std::{
+        fs::File,
+        io::{BufReader, SeekFrom},
+        time::Duration,
+    };
+
+    let skip_existing = path.is_file();
+    let mut first_open = true;
+    let mut reader = None;
+    let mut position = 0_u64;
+    while !stop.load(Ordering::Relaxed) {
+        if reader.is_none() {
+            match File::open(path) {
+                Ok(file) => {
+                    let mut new_reader = BufReader::new(file);
+                    let start = if first_open && skip_existing {
+                        SeekFrom::End(0)
+                    } else {
+                        SeekFrom::Start(0)
+                    };
+                    match new_reader.seek(start) {
+                        Ok(offset) => position = offset,
+                        Err(error) => {
+                            tracing::warn!(target: "nwnrs::launcher", path = %path.display(), %error, "failed to seek followed server log");
+                            std::thread::sleep(Duration::from_millis(100));
+                            continue;
+                        }
+                    }
+                    reader = Some(new_reader);
+                    first_open = false;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    std::thread::sleep(Duration::from_millis(100));
+                    continue;
+                }
+                Err(error) => {
+                    tracing::warn!(target: "nwnrs::launcher", path = %path.display(), %error, "failed to open followed server log");
+                    std::thread::sleep(Duration::from_millis(250));
+                    continue;
+                }
+            }
+        }
+
+        let Some(active_reader) = reader.as_mut() else {
+            continue;
+        };
+        let mut line = String::new();
+        match active_reader.read_line(&mut line) {
+            Ok(0) => {
+                if fs::metadata(path).is_ok_and(|metadata| metadata.len() < position) {
+                    reader = None;
+                    position = 0;
+                } else {
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+            }
+            Ok(bytes) => {
+                position = position.saturating_add(bytes as u64);
+                let line = line.trim_end_matches(['\r', '\n']);
+                if line.is_empty() {
+                    continue;
+                }
+                match kind {
+                    ServerLogKind::Output => info!(target: "nwnrs::server", "{line}"),
+                    ServerLogKind::Error => tracing::error!(target: "nwnrs::server", "{line}"),
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(error) => {
+                tracing::warn!(target: "nwnrs::launcher", path = %path.display(), %error, "failed to read followed server log");
+                reader = None;
+                position = 0;
+            }
+        }
+    }
+}
+
 #[cfg(unix)]
 fn start_terminal_input_relay(sender: std::sync::mpsc::Sender<ServerInput>) {
     std::thread::spawn(move || {
@@ -855,7 +1128,45 @@ fn start_terminal_input_relay(sender: std::sync::mpsc::Sender<ServerInput>) {
     });
 }
 
-#[cfg(unix)]
+#[cfg(windows)]
+fn start_windows_terminal_input_relay(
+    input_sender: std::sync::mpsc::Sender<ServerInput>,
+    shutdown_sender: tokio::sync::mpsc::UnboundedSender<()>,
+) {
+    std::thread::spawn(move || {
+        use tracing::warn;
+
+        let mut input = std::io::stdin().lock();
+        loop {
+            let mut line = Vec::new();
+            match input.read_until(b'\n', &mut line) {
+                Ok(0) => {
+                    let _ = input_sender.send(ServerInput::End);
+                    break;
+                }
+                Ok(_) => {
+                    let command = line.strip_suffix(b"\n").unwrap_or(&line);
+                    let command = command.strip_suffix(b"\r").unwrap_or(command);
+                    if command.eq_ignore_ascii_case(b"quit") {
+                        if shutdown_sender.send(()).is_err() {
+                            break;
+                        }
+                    } else if input_sender.send(ServerInput::Data(line)).is_err() {
+                        break;
+                    }
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(error) => {
+                    warn!(%error, "failed to read terminal input");
+                    let _ = input_sender.send(ServerInput::End);
+                    break;
+                }
+            }
+        }
+    });
+}
+
+#[cfg(any(unix, windows))]
 fn start_server_console_relay(
     server_output: std::process::ChildStdout,
 ) -> std::thread::JoinHandle<()> {
@@ -878,7 +1189,7 @@ fn start_server_console_relay(
     })
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn start_server_error_relay(
     server_error: std::process::ChildStderr,
 ) -> std::thread::JoinHandle<()> {
@@ -901,7 +1212,7 @@ fn start_server_error_relay(
     })
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn relay_server_error_line(line: &str) {
     if let Some(message) = line.strip_prefix(" INFO nwnrs::runtime: ") {
         info!(target: "nwnrs::runtime", "{message}");
@@ -928,7 +1239,7 @@ fn relay_server_error_line(line: &str) {
     }
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn start_server_input_writer(
     mut server_input: std::process::ChildStdin,
     receiver: std::sync::mpsc::Receiver<ServerInput>,
@@ -1020,7 +1331,7 @@ fn forward_signal(server: &std::process::Child, signal: nix::sys::signal::Signal
     }
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn stop_log_followers(log_followers: &mut Vec<LogFollower>) {
     while let Some(mut follower) = log_followers.pop() {
         follower.stop.store(true, Ordering::Relaxed);
@@ -1051,6 +1362,16 @@ fn exit_status_value(status: std::process::ExitStatus) -> u8 {
                 .and_then(|signal| 128_u8.checked_add(signal))
         })
         .unwrap_or(1)
+}
+
+#[cfg(windows)]
+fn windows_exit_status_code(status: std::process::ExitStatus) -> ExitCode {
+    ExitCode::from(
+        status
+            .code()
+            .and_then(|code| u8::try_from(code).ok())
+            .unwrap_or(1),
+    )
 }
 
 #[cfg(test)]
@@ -1209,11 +1530,14 @@ mod tests {
         assert_eq!(environment(&command, ENV_REQUIRED), Some(OsStr::new("1")));
         assert_eq!(environment(&command, ENV_SUPERVISED), Some(OsStr::new("1")));
         assert!(environment(&command, ENV_TARGET_PACK).is_some());
-        let preload = match Platform::host()?.os {
-            OperatingSystem::Macos => MACOS_PRELOAD,
-            OperatingSystem::Linux => LINUX_PRELOAD,
-        };
-        assert!(environment(&command, preload).is_some());
+        match Platform::host()?.os {
+            OperatingSystem::Macos => assert!(environment(&command, MACOS_PRELOAD).is_some()),
+            OperatingSystem::Linux => assert!(environment(&command, LINUX_PRELOAD).is_some()),
+            OperatingSystem::Windows => {
+                assert!(environment(&command, MACOS_PRELOAD).is_none());
+                assert!(environment(&command, LINUX_PRELOAD).is_none());
+            }
+        }
         fs::remove_dir_all(root)?;
         Ok(())
     }
@@ -1356,7 +1680,7 @@ mod tests {
 
     fn write_host_binary(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
         let platform = Platform::host()?;
-        let mut bytes = [0_u8; 64];
+        let mut bytes = vec![0_u8; 0xa0];
         match platform.os {
             OperatingSystem::Macos => {
                 bytes
@@ -1387,6 +1711,32 @@ mod tests {
                     .get_mut(18..20)
                     .ok_or("ELF machine range")?
                     .copy_from_slice(&machine.to_le_bytes());
+            }
+            OperatingSystem::Windows => {
+                bytes
+                    .get_mut(..2)
+                    .ok_or("DOS magic range")?
+                    .copy_from_slice(b"MZ");
+                bytes
+                    .get_mut(60..64)
+                    .ok_or("PE offset range")?
+                    .copy_from_slice(&0x80_u32.to_le_bytes());
+                bytes
+                    .get_mut(0x80..0x84)
+                    .ok_or("PE signature range")?
+                    .copy_from_slice(b"PE\0\0");
+                let machine = match platform.architecture {
+                    Architecture::Aarch64 => 0xaa64_u16,
+                    Architecture::X86_64 => 0x8664_u16,
+                };
+                bytes
+                    .get_mut(0x84..0x86)
+                    .ok_or("PE machine range")?
+                    .copy_from_slice(&machine.to_le_bytes());
+                bytes
+                    .get_mut(0x98..0x9a)
+                    .ok_or("PE optional magic range")?
+                    .copy_from_slice(&0x020b_u16.to_le_bytes());
             }
         }
         fs::write(path, bytes)?;

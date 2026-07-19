@@ -3,6 +3,8 @@
 mod adapter;
 mod bridge;
 mod engine;
+#[cfg(windows)]
+mod windows_launcher;
 
 use std::{
     env,
@@ -11,7 +13,7 @@ use std::{
     fmt,
     io::IsTerminal as _,
     panic::{self, AssertUnwindSafe},
-    process, ptr,
+    ptr,
     sync::{
         OnceLock,
         atomic::{AtomicPtr, Ordering},
@@ -19,8 +21,12 @@ use std::{
 };
 
 pub use bridge::{BridgeInstallError, install_nwscript_bridge};
-use nwnrs_runtime::{ENV_REQUIRED, ENV_SUPERVISED, RuntimeContext, initialize_current_process};
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use nwnrs_runtime::ENV_REQUIRED;
+use nwnrs_runtime::{ENV_SUPERVISED, RuntimeContext, initialize_current_process};
 use tracing_subscriber::EnvFilter;
+#[cfg(windows)]
+pub use windows_launcher::{WindowsLaunchError, WindowsProcessControl, spawn_injected_windows};
 
 static RUNTIME_CONTEXT: OnceLock<RuntimeContext> = OnceLock::new();
 static PROBE_ORIGINAL: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
@@ -201,42 +207,66 @@ extern "C" fn probe_replacement(value: i32) -> i32 {
     .unwrap_or(i32::MIN)
 }
 
-extern "C" fn initialize_injected_runtime() {
+fn try_initialize_injected_runtime() -> Result<(), String> {
     init_tracing();
     let initialized = panic::catch_unwind(initialize_current_process);
     match initialized {
-        Ok(Ok(None)) => {}
+        Ok(Ok(None)) => Ok(()),
         Ok(Ok(Some(context))) => initialize_gum_runtime(context),
-        Ok(Err(error)) => initialization_failed(&error.to_string()),
-        Err(_payload) => initialization_failed("runtime initialization panicked"),
+        Ok(Err(error)) => Err(error.to_string()),
+        Err(_payload) => Err("runtime initialization panicked".to_string()),
     }
 }
 
-fn initialize_gum_runtime(context: RuntimeContext) {
+fn initialize_gum_runtime(context: RuntimeContext) -> Result<(), String> {
     // SAFETY: process-loader initialization calls this once before runtime hooks
     // are installed. Gum remains initialized for the process lifetime.
     unsafe {
         frida_gum_sys::gum_init_embedded();
     }
     if RUNTIME_CONTEXT.set(context).is_err() {
-        initialization_failed("runtime was initialized more than once");
-        return;
+        return Err("runtime was initialized more than once".to_string());
     }
     let Some(context) = RUNTIME_CONTEXT.get() else {
-        initialization_failed("runtime context was unavailable after initialization");
-        return;
+        return Err("runtime context was unavailable after initialization".to_string());
     };
     if let Err(error) = install_nwscript_bridge(context) {
-        initialization_failed(&error.to_string());
-        return;
+        return Err(error.to_string());
     }
     tracing::info!(target: "nwnrs::runtime", "initialized");
+    Ok(())
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+extern "C" fn initialize_injected_runtime() {
+    if let Err(error) = try_initialize_injected_runtime() {
+        initialization_failed(&error);
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn initialization_failed(message: &str) {
     write_diagnostic(message);
     if env::var_os(ENV_REQUIRED).as_deref() == Some(std::ffi::OsStr::new("1")) {
-        process::exit(70);
+        std::process::exit(70);
+    }
+}
+
+/// Initializes the runtime after a Windows launcher has injected this DLL.
+///
+/// The function has the `LPTHREAD_START_ROUTINE` signature so the launcher can
+/// call it on a remote thread after `LoadLibraryW` returns and outside the
+/// Windows loader lock. Zero reports success; `70` reports initialization
+/// failure after a diagnostic has been written.
+#[cfg(windows)]
+#[unsafe(no_mangle)]
+pub extern "system" fn nwnrs_runtime_initialize(_parameter: *mut c_void) -> u32 {
+    match try_initialize_injected_runtime() {
+        Ok(()) => 0,
+        Err(error) => {
+            write_diagnostic(&error);
+            70
+        }
     }
 }
 

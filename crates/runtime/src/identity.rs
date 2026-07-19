@@ -28,12 +28,12 @@ pub struct BinaryIdentity {
     pub path:     PathBuf,
     /// SHA-256 of the complete binary file.
     pub sha256:   FileSha256,
-    /// Platform encoded in the ELF or Mach-O header.
+    /// Platform encoded in the ELF, Mach-O, or PE header.
     pub platform: Platform,
 }
 
 impl BinaryIdentity {
-    /// Reads and identifies an ELF or Mach-O binary.
+    /// Reads and identifies an ELF, Mach-O, or PE binary.
     ///
     /// # Errors
     ///

@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <utility>
 
@@ -15,7 +16,10 @@ struct CExoString {
         if (value_length == 0) {
             return;
         }
-        string = new char[value_length + 1];
+        string = static_cast<char*>(std::malloc(value_length + 1));
+        if (string == nullptr) {
+            return;
+        }
         std::memcpy(string, value, value_length);
         string[value_length] = '\0';
         length = static_cast<std::uint32_t>(value_length);
@@ -31,7 +35,7 @@ struct CExoString {
         return *this;
     }
 
-    ~CExoString() { delete[] string; }
+    ~CExoString() { std::free(string); }
 };
 
 struct FixtureNetLayer {
@@ -168,80 +172,76 @@ void nwnrs_fixture_reset_turd() { reset_fixture_turd(); }
 
 } // extern "C"
 
-CExoString fixture_get_session_name(void* object)
-    asm("nwnrs_fixture_get_session_name");
-CExoString fixture_get_session_name(void* object) {
+#if defined(_WIN32)
+extern "C" CExoString* nwnrs_fixture_get_session_name(
+    void* object,
+    CExoString* output) {
+    *output = static_cast<FixtureNetLayer*>(object)->session_name;
+    return output;
+}
+#else
+extern "C" CExoString nwnrs_fixture_get_session_name(void* object) {
     return static_cast<FixtureNetLayer*>(object)->session_name;
 }
+#endif
 
-void fixture_set_session_name(void* object, CExoString value)
-    asm("nwnrs_fixture_set_session_name");
-void fixture_set_session_name(void* object, CExoString value) {
+extern "C" void nwnrs_fixture_set_session_name(void* object, CExoString value) {
     static_cast<FixtureNetLayer*>(object)->session_name = std::move(value);
 }
 
-CExoString fixture_get_player_password(void* object)
-    asm("nwnrs_fixture_get_player_password");
-CExoString fixture_get_player_password(void* object) {
+#if defined(_WIN32)
+extern "C" CExoString* nwnrs_fixture_get_player_password(
+    void* object,
+    CExoString* output) {
+    *output = static_cast<FixtureNetLayer*>(object)->player_password;
+    return output;
+}
+#else
+extern "C" CExoString nwnrs_fixture_get_player_password(void* object) {
     return static_cast<FixtureNetLayer*>(object)->player_password;
 }
+#endif
 
-std::int32_t fixture_set_player_password(void* object, CExoString value)
-    asm("nwnrs_fixture_set_player_password");
-std::int32_t fixture_set_player_password(void* object, CExoString value) {
+extern "C" std::int32_t nwnrs_fixture_set_player_password(void* object, CExoString value) {
     static_cast<FixtureNetLayer*>(object)->player_password = std::move(value);
     return 1;
 }
 
-CExoString fixture_get_game_master_password(void* object)
-    asm("nwnrs_fixture_get_game_master_password");
-CExoString fixture_get_game_master_password(void* object) {
+#if defined(_WIN32)
+extern "C" CExoString* nwnrs_fixture_get_game_master_password(
+    void* object,
+    CExoString* output) {
+    *output = static_cast<FixtureNetLayer*>(object)->dm_password;
+    return output;
+}
+#else
+extern "C" CExoString nwnrs_fixture_get_game_master_password(void* object) {
     return static_cast<FixtureNetLayer*>(object)->dm_password;
 }
+#endif
 
-std::int32_t fixture_set_game_master_password(void* object, CExoString value)
-    asm("nwnrs_fixture_set_game_master_password");
-std::int32_t fixture_set_game_master_password(void* object, CExoString value) {
+extern "C" std::int32_t nwnrs_fixture_set_game_master_password(void* object, CExoString value) {
     static_cast<FixtureNetLayer*>(object)->dm_password = std::move(value);
     return 1;
 }
 
-void fixture_add_banned_ip(void*, CExoString)
-    asm("nwnrs_fixture_add_banned_ip");
-void fixture_add_banned_ip(void*, CExoString) {}
+extern "C" void nwnrs_fixture_add_banned_ip(void*, CExoString) {}
 
-void fixture_remove_banned_ip(void*, CExoString)
-    asm("nwnrs_fixture_remove_banned_ip");
-void fixture_remove_banned_ip(void*, CExoString) {}
+extern "C" void nwnrs_fixture_remove_banned_ip(void*, CExoString) {}
 
-void fixture_add_banned_cd_key(void*, CExoString)
-    asm("nwnrs_fixture_add_banned_cd_key");
-void fixture_add_banned_cd_key(void*, CExoString) {}
+extern "C" void nwnrs_fixture_add_banned_cd_key(void*, CExoString) {}
 
-void fixture_remove_banned_cd_key(void*, CExoString)
-    asm("nwnrs_fixture_remove_banned_cd_key");
-void fixture_remove_banned_cd_key(void*, CExoString) {}
+extern "C" void nwnrs_fixture_remove_banned_cd_key(void*, CExoString) {}
 
-void fixture_add_banned_player_name(void*, CExoString)
-    asm("nwnrs_fixture_add_banned_player_name");
-void fixture_add_banned_player_name(void*, CExoString) {}
+extern "C" void nwnrs_fixture_add_banned_player_name(void*, CExoString) {}
 
-void fixture_remove_banned_player_name(void*, CExoString)
-    asm("nwnrs_fixture_remove_banned_player_name");
-void fixture_remove_banned_player_name(void*, CExoString) {}
+extern "C" void nwnrs_fixture_remove_banned_player_name(void*, CExoString) {}
 
-void fixture_reload_rules(void*) asm("nwnrs_fixture_reload_rules");
-void fixture_reload_rules(void*) {}
+extern "C" void nwnrs_fixture_reload_rules(void*) {}
 
-void* fixture_get_module(void*) asm("nwnrs_fixture_get_module");
-void* fixture_get_module(void*) { return &fixture_module; }
+extern "C" void* nwnrs_fixture_get_module(void*) { return &fixture_module; }
 
-std::int32_t fixture_get_loc_string(
-    const void* object,
-    std::int32_t,
-    CExoString* output,
-    std::uint8_t) asm("nwnrs_fixture_get_loc_string");
-std::int32_t fixture_get_loc_string(
+extern "C" std::int32_t nwnrs_fixture_get_loc_string(
     const void* object,
     std::int32_t,
     CExoString* output,
@@ -253,9 +253,7 @@ std::int32_t fixture_get_loc_string(
     return 1;
 }
 
-void* fixture_remove_linked_list_node(void* list, void* node)
-    asm("nwnrs_fixture_remove_linked_list_node");
-void* fixture_remove_linked_list_node(void* list, void* node) {
+extern "C" void* nwnrs_fixture_remove_linked_list_node(void* list, void* node) {
     auto* linked_list = static_cast<FixtureLinkedListInternal*>(list);
     auto* linked_node = static_cast<FixtureLinkedListNode*>(node);
     if (linked_list == nullptr || linked_node == nullptr ||
@@ -268,36 +266,30 @@ void* fixture_remove_linked_list_node(void* list, void* node) {
     return linked_node->object;
 }
 
-void* fixture_get_client_object_by_object_id(void*, std::uint32_t object_id)
-    asm("nwnrs_fixture_get_client_object_by_object_id");
-void* fixture_get_client_object_by_object_id(void*, std::uint32_t object_id) {
+extern "C" void* nwnrs_fixture_get_client_object_by_object_id(void*, std::uint32_t object_id) {
     return object_id == 0x01020304 ? &fixture_player : nullptr;
 }
 
-void* fixture_get_creature_by_game_object_id(void*, std::uint32_t object_id)
-    asm("nwnrs_fixture_get_creature_by_game_object_id");
-void* fixture_get_creature_by_game_object_id(void*, std::uint32_t object_id) {
+extern "C" void* nwnrs_fixture_get_creature_by_game_object_id(void*, std::uint32_t object_id) {
     return object_id == 0x01020304 ? &fixture_creature : nullptr;
 }
 
-CExoString fixture_get_player_name(void*) asm("nwnrs_fixture_get_player_name");
-CExoString fixture_get_player_name(void*) {
+#if defined(_WIN32)
+extern "C" CExoString* nwnrs_fixture_get_player_name(void*, CExoString* output) {
+    *output = CExoString("fixture-player", 14);
+    return output;
+}
+#else
+extern "C" CExoString nwnrs_fixture_get_player_name(void*) {
     return CExoString("fixture-player", 14);
 }
+#endif
 
-void* fixture_get_player_info(void*, std::uint32_t player_id)
-    asm("nwnrs_fixture_get_player_info");
-void* fixture_get_player_info(void*, std::uint32_t player_id) {
+extern "C" void* nwnrs_fixture_get_player_info(void*, std::uint32_t player_id) {
     return player_id == fixture_player.player_id ? &fixture_player_info : nullptr;
 }
 
-std::int32_t fixture_disconnect_player(
-    void*,
-    std::uint32_t player_id,
-    std::uint32_t string_reference,
-    std::int32_t cd_auth_failure,
-    const CExoString& reason) asm("nwnrs_fixture_disconnect_player");
-std::int32_t fixture_disconnect_player(
+extern "C" std::int32_t nwnrs_fixture_disconnect_player(
     void*,
     std::uint32_t player_id,
     std::uint32_t string_reference,
@@ -312,11 +304,7 @@ std::int32_t fixture_disconnect_player(
     return 1;
 }
 
-const CExoString& fixture_get_alias_path(
-    const void*,
-    const CExoString& alias,
-    std::int32_t) asm("nwnrs_fixture_get_alias_path");
-const CExoString& fixture_get_alias_path(
+extern "C" const CExoString& nwnrs_fixture_get_alias_path(
     const void*,
     const CExoString& alias,
     std::int32_t) {
@@ -330,28 +318,28 @@ const CExoString& fixture_get_alias_path(
 
 extern "C" void* nwnrs_fixture_admin_keep_symbols() {
     static void* volatile sink;
-    sink = reinterpret_cast<void*>(&fixture_get_session_name);
-    sink = reinterpret_cast<void*>(&fixture_set_session_name);
-    sink = reinterpret_cast<void*>(&fixture_get_player_password);
-    sink = reinterpret_cast<void*>(&fixture_set_player_password);
-    sink = reinterpret_cast<void*>(&fixture_get_game_master_password);
-    sink = reinterpret_cast<void*>(&fixture_set_game_master_password);
-    sink = reinterpret_cast<void*>(&fixture_add_banned_ip);
-    sink = reinterpret_cast<void*>(&fixture_remove_banned_ip);
-    sink = reinterpret_cast<void*>(&fixture_add_banned_cd_key);
-    sink = reinterpret_cast<void*>(&fixture_remove_banned_cd_key);
-    sink = reinterpret_cast<void*>(&fixture_add_banned_player_name);
-    sink = reinterpret_cast<void*>(&fixture_remove_banned_player_name);
-    sink = reinterpret_cast<void*>(&fixture_reload_rules);
-    sink = reinterpret_cast<void*>(&fixture_get_module);
-    sink = reinterpret_cast<void*>(&fixture_get_loc_string);
-    sink = reinterpret_cast<void*>(&fixture_remove_linked_list_node);
-    sink = reinterpret_cast<void*>(&fixture_get_client_object_by_object_id);
-    sink = reinterpret_cast<void*>(&fixture_get_creature_by_game_object_id);
-    sink = reinterpret_cast<void*>(&fixture_get_player_name);
-    sink = reinterpret_cast<void*>(&fixture_get_player_info);
-    sink = reinterpret_cast<void*>(&fixture_disconnect_player);
-    sink = reinterpret_cast<void*>(&fixture_get_alias_path);
+    sink = reinterpret_cast<void*>(&nwnrs_fixture_get_session_name);
+    sink = reinterpret_cast<void*>(&nwnrs_fixture_set_session_name);
+    sink = reinterpret_cast<void*>(&nwnrs_fixture_get_player_password);
+    sink = reinterpret_cast<void*>(&nwnrs_fixture_set_player_password);
+    sink = reinterpret_cast<void*>(&nwnrs_fixture_get_game_master_password);
+    sink = reinterpret_cast<void*>(&nwnrs_fixture_set_game_master_password);
+    sink = reinterpret_cast<void*>(&nwnrs_fixture_add_banned_ip);
+    sink = reinterpret_cast<void*>(&nwnrs_fixture_remove_banned_ip);
+    sink = reinterpret_cast<void*>(&nwnrs_fixture_add_banned_cd_key);
+    sink = reinterpret_cast<void*>(&nwnrs_fixture_remove_banned_cd_key);
+    sink = reinterpret_cast<void*>(&nwnrs_fixture_add_banned_player_name);
+    sink = reinterpret_cast<void*>(&nwnrs_fixture_remove_banned_player_name);
+    sink = reinterpret_cast<void*>(&nwnrs_fixture_reload_rules);
+    sink = reinterpret_cast<void*>(&nwnrs_fixture_get_module);
+    sink = reinterpret_cast<void*>(&nwnrs_fixture_get_loc_string);
+    sink = reinterpret_cast<void*>(&nwnrs_fixture_remove_linked_list_node);
+    sink = reinterpret_cast<void*>(&nwnrs_fixture_get_client_object_by_object_id);
+    sink = reinterpret_cast<void*>(&nwnrs_fixture_get_creature_by_game_object_id);
+    sink = reinterpret_cast<void*>(&nwnrs_fixture_get_player_name);
+    sink = reinterpret_cast<void*>(&nwnrs_fixture_get_player_info);
+    sink = reinterpret_cast<void*>(&nwnrs_fixture_disconnect_player);
+    sink = reinterpret_cast<void*>(&nwnrs_fixture_get_alias_path);
     sink = nwnrs_fixture_exo_base;
     return sink;
 }

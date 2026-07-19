@@ -1185,8 +1185,9 @@ mod tests {
         BinaryIdentity, BridgeTarget, CExoStringLayout, EVENT_CONTEXT_CAPABILITY_VERSION,
         EngineClassLayouts, EventTarget, FileSha256, NWSCRIPT_BRIDGE_CAPABILITY_VERSION,
         OperatingSystem, Platform, PlayerListLayout, RUNTIME_API_VERSION, RuntimeContext,
-        SERVER_STATE_CAPABILITY_VERSION, SelectedTargetPack, TARGET_PACK_SCHEMA_VERSION,
-        TargetAddress, TargetPack, TargetServer, TargetSource, VectorLayout,
+        SERVER_STATE_CAPABILITY_VERSION, SelectedTargetPack, ShutdownTarget,
+        TARGET_PACK_SCHEMA_VERSION, TargetAddress, TargetPack, TargetServer, TargetSource,
+        VectorLayout,
     };
 
     #[test]
@@ -1664,7 +1665,9 @@ mod tests {
             enable_saving_throw_debugging: address(),
             enable_movement_speed_debugging: address(),
             enable_hit_die_debugging: address(),
-            exit_program: address(),
+            shutdown: ShutdownTarget::ExitFlag {
+                address: address()
+            },
             add_banned_ip: address(),
             remove_banned_ip: address(),
             add_banned_cd_key: address(),

@@ -7,7 +7,7 @@ the NWServer executable:
 <os>-<architecture>/<server-sha256>.toml
 ```
 
-There is no fallback, version range, or nearest-match behavior. Schema 1
+There is no fallback, version range, or nearest-match behavior. Schema 2
 contains four kinds of evidence:
 
 - `server`: exact binary identity and human-readable build;
@@ -15,6 +15,11 @@ contains four kinds of evidence:
 - `layouts`: compiler-measured sizes, alignments, and member offsets;
 - versioned capability blocks: `bridge`, optional `server_state`, optional
   `administration`, and optional `events`.
+
+Administration packs declare their shutdown mechanism explicitly. Unix packs
+use a verified engine exit-flag address; Windows uses the current engine
+thread's message queue and therefore does not invent an address for an absent
+global.
 
 An absent optional block means that capability is unavailable. A present block
 must be complete and use the one contract version supported by this runtime.
@@ -48,5 +53,8 @@ crates/runtime/scripts/verify-unified-abi.sh \
   sources/unified \
   target/unified-abi.toml
 ```
+
+On Windows, use `crates\runtime\scripts\verify-unified-abi.ps1` with the same
+two arguments.
 
 See [`../ABI.md`](../ABI.md) for the provenance rules and audited headers.

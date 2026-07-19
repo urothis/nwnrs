@@ -10,7 +10,7 @@ use std::{
     error::Error,
     fmt,
     fs::{self, File},
-    io::Read,
+    io::{Read, Seek as _, SeekFrom},
     path::{Path, PathBuf},
 };
 
@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
 /// The supported target-pack schema version.
-pub const TARGET_PACK_SCHEMA_VERSION: u32 = 1;
+pub const TARGET_PACK_SCHEMA_VERSION: u32 = 2;
 /// The runtime API implemented by this version of the crate.
 pub const RUNTIME_API_VERSION: u32 = 1;
 /// The supported machine-generated Unified ABI snapshot format.
@@ -454,6 +454,19 @@ pub struct ServerStateTarget {
     pub get_udp_port:            TargetAddress,
 }
 
+/// Platform-specific operation used to request a graceful server shutdown.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "snake_case", tag = "strategy")]
+pub enum ShutdownTarget {
+    /// Write `1` to a verified engine-global exit flag.
+    ExitFlag {
+        /// Address of the writable engine-global exit flag.
+        address: TargetAddress,
+    },
+    /// Post `WM_QUIT` to the current Windows engine thread.
+    CurrentThreadMessageQueue,
+}
+
 /// Exact engine entry points and globals used by server administration.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -480,8 +493,8 @@ pub struct AdministrationTarget {
     pub enable_movement_speed_debugging: TargetAddress,
     /// Address of `g_bEnableHitDieDebugging`.
     pub enable_hit_die_debugging: TargetAddress,
-    /// Address of `g_bExitProgram`.
-    pub exit_program: TargetAddress,
+    /// Verified platform-specific graceful-shutdown operation.
+    pub shutdown: ShutdownTarget,
     /// `CServerExoApp::AddIPToBannedList`.
     pub add_banned_ip: TargetAddress,
     /// `CServerExoApp::RemoveIPFromBannedList`.
@@ -808,6 +821,18 @@ fn validate_target_pack_metadata(pack: &TargetPack) -> RuntimeResult<()> {
         )?;
         for (name, address) in administration_addresses(administration) {
             validate_target_address("administration", name, address)?;
+        }
+        match &administration.shutdown {
+            ShutdownTarget::ExitFlag {
+                address,
+            } => validate_target_address("administration", "shutdown.address", address)?,
+            ShutdownTarget::CurrentThreadMessageQueue => {
+                if pack.server.platform.os != OperatingSystem::Windows {
+                    return Err(RuntimeError::new(
+                        "current-thread message-queue shutdown requires Windows",
+                    ));
+                }
+            }
         }
     }
     if let Some(events) = pack.events.as_ref() {
@@ -1176,7 +1201,7 @@ fn server_state_addresses(server_state: &ServerStateTarget) -> [(&'static str, &
 
 fn administration_addresses(
     administration: &AdministrationTarget,
-) -> [(&'static str, &TargetAddress); 30] {
+) -> [(&'static str, &TargetAddress); 29] {
     [
         ("get_session_name", &administration.get_session_name),
         ("set_session_name", &administration.set_session_name),
@@ -1206,7 +1231,6 @@ fn administration_addresses(
             "enable_hit_die_debugging",
             &administration.enable_hit_die_debugging,
         ),
-        ("exit_program", &administration.exit_program),
         ("add_banned_ip", &administration.add_banned_ip),
         ("remove_banned_ip", &administration.remove_banned_ip),
         ("add_banned_cd_key", &administration.add_banned_cd_key),
@@ -1310,6 +1334,47 @@ fn read_platform(file: &mut File, path: &Path) -> RuntimeResult<Platform> {
                     .ok_or_else(|| RuntimeError::new("Mach-O architecture table overflowed"))?,
             )
             .ok_or_else(|| RuntimeError::new("Mach-O header length overflowed"))?
+    } else if magic == b"MZ\0\0" || prefix.get(..2) == Some(b"MZ") {
+        let mut dos_header = [0_u8; 64];
+        dos_header
+            .get_mut(..prefix.len())
+            .ok_or_else(|| RuntimeError::new("invalid DOS header prefix"))?
+            .copy_from_slice(&prefix);
+        file.read_exact(
+            dos_header
+                .get_mut(prefix.len()..)
+                .ok_or_else(|| RuntimeError::new("invalid DOS header remainder"))?,
+        )
+        .map_err(|error| {
+            RuntimeError::new(format!(
+                "failed to read DOS header {}: {error}",
+                path.display()
+            ))
+        })?;
+        let pe_offset = usize::try_from(read_u32_le(&dos_header, 60, "PE header offset")?)
+            .map_err(|_error| RuntimeError::new("PE header offset exceeds usize"))?;
+        if !(64..=1024 * 1024).contains(&pe_offset) {
+            return Err(RuntimeError::new(format!(
+                "unsupported PE header offset: {pe_offset:#x}"
+            )));
+        }
+        let header_length = pe_offset
+            .checked_add(26)
+            .ok_or_else(|| RuntimeError::new("PE header length overflowed"))?;
+        file.seek(SeekFrom::Start(0)).map_err(|error| {
+            RuntimeError::new(format!(
+                "failed to seek binary header {}: {error}",
+                path.display()
+            ))
+        })?;
+        let mut header = vec![0_u8; header_length];
+        file.read_exact(&mut header).map_err(|error| {
+            RuntimeError::new(format!(
+                "failed to read PE header {}: {error}",
+                path.display()
+            ))
+        })?;
+        return parse_platform(&header);
     } else {
         64
     };
@@ -1345,9 +1410,44 @@ fn parse_platform(header: &[u8]) -> RuntimeResult<Platform> {
     if matches!(magic, b"\xca\xfe\xba\xbe" | b"\xca\xfe\xba\xbf") {
         return parse_universal_macho_platform(header);
     }
+    if magic.get(..2) == Some(b"MZ") {
+        return parse_pe_platform(header);
+    }
     Err(RuntimeError::new(
-        "unsupported binary format; expected 64-bit ELF or little-endian Mach-O",
+        "unsupported binary format; expected 64-bit ELF, little-endian Mach-O, or PE32+",
     ))
+}
+
+fn parse_pe_platform(header: &[u8]) -> RuntimeResult<Platform> {
+    let pe_offset = usize::try_from(read_u32_le(header, 60, "PE header offset")?)
+        .map_err(|_error| RuntimeError::new("PE header offset exceeds usize"))?;
+    if header.get(pe_offset..pe_offset.saturating_add(4)) != Some(b"PE\0\0") {
+        return Err(RuntimeError::new("PE header is missing its signature"));
+    }
+    let machine = read_u16_le(header, pe_offset.saturating_add(4), "PE machine")?;
+    let optional_magic = read_u16_le(
+        header,
+        pe_offset.saturating_add(24),
+        "PE optional-header magic",
+    )?;
+    if optional_magic != 0x020b {
+        return Err(RuntimeError::new(
+            "only PE32+ Windows binaries are supported",
+        ));
+    }
+    let architecture = match machine {
+        0x8664 => Architecture::X86_64,
+        0xaa64 => Architecture::Aarch64,
+        _ => {
+            return Err(RuntimeError::new(format!(
+                "unsupported PE machine identifier: {machine:#06x}"
+            )));
+        }
+    };
+    Ok(Platform {
+        os: OperatingSystem::Windows,
+        architecture,
+    })
 }
 
 fn parse_universal_macho_platform(header: &[u8]) -> RuntimeResult<Platform> {
@@ -1490,7 +1590,7 @@ mod tests {
     static NEXT_TEST_DIRECTORY: AtomicUsize = AtomicUsize::new(0);
 
     #[test]
-    fn parses_supported_elf_and_macho_headers() -> Result<(), Box<dyn std::error::Error>> {
+    fn parses_supported_elf_macho_and_pe_headers() -> Result<(), Box<dyn std::error::Error>> {
         let mut elf = [0_u8; 64];
         elf.get_mut(..4)
             .ok_or("ELF magic range")?
@@ -1548,6 +1648,30 @@ mod tests {
             Platform {
                 os:           OperatingSystem::Macos,
                 architecture: expected_architecture,
+            }
+        );
+
+        let mut pe = [0_u8; 0xa0];
+        pe.get_mut(..2)
+            .ok_or("DOS magic range")?
+            .copy_from_slice(b"MZ");
+        pe.get_mut(60..64)
+            .ok_or("PE offset range")?
+            .copy_from_slice(&0x80_u32.to_le_bytes());
+        pe.get_mut(0x80..0x84)
+            .ok_or("PE signature range")?
+            .copy_from_slice(b"PE\0\0");
+        pe.get_mut(0x84..0x86)
+            .ok_or("PE machine range")?
+            .copy_from_slice(&0x8664_u16.to_le_bytes());
+        pe.get_mut(0x98..0x9a)
+            .ok_or("PE optional magic range")?
+            .copy_from_slice(&0x020b_u16.to_le_bytes());
+        assert_eq!(
+            parse_platform(&pe)?,
+            Platform {
+                os:           OperatingSystem::Windows,
+                architecture: Architecture::X86_64,
             }
         );
         Ok(())

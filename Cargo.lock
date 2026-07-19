@@ -1028,6 +1028,7 @@ dependencies = [
  "nwnrs-nwpkg",
  "nwnrs-nwscript",
  "nwnrs-runtime",
+ "nwnrs-runtime-sys",
  "nwnrs-types",
  "reqwest 0.13.4",
  "tokio",
@@ -1074,6 +1075,7 @@ dependencies = [
  "toml",
  "tracing",
  "tracing-subscriber",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

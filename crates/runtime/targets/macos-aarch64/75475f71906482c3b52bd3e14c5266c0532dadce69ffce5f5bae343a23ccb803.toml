@@ -1,5 +1,5 @@
 # Neverwinter Nights 8193.37-17 macOS ARM64.
-schema_version = 1
+schema_version = 2
 runtime_api = 1
 
 [server]
@@ -172,7 +172,10 @@ symbol = "g_bEnableMovementSpeedDebugging"
 [administration.enable_hit_die_debugging]
 symbol = "g_bEnableHitDieDebugging"
 
-[administration.exit_program]
+[administration.shutdown]
+strategy = "exit_flag"
+
+[administration.shutdown.address]
 symbol = "g_bExitProgram"
 
 [administration.add_banned_ip]
