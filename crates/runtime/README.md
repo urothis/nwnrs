@@ -8,6 +8,7 @@ This directory is the source of truth for the safe runtime crate and its
 supporting integration assets:
 
 - `targets/` contains exact server-binary target packs.
+- `abi/` contains the compiler probe for the pinned Unified headers.
 - `fixtures/` contains the native injected-runtime fixture host.
 - `scripts/` contains the cross-platform fixture runner used by CI.
 
@@ -17,11 +18,20 @@ native devkit for the build target.
 
 The initial dispatcher exposes runtime identity and live server state through
 the static `NWNRS` namespace. It reports the module name, current player count,
-and maximum players. During native event-script execution it also reports the
+maximum players, and the server's active UDP port through an owned
+`ServerSnapshot`. During native event-script execution it also reports the
 stable event name, engine identifier, script resref, phase, and nesting depth.
 NWScript can emit trace, debug, info, warning, and error records through the
 runtime's structured tracing pipeline. None of this requires a plugin loader,
 HTTP API, or metrics service.
+
+The NWScript contract is integer-versioned and statically registered. Scripts
+can query the core, server-state, and event-context capability versions before
+using optional functions. Dispatch failures retain a stable error code and a
+diagnostic message on the current bridge thread.
+
+Native ABI provenance and regeneration rules are documented in
+[`ABI.md`](ABI.md).
 
 Module source includes [`nwnrs.nss`](../../module/nwnrs.nss). The
 source-controlled demo module compiles `module/nwnrs_init.nss` into its

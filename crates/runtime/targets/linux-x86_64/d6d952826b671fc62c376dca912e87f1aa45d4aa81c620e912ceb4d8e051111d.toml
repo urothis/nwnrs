@@ -1,6 +1,6 @@
 # Neverwinter Nights 8193.37-17 Linux x86-64.
-schema_version = 2
-runtime_api = 2
+schema_version = 1
+runtime_api = 1
 
 [server]
 sha256 = "d6d952826b671fc62c376dca912e87f1aa45d4aa81c620e912ceb4d8e051111d"
@@ -10,8 +10,47 @@ build = "8193.37-17 [26c6e573]"
 os = "linux"
 architecture = "x86_64"
 
+[source]
+unified_commit = "3d4c4e13c6bf01b032ffe90534fc4a19eb036c03"
+nwn_build = 8193
+nwn_revision = 37
+nwn_postfix = 17
+
+[layouts.c_exo_string]
+size = 16
+alignment = 8
+string_offset = 0
+string_length_offset = 8
+buffer_length_offset = 12
+
+[layouts.player_list]
+size = 16
+alignment = 8
+elements_offset = 0
+count_offset = 8
+capacity_offset = 12
+
+[layouts.vector]
+size = 12
+alignment = 4
+x_offset = 0
+y_offset = 4
+z_offset = 8
+
+[layouts.classes]
+command_implementer_vm_offset = 16
+app_manager_server_offset = 8
+server_info_module_offset = 8
+vm_recursion_level_offset = 36
+vm_script_array_offset = 40
+vm_script_slot_count = 8
+vm_script_size = 152
+vm_script_alignment = 8
+vm_script_name_offset = 24
+vm_script_event_id_offset = 72
+
 [bridge]
-virtual_machine_offset = 16
+version = 1
 
 [bridge.function_management]
 symbol = "_ZN26CNWSVirtualMachineCommands36ExecuteCommandNWNXFunctionManagementEii"
@@ -50,9 +89,7 @@ symbol = "_ZN15CVirtualMachine15StackPushVectorE6Vector"
 symbol = "_ZdaPv"
 
 [server_state]
-server_exo_app_offset = 8
-server_info_module_name_offset = 8
-player_list_count_offset = 8
+version = 1
 
 [server_state.app_manager]
 symbol = "g_pAppManager"
@@ -69,10 +106,8 @@ symbol = "_ZN13CServerExoApp11GetNetLayerEv"
 [server_state.get_session_max_players]
 symbol = "_ZN9CNetLayer20GetSessionMaxPlayersEv"
 
+[server_state.get_udp_port]
+symbol = "_ZN9CNetLayer10GetUDPPortEv"
+
 [events]
-recursion_level_offset = 36
-script_array_offset = 40
-script_slot_count = 8
-script_stride = 152
-script_name_offset = 24
-script_event_id_offset = 72
+version = 1

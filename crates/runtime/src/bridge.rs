@@ -1,19 +1,21 @@
 use std::{error::Error, fmt};
 
-use crate::RuntimeContext;
+use crate::{Capability, RUNTIME_API_VERSION, RuntimeContext};
 
 const NAMESPACE: &str = "NWNRS";
 const MAX_LOG_MESSAGE_BYTES: usize = 64 * 1024;
 
 /// Live read-only server values copied from the engine for one bridge call.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct ServerState {
+pub struct ServerSnapshot {
     /// Current module name as engine string bytes.
     pub module_name:  Vec<u8>,
     /// Number of players currently in the server player list.
     pub player_count: i32,
     /// Maximum number of player connections configured for the session.
     pub max_players:  i32,
+    /// Active UDP listening port reported by the engine network layer.
+    pub udp_port:     i32,
 }
 
 /// One engine event-script invocation active on the current server thread.
@@ -94,9 +96,10 @@ impl TryFrom<i32> for ScriptLogLevel {
             2 => Ok(Self::Info),
             3 => Ok(Self::Warn),
             4 => Ok(Self::Error),
-            _ => Err(BridgeError::new(format!(
-                "invalid NWNRS log level {value}; expected 0 through 4"
-            ))),
+            _ => Err(BridgeError::new(
+                BridgeErrorCode::InvalidArgument,
+                format!("invalid NWNRS log level {value}; expected 0 through 4"),
+            )),
         }
     }
 }
@@ -122,17 +125,232 @@ impl BridgeValue {
     }
 }
 
+/// Stable error codes exposed to NWScript.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(i32)]
+pub enum BridgeErrorCode {
+    /// No bridge error has been recorded.
+    None = 0,
+    /// The requested namespace is not registered.
+    UnknownNamespace = 1,
+    /// The requested function is not registered.
+    UnknownFunction = 2,
+    /// An argument or return value was missing or had the wrong type.
+    InvalidArgument = 3,
+    /// The exact target pack does not provide the required capability.
+    MissingCapability = 4,
+    /// A validated native engine operation failed.
+    Engine = 5,
+    /// A script attempted to reenter the per-thread bridge state.
+    Reentrant = 6,
+}
+
+impl BridgeErrorCode {
+    /// Returns the stable integer representation used by NWScript.
+    #[must_use]
+    pub const fn value(self) -> i32 {
+        match self {
+            Self::None => 0,
+            Self::UnknownNamespace => 1,
+            Self::UnknownFunction => 2,
+            Self::InvalidArgument => 3,
+            Self::MissingCapability => 4,
+            Self::Engine => 5,
+            Self::Reentrant => 6,
+        }
+    }
+}
+
+/// One statically registered function in the stable NWScript API.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BridgeFunction {
+    /// Returns the integer bridge API version.
+    GetApiVersion,
+    /// Returns a named target-pack capability version.
+    GetCapabilityVersion,
+    /// Checks whether a named capability satisfies a minimum version.
+    HasCapability,
+    /// Returns the most recent bridge error code on this thread.
+    GetLastErrorCode,
+    /// Returns the most recent bridge error message on this thread.
+    GetLastErrorMessage,
+    /// Emits one structured runtime log record.
+    Log,
+    /// Returns the runtime crate version.
+    GetRuntimeVersion,
+    /// Returns the exact server binary SHA-256.
+    GetServerBinarySha256,
+    /// Returns the server build label.
+    GetServerBuild,
+    /// Returns the combined server platform.
+    GetServerPlatform,
+    /// Returns the server operating system.
+    GetServerOperatingSystem,
+    /// Returns the server architecture.
+    GetServerArchitecture,
+    /// Returns the active module name.
+    GetModuleName,
+    /// Returns the active player count.
+    GetPlayerCount,
+    /// Returns the configured maximum player count.
+    GetMaxPlayers,
+    /// Returns the active server UDP listening port.
+    GetServerPort,
+    /// Reports whether an engine event is active.
+    GetIsInEvent,
+    /// Returns the semantic current event name.
+    GetCurrentEvent,
+    /// Returns the current engine event identifier.
+    GetCurrentEventId,
+    /// Returns the current event script resref.
+    GetCurrentEventScript,
+    /// Returns the current event phase.
+    GetCurrentEventPhase,
+    /// Returns the current event nesting depth.
+    GetCurrentEventDepth,
+}
+
+impl BridgeFunction {
+    /// Complete registry in stable declaration order.
+    ///
+    /// ```
+    /// assert!(nwnrs_runtime::BridgeFunction::ALL
+    ///     .contains(&nwnrs_runtime::BridgeFunction::Log));
+    /// ```
+    pub const ALL: [Self; 22] = [
+        Self::GetApiVersion,
+        Self::GetCapabilityVersion,
+        Self::HasCapability,
+        Self::GetLastErrorCode,
+        Self::GetLastErrorMessage,
+        Self::Log,
+        Self::GetRuntimeVersion,
+        Self::GetServerBinarySha256,
+        Self::GetServerBuild,
+        Self::GetServerPlatform,
+        Self::GetServerOperatingSystem,
+        Self::GetServerArchitecture,
+        Self::GetModuleName,
+        Self::GetPlayerCount,
+        Self::GetMaxPlayers,
+        Self::GetServerPort,
+        Self::GetIsInEvent,
+        Self::GetCurrentEvent,
+        Self::GetCurrentEventId,
+        Self::GetCurrentEventScript,
+        Self::GetCurrentEventPhase,
+        Self::GetCurrentEventDepth,
+    ];
+
+    /// Returns the exact public function name.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::GetApiVersion => "GetApiVersion",
+            Self::GetCapabilityVersion => "GetCapabilityVersion",
+            Self::HasCapability => "HasCapability",
+            Self::GetLastErrorCode => "GetLastErrorCode",
+            Self::GetLastErrorMessage => "GetLastErrorMessage",
+            Self::Log => "Log",
+            Self::GetRuntimeVersion => "GetRuntimeVersion",
+            Self::GetServerBinarySha256 => "GetServerBinarySha256",
+            Self::GetServerBuild => "GetServerBuild",
+            Self::GetServerPlatform => "GetServerPlatform",
+            Self::GetServerOperatingSystem => "GetServerOperatingSystem",
+            Self::GetServerArchitecture => "GetServerArchitecture",
+            Self::GetModuleName => "GetModuleName",
+            Self::GetPlayerCount => "GetPlayerCount",
+            Self::GetMaxPlayers => "GetMaxPlayers",
+            Self::GetServerPort => "GetServerPort",
+            Self::GetIsInEvent => "GetIsInEvent",
+            Self::GetCurrentEvent => "GetCurrentEvent",
+            Self::GetCurrentEventId => "GetCurrentEventId",
+            Self::GetCurrentEventScript => "GetCurrentEventScript",
+            Self::GetCurrentEventPhase => "GetCurrentEventPhase",
+            Self::GetCurrentEventDepth => "GetCurrentEventDepth",
+        }
+    }
+
+    /// Parses an exact, case-sensitive public function name.
+    #[must_use]
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "GetApiVersion" => Some(Self::GetApiVersion),
+            "GetCapabilityVersion" => Some(Self::GetCapabilityVersion),
+            "HasCapability" => Some(Self::HasCapability),
+            "GetLastErrorCode" => Some(Self::GetLastErrorCode),
+            "GetLastErrorMessage" => Some(Self::GetLastErrorMessage),
+            "Log" => Some(Self::Log),
+            "GetRuntimeVersion" => Some(Self::GetRuntimeVersion),
+            "GetServerBinarySha256" => Some(Self::GetServerBinarySha256),
+            "GetServerBuild" => Some(Self::GetServerBuild),
+            "GetServerPlatform" => Some(Self::GetServerPlatform),
+            "GetServerOperatingSystem" => Some(Self::GetServerOperatingSystem),
+            "GetServerArchitecture" => Some(Self::GetServerArchitecture),
+            "GetModuleName" => Some(Self::GetModuleName),
+            "GetPlayerCount" => Some(Self::GetPlayerCount),
+            "GetMaxPlayers" => Some(Self::GetMaxPlayers),
+            "GetServerPort" => Some(Self::GetServerPort),
+            "GetIsInEvent" => Some(Self::GetIsInEvent),
+            "GetCurrentEvent" => Some(Self::GetCurrentEvent),
+            "GetCurrentEventId" => Some(Self::GetCurrentEventId),
+            "GetCurrentEventScript" => Some(Self::GetCurrentEventScript),
+            "GetCurrentEventPhase" => Some(Self::GetCurrentEventPhase),
+            "GetCurrentEventDepth" => Some(Self::GetCurrentEventDepth),
+            _ => None,
+        }
+    }
+
+    /// Returns the target-pack capability required by this function.
+    #[must_use]
+    pub const fn required_capability(self) -> Option<Capability> {
+        match self {
+            Self::GetModuleName
+            | Self::GetPlayerCount
+            | Self::GetMaxPlayers
+            | Self::GetServerPort => Some(Capability::ServerState),
+            Self::GetIsInEvent
+            | Self::GetCurrentEvent
+            | Self::GetCurrentEventId
+            | Self::GetCurrentEventScript
+            | Self::GetCurrentEventPhase
+            | Self::GetCurrentEventDepth => Some(Capability::EventContext),
+            _ => None,
+        }
+    }
+
+    fn preserves_last_error(self) -> bool {
+        matches!(self, Self::GetLastErrorCode | Self::GetLastErrorMessage)
+    }
+}
+
 /// An error produced while dispatching a call from NWScript.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BridgeError {
+    code:    BridgeErrorCode,
     message: String,
 }
 
 impl BridgeError {
-    fn new(message: impl Into<String>) -> Self {
+    /// Creates a bridge error with a stable public code.
+    #[must_use]
+    pub fn new(code: BridgeErrorCode, message: impl Into<String>) -> Self {
         Self {
+            code,
             message: message.into(),
         }
+    }
+
+    /// Returns the stable error code.
+    #[must_use]
+    pub const fn code(&self) -> BridgeErrorCode {
+        self.code
+    }
+
+    /// Returns the diagnostic message.
+    #[must_use]
+    pub fn message(&self) -> &str {
+        &self.message
     }
 }
 
@@ -153,9 +371,10 @@ pub type BridgeResult<T> = Result<T, BridgeError>;
 /// all previous return values so stale data cannot leak between scripts.
 #[derive(Debug, Default)]
 pub struct ScriptBridge {
-    arguments: Vec<BridgeValue>,
-    returns:   Vec<BridgeValue>,
-    logs:      Vec<ScriptLog>,
+    arguments:  Vec<BridgeValue>,
+    returns:    Vec<BridgeValue>,
+    logs:       Vec<ScriptLog>,
+    last_error: Option<BridgeError>,
 }
 
 impl ScriptBridge {
@@ -175,17 +394,30 @@ impl ScriptBridge {
         namespace: &str,
         function: &str,
         context: &RuntimeContext,
-        server: &ServerState,
+        server: &ServerSnapshot,
         event: &EventContext,
     ) -> BridgeResult<()> {
         self.returns.clear();
         self.logs.clear();
-        let result = self.dispatch(namespace, function, context, server, event);
+        let parsed = BridgeFunction::from_name(function);
+        if !parsed.is_some_and(BridgeFunction::preserves_last_error) {
+            self.last_error = None;
+        }
+        let result = self.dispatch(namespace, function, parsed, context, server, event);
         self.arguments.clear();
-        if result.is_err() {
+        if let Err(error) = &result {
             self.logs.clear();
+            self.last_error = Some(error.clone());
         }
         result
+    }
+
+    /// Records a native engine failure for NWScript to inspect.
+    pub fn record_external_error(&mut self, error: BridgeError) {
+        self.returns.clear();
+        self.logs.clear();
+        self.arguments.clear();
+        self.last_error = Some(error);
     }
 
     /// Takes log records produced by the preceding successful call.
@@ -202,7 +434,7 @@ impl ScriptBridge {
     pub fn pop_integer(&mut self) -> BridgeResult<i32> {
         match self.pop_value("integer")? {
             BridgeValue::Integer(value) => Ok(value),
-            _ => Err(BridgeError::new("return value changed while being popped")),
+            _ => Err(invalid_argument("return value changed while being popped")),
         }
     }
 
@@ -214,7 +446,7 @@ impl ScriptBridge {
     pub fn pop_float(&mut self) -> BridgeResult<f32> {
         match self.pop_value("float")? {
             BridgeValue::Float(value) => Ok(value),
-            _ => Err(BridgeError::new("return value changed while being popped")),
+            _ => Err(invalid_argument("return value changed while being popped")),
         }
     }
 
@@ -226,7 +458,7 @@ impl ScriptBridge {
     pub fn pop_object(&mut self) -> BridgeResult<u32> {
         match self.pop_value("object")? {
             BridgeValue::Object(value) => Ok(value),
-            _ => Err(BridgeError::new("return value changed while being popped")),
+            _ => Err(invalid_argument("return value changed while being popped")),
         }
     }
 
@@ -238,7 +470,7 @@ impl ScriptBridge {
     pub fn pop_string(&mut self) -> BridgeResult<Vec<u8>> {
         match self.pop_value("string")? {
             BridgeValue::String(value) => Ok(value),
-            _ => Err(BridgeError::new("return value changed while being popped")),
+            _ => Err(invalid_argument("return value changed while being popped")),
         }
     }
 
@@ -250,7 +482,7 @@ impl ScriptBridge {
     pub fn pop_vector(&mut self) -> BridgeResult<Vector> {
         match self.pop_value("vector")? {
             BridgeValue::Vector(value) => Ok(value),
-            _ => Err(BridgeError::new("return value changed while being popped")),
+            _ => Err(invalid_argument("return value changed while being popped")),
         }
     }
 
@@ -258,28 +490,81 @@ impl ScriptBridge {
         &mut self,
         namespace: &str,
         function: &str,
+        parsed: Option<BridgeFunction>,
         context: &RuntimeContext,
-        server: &ServerState,
+        server: &ServerSnapshot,
         event: &EventContext,
     ) -> BridgeResult<()> {
         if namespace != NAMESPACE {
-            return Err(BridgeError::new(format!(
-                "unknown NWScript bridge namespace: {namespace}"
-            )));
+            return Err(BridgeError::new(
+                BridgeErrorCode::UnknownNamespace,
+                format!("unknown NWScript bridge namespace: {namespace}"),
+            ));
         }
-        if function == "Log" {
+        let function = parsed.ok_or_else(|| {
+            BridgeError::new(
+                BridgeErrorCode::UnknownFunction,
+                format!("unknown NWScript bridge function: {NAMESPACE}.{function}"),
+            )
+        })?;
+        if let Some(capability) = function.required_capability()
+            && context.target.pack.capability_version(capability) == 0
+        {
+            return Err(BridgeError::new(
+                BridgeErrorCode::MissingCapability,
+                format!(
+                    "target pack does not provide the {} capability",
+                    capability.name()
+                ),
+            ));
+        }
+        if function == BridgeFunction::Log {
             return self.dispatch_log();
         }
-        if !self.arguments.is_empty() {
-            return Err(BridgeError::new(format!(
-                "{NAMESPACE}.{function} does not accept arguments"
-            )));
-        }
-
         let value = match function {
-            "GetRuntimeVersion" => string_value(env!("CARGO_PKG_VERSION")),
-            "GetServerBinarySha256" => string_value(&context.server.sha256.to_string()),
-            "GetServerBuild" => string_value(
+            BridgeFunction::GetCapabilityVersion => {
+                let capability = self.pop_capability()?;
+                BridgeValue::Integer(capability_version(context, capability)?)
+            }
+            BridgeFunction::HasCapability => {
+                let capability = self.pop_capability()?;
+                let minimum = match self.pop_argument("integer")? {
+                    BridgeValue::Integer(value) if value >= 0 => {
+                        u32::try_from(value).map_err(|_error| {
+                            invalid_argument("minimum capability version exceeds u32")
+                        })?
+                    }
+                    BridgeValue::Integer(value) => {
+                        return Err(invalid_argument(format!(
+                            "minimum capability version cannot be {value}"
+                        )));
+                    }
+                    _ => return Err(invalid_argument("minimum capability version changed type")),
+                };
+                BridgeValue::Integer(i32::from(
+                    context.target.pack.capability_version(capability) >= minimum,
+                ))
+            }
+            BridgeFunction::GetLastErrorCode => BridgeValue::Integer(
+                self.last_error
+                    .as_ref()
+                    .map_or(BridgeErrorCode::None.value(), |error| error.code().value()),
+            ),
+            BridgeFunction::GetLastErrorMessage => BridgeValue::String(
+                self.last_error
+                    .as_ref()
+                    .map_or_else(Vec::new, |error| error.message().as_bytes().to_vec()),
+            ),
+            BridgeFunction::GetApiVersion => {
+                BridgeValue::Integer(i32::try_from(RUNTIME_API_VERSION).map_err(|_error| {
+                    invalid_argument("runtime API version exceeds NWScript integer range")
+                })?)
+            }
+            BridgeFunction::GetRuntimeVersion => string_value(env!("CARGO_PKG_VERSION")),
+            BridgeFunction::GetServerBinarySha256 => {
+                string_value(&context.server.sha256.to_string())
+            }
+            BridgeFunction::GetServerBuild => string_value(
                 context
                     .target
                     .pack
@@ -288,26 +573,31 @@ impl ScriptBridge {
                     .as_deref()
                     .unwrap_or_default(),
             ),
-            "GetServerPlatform" => string_value(&context.server.platform.to_string()),
-            "GetServerOperatingSystem" => string_value(&context.server.platform.os.to_string()),
-            "GetServerArchitecture" => {
+            BridgeFunction::GetServerPlatform => string_value(&context.server.platform.to_string()),
+            BridgeFunction::GetServerOperatingSystem => {
+                string_value(&context.server.platform.os.to_string())
+            }
+            BridgeFunction::GetServerArchitecture => {
                 string_value(&context.server.platform.architecture.to_string())
             }
-            "GetModuleName" => BridgeValue::String(server.module_name.clone()),
-            "GetPlayerCount" => BridgeValue::Integer(server.player_count),
-            "GetMaxPlayers" => BridgeValue::Integer(server.max_players),
-            "GetIsInEvent" => BridgeValue::Integer(i32::from(event.depth > 0)),
-            "GetCurrentEvent" => string_value(&event.name),
-            "GetCurrentEventId" => BridgeValue::Integer(event.id),
-            "GetCurrentEventScript" => BridgeValue::String(event.script_name.clone()),
-            "GetCurrentEventPhase" => string_value(&event.phase),
-            "GetCurrentEventDepth" => BridgeValue::Integer(event.depth),
-            _ => {
-                return Err(BridgeError::new(format!(
-                    "unknown NWScript bridge function: {NAMESPACE}.{function}"
-                )));
-            }
+            BridgeFunction::GetModuleName => BridgeValue::String(server.module_name.clone()),
+            BridgeFunction::GetPlayerCount => BridgeValue::Integer(server.player_count),
+            BridgeFunction::GetMaxPlayers => BridgeValue::Integer(server.max_players),
+            BridgeFunction::GetServerPort => BridgeValue::Integer(server.udp_port),
+            BridgeFunction::GetIsInEvent => BridgeValue::Integer(i32::from(event.depth > 0)),
+            BridgeFunction::GetCurrentEvent => string_value(&event.name),
+            BridgeFunction::GetCurrentEventId => BridgeValue::Integer(event.id),
+            BridgeFunction::GetCurrentEventScript => BridgeValue::String(event.script_name.clone()),
+            BridgeFunction::GetCurrentEventPhase => string_value(&event.phase),
+            BridgeFunction::GetCurrentEventDepth => BridgeValue::Integer(event.depth),
+            BridgeFunction::Log => unreachable!("logging dispatched before value matching"),
         };
+        if !self.arguments.is_empty() {
+            return Err(invalid_argument(format!(
+                "{NAMESPACE}.{} received too many arguments",
+                function.name()
+            )));
+        }
         self.returns.push(value);
         Ok(())
     }
@@ -315,19 +605,19 @@ impl ScriptBridge {
     fn dispatch_log(&mut self) -> BridgeResult<()> {
         let message = match self.pop_argument("string")? {
             BridgeValue::String(value) => value,
-            _ => return Err(BridgeError::new("log message changed while being popped")),
+            _ => return Err(invalid_argument("log message changed while being popped")),
         };
         let level = match self.pop_argument("integer")? {
             BridgeValue::Integer(value) => ScriptLogLevel::try_from(value)?,
-            _ => return Err(BridgeError::new("log level changed while being popped")),
+            _ => return Err(invalid_argument("log level changed while being popped")),
         };
         if !self.arguments.is_empty() {
-            return Err(BridgeError::new(format!(
+            return Err(invalid_argument(format!(
                 "{NAMESPACE}.Log received too many arguments"
             )));
         }
         if message.len() > MAX_LOG_MESSAGE_BYTES {
-            return Err(BridgeError::new(format!(
+            return Err(invalid_argument(format!(
                 "{NAMESPACE}.Log message exceeds {MAX_LOG_MESSAGE_BYTES} bytes"
             )));
         }
@@ -338,13 +628,23 @@ impl ScriptBridge {
         Ok(())
     }
 
+    fn pop_capability(&mut self) -> BridgeResult<Capability> {
+        let name = match self.pop_argument("string")? {
+            BridgeValue::String(value) => String::from_utf8(value)
+                .map_err(|_error| invalid_argument("capability name is not UTF-8"))?,
+            _ => return Err(invalid_argument("capability name changed type")),
+        };
+        Capability::from_name(&name)
+            .ok_or_else(|| invalid_argument(format!("unknown target-pack capability: {name}")))
+    }
+
     fn pop_argument(&mut self, expected: &'static str) -> BridgeResult<BridgeValue> {
         let value = self
             .arguments
             .pop()
-            .ok_or_else(|| BridgeError::new(format!("missing {expected} argument")))?;
+            .ok_or_else(|| invalid_argument(format!("missing {expected} argument")))?;
         if value.kind() != expected {
-            return Err(BridgeError::new(format!(
+            return Err(invalid_argument(format!(
                 "expected {expected} argument, found {}",
                 value.kind()
             )));
@@ -356,15 +656,28 @@ impl ScriptBridge {
         let value = self
             .returns
             .pop()
-            .ok_or_else(|| BridgeError::new(format!("no {expected} return value is available")))?;
+            .ok_or_else(|| invalid_argument(format!("no {expected} return value is available")))?;
         if value.kind() != expected {
-            return Err(BridgeError::new(format!(
+            return Err(invalid_argument(format!(
                 "expected {expected} return value, found {}",
                 value.kind()
             )));
         }
         Ok(value)
     }
+}
+
+fn invalid_argument(message: impl Into<String>) -> BridgeError {
+    BridgeError::new(BridgeErrorCode::InvalidArgument, message)
+}
+
+fn capability_version(context: &RuntimeContext, capability: Capability) -> BridgeResult<i32> {
+    i32::try_from(context.target.pack.capability_version(capability)).map_err(|_error| {
+        invalid_argument(format!(
+            "{} capability version exceeds NWScript integer range",
+            capability.name()
+        ))
+    })
 }
 
 fn string_value(value: &str) -> BridgeValue {
@@ -469,22 +782,27 @@ mod tests {
     use std::path::PathBuf;
 
     use super::{
-        BridgeValue, EventContext, ScriptBridge, ScriptLog, ScriptLogLevel, ServerState, Vector,
+        BridgeErrorCode, BridgeValue, EventContext, ScriptBridge, ScriptLog, ScriptLogLevel,
+        ServerSnapshot, Vector,
     };
     use crate::{
-        Architecture, BinaryIdentity, BridgeTarget, EventTarget, FileSha256, OperatingSystem,
-        Platform, RUNTIME_API_VERSION, RuntimeContext, SelectedTargetPack,
-        TARGET_PACK_SCHEMA_VERSION, TargetAddress, TargetPack, TargetServer,
+        AbiLayouts, Architecture, BinaryIdentity, BridgeTarget, CExoStringLayout,
+        EVENT_CONTEXT_CAPABILITY_VERSION, EngineClassLayouts, EventTarget, FileSha256,
+        NWSCRIPT_BRIDGE_CAPABILITY_VERSION, OperatingSystem, Platform, PlayerListLayout,
+        RUNTIME_API_VERSION, RuntimeContext, SERVER_STATE_CAPABILITY_VERSION, SelectedTargetPack,
+        TARGET_PACK_SCHEMA_VERSION, TargetAddress, TargetPack, TargetServer, TargetSource,
+        VectorLayout,
     };
 
     #[test]
     fn dispatches_server_identity_and_clears_failed_calls() -> Result<(), Box<dyn std::error::Error>>
     {
         let context = context();
-        let server = ServerState {
+        let server = ServerSnapshot {
             module_name:  b"fixture-module".to_vec(),
             player_count: 2,
             max_players:  64,
+            udp_port:     5121,
         };
         let event = EventContext {
             name:        "module.on_module_load".to_string(),
@@ -503,6 +821,8 @@ mod tests {
         assert_eq!(bridge.pop_integer()?, 2);
         bridge.call("NWNRS", "GetMaxPlayers", &context, &server, &event)?;
         assert_eq!(bridge.pop_integer()?, 64);
+        bridge.call("NWNRS", "GetServerPort", &context, &server, &event)?;
+        assert_eq!(bridge.pop_integer()?, 5121);
         bridge.call("NWNRS", "GetCurrentEvent", &context, &server, &event)?;
         assert_eq!(bridge.pop_string()?, b"module.on_module_load");
         bridge.call("NWNRS", "GetCurrentEventScript", &context, &server, &event)?;
@@ -560,7 +880,7 @@ mod tests {
             "NWNRS",
             "Log",
             &context,
-            &ServerState::default(),
+            &ServerSnapshot::default(),
             &EventContext::default(),
         )?;
         assert_eq!(
@@ -579,13 +899,81 @@ mod tests {
                     "NWNRS",
                     "Log",
                     &context,
-                    &ServerState::default(),
+                    &ServerSnapshot::default(),
                     &EventContext::default(),
                 )
                 .is_err()
         );
         assert!(bridge.take_logs().is_empty());
         Ok(())
+    }
+
+    #[test]
+    fn exposes_versions_capabilities_and_stable_errors() -> Result<(), Box<dyn std::error::Error>> {
+        let mut context = context();
+        let mut bridge = ScriptBridge::default();
+        let server = ServerSnapshot::default();
+        let event = EventContext::default();
+
+        bridge.call("NWNRS", "GetApiVersion", &context, &server, &event)?;
+        assert_eq!(bridge.pop_integer()?, 1);
+
+        bridge.push_argument(BridgeValue::String(b"server_state".to_vec()));
+        bridge.call("NWNRS", "GetCapabilityVersion", &context, &server, &event)?;
+        assert_eq!(bridge.pop_integer()?, 1);
+
+        let error = bridge
+            .call("NWNRS", "NotRegistered", &context, &server, &event)
+            .expect_err("unknown function must fail");
+        assert_eq!(error.code(), BridgeErrorCode::UnknownFunction);
+        bridge.call("NWNRS", "GetLastErrorCode", &context, &server, &event)?;
+        assert_eq!(
+            bridge.pop_integer()?,
+            BridgeErrorCode::UnknownFunction.value()
+        );
+        bridge.call("NWNRS", "GetLastErrorMessage", &context, &server, &event)?;
+        assert!(String::from_utf8(bridge.pop_string()?)?.contains("NotRegistered"));
+
+        context.target.pack.server_state = None;
+        let error = bridge
+            .call("NWNRS", "GetModuleName", &context, &server, &event)
+            .expect_err("missing optional capability must fail");
+        assert_eq!(error.code(), BridgeErrorCode::MissingCapability);
+        Ok(())
+    }
+
+    #[test]
+    fn public_nwscript_header_matches_the_rust_contract() {
+        let header = include_str!("../../../module/nwnrs.nss");
+        assert!(header.contains(&format!(
+            "const int NWNRS_API_VERSION = {RUNTIME_API_VERSION};"
+        )));
+        for function in super::BridgeFunction::ALL {
+            assert_eq!(
+                super::BridgeFunction::from_name(function.name()),
+                Some(function)
+            );
+            assert!(header.contains(function.name()));
+        }
+        for (name, version) in [
+            ("NWSCRIPT_BRIDGE", NWSCRIPT_BRIDGE_CAPABILITY_VERSION),
+            ("SERVER_STATE", SERVER_STATE_CAPABILITY_VERSION),
+            ("EVENT_CONTEXT", EVENT_CONTEXT_CAPABILITY_VERSION),
+        ] {
+            assert_eq!(version, 1);
+            assert!(header.contains(&format!("NWNRS_CAPABILITY_{name}")));
+        }
+        for (name, code) in [
+            ("NONE", BridgeErrorCode::None),
+            ("UNKNOWN_NAMESPACE", BridgeErrorCode::UnknownNamespace),
+            ("UNKNOWN_FUNCTION", BridgeErrorCode::UnknownFunction),
+            ("INVALID_ARGUMENT", BridgeErrorCode::InvalidArgument),
+            ("MISSING_CAPABILITY", BridgeErrorCode::MissingCapability),
+            ("ENGINE", BridgeErrorCode::Engine),
+            ("REENTRANT", BridgeErrorCode::Reentrant),
+        ] {
+            assert!(header.contains(&format!("NWNRS_ERROR_{name} = {};", code.value())));
+        }
     }
 
     fn context() -> RuntimeContext {
@@ -609,9 +997,11 @@ mod tests {
                         platform,
                         build: Some("fixture".to_string()),
                     },
+                    source:         source(),
+                    layouts:        layouts(),
                     bridge:         bridge_target(),
-                    server_state:   server_state_target(),
-                    events:         event_target(),
+                    server_state:   Some(server_state_target()),
+                    events:         Some(event_target()),
                 },
             },
             required: true,
@@ -623,8 +1013,8 @@ mod tests {
             offset: 1
         };
         BridgeTarget {
+            version:                NWSCRIPT_BRIDGE_CAPABILITY_VERSION,
             function_management:    address(),
-            virtual_machine_offset: 0,
             stack_pop_integer:      address(),
             stack_push_integer:     address(),
             stack_pop_float:        address(),
@@ -644,25 +1034,66 @@ mod tests {
             offset: 1
         };
         crate::ServerStateTarget {
-            app_manager:                    address(),
-            server_exo_app_offset:          8,
-            get_server_info:                address(),
-            server_info_module_name_offset: 8,
-            get_player_list:                address(),
-            player_list_count_offset:       8,
-            get_net_layer:                  address(),
-            get_session_max_players:        address(),
+            version:                 SERVER_STATE_CAPABILITY_VERSION,
+            app_manager:             address(),
+            get_server_info:         address(),
+            get_player_list:         address(),
+            get_net_layer:           address(),
+            get_session_max_players: address(),
+            get_udp_port:            address(),
         }
     }
 
     fn event_target() -> EventTarget {
         EventTarget {
-            recursion_level_offset: 36,
-            script_array_offset:    40,
-            script_slot_count:      8,
-            script_stride:          152,
-            script_name_offset:     24,
-            script_event_id_offset: 72,
+            version: EVENT_CONTEXT_CAPABILITY_VERSION,
+        }
+    }
+
+    fn source() -> TargetSource {
+        TargetSource {
+            unified_commit: "3d4c4e13c6bf01b032ffe90534fc4a19eb036c03".to_string(),
+            nwn_build:      8193,
+            nwn_revision:   37,
+            nwn_postfix:    17,
+        }
+    }
+
+    fn layouts() -> AbiLayouts {
+        AbiLayouts {
+            c_exo_string: CExoStringLayout {
+                size:                 16,
+                alignment:            8,
+                string_offset:        0,
+                string_length_offset: 8,
+                buffer_length_offset: 12,
+            },
+            player_list:  PlayerListLayout {
+                size:            16,
+                alignment:       8,
+                elements_offset: 0,
+                count_offset:    8,
+                capacity_offset: 12,
+            },
+            vector:       VectorLayout {
+                size:      12,
+                alignment: 4,
+                x_offset:  0,
+                y_offset:  4,
+                z_offset:  8,
+            },
+            classes:      EngineClassLayouts {
+                command_implementer_vm_offset: 0,
+                app_manager_server_offset:     8,
+                server_info_module_offset:     8,
+                vm_recursion_level_offset:     36,
+                vm_script_array_offset:        40,
+                vm_script_slot_count:          8,
+                vm_script_size:                152,
+                vm_script_alignment:           8,
+                vm_script_name_offset:         24,
+                vm_script_event_id_offset:     72,
+            },
         }
     }
 }

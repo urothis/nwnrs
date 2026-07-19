@@ -3,6 +3,20 @@
 
 const string NWNRS_NAMESPACE = "NWNRS"; ///< @private
 
+const int NWNRS_API_VERSION = 1;
+
+const string NWNRS_CAPABILITY_NWSCRIPT_BRIDGE = "nwscript_bridge";
+const string NWNRS_CAPABILITY_SERVER_STATE = "server_state";
+const string NWNRS_CAPABILITY_EVENT_CONTEXT = "event_context";
+
+const int NWNRS_ERROR_NONE = 0;
+const int NWNRS_ERROR_UNKNOWN_NAMESPACE = 1;
+const int NWNRS_ERROR_UNKNOWN_FUNCTION = 2;
+const int NWNRS_ERROR_INVALID_ARGUMENT = 3;
+const int NWNRS_ERROR_MISSING_CAPABILITY = 4;
+const int NWNRS_ERROR_ENGINE = 5;
+const int NWNRS_ERROR_REENTRANT = 6;
+
 const int NWNRS_LOG_LEVEL_TRACE = 0;
 const int NWNRS_LOG_LEVEL_DEBUG = 1;
 const int NWNRS_LOG_LEVEL_INFO = 2;
@@ -11,6 +25,21 @@ const int NWNRS_LOG_LEVEL_ERROR = 4;
 
 /// Returns TRUE when the nwnrs NWScript bridge is installed.
 int NWNRS_GetIsAvailable();
+
+/// Returns the integer version of the stable NWScript bridge contract.
+int NWNRS_GetApiVersion();
+
+/// Returns the supported version of a named capability, or zero when absent.
+int NWNRS_GetCapabilityVersion(string sCapability);
+
+/// Returns TRUE when a capability meets the requested minimum version.
+int NWNRS_HasCapability(string sCapability, int nMinimumVersion = 1);
+
+/// Returns the most recent NWNRS_ERROR_* value on this script thread.
+int NWNRS_GetLastErrorCode();
+
+/// Returns the diagnostic message associated with the most recent error.
+string NWNRS_GetLastErrorMessage();
 
 /// Sends a message through the runtime's structured tracing pipeline.
 /// @param sMessage Message to emit.
@@ -44,6 +73,9 @@ int NWNRS_GetPlayerCount();
 /// Returns the maximum number of players configured for the session.
 int NWNRS_GetMaxPlayers();
 
+/// Returns the active UDP port on which the server is listening.
+int NWNRS_GetServerPort();
+
 /// Returns TRUE while an engine module, area, or object event script is running.
 int NWNRS_GetIsInEvent();
 
@@ -65,6 +97,39 @@ int NWNRS_GetCurrentEventDepth();
 int NWNRS_GetIsAvailable()
 {
     return NWNXGetIsAvailable();
+}
+
+int NWNRS_GetApiVersion()
+{
+    NWNXCall(NWNRS_NAMESPACE, "GetApiVersion");
+    return NWNXPopInt();
+}
+
+int NWNRS_GetCapabilityVersion(string sCapability)
+{
+    NWNXPushString(sCapability);
+    NWNXCall(NWNRS_NAMESPACE, "GetCapabilityVersion");
+    return NWNXPopInt();
+}
+
+int NWNRS_HasCapability(string sCapability, int nMinimumVersion = 1)
+{
+    NWNXPushInt(nMinimumVersion);
+    NWNXPushString(sCapability);
+    NWNXCall(NWNRS_NAMESPACE, "HasCapability");
+    return NWNXPopInt();
+}
+
+int NWNRS_GetLastErrorCode()
+{
+    NWNXCall(NWNRS_NAMESPACE, "GetLastErrorCode");
+    return NWNXPopInt();
+}
+
+string NWNRS_GetLastErrorMessage()
+{
+    NWNXCall(NWNRS_NAMESPACE, "GetLastErrorMessage");
+    return NWNXPopString();
 }
 
 void NWNRS_Log(string sMessage, int nLevel = NWNRS_LOG_LEVEL_INFO)
@@ -125,6 +190,12 @@ int NWNRS_GetPlayerCount()
 int NWNRS_GetMaxPlayers()
 {
     NWNXCall(NWNRS_NAMESPACE, "GetMaxPlayers");
+    return NWNXPopInt();
+}
+
+int NWNRS_GetServerPort()
+{
+    NWNXCall(NWNRS_NAMESPACE, "GetServerPort");
     return NWNXPopInt();
 }
 

@@ -1,6 +1,7 @@
 #![doc = include_str!("../README.md")]
 
 mod bridge;
+mod engine;
 
 use std::{
     env,

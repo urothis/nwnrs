@@ -13,16 +13,24 @@ use std::{
 };
 
 pub use bridge::{
-    BridgeError, BridgeResult, BridgeValue, EventContext, ScriptBridge, ScriptLog, ScriptLogLevel,
-    ServerState, Vector, event_name,
+    BridgeError, BridgeErrorCode, BridgeFunction, BridgeResult, BridgeValue, EventContext,
+    ScriptBridge, ScriptLog, ScriptLogLevel, ServerSnapshot, Vector, event_name,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
 /// The supported target-pack schema version.
-pub const TARGET_PACK_SCHEMA_VERSION: u32 = 2;
+pub const TARGET_PACK_SCHEMA_VERSION: u32 = 1;
 /// The runtime API implemented by this version of the crate.
-pub const RUNTIME_API_VERSION: u32 = 2;
+pub const RUNTIME_API_VERSION: u32 = 1;
+/// The supported machine-generated Unified ABI snapshot format.
+pub const ABI_SNAPSHOT_SCHEMA_VERSION: u32 = 1;
+/// Version of the mandatory NWScript bridge capability.
+pub const NWSCRIPT_BRIDGE_CAPABILITY_VERSION: u32 = 1;
+/// Version of the optional server-state capability.
+pub const SERVER_STATE_CAPABILITY_VERSION: u32 = 1;
+/// Version of the optional event-context capability.
+pub const EVENT_CONTEXT_CAPABILITY_VERSION: u32 = 1;
 /// Enables initialization when set to `1` in an injected process.
 pub const ENV_ENABLED: &str = "NWNRS_ENABLED";
 /// Makes initialization failure fatal when set to `1`.
@@ -316,6 +324,208 @@ pub enum TargetAddress {
     },
 }
 
+/// Provenance for the Unified declarations used to derive one target ABI.
+///
+/// ```
+/// let source: Option<nwnrs_runtime::TargetSource> = None;
+/// assert!(source.is_none());
+/// ```
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TargetSource {
+    /// Full Git commit of `nwnxee/unified` used as the semantic source.
+    pub unified_commit: String,
+    /// Numeric NWN build declared by Unified.
+    pub nwn_build:      u32,
+    /// Numeric NWN build revision declared by Unified.
+    pub nwn_revision:   u32,
+    /// Numeric NWN build postfix declared by Unified.
+    pub nwn_postfix:    u32,
+}
+
+/// `CExoString` object layout derived from Unified.
+///
+/// ```
+/// let layout: Option<nwnrs_runtime::CExoStringLayout> = None;
+/// assert!(layout.is_none());
+/// ```
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CExoStringLayout {
+    /// Complete object size.
+    pub size:                 u64,
+    /// Object alignment.
+    pub alignment:            u64,
+    /// Offset of `m_sString`.
+    pub string_offset:        u64,
+    /// Offset of `m_nStringLength`.
+    pub string_length_offset: u64,
+    /// Offset of `m_nBufferLength`.
+    pub buffer_length_offset: u64,
+}
+
+/// `CExoArrayList<CNWSPlayer*>` header layout derived from Unified.
+///
+/// ```
+/// let layout: Option<nwnrs_runtime::PlayerListLayout> = None;
+/// assert!(layout.is_none());
+/// ```
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PlayerListLayout {
+    /// Complete header size.
+    pub size:            u64,
+    /// Header alignment.
+    pub alignment:       u64,
+    /// Offset of the element pointer.
+    pub elements_offset: u64,
+    /// Offset of the live element count.
+    pub count_offset:    u64,
+    /// Offset of the allocated element count.
+    pub capacity_offset: u64,
+}
+
+/// `Vector` layout derived from Unified.
+///
+/// ```
+/// let layout: Option<nwnrs_runtime::VectorLayout> = None;
+/// assert!(layout.is_none());
+/// ```
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct VectorLayout {
+    /// Complete object size.
+    pub size:      u64,
+    /// Object alignment.
+    pub alignment: u64,
+    /// Offset of `x`.
+    pub x_offset:  u64,
+    /// Offset of `y`.
+    pub y_offset:  u64,
+    /// Offset of `z`.
+    pub z_offset:  u64,
+}
+
+/// Engine class member offsets derived from Unified and the platform C++ ABI.
+///
+/// ```
+/// let layouts: Option<nwnrs_runtime::EngineClassLayouts> = None;
+/// assert!(layouts.is_none());
+/// ```
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct EngineClassLayouts {
+    /// Offset of `CVirtualMachineCmdImplementer::m_pVM`.
+    pub command_implementer_vm_offset: u64,
+    /// Offset of `CAppManager::m_pServerExoApp`.
+    pub app_manager_server_offset:     u64,
+    /// Offset of `CServerInfo::m_sModuleName`.
+    pub server_info_module_offset:     u64,
+    /// Offset of `CVirtualMachine::m_nRecursionLevel`.
+    pub vm_recursion_level_offset:     u64,
+    /// Offset of `CVirtualMachine::m_pVirtualMachineScript`.
+    pub vm_script_array_offset:        u64,
+    /// Number of virtual-machine script slots.
+    pub vm_script_slot_count:          u32,
+    /// Complete size of `CVirtualMachineScript`.
+    pub vm_script_size:                u64,
+    /// Alignment of `CVirtualMachineScript`.
+    pub vm_script_alignment:           u64,
+    /// Offset of `CVirtualMachineScript::m_sScriptName`.
+    pub vm_script_name_offset:         u64,
+    /// Offset of `CVirtualMachineScript::m_nScriptEventID`.
+    pub vm_script_event_id_offset:     u64,
+}
+
+/// Complete native layouts used by one exact target pack.
+///
+/// ```
+/// let layouts: Option<nwnrs_runtime::AbiLayouts> = None;
+/// assert!(layouts.is_none());
+/// ```
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AbiLayouts {
+    /// `CExoString` layout.
+    pub c_exo_string: CExoStringLayout,
+    /// `CExoArrayList<CNWSPlayer*>` layout.
+    pub player_list:  PlayerListLayout,
+    /// `Vector` layout.
+    pub vector:       VectorLayout,
+    /// Engine class member offsets.
+    pub classes:      EngineClassLayouts,
+}
+
+/// A machine-generated ABI snapshot emitted from the pinned Unified headers.
+///
+/// ```
+/// let snapshot: Option<nwnrs_runtime::AbiSnapshot> = None;
+/// assert!(snapshot.is_none());
+/// ```
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AbiSnapshot {
+    /// Snapshot format version.
+    pub schema_version: u32,
+    /// Unified source provenance.
+    pub source:         TargetSource,
+    /// Platform for which the C++ compiler emitted the layout.
+    pub platform:       Platform,
+    /// Pointer width in bits.
+    pub pointer_width:  u32,
+    /// Derived native layouts.
+    pub layouts:        AbiLayouts,
+}
+
+/// Stable runtime capability domains exposed through NWScript.
+///
+/// ```
+/// assert_eq!(nwnrs_runtime::Capability::ServerState.name(), "server_state");
+/// ```
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Capability {
+    /// Core NWScript value transport and identity functions.
+    NwscriptBridge,
+    /// Live server module and player state.
+    ServerState,
+    /// Current VM event-script context.
+    EventContext,
+}
+
+impl Capability {
+    /// Returns the stable external capability name.
+    ///
+    /// ```
+    /// assert_eq!(nwnrs_runtime::Capability::EventContext.name(), "event_context");
+    /// ```
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::NwscriptBridge => "nwscript_bridge",
+            Self::ServerState => "server_state",
+            Self::EventContext => "event_context",
+        }
+    }
+
+    /// Parses one stable external capability name.
+    ///
+    /// ```
+    /// assert_eq!(
+    ///     nwnrs_runtime::Capability::from_name("nwscript_bridge"),
+    ///     Some(nwnrs_runtime::Capability::NwscriptBridge),
+    /// );
+    /// ```
+    #[must_use]
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "nwscript_bridge" => Some(Self::NwscriptBridge),
+            "server_state" => Some(Self::ServerState),
+            "event_context" => Some(Self::EventContext),
+            _ => None,
+        }
+    }
+}
+
 /// Exact engine entry points required by the initial NWScript bridge.
 ///
 /// ```
@@ -325,11 +535,10 @@ pub enum TargetAddress {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct BridgeTarget {
+    /// Capability contract version.
+    pub version:                u32,
     /// `CNWSVirtualMachineCommands::ExecuteCommandNWNXFunctionManagement`.
     pub function_management:    TargetAddress,
-    /// Byte offset of `CVirtualMachineCmdImplementer::m_pVM` from the command
-    /// implementer pointer received by the hook.
-    pub virtual_machine_offset: u64,
     /// `CVirtualMachine::StackPopInteger`.
     pub stack_pop_integer:      TargetAddress,
     /// `CVirtualMachine::StackPushInteger`.
@@ -364,107 +573,40 @@ pub struct BridgeTarget {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ServerStateTarget {
+    /// Capability contract version.
+    pub version:                 u32,
     /// Address of the global `CAppManager*` storage.
-    pub app_manager:                    TargetAddress,
-    /// Byte offset of `CAppManager::m_pServerExoApp`.
-    pub server_exo_app_offset:          u64,
+    pub app_manager:             TargetAddress,
     /// `CServerExoApp::GetServerInfo`.
-    pub get_server_info:                TargetAddress,
-    /// Byte offset of `CServerInfo::m_sModuleName`.
-    pub server_info_module_name_offset: u64,
+    pub get_server_info:         TargetAddress,
     /// `CServerExoApp::GetPlayerList`.
-    pub get_player_list:                TargetAddress,
-    /// Byte offset of `CExoArrayList::num`.
-    pub player_list_count_offset:       u64,
+    pub get_player_list:         TargetAddress,
     /// `CServerExoApp::GetNetLayer`.
-    pub get_net_layer:                  TargetAddress,
+    pub get_net_layer:           TargetAddress,
     /// `CNetLayer::GetSessionMaxPlayers`.
-    pub get_session_max_players:        TargetAddress,
+    pub get_session_max_players: TargetAddress,
+    /// `CNetLayer::GetUDPPort`.
+    pub get_udp_port:            TargetAddress,
 }
 
-/// Exact virtual-machine layouts used to read the active event script.
+/// Capability marker for reading the active event-script layout.
 ///
 /// ```
-/// let target = nwnrs_runtime::EventTarget {
-///     recursion_level_offset: 36,
-///     script_array_offset: 40,
-///     script_slot_count: 8,
-///     script_stride: 152,
-///     script_name_offset: 24,
-///     script_event_id_offset: 72,
-/// };
-/// assert_eq!(target.script_slot_count, 8);
+/// let target = nwnrs_runtime::EventTarget { version: 1 };
+/// assert_eq!(target.version, 1);
 /// ```
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct EventTarget {
-    /// Byte offset of `CVirtualMachine::m_nRecursionLevel`.
-    pub recursion_level_offset: u64,
-    /// Byte offset of `CVirtualMachine::m_pVirtualMachineScript`.
-    pub script_array_offset:    u64,
-    /// Number of `CVirtualMachineScript` slots.
-    pub script_slot_count:      u32,
-    /// Size in bytes of one `CVirtualMachineScript`.
-    pub script_stride:          u64,
-    /// Byte offset of `CVirtualMachineScript::m_sScriptName`.
-    pub script_name_offset:     u64,
-    /// Byte offset of `CVirtualMachineScript::m_nScriptEventID`.
-    pub script_event_id_offset: u64,
+    /// Capability contract version.
+    pub version: u32,
 }
 
 /// Versioned runtime metadata for one exact server binary.
 ///
 /// ```
-/// use nwnrs_runtime::{
-///     Architecture, OperatingSystem, Platform, TargetPack, TargetServer,
-///     RUNTIME_API_VERSION, TARGET_PACK_SCHEMA_VERSION,
-/// };
-/// let pack = TargetPack {
-///     schema_version: TARGET_PACK_SCHEMA_VERSION,
-///     runtime_api: RUNTIME_API_VERSION,
-///     server: TargetServer {
-///         sha256: "0".repeat(64),
-///         platform: Platform {
-///             os: OperatingSystem::Linux,
-///             architecture: Architecture::Aarch64,
-///         },
-///         build: Some("fixture".to_string()),
-///     },
-///     bridge: nwnrs_runtime::BridgeTarget {
-///         function_management: nwnrs_runtime::TargetAddress::Offset { offset: 1 },
-///         virtual_machine_offset: 16,
-///         stack_pop_integer: nwnrs_runtime::TargetAddress::Offset { offset: 2 },
-///         stack_push_integer: nwnrs_runtime::TargetAddress::Offset { offset: 3 },
-///         stack_pop_float: nwnrs_runtime::TargetAddress::Offset { offset: 4 },
-///         stack_push_float: nwnrs_runtime::TargetAddress::Offset { offset: 5 },
-///         stack_pop_object: nwnrs_runtime::TargetAddress::Offset { offset: 6 },
-///         stack_push_object: nwnrs_runtime::TargetAddress::Offset { offset: 7 },
-///         stack_pop_string: nwnrs_runtime::TargetAddress::Offset { offset: 8 },
-///         stack_push_string: nwnrs_runtime::TargetAddress::Offset { offset: 9 },
-///         stack_pop_vector: nwnrs_runtime::TargetAddress::Offset { offset: 10 },
-///         stack_push_vector: nwnrs_runtime::TargetAddress::Offset { offset: 11 },
-///         free_exo_string_buffer: nwnrs_runtime::TargetAddress::Offset { offset: 12 },
-///     },
-///     server_state: nwnrs_runtime::ServerStateTarget {
-///         app_manager: nwnrs_runtime::TargetAddress::Offset { offset: 13 },
-///         server_exo_app_offset: 8,
-///         get_server_info: nwnrs_runtime::TargetAddress::Offset { offset: 14 },
-///         server_info_module_name_offset: 8,
-///         get_player_list: nwnrs_runtime::TargetAddress::Offset { offset: 15 },
-///         player_list_count_offset: 8,
-///         get_net_layer: nwnrs_runtime::TargetAddress::Offset { offset: 16 },
-///         get_session_max_players: nwnrs_runtime::TargetAddress::Offset { offset: 17 },
-///     },
-///     events: nwnrs_runtime::EventTarget {
-///         recursion_level_offset: 36,
-///         script_array_offset: 40,
-///         script_slot_count: 8,
-///         script_stride: 152,
-///         script_name_offset: 24,
-///         script_event_id_offset: 72,
-///     },
-/// };
-/// assert_eq!(pack.runtime_api, 2);
+/// let pack: Option<nwnrs_runtime::TargetPack> = None;
+/// assert!(pack.is_none());
 /// ```
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -475,12 +617,37 @@ pub struct TargetPack {
     pub runtime_api:    u32,
     /// Exact server identity associated with this pack.
     pub server:         TargetServer,
+    /// Unified revision used to derive function and layout semantics.
+    pub source:         TargetSource,
+    /// Compiler-derived layout snapshot for this platform.
+    pub layouts:        AbiLayouts,
     /// Minimal native ABI required by the NWScript bridge.
     pub bridge:         BridgeTarget,
     /// Exact native ABI required to read live server state.
-    pub server_state:   ServerStateTarget,
+    pub server_state:   Option<ServerStateTarget>,
     /// Exact native ABI required to observe existing event scripts.
-    pub events:         EventTarget,
+    pub events:         Option<EventTarget>,
+}
+
+impl TargetPack {
+    /// Returns the supported version of a capability, or zero when absent.
+    ///
+    /// ```no_run
+    /// # let pack: nwnrs_runtime::TargetPack = unimplemented!();
+    /// let version = pack.capability_version(nwnrs_runtime::Capability::ServerState);
+    /// assert!(version <= 1);
+    /// ```
+    #[must_use]
+    pub fn capability_version(&self, capability: Capability) -> u32 {
+        match capability {
+            Capability::NwscriptBridge => self.bridge.version,
+            Capability::ServerState => self
+                .server_state
+                .as_ref()
+                .map_or(0, |target| target.version),
+            Capability::EventContext => self.events.as_ref().map_or(0, |target| target.version),
+        }
+    }
 }
 
 /// A loaded target pack and its canonical source path.
@@ -625,6 +792,24 @@ pub fn initialize_current_process() -> RuntimeResult<Option<RuntimeContext>> {
 }
 
 fn validate_target_pack(pack: &TargetPack, binary: &BinaryIdentity) -> RuntimeResult<()> {
+    validate_target_pack_metadata(pack)?;
+    if pack.server.platform != binary.platform {
+        return Err(RuntimeError::new(format!(
+            "target pack platform {} does not match binary platform {}",
+            pack.server.platform, binary.platform
+        )));
+    }
+    let actual_sha256 = binary.sha256.to_string();
+    if pack.server.sha256 != actual_sha256 {
+        return Err(RuntimeError::new(format!(
+            "target pack server SHA-256 {} does not match binary SHA-256 {actual_sha256}",
+            pack.server.sha256
+        )));
+    }
+    Ok(())
+}
+
+fn validate_target_pack_metadata(pack: &TargetPack) -> RuntimeResult<()> {
     if pack.schema_version != TARGET_PACK_SCHEMA_VERSION {
         return Err(RuntimeError::new(format!(
             "unsupported target-pack schema {}; expected {TARGET_PACK_SCHEMA_VERSION}",
@@ -637,86 +822,223 @@ fn validate_target_pack(pack: &TargetPack, binary: &BinaryIdentity) -> RuntimeRe
             pack.runtime_api
         )));
     }
-    if pack.server.platform != binary.platform {
-        return Err(RuntimeError::new(format!(
-            "target pack platform {} does not match binary platform {}",
-            pack.server.platform, binary.platform
-        )));
-    }
-    let actual_sha256 = binary.sha256.to_string();
     if !is_sha256(&pack.server.sha256) {
         return Err(RuntimeError::new(
             "target pack server.sha256 must contain 64 lowercase hexadecimal characters",
         ));
     }
-    if pack.server.sha256 != actual_sha256 {
-        return Err(RuntimeError::new(format!(
-            "target pack server SHA-256 {} does not match binary SHA-256 {actual_sha256}",
-            pack.server.sha256
-        )));
-    }
-    if !pack.bridge.virtual_machine_offset.is_multiple_of(8) {
+    if !is_git_commit(&pack.source.unified_commit) {
         return Err(RuntimeError::new(
-            "target pack bridge.virtual_machine_offset must be eight-byte aligned",
+            "target pack source.unified_commit must contain a full lowercase Git commit",
         ));
     }
+    if pack.source.nwn_build == 0 || pack.source.nwn_revision == 0 {
+        return Err(RuntimeError::new(
+            "target pack source build and revision must be greater than zero",
+        ));
+    }
+    validate_layouts(&pack.layouts)?;
+    validate_capability_version(
+        "nwscript_bridge",
+        pack.bridge.version,
+        NWSCRIPT_BRIDGE_CAPABILITY_VERSION,
+    )?;
     for (name, address) in bridge_addresses(&pack.bridge) {
         validate_target_address("bridge", name, address)?;
     }
-    for (name, address) in server_state_addresses(&pack.server_state) {
-        validate_target_address("server_state", name, address)?;
-    }
-    for (name, offset) in [
-        (
-            "server_exo_app_offset",
-            pack.server_state.server_exo_app_offset,
-        ),
-        (
-            "server_info_module_name_offset",
-            pack.server_state.server_info_module_name_offset,
-        ),
-        (
-            "player_list_count_offset",
-            pack.server_state.player_list_count_offset,
-        ),
-    ] {
-        if !offset.is_multiple_of(8) {
-            return Err(RuntimeError::new(format!(
-                "target pack server_state.{name} must be eight-byte aligned"
-            )));
+    if let Some(server_state) = pack.server_state.as_ref() {
+        validate_capability_version(
+            "server_state",
+            server_state.version,
+            SERVER_STATE_CAPABILITY_VERSION,
+        )?;
+        for (name, address) in server_state_addresses(server_state) {
+            validate_target_address("server_state", name, address)?;
         }
     }
-    if !pack.events.recursion_level_offset.is_multiple_of(4) {
-        return Err(RuntimeError::new(
-            "target pack events.recursion_level_offset must be four-byte aligned",
-        ));
+    if let Some(events) = pack.events.as_ref() {
+        validate_capability_version(
+            "event_context",
+            events.version,
+            EVENT_CONTEXT_CAPABILITY_VERSION,
+        )?;
     }
-    for (name, offset) in [
-        ("script_array_offset", pack.events.script_array_offset),
-        ("script_stride", pack.events.script_stride),
-        ("script_name_offset", pack.events.script_name_offset),
-    ] {
-        if !offset.is_multiple_of(8) {
-            return Err(RuntimeError::new(format!(
-                "target pack events.{name} must be eight-byte aligned"
-            )));
-        }
+    Ok(())
+}
+
+fn validate_capability_version(name: &str, actual: u32, supported: u32) -> RuntimeResult<()> {
+    if actual != supported {
+        return Err(RuntimeError::new(format!(
+            "target pack capability {name} has version {actual}; expected {supported}"
+        )));
     }
-    if !pack.events.script_event_id_offset.is_multiple_of(4) {
-        return Err(RuntimeError::new(
-            "target pack events.script_event_id_offset must be four-byte aligned",
-        ));
-    }
-    if pack.events.script_slot_count == 0 {
-        return Err(RuntimeError::new(
-            "target pack events.script_slot_count must be greater than zero",
-        ));
-    }
-    if pack.events.script_name_offset.saturating_add(16) > pack.events.script_stride
-        || pack.events.script_event_id_offset.saturating_add(4) > pack.events.script_stride
+    Ok(())
+}
+
+fn validate_layouts(layouts: &AbiLayouts) -> RuntimeResult<()> {
+    let string = &layouts.c_exo_string;
+    if string.size != 16
+        || string.alignment != 8
+        || string.string_offset != 0
+        || string.string_length_offset != 8
+        || string.buffer_length_offset != 12
     {
         return Err(RuntimeError::new(
-            "target pack event script fields exceed events.script_stride",
+            "target pack CExoString layout does not match the supported Unified ABI",
+        ));
+    }
+    let players = &layouts.player_list;
+    if players.size != 16
+        || players.alignment != 8
+        || players.elements_offset != 0
+        || players.count_offset != 8
+        || players.capacity_offset != 12
+    {
+        return Err(RuntimeError::new(
+            "target pack player-list layout does not match the supported Unified ABI",
+        ));
+    }
+    let vector = &layouts.vector;
+    if vector.size != 12
+        || vector.alignment != 4
+        || vector.x_offset != 0
+        || vector.y_offset != 4
+        || vector.z_offset != 8
+    {
+        return Err(RuntimeError::new(
+            "target pack Vector layout does not match the supported Unified ABI",
+        ));
+    }
+    let classes = &layouts.classes;
+    for (name, offset, alignment) in [
+        (
+            "command_implementer_vm_offset",
+            classes.command_implementer_vm_offset,
+            8,
+        ),
+        (
+            "app_manager_server_offset",
+            classes.app_manager_server_offset,
+            8,
+        ),
+        (
+            "server_info_module_offset",
+            classes.server_info_module_offset,
+            8,
+        ),
+        (
+            "vm_recursion_level_offset",
+            classes.vm_recursion_level_offset,
+            4,
+        ),
+        ("vm_script_array_offset", classes.vm_script_array_offset, 8),
+        ("vm_script_size", classes.vm_script_size, 8),
+        ("vm_script_name_offset", classes.vm_script_name_offset, 8),
+        (
+            "vm_script_event_id_offset",
+            classes.vm_script_event_id_offset,
+            4,
+        ),
+    ] {
+        if !offset.is_multiple_of(alignment) {
+            return Err(RuntimeError::new(format!(
+                "target pack layout {name} is not {alignment}-byte aligned"
+            )));
+        }
+    }
+    if classes.vm_script_slot_count == 0 {
+        return Err(RuntimeError::new(
+            "target pack VM script slot count must be greater than zero",
+        ));
+    }
+    if classes.vm_script_alignment != 8 {
+        return Err(RuntimeError::new(
+            "target pack CVirtualMachineScript alignment must be eight bytes",
+        ));
+    }
+    if classes.vm_script_name_offset.saturating_add(string.size) > classes.vm_script_size
+        || classes.vm_script_event_id_offset.saturating_add(4) > classes.vm_script_size
+    {
+        return Err(RuntimeError::new(
+            "target pack VM script fields exceed the declared script size",
+        ));
+    }
+    Ok(())
+}
+
+/// Loads a machine-generated Unified ABI snapshot.
+///
+/// # Errors
+///
+/// Returns an error when the snapshot cannot be read, parsed, or validated.
+///
+/// ```no_run
+/// let snapshot = nwnrs_runtime::load_abi_snapshot("target/unified-abi.toml")?;
+/// assert_eq!(snapshot.pointer_width, 64);
+/// # Ok::<(), nwnrs_runtime::RuntimeError>(())
+/// ```
+pub fn load_abi_snapshot(path: impl AsRef<Path>) -> RuntimeResult<AbiSnapshot> {
+    let path = path.as_ref();
+    let text = fs::read_to_string(path).map_err(|error| {
+        RuntimeError::new(format!(
+            "failed to read ABI snapshot {}: {error}",
+            path.display()
+        ))
+    })?;
+    let snapshot = toml::from_str::<AbiSnapshot>(&text).map_err(|error| {
+        RuntimeError::new(format!(
+            "failed to parse ABI snapshot {}: {error}",
+            path.display()
+        ))
+    })?;
+    if snapshot.schema_version != ABI_SNAPSHOT_SCHEMA_VERSION {
+        return Err(RuntimeError::new(format!(
+            "unsupported ABI snapshot schema {}; expected {ABI_SNAPSHOT_SCHEMA_VERSION}",
+            snapshot.schema_version
+        )));
+    }
+    if snapshot.pointer_width != 64 {
+        return Err(RuntimeError::new(format!(
+            "unsupported ABI snapshot pointer width {}; expected 64",
+            snapshot.pointer_width
+        )));
+    }
+    if !is_git_commit(&snapshot.source.unified_commit) {
+        return Err(RuntimeError::new(
+            "ABI snapshot Unified commit must contain 40 lowercase hexadecimal characters",
+        ));
+    }
+    validate_layouts(&snapshot.layouts)?;
+    Ok(snapshot)
+}
+
+/// Verifies that a generated ABI snapshot exactly matches one target pack.
+///
+/// # Errors
+///
+/// Returns an error when provenance, platform, or any layout differs.
+///
+/// ```no_run
+/// # let snapshot: nwnrs_runtime::AbiSnapshot = unimplemented!();
+/// # let pack: nwnrs_runtime::TargetPack = unimplemented!();
+/// nwnrs_runtime::validate_abi_snapshot(&snapshot, &pack)?;
+/// # Ok::<(), nwnrs_runtime::RuntimeError>(())
+/// ```
+pub fn validate_abi_snapshot(snapshot: &AbiSnapshot, pack: &TargetPack) -> RuntimeResult<()> {
+    if snapshot.source != pack.source {
+        return Err(RuntimeError::new(
+            "ABI snapshot Unified provenance does not match the target pack",
+        ));
+    }
+    if snapshot.platform != pack.server.platform {
+        return Err(RuntimeError::new(format!(
+            "ABI snapshot platform {} does not match target platform {}",
+            snapshot.platform, pack.server.platform
+        )));
+    }
+    if snapshot.layouts != pack.layouts {
+        return Err(RuntimeError::new(
+            "ABI snapshot layouts do not match the target pack",
         ));
     }
     Ok(())
@@ -756,7 +1078,7 @@ fn bridge_addresses(bridge: &BridgeTarget) -> [(&'static str, &TargetAddress); 1
     ]
 }
 
-fn server_state_addresses(server_state: &ServerStateTarget) -> [(&'static str, &TargetAddress); 5] {
+fn server_state_addresses(server_state: &ServerStateTarget) -> [(&'static str, &TargetAddress); 6] {
     [
         ("app_manager", &server_state.app_manager),
         ("get_server_info", &server_state.get_server_info),
@@ -766,11 +1088,19 @@ fn server_state_addresses(server_state: &ServerStateTarget) -> [(&'static str, &
             "get_session_max_players",
             &server_state.get_session_max_players,
         ),
+        ("get_udp_port", &server_state.get_udp_port),
     ]
 }
 
 fn is_sha256(value: &str) -> bool {
     value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn is_git_commit(value: &str) -> bool {
+    value.len() == 40
         && value
             .bytes()
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
@@ -996,10 +1326,13 @@ mod tests {
     };
 
     use super::{
-        Architecture, BinaryIdentity, BridgeTarget, EventTarget, OperatingSystem, Platform,
-        RUNTIME_API_VERSION, ServerStateTarget, TARGET_PACK_SCHEMA_VERSION, TargetAddress,
-        TargetPack, TargetServer, bridge_addresses, parse_platform, resolve_target_pack,
-        server_state_addresses,
+        AbiLayouts, Architecture, BinaryIdentity, BridgeTarget, CExoStringLayout, Capability,
+        EVENT_CONTEXT_CAPABILITY_VERSION, EngineClassLayouts, EventTarget,
+        NWSCRIPT_BRIDGE_CAPABILITY_VERSION, OperatingSystem, Platform, PlayerListLayout,
+        RUNTIME_API_VERSION, SERVER_STATE_CAPABILITY_VERSION, ServerStateTarget,
+        TARGET_PACK_SCHEMA_VERSION, TargetAddress, TargetPack, TargetServer, TargetSource,
+        VectorLayout, bridge_addresses, parse_platform, resolve_target_pack,
+        server_state_addresses, validate_target_pack_metadata,
     };
 
     static NEXT_TEST_DIRECTORY: AtomicUsize = AtomicUsize::new(0);
@@ -1092,9 +1425,11 @@ mod tests {
                 platform: identity.platform,
                 build:    Some("fixture".to_string()),
             },
+            source:         fixture_source(),
+            layouts:        fixture_layouts(),
             bridge:         fixture_bridge_target(),
-            server_state:   fixture_server_state_target(),
-            events:         fixture_event_target(),
+            server_state:   Some(fixture_server_state_target()),
+            events:         Some(fixture_event_target()),
         };
         let pack_directory = root.join(identity.platform.directory_name());
         fs::create_dir_all(&pack_directory)?;
@@ -1104,6 +1439,23 @@ mod tests {
         let selected = resolve_target_pack(&root, &identity)?;
         assert_eq!(selected.pack, pack);
         assert_eq!(selected.path, fs::canonicalize(pack_path)?);
+
+        pack.server_state = None;
+        pack.events = None;
+        fs::write(&selected.path, toml::to_string(&pack)?)?;
+        let selected_without_optional_capabilities = resolve_target_pack(&root, &identity)?;
+        assert_eq!(
+            selected_without_optional_capabilities
+                .pack
+                .capability_version(Capability::ServerState),
+            0
+        );
+        assert_eq!(
+            selected_without_optional_capabilities
+                .pack
+                .capability_version(Capability::EventContext),
+            0
+        );
 
         pack.server.sha256 = "0".repeat(64);
         fs::write(&selected.path, toml::to_string(&pack)?)?;
@@ -1138,6 +1490,7 @@ mod tests {
                     continue;
                 }
                 let pack = toml::from_str::<TargetPack>(&fs::read_to_string(pack_entry.path())?)?;
+                validate_target_pack_metadata(&pack)?;
                 let filename = pack_entry
                     .path()
                     .file_stem()
@@ -1157,13 +1510,15 @@ mod tests {
                         assert!(!symbol.as_bytes().contains(&0));
                     }
                 }
-                for (_name, address) in server_state_addresses(&pack.server_state) {
-                    if let TargetAddress::Symbol {
-                        symbol,
-                    } = address
-                    {
-                        assert!(!symbol.is_empty());
-                        assert!(!symbol.as_bytes().contains(&0));
+                if let Some(server_state) = pack.server_state.as_ref() {
+                    for (_name, address) in server_state_addresses(server_state) {
+                        if let TargetAddress::Symbol {
+                            symbol,
+                        } = address
+                        {
+                            assert!(!symbol.is_empty());
+                            assert!(!symbol.as_bytes().contains(&0));
+                        }
                     }
                 }
                 pack_count = pack_count.saturating_add(1);
@@ -1175,10 +1530,10 @@ mod tests {
 
     fn fixture_bridge_target() -> BridgeTarget {
         BridgeTarget {
+            version:                NWSCRIPT_BRIDGE_CAPABILITY_VERSION,
             function_management:    TargetAddress::Offset {
                 offset: 1
             },
-            virtual_machine_offset: 0,
             stack_pop_integer:      TargetAddress::Offset {
                 offset: 2
             },
@@ -1217,35 +1572,78 @@ mod tests {
 
     fn fixture_server_state_target() -> ServerStateTarget {
         ServerStateTarget {
-            app_manager:                    TargetAddress::Offset {
+            version:                 SERVER_STATE_CAPABILITY_VERSION,
+            app_manager:             TargetAddress::Offset {
                 offset: 13
             },
-            server_exo_app_offset:          8,
-            get_server_info:                TargetAddress::Offset {
+            get_server_info:         TargetAddress::Offset {
                 offset: 14
             },
-            server_info_module_name_offset: 8,
-            get_player_list:                TargetAddress::Offset {
+            get_player_list:         TargetAddress::Offset {
                 offset: 15
             },
-            player_list_count_offset:       8,
-            get_net_layer:                  TargetAddress::Offset {
+            get_net_layer:           TargetAddress::Offset {
                 offset: 16
             },
-            get_session_max_players:        TargetAddress::Offset {
+            get_session_max_players: TargetAddress::Offset {
                 offset: 17
+            },
+            get_udp_port:            TargetAddress::Offset {
+                offset: 18
             },
         }
     }
 
     fn fixture_event_target() -> EventTarget {
         EventTarget {
-            recursion_level_offset: 36,
-            script_array_offset:    40,
-            script_slot_count:      8,
-            script_stride:          152,
-            script_name_offset:     24,
-            script_event_id_offset: 72,
+            version: EVENT_CONTEXT_CAPABILITY_VERSION,
+        }
+    }
+
+    fn fixture_source() -> TargetSource {
+        TargetSource {
+            unified_commit: "3d4c4e13c6bf01b032ffe90534fc4a19eb036c03".to_string(),
+            nwn_build:      8193,
+            nwn_revision:   37,
+            nwn_postfix:    17,
+        }
+    }
+
+    fn fixture_layouts() -> AbiLayouts {
+        AbiLayouts {
+            c_exo_string: CExoStringLayout {
+                size:                 16,
+                alignment:            8,
+                string_offset:        0,
+                string_length_offset: 8,
+                buffer_length_offset: 12,
+            },
+            player_list:  PlayerListLayout {
+                size:            16,
+                alignment:       8,
+                elements_offset: 0,
+                count_offset:    8,
+                capacity_offset: 12,
+            },
+            vector:       VectorLayout {
+                size:      12,
+                alignment: 4,
+                x_offset:  0,
+                y_offset:  4,
+                z_offset:  8,
+            },
+            classes:      EngineClassLayouts {
+                command_implementer_vm_offset: 0,
+                app_manager_server_offset:     8,
+                server_info_module_offset:     8,
+                vm_recursion_level_offset:     36,
+                vm_script_array_offset:        40,
+                vm_script_slot_count:          8,
+                vm_script_size:                152,
+                vm_script_alignment:           8,
+                vm_script_name_offset:         24,
+                vm_script_event_id_offset:     72,
+            },
         }
     }
 

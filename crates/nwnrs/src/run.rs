@@ -1063,9 +1063,12 @@ mod tests {
     };
 
     use nwnrs_runtime::{
-        Architecture, BinaryIdentity, BridgeTarget, ENV_ENABLED, ENV_REQUIRED, ENV_SUPERVISED,
-        ENV_TARGET_PACK, EventTarget, OperatingSystem, Platform, RUNTIME_API_VERSION,
+        AbiLayouts, Architecture, BinaryIdentity, BridgeTarget, CExoStringLayout, ENV_ENABLED,
+        ENV_REQUIRED, ENV_SUPERVISED, ENV_TARGET_PACK, EVENT_CONTEXT_CAPABILITY_VERSION,
+        EngineClassLayouts, EventTarget, NWSCRIPT_BRIDGE_CAPABILITY_VERSION, OperatingSystem,
+        Platform, PlayerListLayout, RUNTIME_API_VERSION, SERVER_STATE_CAPABILITY_VERSION,
         ServerStateTarget, TARGET_PACK_SCHEMA_VERSION, TargetAddress, TargetPack, TargetServer,
+        TargetSource, VectorLayout,
     };
 
     #[cfg(feature = "tooling")]
@@ -1403,9 +1406,11 @@ mod tests {
                 platform,
                 build: Some("fixture".to_string()),
             },
+            source:         target_source(),
+            layouts:        target_layouts(),
             bridge:         bridge_target(),
-            server_state:   server_state_target(),
-            events:         event_target(),
+            server_state:   Some(server_state_target()),
+            events:         Some(event_target()),
         };
         let directory = root.join(platform.directory_name());
         fs::create_dir_all(&directory)?;
@@ -1421,8 +1426,8 @@ mod tests {
             offset: 1
         };
         BridgeTarget {
+            version:                NWSCRIPT_BRIDGE_CAPABILITY_VERSION,
             function_management:    address(),
-            virtual_machine_offset: 0,
             stack_pop_integer:      address(),
             stack_push_integer:     address(),
             stack_pop_float:        address(),
@@ -1442,25 +1447,66 @@ mod tests {
             offset: 1
         };
         ServerStateTarget {
-            app_manager:                    address(),
-            server_exo_app_offset:          8,
-            get_server_info:                address(),
-            server_info_module_name_offset: 8,
-            get_player_list:                address(),
-            player_list_count_offset:       8,
-            get_net_layer:                  address(),
-            get_session_max_players:        address(),
+            version:                 SERVER_STATE_CAPABILITY_VERSION,
+            app_manager:             address(),
+            get_server_info:         address(),
+            get_player_list:         address(),
+            get_net_layer:           address(),
+            get_session_max_players: address(),
+            get_udp_port:            address(),
         }
     }
 
     fn event_target() -> EventTarget {
         EventTarget {
-            recursion_level_offset: 36,
-            script_array_offset:    40,
-            script_slot_count:      8,
-            script_stride:          if cfg!(target_os = "linux") { 152 } else { 136 },
-            script_name_offset:     24,
-            script_event_id_offset: 72,
+            version: EVENT_CONTEXT_CAPABILITY_VERSION,
+        }
+    }
+
+    fn target_source() -> TargetSource {
+        TargetSource {
+            unified_commit: "3d4c4e13c6bf01b032ffe90534fc4a19eb036c03".to_string(),
+            nwn_build:      8193,
+            nwn_revision:   37,
+            nwn_postfix:    17,
+        }
+    }
+
+    fn target_layouts() -> AbiLayouts {
+        AbiLayouts {
+            c_exo_string: CExoStringLayout {
+                size:                 16,
+                alignment:            8,
+                string_offset:        0,
+                string_length_offset: 8,
+                buffer_length_offset: 12,
+            },
+            player_list:  PlayerListLayout {
+                size:            16,
+                alignment:       8,
+                elements_offset: 0,
+                count_offset:    8,
+                capacity_offset: 12,
+            },
+            vector:       VectorLayout {
+                size:      12,
+                alignment: 4,
+                x_offset:  0,
+                y_offset:  4,
+                z_offset:  8,
+            },
+            classes:      EngineClassLayouts {
+                command_implementer_vm_offset: 0,
+                app_manager_server_offset:     8,
+                server_info_module_offset:     8,
+                vm_recursion_level_offset:     36,
+                vm_script_array_offset:        40,
+                vm_script_slot_count:          8,
+                vm_script_size:                if cfg!(target_os = "linux") { 152 } else { 136 },
+                vm_script_alignment:           8,
+                vm_script_name_offset:         24,
+                vm_script_event_id_offset:     72,
+            },
         }
     }
 

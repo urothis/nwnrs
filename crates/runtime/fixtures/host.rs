@@ -99,6 +99,7 @@ struct PlayerList {
 #[repr(C)]
 struct NetLayer {
     max_players: u32,
+    udp_port:    u32,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -349,6 +350,15 @@ pub extern "C" fn nwnrs_fixture_get_session_max_players(net_layer: *mut c_void) 
     unsafe { (*net_layer.cast::<NetLayer>()).max_players }
 }
 
+#[unsafe(no_mangle)]
+pub extern "C" fn nwnrs_fixture_get_udp_port(net_layer: *mut c_void) -> u32 {
+    if net_layer.is_null() {
+        return 0;
+    }
+    // SAFETY: the fixture passes its live NetLayer as the method receiver.
+    unsafe { (*net_layer.cast::<NetLayer>()).udp_port }
+}
+
 fn pop_value(vm: *mut c_void) -> Option<Value> {
     if vm.is_null() {
         return None;
@@ -402,6 +412,31 @@ fn call_log(commands: &mut Commands, vm: &mut VirtualMachine, level: i32, messag
     vm.stack.push(Value::String(message.to_string()));
     assert_eq!(call(commands, NWNX_PUSH_STRING), 0);
     vm.stack.push(Value::String("Log".to_string()));
+    vm.stack.push(Value::String("NWNRS".to_string()));
+    assert_eq!(call(commands, NWNX_CALL), 0);
+}
+
+fn call_capability_version(commands: &mut Commands, vm: &mut VirtualMachine, capability: &str) -> i32 {
+    vm.stack.push(Value::String(capability.to_string()));
+    assert_eq!(call(commands, NWNX_PUSH_STRING), 0);
+    call_integer(commands, vm, "GetCapabilityVersion")
+}
+
+fn call_has_capability(
+    commands: &mut Commands,
+    vm: &mut VirtualMachine,
+    capability: &str,
+    minimum: i32,
+) -> i32 {
+    vm.stack.push(Value::Integer(minimum));
+    assert_eq!(call(commands, NWNX_PUSH_INTEGER), 0);
+    vm.stack.push(Value::String(capability.to_string()));
+    assert_eq!(call(commands, NWNX_PUSH_STRING), 0);
+    call_integer(commands, vm, "HasCapability")
+}
+
+fn call_without_result(commands: &mut Commands, vm: &mut VirtualMachine, function: &str) {
+    vm.stack.push(Value::String(function.to_string()));
     vm.stack.push(Value::String("NWNRS".to_string()));
     assert_eq!(call(commands, NWNX_CALL), 0);
 }
@@ -471,6 +506,7 @@ fn main() {
     };
     let mut net_layer = NetLayer {
         max_players: 64,
+        udp_port:    5121,
     };
     let mut server = ServerExoApp {
         server_info: &raw mut server_info,
@@ -493,6 +529,17 @@ fn main() {
 
     assert_eq!(call(&mut commands, NWNX_GET_IS_AVAILABLE), 0);
     assert!(matches!(vm.stack.pop(), Some(Value::Integer(1))));
+
+    assert_eq!(call_integer(&mut commands, &mut vm, "GetApiVersion"), 1);
+    assert_eq!(call_capability_version(&mut commands, &mut vm, "nwscript_bridge"), 1);
+    assert_eq!(call_capability_version(&mut commands, &mut vm, "server_state"), 1);
+    assert_eq!(call_capability_version(&mut commands, &mut vm, "event_context"), 1);
+    assert_eq!(call_has_capability(&mut commands, &mut vm, "server_state", 1), 1);
+    assert_eq!(call_has_capability(&mut commands, &mut vm, "server_state", 2), 0);
+    assert_eq!(call_integer(&mut commands, &mut vm, "GetLastErrorCode"), 0);
+    call_without_result(&mut commands, &mut vm, "NotRegistered");
+    assert_eq!(call_integer(&mut commands, &mut vm, "GetLastErrorCode"), 2);
+    assert!(call_string(&mut commands, &mut vm, "GetLastErrorMessage").contains("NotRegistered"));
 
     assert!(!call_string(&mut commands, &mut vm, "GetRuntimeVersion").is_empty());
     assert_eq!(
@@ -517,6 +564,7 @@ fn main() {
     );
     assert_eq!(call_integer(&mut commands, &mut vm, "GetPlayerCount"), 3);
     assert_eq!(call_integer(&mut commands, &mut vm, "GetMaxPlayers"), 64);
+    assert_eq!(call_integer(&mut commands, &mut vm, "GetServerPort"), 5121);
     assert_eq!(call_integer(&mut commands, &mut vm, "GetIsInEvent"), 0);
     assert_eq!(call_integer(&mut commands, &mut vm, "GetCurrentEventId"), -1);
     assert_eq!(call_integer(&mut commands, &mut vm, "GetCurrentEventDepth"), 0);
@@ -583,5 +631,6 @@ fn keep_abi_symbols() {
     std::hint::black_box(nwnrs_fixture_get_player_list as *const ());
     std::hint::black_box(nwnrs_fixture_get_net_layer as *const ());
     std::hint::black_box(nwnrs_fixture_get_session_max_players as *const ());
+    std::hint::black_box(nwnrs_fixture_get_udp_port as *const ());
     std::hint::black_box(&raw const nwnrs_fixture_app_manager);
 }

@@ -32,7 +32,19 @@ jobs:
             - uses: actions/checkout@v6.0.3
               with:
                   persist-credentials: false
+            - name: Check out pinned Unified ABI source
+              uses: actions/checkout@v6.0.3
+              with:
+                  repository: nwnxee/unified
+                  ref: 3d4c4e13c6bf01b032ffe90534fc4a19eb036c03
+                  path: sources/unified
+                  persist-credentials: false
             - uses: ./.github/actions/setup-rust
+            - name: Verify target layouts from Unified
+              run: |
+                  crates/runtime/scripts/verify-unified-abi.sh \
+                    sources/unified \
+                    target/unified-abi.toml
             - name: Run Frida Gum interception probe
               run: cargo run --locked --package nwnrs-runtime-sys --example frida-probe
             - name: Test launcher and injected runtime
