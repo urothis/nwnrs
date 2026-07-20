@@ -299,7 +299,7 @@ server-log following.
 
 Once injected, the runtime installs the NWScript bridge described by the
 source-controlled `include/nwnrs/nwnrs.nss` include package. It reports runtime identity,
-server state, and active module/area/object event context, and exposes validated
+server state, and scoped JSON event payloads, and exposes validated
 administration operations such as session settings, ban lists, graceful
 shutdown, rules reload, TURD recovery, and deferred server-vault character
 deletion. No HTTP or metrics service is started.

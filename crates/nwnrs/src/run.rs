@@ -1425,12 +1425,11 @@ mod tests {
 
     use nwnrs_runtime::{
         AbiLayouts, Architecture, BinaryIdentity, BridgeTarget, CExoStringLayout, ENV_ENABLED,
-        ENV_REQUIRED, ENV_SUPERVISED, ENV_TARGET_PACK, ENV_WINDOWS_GUI,
-        EVENT_CONTEXT_CAPABILITY_VERSION, EngineClassLayouts, EventTarget,
-        NWSCRIPT_BRIDGE_CAPABILITY_VERSION, OperatingSystem, Platform, PlayerListLayout,
-        RUNTIME_API_VERSION, SERVER_STATE_CAPABILITY_VERSION, ServerStateTarget,
-        TARGET_PACK_SCHEMA_VERSION, TargetAddress, TargetPack, TargetServer, TargetSource,
-        VectorLayout,
+        ENV_REQUIRED, ENV_SUPERVISED, ENV_TARGET_PACK, ENV_WINDOWS_GUI, EVENTS_CAPABILITY_VERSION,
+        EngineClassLayouts, EventTarget, NWSCRIPT_BRIDGE_CAPABILITY_VERSION, OperatingSystem,
+        Platform, PlayerListLayout, RUNTIME_API_VERSION, SERVER_STATE_CAPABILITY_VERSION,
+        ServerStateTarget, TARGET_PACK_SCHEMA_VERSION, TargetAddress, TargetPack, TargetServer,
+        TargetSource, VectorLayout,
     };
 
     #[cfg(feature = "tooling")]
@@ -1868,7 +1867,7 @@ mod tests {
             offset: 1
         };
         EventTarget {
-            version:            EVENT_CONTEXT_CAPABILITY_VERSION,
+            version:            EVENTS_CAPABILITY_VERSION,
             load_module_finish: address(),
             virtual_machine:    address(),
             run_script:         address(),

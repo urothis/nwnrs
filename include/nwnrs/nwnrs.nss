@@ -1,5 +1,5 @@
 /// @file nwnrs.nss
-/// @brief Server identity, live state, administration, event context, and structured logging.
+/// @brief Server identity, live state, administration, JSON events, and structured logging.
 
 const string NWNRS_NAMESPACE = "NWNRS"; ///< @private
 
@@ -8,7 +8,7 @@ const int NWNRS_API_VERSION = 1;
 const string NWNRS_CAPABILITY_NWSCRIPT_BRIDGE = "nwscript_bridge";
 const string NWNRS_CAPABILITY_SERVER_STATE = "server_state";
 const string NWNRS_CAPABILITY_ADMINISTRATION = "administration";
-const string NWNRS_CAPABILITY_EVENT_CONTEXT = "event_context";
+const string NWNRS_CAPABILITY_EVENTS = "events";
 
 const int NWNRS_ERROR_NONE = 0;
 const int NWNRS_ERROR_UNKNOWN_NAMESPACE = 1;
@@ -196,23 +196,19 @@ void NWNRS_DeletePlayerCharacter(
 /// Returns TRUE when a matching TURD was found and removed.
 int NWNRS_DeleteTURD(string sPlayerName, string sCharacterName);
 
-/// Returns TRUE while an engine module, area, or object event script is running.
+/// Returns TRUE while an nwnrs event dispatcher is running.
 int NWNRS_GetIsInEvent();
 
-/// Returns the stable semantic name of the current event, or "" outside one.
-string NWNRS_GetCurrentEvent();
+/// Returns the immutable current event object, or JsonNull outside dispatch.
+/// Every event contains name, id, script, phase, depth, target, controls, and
+/// event-specific data. Object identifiers are eight-digit hexadecimal strings.
+json NWNRS_GetCurrentEvent();
 
-/// Returns the engine EVENT_SCRIPT_* identifier, or -1 outside an event.
-int NWNRS_GetCurrentEventId();
+/// Prevents the current event's original engine operation when it is skippable.
+void NWNRS_SkipCurrentEvent();
 
-/// Returns the current event script resref, or "" outside an event.
-string NWNRS_GetCurrentEventScript();
-
-/// Returns "running" while an event script is active, or "" outside one.
-string NWNRS_GetCurrentEventPhase();
-
-/// Returns the one-based VM script depth, or zero outside an event.
-int NWNRS_GetCurrentEventDepth();
+/// Sets the current event result when its schema supports a JSON result.
+void NWNRS_SetCurrentEventResult(json jResult);
 
 int NWNRS_GetIsAvailable()
 {
@@ -501,32 +497,19 @@ int NWNRS_GetIsInEvent()
     return NWNXPopInt();
 }
 
-string NWNRS_GetCurrentEvent()
+json NWNRS_GetCurrentEvent()
 {
     NWNXCall(NWNRS_NAMESPACE, "GetCurrentEvent");
-    return NWNXPopString();
+    return JsonParse(NWNXPopString());
 }
 
-int NWNRS_GetCurrentEventId()
+void NWNRS_SkipCurrentEvent()
 {
-    NWNXCall(NWNRS_NAMESPACE, "GetCurrentEventId");
-    return NWNXPopInt();
+    NWNXCall(NWNRS_NAMESPACE, "SkipCurrentEvent");
 }
 
-string NWNRS_GetCurrentEventScript()
+void NWNRS_SetCurrentEventResult(json jResult)
 {
-    NWNXCall(NWNRS_NAMESPACE, "GetCurrentEventScript");
-    return NWNXPopString();
-}
-
-string NWNRS_GetCurrentEventPhase()
-{
-    NWNXCall(NWNRS_NAMESPACE, "GetCurrentEventPhase");
-    return NWNXPopString();
-}
-
-int NWNRS_GetCurrentEventDepth()
-{
-    NWNXCall(NWNRS_NAMESPACE, "GetCurrentEventDepth");
-    return NWNXPopInt();
+    NWNXPushString(JsonDump(jResult));
+    NWNXCall(NWNRS_NAMESPACE, "SetCurrentEventResult");
 }

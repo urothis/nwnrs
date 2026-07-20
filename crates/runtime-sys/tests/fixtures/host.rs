@@ -148,16 +148,6 @@ struct NetLayer {
     dm_password: CExoString,
 }
 
-#[derive(Debug, Eq, PartialEq)]
-struct ObservedEvent {
-    name:        String,
-    id:          i32,
-    script_name: String,
-    phase:       String,
-    depth:       i32,
-    is_in_event: i32,
-}
-
 #[unsafe(no_mangle)]
 pub static mut nwnrs_fixture_app_manager: *mut c_void = std::ptr::null_mut();
 
@@ -456,6 +446,22 @@ pub extern "C" fn nwnrs_fixture_run_script(
     if name != b"_nwnrs_onload" {
         return 0;
     }
+    let mut commands = Commands {
+        virtual_machine: vm,
+    };
+    // SAFETY: the fixture runtime owns this VM on the current thread for the
+    // complete synchronous RunScript call.
+    let vm = unsafe { &mut *vm.cast::<VirtualMachine>() };
+    assert_eq!(call_integer(&mut commands, vm, "GetIsInEvent"), 1);
+    assert_eq!(
+        call_string(&mut commands, vm, "GetCurrentEvent"),
+        concat!(
+            "{\"name\":\"module.on_module_load\",\"id\":3002,",
+            "\"script\":\"_nwnrs_onload\",\"phase\":\"before\",",
+            "\"depth\":1,\"target\":\"00000000\",",
+            "\"controls\":{\"skippable\":false,\"result\":false},\"data\":{}}"
+        )
+    );
     MODULE_ONLOAD_CALLS.fetch_add(1, Ordering::Relaxed);
     1
 }
@@ -610,39 +616,12 @@ fn call_integer_with_two_strings(
     call_integer(commands, vm, function)
 }
 
-fn observe_current_event(commands: &mut Commands, vm: &mut VirtualMachine) -> ObservedEvent {
-    ObservedEvent {
-        name:        call_string(commands, vm, "GetCurrentEvent"),
-        id:          call_integer(commands, vm, "GetCurrentEventId"),
-        script_name: call_string(commands, vm, "GetCurrentEventScript"),
-        phase:       call_string(commands, vm, "GetCurrentEventPhase"),
-        depth:       call_integer(commands, vm, "GetCurrentEventDepth"),
-        is_in_event: call_integer(commands, vm, "GetIsInEvent"),
-    }
-}
-
 fn empty_exo_string() -> CExoString {
     CExoString {
         string:        std::ptr::null_mut(),
         string_length: 0,
         buffer_length: 0,
     }
-}
-
-fn borrowed_exo_string(bytes: &mut [u8]) -> CExoString {
-    let string_length = u32::try_from(bytes.len()).expect("fixture script name fits u32");
-    CExoString {
-        string: bytes.as_mut_ptr(),
-        string_length,
-        buffer_length: string_length,
-    }
-}
-
-fn set_event(vm: &mut VirtualMachine, level: usize, id: i32, script_name: &mut [u8]) {
-    vm.recursion_level = i32::try_from(level).expect("fixture recursion level fits i32");
-    let script = vm.scripts.get_mut(level).expect("fixture script slot exists");
-    script.event_id = id;
-    script.script_name = borrowed_exo_string(script_name);
 }
 
 fn assert_fixture_layout() {
@@ -779,7 +758,7 @@ fn main() {
     assert_eq!(call_capability_version(&mut commands, &mut vm, "nwscript_bridge"), 1);
     assert_eq!(call_capability_version(&mut commands, &mut vm, "server_state"), 1);
     assert_eq!(call_capability_version(&mut commands, &mut vm, "administration"), 1);
-    assert_eq!(call_capability_version(&mut commands, &mut vm, "event_context"), 2);
+    assert_eq!(call_capability_version(&mut commands, &mut vm, "events"), 2);
     assert_eq!(call_has_capability(&mut commands, &mut vm, "server_state", 1), 1);
     assert_eq!(call_has_capability(&mut commands, &mut vm, "server_state", 2), 0);
     assert_eq!(call_integer(&mut commands, &mut vm, "GetLastErrorCode"), 0);
@@ -986,8 +965,7 @@ fn main() {
         );
     }
     assert_eq!(call_integer(&mut commands, &mut vm, "GetIsInEvent"), 0);
-    assert_eq!(call_integer(&mut commands, &mut vm, "GetCurrentEventId"), -1);
-    assert_eq!(call_integer(&mut commands, &mut vm, "GetCurrentEventDepth"), 0);
+    assert_eq!(call_string(&mut commands, &mut vm, "GetCurrentEvent"), "null");
     call_log(&mut commands, &mut vm, 0, "fixture trace message");
     call_log(&mut commands, &mut vm, 1, "fixture debug message");
     call_log(&mut commands, &mut vm, 2, "fixture info message");
@@ -1000,45 +978,6 @@ fn main() {
     call_log(&mut commands, &mut vm, 3, "fixture warn message");
     call_log(&mut commands, &mut vm, 4, "fixture error message");
 
-    let mut module_script = b"fixture_event".to_vec();
-    let mut area_script = b"area_enter".to_vec();
-    let mut creature_script = b"creature_spawn".to_vec();
-    set_event(&mut vm, 0, 3002, &mut module_script);
-    assert_eq!(
-        observe_current_event(&mut commands, &mut vm),
-        ObservedEvent {
-            name:        "module.on_module_load".to_string(),
-            id:          3002,
-            script_name: "fixture_event".to_string(),
-            phase:       "running".to_string(),
-            depth:       1,
-            is_in_event: 1,
-        }
-    );
-    set_event(&mut vm, 1, 4002, &mut area_script);
-    assert_eq!(
-        observe_current_event(&mut commands, &mut vm),
-        ObservedEvent {
-            name:        "area.on_enter".to_string(),
-            id:          4002,
-            script_name: "area_enter".to_string(),
-            phase:       "running".to_string(),
-            depth:       2,
-            is_in_event: 1,
-        }
-    );
-    set_event(&mut vm, 0, 5008, &mut creature_script);
-    assert_eq!(
-        observe_current_event(&mut commands, &mut vm),
-        ObservedEvent {
-            name:        "creature.on_spawn_in".to_string(),
-            id:          5008,
-            script_name: "creature_spawn".to_string(),
-            phase:       "running".to_string(),
-            depth:       1,
-            is_in_event: 1,
-        }
-    );
     call_without_result(&mut commands, &mut vm, "RequestShutdown");
     // SAFETY: the fixture global remains live until process exit.
     assert_eq!(unsafe { nwnrs_fixture_exit_program }, 1);

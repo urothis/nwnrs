@@ -57,9 +57,9 @@ collector is the native module-load registration:
 
 ```nss
 #[nwnrs::events(module_load)]
-void ProjectStart()
+void ProjectStart(json jEvent)
 {
-    // Runs from the generated _nwnrs_onload dispatcher.
+    // Receives the immutable event snapshot from _nwnrs_onload.
 }
 ```
 

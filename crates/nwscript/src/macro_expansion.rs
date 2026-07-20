@@ -659,7 +659,8 @@ pub fn expand_source_macros(
 /// removes their complete syntax from the emitted token stream.
 ///
 /// Multiple registrations may be placed in one attribute and separated by
-/// commas. The attribute must be attached to a function definition.
+/// commas. The attribute must be attached to a `void Handler(json event)`
+/// function definition.
 ///
 /// # Errors
 ///
@@ -698,7 +699,7 @@ pub fn collect_nwnrs_event_handlers(
         }
         let events = parse_nwnrs_event_attribute(attribute)?;
         let function_name =
-            attributed_function_name(&stream.trees, position + 2, attribute.span())?;
+            attributed_event_function(&stream.trees, position + 2, attribute.span())?;
         handlers.extend(events.into_iter().map(|event| NwnrsEventHandler {
             event,
             function_name: function_name.clone(),
@@ -803,32 +804,50 @@ fn parse_nwnrs_event_attribute(
     Ok(events)
 }
 
-fn attributed_function_name(
+fn attributed_event_function(
     trees: &[NwTokenTree],
     start: usize,
     span: Span,
 ) -> Result<String, MacroExpansionError> {
-    let mut previous_identifier = None;
-    for tree in trees.iter().skip(start) {
-        match tree {
-            NwTokenTree::Token(token) if token.kind == TokenKind::Identifier => {
-                previous_identifier = Some(token.text.clone());
-            }
-            NwTokenTree::Token(token) if token.kind == TokenKind::Semicolon => break,
-            NwTokenTree::Group(group) if group.delimiter == NwDelimiter::Parenthesis => {
-                let Some(name) = previous_identifier else {
-                    break;
-                };
-                return Ok(name);
-            }
-            NwTokenTree::Group(group) if group.delimiter == NwDelimiter::Brace => break,
-            _ => {}
-        }
+    let Some(NwTokenTree::Token(return_type)) = trees.get(start) else {
+        return Err(invalid_event_handler(span));
+    };
+    let Some(NwTokenTree::Token(name)) = trees.get(start + 1) else {
+        return Err(invalid_event_handler(span));
+    };
+    let Some(NwTokenTree::Group(parameters)) = trees.get(start + 2) else {
+        return Err(invalid_event_handler(span));
+    };
+    let Some(NwTokenTree::Group(body)) = trees.get(start + 3) else {
+        return Err(invalid_event_handler(span));
+    };
+    if return_type.text != "void"
+        || name.kind != TokenKind::Identifier
+        || parameters.delimiter != NwDelimiter::Parenthesis
+        || body.delimiter != NwDelimiter::Brace
+    {
+        return Err(invalid_event_handler(span));
     }
-    Err(MacroExpansionError::new(
+    let parameter_trees = parameters.stream.trees();
+    let valid_parameters = matches!(
+        parameter_trees,
+        [NwTokenTree::Token(parameter_type), NwTokenTree::Token(parameter_name)]
+            if parameter_type.text == "json" && parameter_name.kind == TokenKind::Identifier
+    );
+    if !valid_parameters {
+        return Err(MacroExpansionError::new(
+            parameters.span(),
+            "nwnrs event handler must accept exactly one `json` parameter",
+        ));
+    }
+    Ok(name.text.clone())
+}
+
+fn invalid_event_handler(span: Span) -> MacroExpansionError {
+    MacroExpansionError::new(
         span,
-        "nwnrs event attribute must be attached to a function definition",
-    ))
+        "nwnrs event attribute must be attached to `void Handler(json event) { ... }`",
+    )
 }
 
 /// Built-in identity macro used to validate and bootstrap the expansion host.
@@ -1648,7 +1667,7 @@ mod event_attribute_tests {
     fn collects_and_erases_module_load_attributes() -> Result<(), Box<dyn std::error::Error>> {
         let tokens = lex_text(
             SourceId::new(0),
-            "#[nwnrs::events(module_load)]\nvoid ProjectStart() {}",
+            "#[nwnrs::events(module_load)]\nvoid ProjectStart(json jEvent) {}",
         )?;
         let mut stream = NwTokenStream::from_tokens(&tokens)?;
         let handlers = collect_nwnrs_event_handlers(&mut stream)?;
@@ -1666,6 +1685,19 @@ mod event_attribute_tests {
         let rendered = render_nwscript_tokens(&stream);
         assert!(!rendered.contains("#["));
         assert!(rendered.contains("ProjectStart"));
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_event_handler_without_json_parameter() -> Result<(), Box<dyn std::error::Error>> {
+        let tokens = lex_text(
+            SourceId::new(0),
+            "#[nwnrs::events(module_load)]\nvoid ProjectStart() {}",
+        )?;
+        let mut stream = NwTokenStream::from_tokens(&tokens)?;
+        let error = collect_nwnrs_event_handlers(&mut stream)
+            .expect_err("parameterless event handler should be rejected");
+        assert!(error.message.contains("exactly one `json` parameter"));
         Ok(())
     }
 }

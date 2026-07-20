@@ -1,32 +1,128 @@
-use std::ffi::c_void;
+use std::{
+    collections::BTreeMap,
+    ffi::c_void,
+    sync::{Mutex, MutexGuard},
+};
 
-use nwnrs_runtime::{EngineClassLayouts, EventContext, EventTarget, event_name};
+use nwnrs_runtime::{EventCommand, EventControls, EventObjectId, EventPayload, EventTarget};
 
 use super::{
     abi::{CExoString, RunScript},
     address::{GlobalStorage, HookTarget, NativeAddress, Resolver},
-    string::copy_exo_string,
     thread::EngineThreadToken,
 };
 use crate::bridge::BridgeInstallError;
+
+const MAX_EVENT_DEPTH: usize = 64;
+const MODULE_LOAD_EVENT_ID: i32 = 3002;
+const MODULE_LOAD_DISPATCHER: &str = "_nwnrs_onload";
+
+struct EventFrame {
+    payload: EventPayload,
+    skipped: bool,
+    result:  Option<Vec<u8>>,
+}
+
+struct EventScope<'event> {
+    frames: &'event Mutex<Vec<EventFrame>>,
+    active: bool,
+}
+
+#[derive(Default)]
+struct EventFrames {
+    values: Mutex<Vec<EventFrame>>,
+}
+
+impl EventFrames {
+    fn enter(&self, mut payload: EventPayload) -> Result<EventScope<'_>, BridgeInstallError> {
+        let mut frames = lock_frames(&self.values)?;
+        if frames.len() >= MAX_EVENT_DEPTH {
+            return Err(BridgeInstallError::new(format!(
+                "event nesting exceeds {MAX_EVENT_DEPTH} frames"
+            )));
+        }
+        payload.depth = u32::try_from(frames.len())
+            .ok()
+            .and_then(|depth| depth.checked_add(1))
+            .ok_or_else(|| BridgeInstallError::new("event nesting depth overflowed"))?;
+        frames.push(EventFrame {
+            payload,
+            skipped: false,
+            result: None,
+        });
+        drop(frames);
+        Ok(EventScope {
+            frames: &self.values,
+            active: true,
+        })
+    }
+
+    fn current(&self) -> Result<Option<EventPayload>, BridgeInstallError> {
+        Ok(lock_frames(&self.values)?
+            .last()
+            .map(|frame| frame.payload.clone()))
+    }
+
+    fn control(&self, command: EventCommand) -> Result<(), BridgeInstallError> {
+        let mut frames = lock_frames(&self.values)?;
+        let frame = frames.last_mut().ok_or_else(|| {
+            BridgeInstallError::new("event control requested outside nwnrs event dispatch")
+        })?;
+        match command {
+            EventCommand::Skip if frame.payload.controls.skippable => frame.skipped = true,
+            EventCommand::Skip => {
+                return Err(BridgeInstallError::new(format!(
+                    "event {} is not skippable",
+                    frame.payload.name
+                )));
+            }
+            EventCommand::SetResult(result) if frame.payload.controls.result => {
+                frame.result = Some(result);
+            }
+            EventCommand::SetResult(_) => {
+                return Err(BridgeInstallError::new(format!(
+                    "event {} does not accept a result",
+                    frame.payload.name
+                )));
+            }
+        }
+        Ok(())
+    }
+}
+
+impl EventScope<'_> {
+    fn finish(mut self) -> Result<EventFrame, BridgeInstallError> {
+        let frame = lock_frames(self.frames)?.pop().ok_or_else(|| {
+            BridgeInstallError::new("active event frame disappeared before dispatch completed")
+        })?;
+        self.active = false;
+        Ok(frame)
+    }
+}
+
+impl Drop for EventScope<'_> {
+    fn drop(&mut self) {
+        if self.active {
+            let mut frames = self
+                .frames
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            let _discarded = frames.pop();
+        }
+    }
+}
 
 pub(crate) struct EventEngine {
     load_module_finish:      NativeAddress<HookTarget>,
     virtual_machine_storage: NativeAddress<GlobalStorage>,
     run_script:              RunScript,
-    recursion_level_offset:  usize,
-    script_array_offset:     usize,
-    script_slot_count:       usize,
-    script_size:             usize,
-    script_name_offset:      usize,
-    script_event_id_offset:  usize,
+    frames:                  EventFrames,
 }
 
 impl EventEngine {
     pub(crate) fn resolve(
         resolver: &Resolver,
         target: &EventTarget,
-        layouts: &EngineClassLayouts,
     ) -> Result<Self, BridgeInstallError> {
         let load_module_finish = resolver.resolve::<HookTarget>(
             "events",
@@ -48,19 +144,7 @@ impl EventEngine {
             load_module_finish,
             virtual_machine_storage,
             run_script,
-            recursion_level_offset: checked(
-                "vm_recursion_level_offset",
-                layouts.vm_recursion_level_offset,
-            )?,
-            script_array_offset: checked("vm_script_array_offset", layouts.vm_script_array_offset)?,
-            script_slot_count: usize::try_from(layouts.vm_script_slot_count)
-                .map_err(|_error| BridgeInstallError::new("VM script-slot count exceeds usize"))?,
-            script_size: checked("vm_script_size", layouts.vm_script_size)?,
-            script_name_offset: checked("vm_script_name_offset", layouts.vm_script_name_offset)?,
-            script_event_id_offset: checked(
-                "vm_script_event_id_offset",
-                layouts.vm_script_event_id_offset,
-            )?,
+            frames: EventFrames::default(),
         })
     }
 
@@ -81,68 +165,133 @@ impl EventEngine {
                 "g_pVirtualMachine was null at module-load completion",
             ));
         }
-        let mut script_name = b"_nwnrs_onload\0".to_vec();
-        let mut script = CExoString {
-            string:        script_name.as_mut_ptr().cast(),
-            string_length: 13,
-            buffer_length: 14,
-        };
-        Ok((self.run_script)(vm, &raw mut script, 0, 1, 0) != 0)
-    }
 
-    pub(crate) fn context(
-        &self,
-        _thread: &EngineThreadToken,
-        vm: *mut c_void,
-    ) -> Result<EventContext, BridgeInstallError> {
-        if vm.is_null() {
+        let scope = self.frames.enter(EventPayload {
+            name:     "module.on_module_load".to_string(),
+            id:       MODULE_LOAD_EVENT_ID,
+            script:   MODULE_LOAD_DISPATCHER.to_string(),
+            phase:    "before".to_string(),
+            depth:    0,
+            target:   EventObjectId::new(0),
+            controls: EventControls::default(),
+            data:     BTreeMap::new(),
+        })?;
+        let mut script_name = format!("{MODULE_LOAD_DISPATCHER}\0").into_bytes();
+        let string_length = u32::try_from(MODULE_LOAD_DISPATCHER.len()).map_err(|_error| {
+            BridgeInstallError::new("module-load dispatcher resref exceeds u32")
+        })?;
+        let buffer_length = string_length.checked_add(1).ok_or_else(|| {
+            BridgeInstallError::new("module-load dispatcher buffer length overflowed")
+        })?;
+        let mut script = CExoString {
+            string: script_name.as_mut_ptr().cast(),
+            string_length,
+            buffer_length,
+        };
+        let ran = (self.run_script)(vm, &raw mut script, 0, 1, 0) != 0;
+        let frame = scope.finish()?;
+        if frame.skipped || frame.result.is_some() {
             return Err(BridgeInstallError::new(
-                "event context received a null virtual machine",
+                "module-load event accepted an unsupported control mutation",
             ));
         }
-        // SAFETY: the callback VM and compiler-derived field offset remain live
-        // for this synchronous read.
-        let level = unsafe {
-            vm.cast::<u8>()
-                .add(self.recursion_level_offset)
-                .cast::<i32>()
-                .read()
-        };
-        let Ok(index) = usize::try_from(level) else {
-            return Ok(EventContext::default());
-        };
-        if index >= self.script_slot_count {
-            return Err(BridgeInstallError::new(format!(
-                "virtual-machine recursion level {level} exceeds the {} script slots",
-                self.script_slot_count
-            )));
-        }
-        let offset = index
-            .checked_mul(self.script_size)
-            .and_then(|value| self.script_array_offset.checked_add(value))
-            .ok_or_else(|| BridgeInstallError::new("virtual-machine script slot overflowed"))?;
-        // SAFETY: index is bounded and target validation bounds both fields
-        // within one compiler-measured CVirtualMachineScript object.
-        let slot = unsafe { vm.cast::<u8>().add(offset) };
-        let id = unsafe { slot.add(self.script_event_id_offset).cast::<i32>().read() };
-        if id <= 0 {
-            return Ok(EventContext::default());
-        }
-        let script = unsafe { &*slot.add(self.script_name_offset).cast::<CExoString>() };
-        Ok(EventContext {
-            name: event_name(id).to_string(),
-            id,
-            script_name: copy_exo_string(script)?,
-            phase: "running".to_string(),
-            depth: level
-                .checked_add(1)
-                .ok_or_else(|| BridgeInstallError::new("event recursion depth overflowed"))?,
-        })
+        Ok(ran)
+    }
+
+    pub(crate) fn current_event(
+        &self,
+        _thread: &EngineThreadToken,
+    ) -> Result<Option<EventPayload>, BridgeInstallError> {
+        self.frames.current()
+    }
+
+    pub(crate) fn control_event(
+        &self,
+        _thread: &EngineThreadToken,
+        command: EventCommand,
+    ) -> Result<(), BridgeInstallError> {
+        self.frames.control(command)
     }
 }
 
-fn checked(name: &str, value: u64) -> Result<usize, BridgeInstallError> {
-    usize::try_from(value).map_err(|_error| {
-        BridgeInstallError::new(format!("target-pack layout {name} exceeds usize"))
-    })
+fn lock_frames(
+    frames: &Mutex<Vec<EventFrame>>,
+) -> Result<MutexGuard<'_, Vec<EventFrame>>, BridgeInstallError> {
+    frames
+        .lock()
+        .map_err(|_error| BridgeInstallError::new("event frame lock is poisoned"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn payload(name: &str, controls: EventControls) -> EventPayload {
+        EventPayload {
+            name: name.to_string(),
+            id: -1,
+            script: "_nwnrs_event".to_string(),
+            phase: "before".to_string(),
+            depth: 0,
+            target: EventObjectId::new(0x0102_0304),
+            controls,
+            data: BTreeMap::new(),
+        }
+    }
+
+    #[test]
+    fn nested_frames_restore_parent_state() -> Result<(), BridgeInstallError> {
+        let frames = EventFrames::default();
+        let outer = frames.enter(payload(
+            "fixture.outer",
+            EventControls {
+                skippable: true,
+                result:    true,
+            },
+        ))?;
+        assert_eq!(frames.current()?.map(|event| event.depth), Some(1));
+        frames.control(EventCommand::SetResult(b"{\"outer\":true}".to_vec()))?;
+
+        let inner = frames.enter(payload(
+            "fixture.inner",
+            EventControls {
+                skippable: true,
+                result:    false,
+            },
+        ))?;
+        assert_eq!(frames.current()?.map(|event| event.depth), Some(2));
+        frames.control(EventCommand::Skip)?;
+        let inner = inner.finish()?;
+        assert!(inner.skipped);
+        assert!(inner.result.is_none());
+
+        assert_eq!(
+            frames.current()?.map(|event| event.name),
+            Some("fixture.outer".to_string())
+        );
+        let outer = outer.finish()?;
+        assert!(!outer.skipped);
+        assert_eq!(outer.result, Some(b"{\"outer\":true}".to_vec()));
+        assert!(frames.current()?.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn scope_drop_removes_frame_and_controls_are_schema_checked() -> Result<(), BridgeInstallError>
+    {
+        let frames = EventFrames::default();
+        {
+            let _scope = frames.enter(payload("fixture.read_only", EventControls::default()))?;
+            let error = frames
+                .control(EventCommand::Skip)
+                .expect_err("read-only event must reject skip");
+            assert!(error.to_string().contains("not skippable"));
+            let error = frames
+                .control(EventCommand::SetResult(b"null".to_vec()))
+                .expect_err("read-only event must reject results");
+            assert!(error.to_string().contains("does not accept a result"));
+        }
+        assert!(frames.current()?.is_none());
+        Ok(())
+    }
 }

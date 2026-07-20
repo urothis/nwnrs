@@ -16,8 +16,9 @@ use std::{
 
 pub use bridge::{
     AdministrationCommand, BannedLists, BridgeError, BridgeErrorCode, BridgeFunction, BridgeResult,
-    BridgeValue, EventContext, HostCommandResult, HostQuery, HostValue, RuntimeHost, ScriptBridge,
-    ScriptLog, ScriptLogLevel, Vector, event_name,
+    BridgeValue, EventCommand, EventControls, EventLocation, EventObjectId, EventPayload,
+    EventValue, EventVector, HostCommandResult, HostQuery, HostValue, RuntimeHost, ScriptBridge,
+    ScriptLog, ScriptLogLevel, Vector,
 };
 pub use identity::{BinaryIdentity, FileSha256};
 pub use platform::{Architecture, OperatingSystem, Platform};
@@ -36,8 +37,8 @@ pub const NWSCRIPT_BRIDGE_CAPABILITY_VERSION: u32 = 1;
 pub const SERVER_STATE_CAPABILITY_VERSION: u32 = 1;
 /// Version of the optional administration capability.
 pub const ADMINISTRATION_CAPABILITY_VERSION: u32 = 1;
-/// Version of the optional event-context capability.
-pub const EVENT_CONTEXT_CAPABILITY_VERSION: u32 = 2;
+/// Version of the optional events capability.
+pub const EVENTS_CAPABILITY_VERSION: u32 = 2;
 /// Enables initialization when set to `1` in an injected process.
 pub const ENV_ENABLED: &str = "NWNRS_ENABLED";
 /// Makes initialization failure fatal when set to `1`.
@@ -357,15 +358,15 @@ pub enum Capability {
     ServerState,
     /// Runtime administration controls.
     Administration,
-    /// Current VM event-script context.
-    EventContext,
+    /// Scoped native events and their NWScript dispatch.
+    Events,
 }
 
 impl Capability {
     /// Returns the stable external capability name.
     ///
     /// ```
-    /// assert_eq!(nwnrs_runtime::Capability::EventContext.name(), "event_context");
+    /// assert_eq!(nwnrs_runtime::Capability::Events.name(), "events");
     /// ```
     #[must_use]
     pub const fn name(self) -> &'static str {
@@ -373,7 +374,7 @@ impl Capability {
             Self::NwscriptBridge => "nwscript_bridge",
             Self::ServerState => "server_state",
             Self::Administration => "administration",
-            Self::EventContext => "event_context",
+            Self::Events => "events",
         }
     }
 
@@ -391,7 +392,7 @@ impl Capability {
             "nwscript_bridge" => Some(Self::NwscriptBridge),
             "server_state" => Some(Self::ServerState),
             "administration" => Some(Self::Administration),
-            "event_context" => Some(Self::EventContext),
+            "events" => Some(Self::Events),
             _ => None,
         }
     }
@@ -616,7 +617,7 @@ impl TargetPack {
                 .administration
                 .as_ref()
                 .map_or(0, |target| target.version),
-            Capability::EventContext => self.events.as_ref().map_or(0, |target| target.version),
+            Capability::Events => self.events.as_ref().map_or(0, |target| target.version),
         }
     }
 }
@@ -855,11 +856,7 @@ fn validate_target_pack_metadata(pack: &TargetPack) -> RuntimeResult<()> {
         }
     }
     if let Some(events) = pack.events.as_ref() {
-        validate_capability_version(
-            "event_context",
-            events.version,
-            EVENT_CONTEXT_CAPABILITY_VERSION,
-        )?;
+        validate_capability_version("events", events.version, EVENTS_CAPABILITY_VERSION)?;
         for (name, address) in [
             ("load_module_finish", &events.load_module_finish),
             ("virtual_machine", &events.virtual_machine),
@@ -1605,7 +1602,7 @@ mod tests {
 
     use super::{
         AbiLayouts, Architecture, BinaryIdentity, BridgeTarget, CExoStringLayout, Capability,
-        EVENT_CONTEXT_CAPABILITY_VERSION, EngineClassLayouts, EventTarget,
+        EVENTS_CAPABILITY_VERSION, EngineClassLayouts, EventTarget,
         NWSCRIPT_BRIDGE_CAPABILITY_VERSION, OperatingSystem, Platform, PlayerListLayout,
         RUNTIME_API_VERSION, SERVER_STATE_CAPABILITY_VERSION, ServerStateTarget,
         TARGET_PACK_SCHEMA_VERSION, TargetAddress, TargetPack, TargetServer, TargetSource,
@@ -1756,7 +1753,7 @@ mod tests {
         assert_eq!(
             selected_without_optional_capabilities
                 .pack
-                .capability_version(Capability::EventContext),
+                .capability_version(Capability::Events),
             0
         );
 
@@ -1899,7 +1896,7 @@ mod tests {
 
     fn fixture_event_target() -> EventTarget {
         EventTarget {
-            version:            EVENT_CONTEXT_CAPABILITY_VERSION,
+            version:            EVENTS_CAPABILITY_VERSION,
             load_module_finish: TargetAddress::Offset {
                 offset: 19
             },

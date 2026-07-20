@@ -1,10 +1,8 @@
 //! Safe runtime-host adapter backed by live NWServer engine access.
 
-use std::ffi::c_void;
-
 use nwnrs_runtime::{
-    AdministrationCommand, BridgeError, BridgeErrorCode, BridgeResult, HostCommandResult,
-    HostQuery, HostValue, RuntimeHost,
+    AdministrationCommand, BridgeError, BridgeErrorCode, BridgeResult, EventCommand,
+    HostCommandResult, HostQuery, HostValue, RuntimeHost,
 };
 
 use crate::{
@@ -16,19 +14,13 @@ use crate::{
 pub(crate) struct NativeRuntimeHost<'engine, 'thread> {
     engine: &'engine Engine,
     thread: &'thread EngineThreadToken,
-    vm:     *mut c_void,
 }
 
 impl<'engine, 'thread> NativeRuntimeHost<'engine, 'thread> {
-    pub(crate) const fn new(
-        engine: &'engine Engine,
-        thread: &'thread EngineThreadToken,
-        vm: *mut c_void,
-    ) -> Self {
+    pub(crate) const fn new(engine: &'engine Engine, thread: &'thread EngineThreadToken) -> Self {
         Self {
             engine,
             thread,
-            vm,
         }
     }
 }
@@ -84,9 +76,9 @@ impl RuntimeHost for NativeRuntimeHost<'_, '_> {
                     .banned_lists(self.thread)
                     .map_err(engine_error)?,
             ),
-            HostQuery::EventContext => HostValue::EventContext(
+            HostQuery::CurrentEvent => HostValue::CurrentEvent(
                 self.engine
-                    .event_context(self.thread, self.vm)
+                    .current_event(self.thread)
                     .map_err(engine_error)?,
             ),
         };
@@ -96,6 +88,12 @@ impl RuntimeHost for NativeRuntimeHost<'_, '_> {
     fn execute(&mut self, command: AdministrationCommand) -> BridgeResult<HostCommandResult> {
         self.engine
             .execute_administration(self.thread, &command)
+            .map_err(engine_error)
+    }
+
+    fn control_event(&mut self, command: EventCommand) -> BridgeResult<()> {
+        self.engine
+            .control_event(self.thread, command)
             .map_err(engine_error)
     }
 }

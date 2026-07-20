@@ -6,14 +6,15 @@ mod value;
 
 pub use error::{BridgeError, BridgeErrorCode, BridgeResult};
 pub use host::{
-    AdministrationCommand, BannedLists, EventContext, HostCommandResult, HostQuery, HostValue,
-    RuntimeHost,
+    AdministrationCommand, BannedLists, EventCommand, EventControls, EventLocation, EventObjectId,
+    EventPayload, EventValue, EventVector, HostCommandResult, HostQuery, HostValue, RuntimeHost,
 };
 pub use value::{BridgeValue, ScriptLog, ScriptLogLevel, Vector};
 
 const NAMESPACE: &str = "NWNRS";
 const MAX_LOG_MESSAGE_BYTES: usize = 64 * 1024;
 const MAX_ADMIN_STRING_BYTES: usize = 64 * 1024;
+const MAX_EVENT_JSON_BYTES: usize = 64 * 1024;
 const OBJECT_INVALID: u32 = 0x7f00_0000;
 
 /// One statically registered function in the stable NWScript API.
@@ -109,16 +110,12 @@ pub enum BridgeFunction {
     DeleteTurd,
     /// Reports whether an engine event is active.
     GetIsInEvent,
-    /// Returns the semantic current event name.
+    /// Returns the complete current event as serialized JSON.
     GetCurrentEvent,
-    /// Returns the current engine event identifier.
-    GetCurrentEventId,
-    /// Returns the current event script resref.
-    GetCurrentEventScript,
-    /// Returns the current event phase.
-    GetCurrentEventPhase,
-    /// Returns the current event nesting depth.
-    GetCurrentEventDepth,
+    /// Skips the current event when its schema permits it.
+    SkipCurrentEvent,
+    /// Sets the current event's JSON result when its schema permits it.
+    SetCurrentEventResult,
 }
 
 impl BridgeFunction {
@@ -128,7 +125,7 @@ impl BridgeFunction {
     /// assert!(nwnrs_runtime::BridgeFunction::ALL
     ///     .contains(&nwnrs_runtime::BridgeFunction::Log));
     /// ```
-    pub const ALL: [Self; 50] = [
+    pub const ALL: [Self; 48] = [
         Self::GetApiVersion,
         Self::GetCapabilityVersion,
         Self::HasCapability,
@@ -175,10 +172,8 @@ impl BridgeFunction {
         Self::DeleteTurd,
         Self::GetIsInEvent,
         Self::GetCurrentEvent,
-        Self::GetCurrentEventId,
-        Self::GetCurrentEventScript,
-        Self::GetCurrentEventPhase,
-        Self::GetCurrentEventDepth,
+        Self::SkipCurrentEvent,
+        Self::SetCurrentEventResult,
     ];
 
     /// Returns the exact public function name.
@@ -231,10 +226,8 @@ impl BridgeFunction {
             Self::DeleteTurd => "DeleteTURD",
             Self::GetIsInEvent => "GetIsInEvent",
             Self::GetCurrentEvent => "GetCurrentEvent",
-            Self::GetCurrentEventId => "GetCurrentEventId",
-            Self::GetCurrentEventScript => "GetCurrentEventScript",
-            Self::GetCurrentEventPhase => "GetCurrentEventPhase",
-            Self::GetCurrentEventDepth => "GetCurrentEventDepth",
+            Self::SkipCurrentEvent => "SkipCurrentEvent",
+            Self::SetCurrentEventResult => "SetCurrentEventResult",
         }
     }
 
@@ -288,10 +281,8 @@ impl BridgeFunction {
             "DeleteTURD" => Some(Self::DeleteTurd),
             "GetIsInEvent" => Some(Self::GetIsInEvent),
             "GetCurrentEvent" => Some(Self::GetCurrentEvent),
-            "GetCurrentEventId" => Some(Self::GetCurrentEventId),
-            "GetCurrentEventScript" => Some(Self::GetCurrentEventScript),
-            "GetCurrentEventPhase" => Some(Self::GetCurrentEventPhase),
-            "GetCurrentEventDepth" => Some(Self::GetCurrentEventDepth),
+            "SkipCurrentEvent" => Some(Self::SkipCurrentEvent),
+            "SetCurrentEventResult" => Some(Self::SetCurrentEventResult),
             _ => None,
         }
     }
@@ -334,10 +325,8 @@ impl BridgeFunction {
             | Self::DeleteTurd => Some(Capability::Administration),
             Self::GetIsInEvent
             | Self::GetCurrentEvent
-            | Self::GetCurrentEventId
-            | Self::GetCurrentEventScript
-            | Self::GetCurrentEventPhase
-            | Self::GetCurrentEventDepth => Some(Capability::EventContext),
+            | Self::SkipCurrentEvent
+            | Self::SetCurrentEventResult => Some(Capability::Events),
             _ => None,
         }
     }
@@ -368,7 +357,8 @@ impl BridgeFunction {
             | Self::AddBannedCdKey
             | Self::RemoveBannedCdKey
             | Self::AddBannedPlayerName
-            | Self::RemoveBannedPlayerName => 1,
+            | Self::RemoveBannedPlayerName
+            | Self::SetCurrentEventResult => 1,
             _ => 0,
         }
     }
@@ -797,20 +787,19 @@ impl ScriptBridge {
                 Some(BridgeValue::Integer(i32::from(deleted)))
             }
             BridgeFunction::GetIsInEvent => Some(BridgeValue::Integer(i32::from(
-                host_event_context(host)?.depth > 0,
+                host_current_event(host)?.is_some(),
             ))),
-            BridgeFunction::GetCurrentEvent => Some(string_value(&host_event_context(host)?.name)),
-            BridgeFunction::GetCurrentEventId => {
-                Some(BridgeValue::Integer(host_event_context(host)?.id))
+            BridgeFunction::GetCurrentEvent => Some(BridgeValue::String(current_event_json(host)?)),
+            BridgeFunction::SkipCurrentEvent => {
+                self.ensure_no_arguments(function)?;
+                host.control_event(EventCommand::Skip)?;
+                None
             }
-            BridgeFunction::GetCurrentEventScript => {
-                Some(BridgeValue::String(host_event_context(host)?.script_name))
-            }
-            BridgeFunction::GetCurrentEventPhase => {
-                Some(string_value(&host_event_context(host)?.phase))
-            }
-            BridgeFunction::GetCurrentEventDepth => {
-                Some(BridgeValue::Integer(host_event_context(host)?.depth))
+            BridgeFunction::SetCurrentEventResult => {
+                let result = self.pop_string_argument("event result")?;
+                self.ensure_no_arguments(function)?;
+                host.control_event(EventCommand::SetResult(validate_event_json(result)?))?;
+                None
             }
             BridgeFunction::Log => unreachable!("logging dispatched before value matching"),
         };
@@ -1028,14 +1017,46 @@ fn host_banned_lists(host: &mut impl RuntimeHost) -> BridgeResult<BannedLists> {
     }
 }
 
-fn host_event_context(host: &mut impl RuntimeHost) -> BridgeResult<EventContext> {
-    match host.query(HostQuery::EventContext)? {
-        HostValue::EventContext(value) => Ok(value),
+fn host_current_event(host: &mut impl RuntimeHost) -> BridgeResult<Option<EventPayload>> {
+    match host.query(HostQuery::CurrentEvent)? {
+        HostValue::CurrentEvent(value) => Ok(value),
         _ => Err(unexpected_host_value(
-            HostQuery::EventContext,
-            "event context",
+            HostQuery::CurrentEvent,
+            "current event",
         )),
     }
+}
+
+fn current_event_json(host: &mut impl RuntimeHost) -> BridgeResult<Vec<u8>> {
+    let json = serde_json::to_vec(&host_current_event(host)?).map_err(|error| {
+        BridgeError::new(
+            BridgeErrorCode::Engine,
+            format!("failed to serialize current event: {error}"),
+        )
+    })?;
+    if json.len() > MAX_EVENT_JSON_BYTES {
+        return Err(BridgeError::new(
+            BridgeErrorCode::Engine,
+            format!("current event JSON exceeds {MAX_EVENT_JSON_BYTES} bytes"),
+        ));
+    }
+    Ok(json)
+}
+
+fn validate_event_json(value: Vec<u8>) -> BridgeResult<Vec<u8>> {
+    if value.len() > MAX_EVENT_JSON_BYTES {
+        return Err(invalid_argument(format!(
+            "event JSON exceeds {MAX_EVENT_JSON_BYTES} bytes"
+        )));
+    }
+    let value: serde_json::Value = serde_json::from_slice(&value)
+        .map_err(|error| invalid_argument(format!("event result is not valid JSON: {error}")))?;
+    serde_json::to_vec(&value).map_err(|error| {
+        BridgeError::new(
+            BridgeErrorCode::Engine,
+            format!("failed to normalize event result JSON: {error}"),
+        )
+    })
 }
 
 fn unexpected_host_value(query: HostQuery, expected: &str) -> BridgeError {
@@ -1078,111 +1099,18 @@ fn string_value(value: &str) -> BridgeValue {
     BridgeValue::String(value.as_bytes().to_vec())
 }
 
-/// Returns the stable semantic name for an engine `EVENT_SCRIPT_*` identifier.
-#[must_use]
-pub fn event_name(id: i32) -> &'static str {
-    match id {
-        3000 => "module.on_heartbeat",
-        3001 => "module.on_user_defined",
-        3002 => "module.on_module_load",
-        3003 => "module.on_module_start",
-        3004 => "module.on_client_enter",
-        3005 => "module.on_client_exit",
-        3006 => "module.on_activate_item",
-        3007 => "module.on_acquire_item",
-        3008 => "module.on_lose_item",
-        3009 => "module.on_player_death",
-        3010 => "module.on_player_dying",
-        3011 => "module.on_respawn_button_pressed",
-        3012 => "module.on_player_rest",
-        3013 => "module.on_player_level_up",
-        3014 => "module.on_player_cancel_cutscene",
-        3015 => "module.on_equip_item",
-        3016 => "module.on_unequip_item",
-        3017 => "module.on_player_chat",
-        3018 => "module.on_player_target",
-        4000 => "area.on_heartbeat",
-        4001 => "area.on_user_defined",
-        4002 => "area.on_enter",
-        4003 => "area.on_exit",
-        5000 => "creature.on_heartbeat",
-        5001 => "creature.on_notice",
-        5002 => "creature.on_spell_cast_at",
-        5003 => "creature.on_melee_attacked",
-        5004 => "creature.on_damaged",
-        5005 => "creature.on_disturbed",
-        5006 => "creature.on_end_combat_round",
-        5007 => "creature.on_dialogue",
-        5008 => "creature.on_spawn_in",
-        5009 => "creature.on_rested",
-        5010 => "creature.on_death",
-        5011 => "creature.on_user_defined",
-        5012 => "creature.on_blocked_by_door",
-        7000 => "trigger.on_heartbeat",
-        7001 => "trigger.on_object_enter",
-        7002 => "trigger.on_object_exit",
-        7003 => "trigger.on_user_defined",
-        7004 => "trigger.on_trap_triggered",
-        7005 => "trigger.on_disarmed",
-        7006 => "trigger.on_clicked",
-        9000 => "placeable.on_closed",
-        9001 => "placeable.on_damaged",
-        9002 => "placeable.on_death",
-        9003 => "placeable.on_disarm",
-        9004 => "placeable.on_heartbeat",
-        9005 => "placeable.on_inventory_disturbed",
-        9006 => "placeable.on_lock",
-        9007 => "placeable.on_melee_attacked",
-        9008 => "placeable.on_open",
-        9009 => "placeable.on_spell_cast_at",
-        9010 => "placeable.on_trap_triggered",
-        9011 => "placeable.on_unlock",
-        9012 => "placeable.on_used",
-        9013 => "placeable.on_user_defined",
-        9014 => "placeable.on_dialogue",
-        9015 => "placeable.on_left_click",
-        10000 => "door.on_open",
-        10001 => "door.on_close",
-        10002 => "door.on_damage",
-        10003 => "door.on_death",
-        10004 => "door.on_disarm",
-        10005 => "door.on_heartbeat",
-        10006 => "door.on_lock",
-        10007 => "door.on_melee_attacked",
-        10008 => "door.on_spell_cast_at",
-        10009 => "door.on_trap_triggered",
-        10010 => "door.on_unlock",
-        10011 => "door.on_user_defined",
-        10012 => "door.on_clicked",
-        10013 => "door.on_dialogue",
-        10014 => "door.on_fail_to_open",
-        11000 => "area_of_effect.on_heartbeat",
-        11001 => "area_of_effect.on_user_defined",
-        11002 => "area_of_effect.on_object_enter",
-        11003 => "area_of_effect.on_object_exit",
-        13000 => "encounter.on_object_enter",
-        13001 => "encounter.on_object_exit",
-        13002 => "encounter.on_heartbeat",
-        13003 => "encounter.on_exhausted",
-        13004 => "encounter.on_user_defined",
-        14000 => "store.on_open",
-        14001 => "store.on_close",
-        _ => "unknown",
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
+    use std::{collections::BTreeMap, path::PathBuf};
 
     use super::{
         AdministrationCommand, BannedLists, BridgeError, BridgeErrorCode, BridgeResult,
-        BridgeValue, EventContext, HostCommandResult, HostQuery, HostValue, RuntimeHost,
-        ScriptBridge, ScriptLog, ScriptLogLevel, Vector,
+        BridgeValue, EventCommand, EventControls, EventObjectId, EventPayload, HostCommandResult,
+        HostQuery, HostValue, RuntimeHost, ScriptBridge, ScriptLog, ScriptLogLevel, Vector,
     };
     use crate::{
         ADMINISTRATION_CAPABILITY_VERSION, AbiLayouts, AdministrationTarget, Architecture,
-        BinaryIdentity, BridgeTarget, CExoStringLayout, EVENT_CONTEXT_CAPABILITY_VERSION,
+        BinaryIdentity, BridgeTarget, CExoStringLayout, EVENTS_CAPABILITY_VERSION,
         EngineClassLayouts, EventTarget, FileSha256, NWSCRIPT_BRIDGE_CAPABILITY_VERSION,
         OperatingSystem, Platform, PlayerListLayout, RUNTIME_API_VERSION, RuntimeContext,
         SERVER_STATE_CAPABILITY_VERSION, SelectedTargetPack, ShutdownTarget,
@@ -1199,13 +1127,19 @@ mod tests {
             player_count: 2,
             max_players: 64,
             udp_port: 5121,
-            event: EventContext {
-                name:        "module.on_module_load".to_string(),
-                id:          3002,
-                script_name: b"fixture_event".to_vec(),
-                phase:       "running".to_string(),
-                depth:       1,
-            },
+            event: Some(EventPayload {
+                name:     "module.on_module_load".to_string(),
+                id:       3002,
+                script:   "_nwnrs_onload".to_string(),
+                phase:    "before".to_string(),
+                depth:    1,
+                target:   EventObjectId::new(0),
+                controls: EventControls {
+                    skippable: true,
+                    result:    true,
+                },
+                data:     BTreeMap::new(),
+            }),
             ..FakeHost::default()
         };
         let mut bridge = ScriptBridge::default();
@@ -1221,11 +1155,48 @@ mod tests {
         bridge.call("NWNRS", "GetServerPort", &context, &mut host)?;
         assert_eq!(bridge.pop_integer()?, 5121);
         bridge.call("NWNRS", "GetCurrentEvent", &context, &mut host)?;
-        assert_eq!(bridge.pop_string()?, b"module.on_module_load");
-        bridge.call("NWNRS", "GetCurrentEventScript", &context, &mut host)?;
-        assert_eq!(bridge.pop_string()?, b"fixture_event");
-        bridge.call("NWNRS", "GetCurrentEventDepth", &context, &mut host)?;
-        assert_eq!(bridge.pop_integer()?, 1);
+        let event: serde_json::Value = serde_json::from_slice(&bridge.pop_string()?)?;
+        assert_eq!(
+            event.pointer("/name").and_then(serde_json::Value::as_str),
+            Some("module.on_module_load")
+        );
+        assert_eq!(
+            event.pointer("/id").and_then(serde_json::Value::as_i64),
+            Some(3002)
+        );
+        assert_eq!(
+            event.pointer("/script").and_then(serde_json::Value::as_str),
+            Some("_nwnrs_onload")
+        );
+        assert_eq!(
+            event.pointer("/phase").and_then(serde_json::Value::as_str),
+            Some("before")
+        );
+        assert_eq!(
+            event.pointer("/depth").and_then(serde_json::Value::as_u64),
+            Some(1)
+        );
+        assert_eq!(
+            event.pointer("/target").and_then(serde_json::Value::as_str),
+            Some("00000000")
+        );
+        assert_eq!(
+            event
+                .pointer("/controls/skippable")
+                .and_then(serde_json::Value::as_bool),
+            Some(true)
+        );
+
+        bridge.call("NWNRS", "SkipCurrentEvent", &context, &mut host)?;
+        bridge.push_argument(BridgeValue::String(b"{\"accepted\":true}".to_vec()));
+        bridge.call("NWNRS", "SetCurrentEventResult", &context, &mut host)?;
+        assert_eq!(
+            host.event_commands,
+            [
+                EventCommand::Skip,
+                EventCommand::SetResult(b"{\"accepted\":true}".to_vec())
+            ]
+        );
 
         bridge.push_argument(BridgeValue::Integer(1));
         assert!(
@@ -1451,7 +1422,7 @@ mod tests {
             "NWSCRIPT_BRIDGE",
             "SERVER_STATE",
             "ADMINISTRATION",
-            "EVENT_CONTEXT",
+            "EVENTS",
         ] {
             assert!(header.contains(&format!("NWNRS_CAPABILITY_{name}")));
         }
@@ -1509,7 +1480,8 @@ mod tests {
         min_level:              i32,
         max_level:              i32,
         banned_lists:           BannedLists,
-        event:                  EventContext,
+        event:                  Option<EventPayload>,
+        event_commands:         Vec<EventCommand>,
         queries:                Vec<HostQuery>,
         commands:               Vec<AdministrationCommand>,
         execution_error:        Option<BridgeError>,
@@ -1528,7 +1500,8 @@ mod tests {
                 min_level:              1,
                 max_level:              40,
                 banned_lists:           BannedLists::default(),
-                event:                  EventContext::default(),
+                event:                  None,
+                event_commands:         Vec::new(),
                 queries:                Vec::new(),
                 commands:               Vec::new(),
                 execution_error:        None,
@@ -1554,7 +1527,7 @@ mod tests {
                     HostValue::Integer(i32::from(matches!(debug_type, 1 | 3)))
                 }
                 HostQuery::BannedLists => HostValue::BannedLists(self.banned_lists.clone()),
-                HostQuery::EventContext => HostValue::EventContext(self.event.clone()),
+                HostQuery::CurrentEvent => HostValue::CurrentEvent(self.event.clone()),
             };
             Ok(value)
         }
@@ -1570,6 +1543,11 @@ mod tests {
             };
             self.commands.push(command);
             Ok(result)
+        }
+
+        fn control_event(&mut self, command: EventCommand) -> BridgeResult<()> {
+            self.event_commands.push(command);
+            Ok(())
         }
     }
 
@@ -1647,7 +1625,7 @@ mod tests {
             offset: 1
         };
         EventTarget {
-            version:            EVENT_CONTEXT_CAPABILITY_VERSION,
+            version:            EVENTS_CAPABILITY_VERSION,
             load_module_finish: address(),
             virtual_machine:    address(),
             run_script:         address(),

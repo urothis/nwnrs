@@ -9,7 +9,7 @@ return-state management, and administration command construction remain in
 the safe `nwnrs-runtime` crate.
 
 The boundary is split into typed engine modules for VM stack transport,
-server state, event context, engine strings, native addresses, and VM-thread
+server state, scoped events, engine strings, native addresses, and VM-thread
 access. Resolved addresses are converted to their exact function types once.
 Opaque C++ objects never escape this crate, owned engine strings use an RAII
 deallocator, and every engine read requires a non-`Send`, non-`Sync` callback
@@ -34,18 +34,20 @@ byte-identical `.deletedN` hard-link backup when requested, removes the active
 BIC, and cleans the matching TURD without retaining an engine pointer between
 ticks.
 
-The same exact target pack records the live `CVirtualMachineScript` layout.
-During each NWScript bridge call, the runtime copies the current script name,
-engine event identifier, and recursion depth directly from that VM slot. This
-makes module, area, and object event context visible without adding event
-hooks or changing engine event behavior.
-
 Event capability version 2 also identifies the exact
 `CNWSModule::LoadModuleFinish`, `CVirtualMachine::RunScript`, and
 `g_pVirtualMachine` symbols. A Frida replacement runs the generated
 `_nwnrs_onload` script with owner `0` before calling the original module-load
 completion function. Script failure is diagnostic only: the original engine
 function is always called. This does not read or rewrite `Mod_OnModLoad`.
+
+Each native event dispatch pushes one owned, typed frame onto a bounded stack.
+The safe bridge serializes the active frame once and the generated NWScript
+dispatcher parses it once before invoking its handlers. Nested hooks restore
+their parent frame, and scope cleanup removes a frame after normal failure or
+Rust unwinding. JSON never contains borrowed engine pointers. Skip and result
+requests mutate only the top frame and are rejected unless its event schema
+advertises that control.
 
 Validated NWScript log calls are emitted through `tracing` under the
 `nwnrs::script` target. A supervising launcher preserves their requested level;

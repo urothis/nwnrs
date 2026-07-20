@@ -1,5 +1,9 @@
 //! Safe operations exposed by the native NWServer adapter.
 
+use std::collections::BTreeMap;
+
+use serde::Serialize;
+
 use super::BridgeResult;
 
 /// One administration mutation validated by the NWScript dispatcher.
@@ -92,8 +96,17 @@ pub enum HostQuery {
     DebugValue(i32),
     /// All three engine ban lists.
     BannedLists,
-    /// Current VM event-script context.
-    EventContext,
+    /// Current scoped nwnrs event, if any.
+    CurrentEvent,
+}
+
+/// Mutations supported by the currently active event frame.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum EventCommand {
+    /// Prevents a skippable event's original engine operation.
+    Skip,
+    /// Replaces the event's JSON result.
+    SetResult(Vec<u8>),
 }
 
 /// The three administration ban lists returned as one coherent value.
@@ -108,7 +121,7 @@ pub struct BannedLists {
 }
 
 /// A typed value returned by [`RuntimeHost::query`].
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum HostValue {
     /// An NWScript integer value.
     Integer(i32),
@@ -118,8 +131,8 @@ pub enum HostValue {
     String(Vec<u8>),
     /// All administration ban lists.
     BannedLists(BannedLists),
-    /// Current event context.
-    EventContext(EventContext),
+    /// Current scoped event, or `None` outside nwnrs event dispatch.
+    CurrentEvent(Option<EventPayload>),
 }
 
 /// Result produced by one synchronous administration command.
@@ -131,31 +144,106 @@ pub enum HostCommandResult {
     Boolean(bool),
 }
 
-/// One engine event-script invocation active on the current server thread.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct EventContext {
-    /// Stable semantic event name, such as `module.on_module_load`.
-    pub name:        String,
-    /// Engine `EVENT_SCRIPT_*` identifier, or `-1` outside an event.
-    pub id:          i32,
-    /// Event script resref copied from the engine.
-    pub script_name: Vec<u8>,
-    /// Current phase. The context-first API currently reports `running`.
-    pub phase:       String,
-    /// One-based VM script nesting depth, or zero outside an event.
-    pub depth:       i32,
+/// Controls advertised to NWScript for one event kind.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize)]
+pub struct EventControls {
+    /// Whether [`EventCommand::Skip`] is accepted.
+    pub skippable: bool,
+    /// Whether [`EventCommand::SetResult`] is accepted.
+    pub result:    bool,
 }
 
-impl Default for EventContext {
-    fn default() -> Self {
-        Self {
-            name:        String::new(),
-            id:          -1,
-            script_name: Vec::new(),
-            phase:       String::new(),
-            depth:       0,
-        }
+/// An NWScript object identifier serialized as exactly eight hexadecimal
+/// digits.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct EventObjectId(u32);
+
+impl EventObjectId {
+    /// Creates an event object identifier from its engine representation.
+    #[must_use]
+    pub const fn new(value: u32) -> Self {
+        Self(value)
     }
+
+    /// Returns the raw engine object identifier.
+    #[must_use]
+    pub const fn raw(self) -> u32 {
+        self.0
+    }
+}
+
+impl Serialize for EventObjectId {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&format!("{:08x}", self.0))
+    }
+}
+
+/// A three-dimensional event value.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+pub struct EventVector {
+    /// X coordinate.
+    pub x: f32,
+    /// Y coordinate.
+    pub y: f32,
+    /// Z coordinate.
+    pub z: f32,
+}
+
+/// A location copied from live engine state for one event dispatch.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+pub struct EventLocation {
+    /// Containing area object identifier.
+    pub area:     EventObjectId,
+    /// World-space position.
+    pub position: EventVector,
+    /// Facing in degrees.
+    pub facing:   f32,
+}
+
+/// One owned, typed value in an event's data object.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(untagged)]
+pub enum EventValue {
+    /// Explicit JSON null.
+    Null,
+    /// Boolean event field.
+    Boolean(bool),
+    /// Signed integer event field.
+    Integer(i32),
+    /// Floating-point event field.
+    Float(f32),
+    /// UTF-8 string event field.
+    String(String),
+    /// Neverwinter Nights object identifier.
+    Object(EventObjectId),
+    /// Three-dimensional vector event field.
+    Vector(EventVector),
+    /// Area, position, and facing event field.
+    Location(EventLocation),
+}
+
+/// One immutable JSON-shaped event snapshot passed to every NWScript handler.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct EventPayload {
+    /// Stable semantic event identity.
+    pub name:     String,
+    /// Engine `EVENT_SCRIPT_*` identifier, or `-1` when not applicable.
+    pub id:       i32,
+    /// Generated dispatcher script resref.
+    pub script:   String,
+    /// Hook phase such as `before` or `after`.
+    pub phase:    String,
+    /// One-based nwnrs event nesting depth.
+    pub depth:    u32,
+    /// Object used as `OBJECT_SELF` for the dispatcher.
+    pub target:   EventObjectId,
+    /// Mutations supported by this event kind.
+    pub controls: EventControls,
+    /// Event-specific owned values.
+    pub data:     BTreeMap<String, EventValue>,
 }
 
 /// Safe interface through which the dispatcher accesses live NWServer state.
@@ -176,4 +264,73 @@ pub trait RuntimeHost {
     ///
     /// Returns an engine bridge error when the mutation fails.
     fn execute(&mut self, command: AdministrationCommand) -> BridgeResult<HostCommandResult>;
+
+    /// Mutates the current scoped event frame.
+    ///
+    /// # Errors
+    ///
+    /// Returns an engine bridge error outside event dispatch or when the
+    /// current event does not support the requested control.
+    fn control_event(&mut self, command: EventCommand) -> BridgeResult<()>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn event_values_have_stable_json_representations() -> Result<(), serde_json::Error> {
+        let values = BTreeMap::from([
+            (
+                "location".to_string(),
+                EventValue::Location(EventLocation {
+                    area:     EventObjectId::new(0x0102_0304),
+                    position: EventVector {
+                        x: 1.25,
+                        y: -2.5,
+                        z: 3.75,
+                    },
+                    facing:   90.0,
+                }),
+            ),
+            (
+                "object".to_string(),
+                EventValue::Object(EventObjectId::new(0x7f00_0000)),
+            ),
+            (
+                "vector".to_string(),
+                EventValue::Vector(EventVector {
+                    x: 4.0,
+                    y: 5.0,
+                    z: 6.0,
+                }),
+            ),
+        ]);
+        let json = serde_json::to_value(values)?;
+        assert_eq!(
+            json.pointer("/object").and_then(serde_json::Value::as_str),
+            Some("7f000000")
+        );
+        assert_eq!(
+            json.pointer("/vector/y")
+                .and_then(serde_json::Value::as_f64),
+            Some(5.0)
+        );
+        assert_eq!(
+            json.pointer("/location/area")
+                .and_then(serde_json::Value::as_str),
+            Some("01020304")
+        );
+        assert_eq!(
+            json.pointer("/location/position/z")
+                .and_then(serde_json::Value::as_f64),
+            Some(3.75)
+        );
+        assert_eq!(
+            json.pointer("/location/facing")
+                .and_then(serde_json::Value::as_f64),
+            Some(90.0)
+        );
+        Ok(())
+    }
 }

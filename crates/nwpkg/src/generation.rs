@@ -127,10 +127,14 @@ pub fn generate_event_dispatcher(input: &Path) -> Result<Option<GeneratedEventDi
         generated.push('\n');
     }
     generated.push_str("void main()\n{\n");
+    if !handlers.is_empty() {
+        generated.push_str("    NWNXCall(\"NWNRS\", \"GetCurrentEvent\");\n");
+        generated.push_str("    json jEvent = JsonParse(NWNXPopString());\n");
+    }
     for handler in handlers {
         generated.push_str("    ");
         generated.push_str(&handler);
-        generated.push_str("();\n");
+        generated.push_str("(jEvent);\n");
     }
     generated.push_str("}\n");
     Ok(Some(GeneratedEventDispatcher {
@@ -230,13 +234,15 @@ mod tests {
         let root = test_root("handlers")?;
         fs::write(
             root.join("startup.nss"),
-            "#[nwnrs::events(module_load)]\nvoid ProjectStart() {}\n",
+            "#[nwnrs::events(module_load)]\nvoid ProjectStart(json jEvent) {}\n",
         )
         .map_err(|error| error.to_string())?;
         let dispatcher = generate_event_dispatcher(&root)?
             .ok_or_else(|| "module did not generate a dispatcher".to_string())?;
         assert!(dispatcher.source.contains("#include \"startup\""));
-        assert!(dispatcher.source.contains("    ProjectStart();"));
+        assert_eq!(dispatcher.source.matches("GetCurrentEvent").count(), 1);
+        assert_eq!(dispatcher.source.matches("JsonParse").count(), 1);
+        assert!(dispatcher.source.contains("    ProjectStart(jEvent);"));
         assert!(!dispatcher.source.contains("#["));
         fs::remove_dir_all(root).map_err(|error| error.to_string())
     }

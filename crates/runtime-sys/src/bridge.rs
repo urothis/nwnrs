@@ -357,7 +357,7 @@ fn handle_call(engine: &Engine, thread: &EngineThreadToken, vm: *mut c_void) -> 
     let Some(context) = RUNTIME_CONTEXT.get() else {
         return VM_FAKE_ABORT_SCRIPT;
     };
-    let mut host = NativeRuntimeHost::new(engine, thread, vm);
+    let mut host = NativeRuntimeHost::new(engine, thread);
     let result = SCRIPT_BRIDGE.try_with(|bridge| {
         let mut bridge = bridge.try_borrow_mut().map_err(|_error| {
             BridgeError::new(

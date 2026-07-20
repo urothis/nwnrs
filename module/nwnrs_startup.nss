@@ -1,7 +1,7 @@
 #include "nwnrs"
 
 #[nwnrs::events(module_load)]
-void NWNRS_OnModuleLoad()
+void NWNRS_OnModuleLoad(json jEvent)
 {
     json jRuntime = JsonObject();
     jRuntime = JsonObjectSet(jRuntime, "version", JsonString(NWNRS_GetRuntimeVersion()));
@@ -30,13 +30,6 @@ void NWNRS_OnModuleLoad()
     json jModule = JsonObject();
     jModule = JsonObjectSet(jModule, "name", JsonString(NWNRS_GetModuleName()));
     jModule = JsonObjectSet(jModule, "players", jPlayers);
-
-    json jEvent = JsonObject();
-    jEvent = JsonObjectSet(jEvent, "name", JsonString(NWNRS_GetCurrentEvent()));
-    jEvent = JsonObjectSet(jEvent, "id", JsonInt(NWNRS_GetCurrentEventId()));
-    jEvent = JsonObjectSet(jEvent, "script", JsonString(NWNRS_GetCurrentEventScript()));
-    jEvent = JsonObjectSet(jEvent, "phase", JsonString(NWNRS_GetCurrentEventPhase()));
-    jEvent = JsonObjectSet(jEvent, "depth", JsonInt(NWNRS_GetCurrentEventDepth()));
 
     json jStartup = JsonObject();
     jStartup = JsonObjectSet(jStartup, "runtime", jRuntime);

@@ -4,11 +4,10 @@ use std::{error::Error, ffi::OsString, fs, path::PathBuf};
 
 use nwnrs_runtime::{
     ADMINISTRATION_CAPABILITY_VERSION, AbiLayouts, AdministrationTarget, BinaryIdentity,
-    BridgeTarget, CExoStringLayout, EVENT_CONTEXT_CAPABILITY_VERSION, EngineClassLayouts,
-    EventTarget, NWSCRIPT_BRIDGE_CAPABILITY_VERSION, OperatingSystem, PlayerListLayout,
-    RUNTIME_API_VERSION, SERVER_STATE_CAPABILITY_VERSION, ServerStateTarget, ShutdownTarget,
-    TARGET_PACK_SCHEMA_VERSION, TargetAddress, TargetPack, TargetServer, TargetSource,
-    VectorLayout,
+    BridgeTarget, CExoStringLayout, EVENTS_CAPABILITY_VERSION, EngineClassLayouts, EventTarget,
+    NWSCRIPT_BRIDGE_CAPABILITY_VERSION, OperatingSystem, PlayerListLayout, RUNTIME_API_VERSION,
+    SERVER_STATE_CAPABILITY_VERSION, ServerStateTarget, ShutdownTarget, TARGET_PACK_SCHEMA_VERSION,
+    TargetAddress, TargetPack, TargetServer, TargetSource, VectorLayout,
 };
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -102,7 +101,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             get_alias_path: symbol("nwnrs_fixture_get_alias_path"),
         }),
         events:         Some(EventTarget {
-            version:            EVENT_CONTEXT_CAPABILITY_VERSION,
+            version:            EVENTS_CAPABILITY_VERSION,
             load_module_finish: symbol("nwnrs_fixture_load_module_finish"),
             virtual_machine:    symbol("nwnrs_fixture_virtual_machine"),
             run_script:         symbol("nwnrs_fixture_run_script"),

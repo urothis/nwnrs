@@ -32,8 +32,10 @@ dependencies do not require network access or a dependency lock entry.
 
 For module projects, packing always generates and compiles
 `_nwnrs_onload.nss` in memory. Functions marked with
-`#[nwnrs::events(module_load)]` are gathered across the module source root,
-their source files are included once, and the dispatcher calls each handler
-in deterministic name order. With no handlers the generated script is simply
-an empty `void main() {}`. The attribute and generated source are compiler
-inputs only and never appear in NCS bytecode or the source tree.
+`#[nwnrs::events(module_load)]` are gathered across the module source root.
+Each handler must have the exact `void Handler(json event)` signature. Their
+source files are included once, the current event is fetched and parsed once,
+and the dispatcher passes the same immutable JSON snapshot to every handler in
+deterministic name order. With no handlers the generated script is simply an
+empty `void main() {}`. The attribute and generated source are compiler inputs
+only and never appear in NCS bytecode or the source tree.

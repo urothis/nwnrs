@@ -13,7 +13,8 @@ use address::Resolver;
 use administration::AdministrationEngine;
 use event::EventEngine;
 use nwnrs_runtime::{
-    AdministrationCommand, BannedLists, EventContext, HostCommandResult, RuntimeContext,
+    AdministrationCommand, BannedLists, EventCommand, EventPayload, HostCommandResult,
+    RuntimeContext,
 };
 use server::ServerEngine;
 pub(crate) use thread::EngineThreadToken;
@@ -59,7 +60,7 @@ impl Engine {
             .pack
             .events
             .as_ref()
-            .map(|target| EventEngine::resolve(&resolver, target, &layouts.classes))
+            .map(|target| EventEngine::resolve(&resolver, target))
             .transpose()?;
         let administration = context
             .target
@@ -222,15 +223,26 @@ impl Engine {
             .execute(thread, self.server()?, command)
     }
 
-    pub(crate) fn event_context(
+    pub(crate) fn current_event(
         &self,
         thread: &EngineThreadToken,
-        vm: *mut c_void,
-    ) -> Result<EventContext, BridgeInstallError> {
-        self.event.as_ref().map_or_else(
-            || Ok(EventContext::default()),
-            |event| event.context(thread, vm),
-        )
+    ) -> Result<Option<EventPayload>, BridgeInstallError> {
+        self.event
+            .as_ref()
+            .map_or_else(|| Ok(None), |event| event.current_event(thread))
+    }
+
+    pub(crate) fn control_event(
+        &self,
+        thread: &EngineThreadToken,
+        command: EventCommand,
+    ) -> Result<(), BridgeInstallError> {
+        self.event
+            .as_ref()
+            .ok_or_else(|| {
+                BridgeInstallError::new("target pack does not provide the events capability")
+            })?
+            .control_event(thread, command)
     }
 
     fn server(&self) -> Result<&ServerEngine, BridgeInstallError> {
