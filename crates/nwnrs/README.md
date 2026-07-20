@@ -194,6 +194,13 @@ architecture, and supervises the server process. macOS uses
 suspended, loads and initializes the matching runtime DLL, and resumes the
 primary thread only after initialization succeeds.
 
+On Windows, the runtime also themes the native NWServer control panel. The
+title bar, background, labels, inputs, lists, buttons, checkboxes, combo boxes,
+and numeric spinners use a dark palette; orange is limited to the window
+border, focus/checked states, dropdown and spinner glyphs, and a two-pixel
+client accent line. Painting is control-local and leaves the original native
+input and command behavior intact.
+
 The launcher mirrors new output from `logs.0/nwserverLog1.txt` and
 `logs.0/nwserverError1.txt` to its own output, forwards `TERM` and `HUP` to the
 server, cleans up the log follower, and returns the server's exit status.

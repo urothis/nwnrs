@@ -6,6 +6,10 @@ use std::{
     slice,
 };
 
+#[cfg(windows)]
+#[path = "windows_theme.rs"]
+mod windows_theme;
+
 unsafe extern "C" {
     fn malloc(size: usize) -> *mut c_void;
     fn free(pointer: *mut c_void);
@@ -623,6 +627,8 @@ fn assert_fixture_layout() {
 fn main() {
     assert_fixture_layout();
     keep_abi_symbols();
+    #[cfg(windows)]
+    windows_theme::verify();
     // SAFETY: this only creates linker-visible references to fixture symbols.
     unsafe {
         std::hint::black_box(nwnrs_fixture_admin_keep_symbols());

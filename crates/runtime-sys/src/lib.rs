@@ -5,6 +5,8 @@ mod bridge;
 mod engine;
 #[cfg(windows)]
 mod windows_launcher;
+#[cfg(windows)]
+mod windows_theme;
 
 use std::{
     env,
@@ -232,6 +234,10 @@ fn initialize_gum_runtime(context: RuntimeContext) -> Result<(), String> {
     };
     if let Err(error) = install_nwscript_bridge(context) {
         return Err(error.to_string());
+    }
+    #[cfg(windows)]
+    if let Err(error) = windows_theme::install() {
+        tracing::warn!(target: "nwnrs::runtime", %error, "Windows dark theme is unavailable");
     }
     tracing::info!(target: "nwnrs::runtime", "initialized");
     Ok(())

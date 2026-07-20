@@ -66,7 +66,7 @@ if ($LASTEXITCODE -ne 0) { throw 'fixture host build failed' }
 if ($LASTEXITCODE -ne 0) { throw 'fixture target-pack generation failed' }
 if (-not (Test-Path -LiteralPath $runtime)) { throw "runtime DLL is missing: $runtime" }
 
-$env:RUST_LOG = 'warn,nwnrs::launcher=info,nwnrs::runtime=info,nwnrs::script=trace'
+$env:RUST_LOG = 'warn,nwnrs::launcher=info,nwnrs::runtime=info,nwnrs::script=trace,nwnrs::console=info'
 $process = Start-Process `
     -FilePath $launcher `
     -ArgumentList @('run', '--no-tail-logs', '--runtime', $runtime, '--targets', $targets, $fixtureHost) `

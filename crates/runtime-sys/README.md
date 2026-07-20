@@ -43,6 +43,14 @@ Validated NWScript log calls are emitted through `tracing` under the
 `nwnrs::script` target. A supervising launcher preserves their requested level;
 directly preloaded servers render them from the injected runtime itself.
 
+The Windows runtime observes creation of the exact NWServer control-panel
+window and applies a native dark theme before it becomes visible. It uses DWM
+for the frame, standard control themes and control-color messages for inputs
+and lists, and paint-only subclasses for legacy buttons, checkboxes, combo
+arrows, and numeric spinners. The subclasses delegate all non-paint messages
+to the original controls, preserving normal keyboard, mouse, and command
+behavior.
+
 Build and execute the platform interception probe with:
 
 ```console
