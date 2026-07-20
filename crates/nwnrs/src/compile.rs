@@ -129,6 +129,7 @@ fn compile_script_file_outcome(
     let mut host = CliCompilerHost {
         resolver,
         install_resman: options.install_resman.clone(),
+        overlay: None,
     };
     let driver_options = nwscript::CompilerDriverOptions {
         session: nwscript::CompilerSessionOptions {
@@ -179,6 +180,54 @@ fn compile_script_file_outcome(
     Ok(outcome)
 }
 
+pub(crate) fn compile_generated_script(
+    source_name: &str,
+    source: &[u8],
+    include_dirs: &[PathBuf],
+    options: &CompileScriptOptions,
+) -> Result<nwscript::CompileArtifacts, String> {
+    let mut resolver = nwscript::FileSystemScriptResolver::new();
+    for root in include_dirs.iter().chain(&options.include_dirs) {
+        resolver.add_root(root);
+    }
+    let logical_name = format!("{source_name}.nss");
+    let mut host = CliCompilerHost {
+        resolver,
+        install_resman: options.install_resman.clone(),
+        overlay: Some((logical_name.clone(), source.to_vec())),
+    };
+    let driver_options = nwscript::CompilerDriverOptions {
+        session: nwscript::CompilerSessionOptions {
+            langspec_script_name: options.langspec.as_ref().map_or_else(
+                || nwscript::DEFAULT_LANGSPEC_SCRIPT_NAME.to_string(),
+                |path| path.to_string_lossy().into_owned(),
+            ),
+            compile:              nwscript::CompileOptions {
+                semantic:      nwscript::SemanticOptions {
+                    require_entrypoint:       true,
+                    allow_conditional_script: true,
+                },
+                optimizations: options.optimizations,
+            },
+            source_load:          nwscript::SourceLoadOptions {
+                max_include_depth: options.max_include_depth,
+                ..nwscript::SourceLoadOptions::default()
+            },
+            emit_debug:           options.debug,
+        },
+        output_alias: source_name.to_string(),
+        ..nwscript::CompilerDriverOptions::default()
+    };
+    match nwscript::compile_file_with_host(&mut host, &logical_name, &driver_options)
+        .map_err(|error| format!("failed to compile generated {logical_name}: {error}"))?
+    {
+        nwscript::CompileFileOutcome::Compiled(artifacts) => Ok(artifacts),
+        nwscript::CompileFileOutcome::SkippedNoEntrypoint => Err(format!(
+            "generated {logical_name} did not define an entrypoint"
+        )),
+    }
+}
+
 fn script_search_roots(input: &Path, include_dirs: &[PathBuf]) -> Vec<PathBuf> {
     let mut roots = Vec::new();
     if let Some(parent) = input.parent() {
@@ -195,6 +244,7 @@ fn script_search_roots(input: &Path, include_dirs: &[PathBuf]) -> Vec<PathBuf> {
 struct CliCompilerHost {
     resolver:       nwscript::FileSystemScriptResolver,
     install_resman: Option<SharedInstallResMan>,
+    overlay:        Option<(String, Vec<u8>)>,
 }
 
 impl nwscript::ScriptResolver for CliCompilerHost {
@@ -203,6 +253,14 @@ impl nwscript::ScriptResolver for CliCompilerHost {
         script_name: &str,
         res_type: ResType,
     ) -> Result<Option<Vec<u8>>, nwscript::SourceError> {
+        if res_type == nwscript::NW_SCRIPT_SOURCE_RES_TYPE
+            && let Some((name, bytes)) = &self.overlay
+            && Path::new(script_name)
+                .file_name()
+                .is_some_and(|requested| requested.eq_ignore_ascii_case(name))
+        {
+            return Ok(Some(bytes.clone()));
+        }
         if let Some(bytes) =
             nwscript::ScriptResolver::resolve_script_bytes(&self.resolver, script_name, res_type)?
         {
@@ -333,6 +391,7 @@ pub(crate) fn build_install_script_resolver(
             Arc::new(CliCompilerHost {
                 resolver:       nwscript::FileSystemScriptResolver::new(),
                 install_resman: Some(install_resman),
+                overlay:        None,
             }) as nwscript::SharedScriptResolver
         }),
     )

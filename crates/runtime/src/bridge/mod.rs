@@ -1202,7 +1202,7 @@ mod tests {
             event: EventContext {
                 name:        "module.on_module_load".to_string(),
                 id:          3002,
-                script_name: b"nwnrs_init".to_vec(),
+                script_name: b"fixture_event".to_vec(),
                 phase:       "running".to_string(),
                 depth:       1,
             },
@@ -1223,7 +1223,7 @@ mod tests {
         bridge.call("NWNRS", "GetCurrentEvent", &context, &mut host)?;
         assert_eq!(bridge.pop_string()?, b"module.on_module_load");
         bridge.call("NWNRS", "GetCurrentEventScript", &context, &mut host)?;
-        assert_eq!(bridge.pop_string()?, b"nwnrs_init");
+        assert_eq!(bridge.pop_string()?, b"fixture_event");
         bridge.call("NWNRS", "GetCurrentEventDepth", &context, &mut host)?;
         assert_eq!(bridge.pop_integer()?, 1);
 
@@ -1447,13 +1447,12 @@ mod tests {
             );
             assert!(header.contains(function.name()));
         }
-        for (name, version) in [
-            ("NWSCRIPT_BRIDGE", NWSCRIPT_BRIDGE_CAPABILITY_VERSION),
-            ("SERVER_STATE", SERVER_STATE_CAPABILITY_VERSION),
-            ("ADMINISTRATION", ADMINISTRATION_CAPABILITY_VERSION),
-            ("EVENT_CONTEXT", EVENT_CONTEXT_CAPABILITY_VERSION),
+        for name in [
+            "NWSCRIPT_BRIDGE",
+            "SERVER_STATE",
+            "ADMINISTRATION",
+            "EVENT_CONTEXT",
         ] {
-            assert_eq!(version, 1);
             assert!(header.contains(&format!("NWNRS_CAPABILITY_{name}")));
         }
         for (name, code) in [
@@ -1644,8 +1643,14 @@ mod tests {
     }
 
     fn event_target() -> EventTarget {
+        let address = || TargetAddress::Offset {
+            offset: 1
+        };
         EventTarget {
-            version: EVENT_CONTEXT_CAPABILITY_VERSION,
+            version:            EVENT_CONTEXT_CAPABILITY_VERSION,
+            load_module_finish: address(),
+            virtual_machine:    address(),
+            run_script:         address(),
         }
     }
 

@@ -1,27 +1,8 @@
 #include "nwnrs"
 
-void main()
+#[nwnrs::events(module_load)]
+void NWNRS_OnModuleLoad()
 {
-    ExecuteScript("x2_mod_def_load", OBJECT_SELF);
-
-    if (!NWNRS_GetIsAvailable())
-    {
-        WriteTimestampedLogEntry("nwnrs runtime is not available");
-        return;
-    }
-    if (NWNRS_GetApiVersion() != NWNRS_API_VERSION)
-    {
-        NWNRS_Log("nwnrs NWScript API version mismatch", NWNRS_LOG_LEVEL_ERROR);
-        return;
-    }
-    if (!NWNRS_HasCapability(NWNRS_CAPABILITY_SERVER_STATE) ||
-        !NWNRS_HasCapability(NWNRS_CAPABILITY_ADMINISTRATION) ||
-        !NWNRS_HasCapability(NWNRS_CAPABILITY_EVENT_CONTEXT))
-    {
-        NWNRS_Log("nwnrs target pack lacks module initialization capabilities", NWNRS_LOG_LEVEL_ERROR);
-        return;
-    }
-
     json jRuntime = JsonObject();
     jRuntime = JsonObjectSet(jRuntime, "version", JsonString(NWNRS_GetRuntimeVersion()));
     jRuntime = JsonObjectSet(jRuntime, "api_version", JsonInt(NWNRS_GetApiVersion()));
@@ -64,4 +45,5 @@ void main()
     jStartup = JsonObjectSet(jStartup, "event", jEvent);
 
     NWNRS_Log(JsonDump(jStartup, 2), NWNRS_LOG_LEVEL_INFO);
+    NWNRS_Log("nwnrs native module-load dispatcher initialized", NWNRS_LOG_LEVEL_INFO);
 }

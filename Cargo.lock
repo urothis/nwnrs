@@ -1041,6 +1041,7 @@ dependencies = [
 name = "nwnrs-nwpkg"
 version = "0.0.1"
 dependencies = [
+ "nwnrs-nwscript",
  "nwnrs-types",
  "serde",
  "serde_json",

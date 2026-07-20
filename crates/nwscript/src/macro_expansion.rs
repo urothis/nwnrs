@@ -257,6 +257,17 @@ pub struct MacroInvocation {
     pub span:      Span,
 }
 
+/// One function registered for an nwnrs-generated event dispatcher.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NwnrsEventHandler {
+    /// Canonical event identity.
+    pub event:          String,
+    /// NWScript function to invoke.
+    pub function_name:  String,
+    /// Span of the compiler-only attribute.
+    pub attribute_span: Span,
+}
+
 /// Output from one bang-macro implementation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MacroOutput {
@@ -630,6 +641,7 @@ pub fn expand_source_macros(
         .cloned()
         .unwrap_or_else(|| Token::new(TokenKind::Eof, Span::new(SourceId::new(0), 0, 0), ""));
     let mut stream = NwTokenStream::from_tokens(&tokens)?;
+    let _attributes = collect_nwnrs_event_handlers(&mut stream)?;
     collect_nwscript_macros(&mut stream, registry)?;
     collect_declarative_macros(&mut stream, registry)?;
     let mut expander = MacroExpander {
@@ -641,6 +653,182 @@ pub fn expand_source_macros(
     let mut flattened = expanded.into_tokens();
     flattened.push(eof);
     Ok(flattened)
+}
+
+/// Collects compiler-only `#[nwnrs::events(module_load)]` attributes and
+/// removes their complete syntax from the emitted token stream.
+///
+/// Multiple registrations may be placed in one attribute and separated by
+/// commas. The attribute must be attached to a function definition.
+///
+/// # Errors
+///
+/// Returns a diagnostic for unsupported attributes, malformed event paths,
+/// unknown event identities, or attributes not attached to a function body.
+pub fn collect_nwnrs_event_handlers(
+    stream: &mut NwTokenStream,
+) -> Result<Vec<NwnrsEventHandler>, MacroExpansionError> {
+    let mut output = Vec::new();
+    let mut handlers = Vec::new();
+    let mut position = 0;
+    while position < stream.trees.len() {
+        let Some(NwTokenTree::Token(hash)) = stream.trees.get(position) else {
+            if let Some(tree) = stream.trees.get(position).cloned() {
+                output.push(tree);
+            }
+            position += 1;
+            continue;
+        };
+        if hash.kind != TokenKind::Hash {
+            output.push(NwTokenTree::Token(hash.clone()));
+            position += 1;
+            continue;
+        }
+        let Some(NwTokenTree::Group(attribute)) = stream.trees.get(position + 1) else {
+            return Err(MacroExpansionError::new(
+                hash.span,
+                "`#` must be followed by a compiler attribute in brackets",
+            ));
+        };
+        if attribute.delimiter != NwDelimiter::Bracket {
+            return Err(MacroExpansionError::new(
+                attribute.span(),
+                "compiler attributes must use `#[...]`",
+            ));
+        }
+        let events = parse_nwnrs_event_attribute(attribute)?;
+        let function_name =
+            attributed_function_name(&stream.trees, position + 2, attribute.span())?;
+        handlers.extend(events.into_iter().map(|event| NwnrsEventHandler {
+            event,
+            function_name: function_name.clone(),
+            attribute_span: attribute.span(),
+        }));
+        position += 2;
+    }
+    stream.trees = output;
+    Ok(handlers)
+}
+
+fn parse_nwnrs_event_attribute(
+    attribute: &NwTokenGroup,
+) -> Result<Vec<String>, MacroExpansionError> {
+    let trees = attribute.stream.trees();
+    let mut position = 0;
+    let mut events = Vec::new();
+    while position < trees.len() {
+        let path = ["nwnrs", ":", ":", "events"];
+        for expected in path {
+            let Some(NwTokenTree::Token(token)) = trees.get(position) else {
+                return Err(MacroExpansionError::new(
+                    attribute.span(),
+                    "expected `nwnrs::events(...)` compiler attribute",
+                ));
+            };
+            if token.text != expected {
+                return Err(MacroExpansionError::new(
+                    token.span,
+                    "only `nwnrs::events(...)` compiler attributes are supported",
+                ));
+            }
+            position += 1;
+        }
+        let Some(NwTokenTree::Group(arguments)) = trees.get(position) else {
+            return Err(MacroExpansionError::new(
+                attribute.span(),
+                "`nwnrs::events` requires parenthesized event identities",
+            ));
+        };
+        if arguments.delimiter != NwDelimiter::Parenthesis {
+            return Err(MacroExpansionError::new(
+                arguments.span(),
+                "`nwnrs::events` requires parentheses",
+            ));
+        }
+        let argument_trees = arguments.stream.trees();
+        if argument_trees.is_empty() {
+            return Err(MacroExpansionError::new(
+                arguments.span(),
+                "`nwnrs::events` requires at least one event identity",
+            ));
+        }
+        for (index, tree) in argument_trees.iter().enumerate() {
+            if index % 2 == 1 {
+                let NwTokenTree::Token(comma) = tree else {
+                    return Err(MacroExpansionError::new(
+                        tree.span(),
+                        "event identities must be separated by commas",
+                    ));
+                };
+                if comma.kind != TokenKind::Comma {
+                    return Err(MacroExpansionError::new(
+                        comma.span,
+                        "event identities must be separated by commas",
+                    ));
+                }
+                continue;
+            }
+            let NwTokenTree::Token(identity) = tree else {
+                return Err(MacroExpansionError::new(
+                    tree.span(),
+                    "event identity must be an identifier",
+                ));
+            };
+            if identity.kind != TokenKind::Identifier || identity.text != "module_load" {
+                return Err(MacroExpansionError::new(
+                    identity.span,
+                    format!("unsupported nwnrs event identity {:?}", identity.text),
+                ));
+            }
+            events.push(identity.text.clone());
+        }
+        position += 1;
+        if position == trees.len() {
+            break;
+        }
+        let Some(NwTokenTree::Token(comma)) = trees.get(position) else {
+            return Err(MacroExpansionError::new(
+                attribute.span(),
+                "event registrations must be separated by commas",
+            ));
+        };
+        if comma.kind != TokenKind::Comma {
+            return Err(MacroExpansionError::new(
+                comma.span,
+                "event registrations must be separated by commas",
+            ));
+        }
+        position += 1;
+    }
+    Ok(events)
+}
+
+fn attributed_function_name(
+    trees: &[NwTokenTree],
+    start: usize,
+    span: Span,
+) -> Result<String, MacroExpansionError> {
+    let mut previous_identifier = None;
+    for tree in trees.iter().skip(start) {
+        match tree {
+            NwTokenTree::Token(token) if token.kind == TokenKind::Identifier => {
+                previous_identifier = Some(token.text.clone());
+            }
+            NwTokenTree::Token(token) if token.kind == TokenKind::Semicolon => break,
+            NwTokenTree::Group(group) if group.delimiter == NwDelimiter::Parenthesis => {
+                let Some(name) = previous_identifier else {
+                    break;
+                };
+                return Ok(name);
+            }
+            NwTokenTree::Group(group) if group.delimiter == NwDelimiter::Brace => break,
+            _ => {}
+        }
+    }
+    Err(MacroExpansionError::new(
+        span,
+        "nwnrs event attribute must be attached to a function definition",
+    ))
 }
 
 /// Built-in identity macro used to validate and bootstrap the expansion host.
@@ -1448,6 +1636,38 @@ fn render_string_literal(output: &mut String, value: &str) {
         }
     }
     output.push('"');
+}
+
+#[cfg(test)]
+mod event_attribute_tests {
+    use crate::{
+        NwTokenStream, SourceId, collect_nwnrs_event_handlers, lex_text, render_nwscript_tokens,
+    };
+
+    #[test]
+    fn collects_and_erases_module_load_attributes() -> Result<(), Box<dyn std::error::Error>> {
+        let tokens = lex_text(
+            SourceId::new(0),
+            "#[nwnrs::events(module_load)]\nvoid ProjectStart() {}",
+        )?;
+        let mut stream = NwTokenStream::from_tokens(&tokens)?;
+        let handlers = collect_nwnrs_event_handlers(&mut stream)?;
+        assert_eq!(handlers.len(), 1);
+        assert_eq!(
+            handlers.first().map(|handler| handler.event.as_str()),
+            Some("module_load")
+        );
+        assert_eq!(
+            handlers
+                .first()
+                .map(|handler| handler.function_name.as_str()),
+            Some("ProjectStart")
+        );
+        let rendered = render_nwscript_tokens(&stream);
+        assert!(!rendered.contains("#["));
+        assert!(rendered.contains("ProjectStart"));
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone)]

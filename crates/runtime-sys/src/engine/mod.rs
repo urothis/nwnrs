@@ -59,7 +59,7 @@ impl Engine {
             .pack
             .events
             .as_ref()
-            .map(|_| EventEngine::from_layouts(&layouts.classes))
+            .map(|target| EventEngine::resolve(&resolver, target, &layouts.classes))
             .transpose()?;
         let administration = context
             .target
@@ -91,6 +91,24 @@ impl Engine {
         self.administration
             .as_ref()
             .map(AdministrationEngine::main_loop_hook_target)
+    }
+
+    pub(crate) fn module_load_hook_target(&self) -> Option<usize> {
+        self.event
+            .as_ref()
+            .map(EventEngine::module_load_hook_target)
+    }
+
+    pub(crate) fn run_module_onload(
+        &self,
+        thread: &EngineThreadToken,
+    ) -> Result<bool, BridgeInstallError> {
+        self.event
+            .as_ref()
+            .ok_or_else(|| {
+                BridgeInstallError::new("target pack does not provide the events capability")
+            })?
+            .run_module_onload(thread)
     }
 
     pub(crate) fn process_deferred_administration(

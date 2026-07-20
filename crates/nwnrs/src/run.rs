@@ -1864,8 +1864,14 @@ mod tests {
     }
 
     fn event_target() -> EventTarget {
+        let address = || TargetAddress::Offset {
+            offset: 1
+        };
         EventTarget {
-            version: EVENT_CONTEXT_CAPABILITY_VERSION,
+            version:            EVENT_CONTEXT_CAPABILITY_VERSION,
+            load_module_finish: address(),
+            virtual_machine:    address(),
+            run_script:         address(),
         }
     }
 

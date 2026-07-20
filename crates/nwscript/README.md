@@ -52,6 +52,21 @@ The extended frontend recognizes balanced `name!(...)`, `name![...]`, and
 `name!{...}` invocations. Macro syntax is expanded and removed before the
 ordinary NWScript parser or NCS code generator sees it.
 
+Compiler attributes use the same erasure rule. The first project-wide
+collector is the native module-load registration:
+
+```nss
+#[nwnrs::events(module_load)]
+void ProjectStart()
+{
+    // Runs from the generated _nwnrs_onload dispatcher.
+}
+```
+
+The frontend removes the complete `#[...]` syntax before parsing. Unsupported
+attributes and event identities are errors, so extended text can neither leak
+into NCS nor be silently ignored.
+
 Fixed declarative transformations can live directly in source:
 
 ```nss

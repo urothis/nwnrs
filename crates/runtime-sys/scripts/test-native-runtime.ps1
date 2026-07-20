@@ -48,7 +48,7 @@ if ($LASTEXITCODE -ne 0) { throw 'runtime DLL build failed' }
 & cargo build --locked --package nwnrs
 if ($LASTEXITCODE -ne 0) { throw 'launcher build failed' }
 
-& cl.exe /nologo /std:c++17 /EHsc /W4 /WX /wd4190 /MD /c `
+& cl.exe /nologo /std:c++17 /EHsc /W4 /WX /MD /c `
     (Join-Path $repository 'crates\runtime-sys\tests\fixtures\administration.cpp') `
     "/Fo:$administrationObject"
 if ($LASTEXITCODE -ne 0) { throw 'administration fixture compilation failed' }

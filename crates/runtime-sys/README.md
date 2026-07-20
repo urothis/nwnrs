@@ -23,7 +23,8 @@ server accessors implement its `RuntimeHost` contract and read only the value
 requested by each call. Mutations execute synchronously, so native failures
 belong to the same bridge call. These accessors expose the live module name,
 player count, maximum players, and active UDP port, which base NWScript does
-not provide. Administration mutations use separately verified engine methods
+not provide. The port is zero during the native module-load boundary when the
+engine still reports its unsigned unavailable sentinel. Administration mutations use separately verified engine methods
 and field offsets; TURD recovery traverses the engine-owned linked list and
 removes only an exact community-name and full-character-name match.
 Player-character deletion is prepared during the NWScript callback using only
@@ -38,6 +39,13 @@ During each NWScript bridge call, the runtime copies the current script name,
 engine event identifier, and recursion depth directly from that VM slot. This
 makes module, area, and object event context visible without adding event
 hooks or changing engine event behavior.
+
+Event capability version 2 also identifies the exact
+`CNWSModule::LoadModuleFinish`, `CVirtualMachine::RunScript`, and
+`g_pVirtualMachine` symbols. A Frida replacement runs the generated
+`_nwnrs_onload` script with owner `0` before calling the original module-load
+completion function. Script failure is diagnostic only: the original engine
+function is always called. This does not read or rewrite `Mod_OnModLoad`.
 
 Validated NWScript log calls are emitted through `tracing` under the
 `nwnrs::script` target. A supervising launcher preserves their requested level;

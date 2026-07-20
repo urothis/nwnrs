@@ -26,6 +26,12 @@ must be complete and use the one contract version supported by this runtime.
 NWScript can inspect these versions with `NWNRS_GetCapabilityVersion` and
 `NWNRS_HasCapability`.
 
+Event capability version 2 contains the active VM-context layout contract plus
+exact addresses for `CNWSModule::LoadModuleFinish`, global
+`g_pVirtualMachine`, and `CVirtualMachine::RunScript`. These implement the
+native `_nwnrs_onload` bootstrap without assigning or patching the module's
+vanilla `Mod_OnModLoad` field.
+
 Addresses are either exact native symbols:
 
 ```toml

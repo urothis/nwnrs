@@ -4,6 +4,7 @@ use std::{
     ffi::c_void,
     fs,
     slice,
+    sync::atomic::{AtomicU32, Ordering},
 };
 
 #[cfg(windows)]
@@ -159,6 +160,11 @@ struct ObservedEvent {
 
 #[unsafe(no_mangle)]
 pub static mut nwnrs_fixture_app_manager: *mut c_void = std::ptr::null_mut();
+
+#[unsafe(no_mangle)]
+pub static mut nwnrs_fixture_virtual_machine: *mut c_void = std::ptr::null_mut();
+
+static MODULE_ONLOAD_CALLS: AtomicU32 = AtomicU32::new(0);
 
 unsafe extern "C" {
     static mut nwnrs_fixture_enable_combat_debugging: i32;
@@ -417,6 +423,40 @@ pub extern "C" fn nwnrs_fixture_get_udp_port(net_layer: *mut c_void) -> u32 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn nwnrs_fixture_main_loop(_server_internal: *mut c_void) -> i32 {
+    1
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn nwnrs_fixture_load_module_finish(_module: *mut c_void) -> u32 {
+    1
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn nwnrs_fixture_run_script(
+    vm: *mut c_void,
+    script: *mut CExoString,
+    owner: u32,
+    owner_is_valid: i32,
+    event_id: i32,
+) -> i32 {
+    if vm.is_null() || script.is_null() || owner != 0 || owner_is_valid != 1 || event_id != 0 {
+        return 0;
+    }
+    // SAFETY: the fixture bridge supplies one live CExoString for the
+    // synchronous call.
+    let script = unsafe { &*script };
+    if script.string.is_null() {
+        return 0;
+    }
+    let Ok(length) = usize::try_from(script.string_length) else {
+        return 0;
+    };
+    // SAFETY: the fixture string buffer contains string_length bytes.
+    let name = unsafe { slice::from_raw_parts(script.string, length) };
+    if name != b"_nwnrs_onload" {
+        return 0;
+    }
+    MODULE_ONLOAD_CALLS.fetch_add(1, Ordering::Relaxed);
     1
 }
 
@@ -721,6 +761,13 @@ fn main() {
         nwnrs_fixture_app_manager = (&raw mut app_manager).cast();
     }
     let mut vm = VirtualMachine::default();
+    // SAFETY: the fixture owns vm until process exit and executes on one
+    // thread.
+    unsafe {
+        nwnrs_fixture_virtual_machine = (&raw mut vm).cast();
+    }
+    assert_eq!(nwnrs_fixture_load_module_finish(std::ptr::null_mut()), 1);
+    assert_eq!(MODULE_ONLOAD_CALLS.load(Ordering::Relaxed), 1);
     let mut commands = Commands {
         virtual_machine: (&raw mut vm).cast(),
     };
@@ -732,7 +779,7 @@ fn main() {
     assert_eq!(call_capability_version(&mut commands, &mut vm, "nwscript_bridge"), 1);
     assert_eq!(call_capability_version(&mut commands, &mut vm, "server_state"), 1);
     assert_eq!(call_capability_version(&mut commands, &mut vm, "administration"), 1);
-    assert_eq!(call_capability_version(&mut commands, &mut vm, "event_context"), 1);
+    assert_eq!(call_capability_version(&mut commands, &mut vm, "event_context"), 2);
     assert_eq!(call_has_capability(&mut commands, &mut vm, "server_state", 1), 1);
     assert_eq!(call_has_capability(&mut commands, &mut vm, "server_state", 2), 0);
     assert_eq!(call_integer(&mut commands, &mut vm, "GetLastErrorCode"), 0);
@@ -953,7 +1000,7 @@ fn main() {
     call_log(&mut commands, &mut vm, 3, "fixture warn message");
     call_log(&mut commands, &mut vm, 4, "fixture error message");
 
-    let mut module_script = b"nwnrs_init".to_vec();
+    let mut module_script = b"fixture_event".to_vec();
     let mut area_script = b"area_enter".to_vec();
     let mut creature_script = b"creature_spawn".to_vec();
     set_event(&mut vm, 0, 3002, &mut module_script);
@@ -962,7 +1009,7 @@ fn main() {
         ObservedEvent {
             name:        "module.on_module_load".to_string(),
             id:          3002,
-            script_name: "nwnrs_init".to_string(),
+            script_name: "fixture_event".to_string(),
             phase:       "running".to_string(),
             depth:       1,
             is_in_event: 1,
@@ -1016,7 +1063,10 @@ fn keep_abi_symbols() {
     std::hint::black_box(nwnrs_fixture_get_session_max_players as *const ());
     std::hint::black_box(nwnrs_fixture_get_udp_port as *const ());
     std::hint::black_box(nwnrs_fixture_main_loop as *const ());
+    std::hint::black_box(nwnrs_fixture_load_module_finish as *const ());
+    std::hint::black_box(nwnrs_fixture_run_script as *const ());
     std::hint::black_box(&raw const nwnrs_fixture_app_manager);
+    std::hint::black_box(&raw const nwnrs_fixture_virtual_machine);
     std::hint::black_box(&raw const nwnrs_fixture_enable_combat_debugging);
     std::hint::black_box(&raw const nwnrs_fixture_enable_saving_throw_debugging);
     std::hint::black_box(&raw const nwnrs_fixture_enable_movement_speed_debugging);

@@ -100,7 +100,7 @@ int NWNRS_GetPlayerCount();
 /// Returns the maximum number of players configured for the session.
 int NWNRS_GetMaxPlayers();
 
-/// Returns the active UDP port on which the server is listening.
+/// Returns the active UDP port, or zero before network startup completes.
 int NWNRS_GetServerPort();
 
 // Administration

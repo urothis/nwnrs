@@ -150,7 +150,11 @@ impl ServerEngine {
                 "CServerExoApp::GetNetLayer returned null",
             ));
         }
-        i32::try_from((self.get_udp_port)(network)).map_err(|_error| {
+        let port = (self.get_udp_port)(network);
+        if port == u32::MAX {
+            return Ok(0);
+        }
+        i32::try_from(port).map_err(|_error| {
             BridgeInstallError::new("server UDP port exceeds NWScript integer range")
         })
     }

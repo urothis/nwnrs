@@ -102,7 +102,10 @@ fn main() -> Result<(), Box<dyn Error>> {
             get_alias_path: symbol("nwnrs_fixture_get_alias_path"),
         }),
         events:         Some(EventTarget {
-            version: EVENT_CONTEXT_CAPABILITY_VERSION,
+            version:            EVENT_CONTEXT_CAPABILITY_VERSION,
+            load_module_finish: symbol("nwnrs_fixture_load_module_finish"),
+            virtual_machine:    symbol("nwnrs_fixture_virtual_machine"),
+            run_script:         symbol("nwnrs_fixture_run_script"),
         }),
     };
     let directory = PathBuf::from(targets).join(identity.platform.directory_name());

@@ -19,7 +19,8 @@ use crate::{
     args::{KeyPackCmd, PackCmd},
     compile::{
         CompileScriptOptions, CompileScriptOutcome, autodetected_install_resman,
-        compile_script_file, compile_script_file_with_skip, parse_optimizations,
+        compile_generated_script, compile_script_file, compile_script_file_with_skip,
+        parse_optimizations,
     },
     package::{PackageOptions, run_package},
     util::{
@@ -193,8 +194,10 @@ fn run_pack_erf(cmd: PackCmd) -> Result<(), String> {
     let (input, output) = explicit_pack_paths(&cmd)?;
     let input = input.clone();
     let output = output.clone();
+    let dispatcher = nwnrs_nwpkg::generate_event_dispatcher(&input)?;
     let metadata = read_erf_pack_metadata(&input)?;
     if let Some(metadata) = metadata.as_ref()
+        && dispatcher.is_none()
         && should_copy_original_erf(metadata, &input)?
     {
         ensure_output_file_ready(&output, cmd.force)?;
@@ -220,6 +223,7 @@ fn run_pack_erf(cmd: PackCmd) -> Result<(), String> {
     );
     let compile_config = ScriptCompileConfig::from_pack_cmd(&cmd, &input)?;
     let sources = collect_generic_pack_sources(&input, true, cmd.no_symlinks)?;
+    let sources = add_generated_event_dispatcher(&input, sources, &compile_config, dispatcher)?;
     let sources = apply_erf_entry_order(metadata.as_ref(), sources);
     let sources = normalize_pack_sources(sources)?;
     let sources = compile_pack_sources(sources, &compile_config)?;
@@ -281,6 +285,39 @@ fn run_pack_erf(cmd: PackCmd) -> Result<(), String> {
     fs::write(&output, out.into_inner())
         .map_err(|error| format!("failed to write {}: {error}", output.display()))?;
     Ok(())
+}
+
+fn add_generated_event_dispatcher(
+    input: &Path,
+    mut sources: Vec<PackSourceEntry>,
+    compile_config: &ScriptCompileConfig,
+    dispatcher: Option<nwnrs_nwpkg::GeneratedEventDispatcher>,
+) -> Result<Vec<PackSourceEntry>, String> {
+    let Some(dispatcher) = dispatcher else {
+        return Ok(sources);
+    };
+    let options = pack_compile_options(
+        compile_config,
+        vec![dispatcher.include_root.clone()],
+        compile_config.debug,
+    )?;
+    let artifacts = compile_generated_script(
+        &dispatcher.name,
+        dispatcher.source.as_bytes(),
+        std::slice::from_ref(&dispatcher.include_root),
+        &options,
+    )?;
+    let rr = resman::ResolvedResRef::from_filename(&format!("{}.ncs", dispatcher.name))
+        .map_err(|error| format!("invalid generated dispatcher name: {error}"))?;
+    sources.push(PackSourceEntry {
+        rr:     rr.into(),
+        source: PackSourceKind::CompiledScript {
+            path: input.join(format!("{}.nss", dispatcher.name)),
+            ncs:  artifacts.ncs,
+            ndb:  artifacts.ndb,
+        },
+    });
+    Ok(sources)
 }
 
 #[instrument(

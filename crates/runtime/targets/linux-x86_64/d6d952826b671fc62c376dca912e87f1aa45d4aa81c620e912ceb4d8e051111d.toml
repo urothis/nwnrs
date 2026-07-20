@@ -137,7 +137,16 @@ symbol = "_ZN9CNetLayer20GetSessionMaxPlayersEv"
 symbol = "_ZN9CNetLayer10GetUDPPortEv"
 
 [events]
-version = 1
+version = 2
+
+[events.load_module_finish]
+symbol = "_ZN10CNWSModule16LoadModuleFinishEv"
+
+[events.virtual_machine]
+symbol = "g_pVirtualMachine"
+
+[events.run_script]
+symbol = "_ZN15CVirtualMachine9RunScriptEP10CExoStringjii"
 
 [administration]
 version = 1

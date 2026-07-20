@@ -38,6 +38,14 @@ struct CExoString {
     ~CExoString() { std::free(string); }
 };
 
+// Owned CExoString results must retain the platform C++ return ABI. Give those
+// C++ functions stable fixture symbols without incorrectly declaring C linkage.
+#if defined(__APPLE__)
+#define NWNRS_FIXTURE_NATIVE_SYMBOL(name) __asm__("_" #name)
+#elif !defined(_WIN32)
+#define NWNRS_FIXTURE_NATIVE_SYMBOL(name) __asm__(#name)
+#endif
+
 struct FixtureNetLayer {
     std::uint32_t max_players;
     std::uint32_t udp_port;
@@ -180,7 +188,9 @@ extern "C" CExoString* nwnrs_fixture_get_session_name(
     return output;
 }
 #else
-extern "C" CExoString nwnrs_fixture_get_session_name(void* object) {
+CExoString nwnrs_fixture_get_session_name(void* object)
+    NWNRS_FIXTURE_NATIVE_SYMBOL(nwnrs_fixture_get_session_name);
+CExoString nwnrs_fixture_get_session_name(void* object) {
     return static_cast<FixtureNetLayer*>(object)->session_name;
 }
 #endif
@@ -197,7 +207,9 @@ extern "C" CExoString* nwnrs_fixture_get_player_password(
     return output;
 }
 #else
-extern "C" CExoString nwnrs_fixture_get_player_password(void* object) {
+CExoString nwnrs_fixture_get_player_password(void* object)
+    NWNRS_FIXTURE_NATIVE_SYMBOL(nwnrs_fixture_get_player_password);
+CExoString nwnrs_fixture_get_player_password(void* object) {
     return static_cast<FixtureNetLayer*>(object)->player_password;
 }
 #endif
@@ -215,7 +227,9 @@ extern "C" CExoString* nwnrs_fixture_get_game_master_password(
     return output;
 }
 #else
-extern "C" CExoString nwnrs_fixture_get_game_master_password(void* object) {
+CExoString nwnrs_fixture_get_game_master_password(void* object)
+    NWNRS_FIXTURE_NATIVE_SYMBOL(nwnrs_fixture_get_game_master_password);
+CExoString nwnrs_fixture_get_game_master_password(void* object) {
     return static_cast<FixtureNetLayer*>(object)->dm_password;
 }
 #endif
@@ -280,7 +294,9 @@ extern "C" CExoString* nwnrs_fixture_get_player_name(void*, CExoString* output) 
     return output;
 }
 #else
-extern "C" CExoString nwnrs_fixture_get_player_name(void*) {
+CExoString nwnrs_fixture_get_player_name(void*)
+    NWNRS_FIXTURE_NATIVE_SYMBOL(nwnrs_fixture_get_player_name);
+CExoString nwnrs_fixture_get_player_name(void*) {
     return CExoString("fixture-player", 14);
 }
 #endif
@@ -304,7 +320,27 @@ extern "C" std::int32_t nwnrs_fixture_disconnect_player(
     return 1;
 }
 
-extern "C" const CExoString& nwnrs_fixture_get_alias_path(
+#if defined(_WIN32)
+// A C++ reference is represented by a pointer in the Windows x64 ABI. Returning
+// that pointer directly keeps the fixture ABI-correct and its C export valid.
+extern "C" const CExoString* nwnrs_fixture_get_alias_path(
+    const void*,
+    const CExoString& alias,
+    std::int32_t) {
+    static const CExoString empty;
+    if (alias.length != 11 || alias.string == nullptr ||
+        std::memcmp(alias.string, "SERVERVAULT", 11) != 0) {
+        return &empty;
+    }
+    return &fixture_alias_list.server_vault;
+}
+#else
+const CExoString& nwnrs_fixture_get_alias_path(
+    const void*,
+    const CExoString&,
+    std::int32_t)
+    NWNRS_FIXTURE_NATIVE_SYMBOL(nwnrs_fixture_get_alias_path);
+const CExoString& nwnrs_fixture_get_alias_path(
     const void*,
     const CExoString& alias,
     std::int32_t) {
@@ -315,6 +351,7 @@ extern "C" const CExoString& nwnrs_fixture_get_alias_path(
     }
     return fixture_alias_list.server_vault;
 }
+#endif
 
 extern "C" void* nwnrs_fixture_admin_keep_symbols() {
     static void* volatile sink;

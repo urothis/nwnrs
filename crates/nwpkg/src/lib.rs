@@ -3,12 +3,14 @@
 
 mod dependency;
 mod fs;
+mod generation;
 mod kind;
 mod lock;
 mod manifest;
 
 pub use dependency::{ResolvedIncludeDependency, resolve_include_dependencies};
 pub use fs::is_project_control_file;
+pub use generation::{GeneratedEventDispatcher, generate_event_dispatcher};
 pub use kind::{ProjectKind, ProjectLayout};
 pub use lock::{
     ErfPackMetadata, KeyPackMetadata, ResourcePackMetadata, copy_original_key_set,

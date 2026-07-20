@@ -137,7 +137,16 @@ offset = 0x000c3390
 offset = 0x000c33d0
 
 [events]
-version = 1
+version = 2
+
+[events.load_module_finish]
+symbol = "?LoadModuleFinish@CNWSModule@@QEAAIXZ"
+
+[events.virtual_machine]
+symbol = "?g_pVirtualMachine@@3PEAVCVirtualMachine@@EA"
+
+[events.run_script]
+symbol = "?RunScript@CVirtualMachine@@QEAAHPEAVCExoString@@IHH@Z"
 
 [administration]
 version = 1

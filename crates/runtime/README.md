@@ -42,7 +42,9 @@ Native ABI provenance and regeneration rules are documented in
 [`ABI.md`](ABI.md).
 
 The [`nwnrs.nss`](../../include/nwnrs/nwnrs.nss) include is a separate local
-`nwpkg` dependency of the source-controlled demo module. The module compiles
-`module/nwnrs_init.nss` into its module-load event, preserves the stock
-`x2_mod_def_load` behavior, and writes a runtime, server, and module-load-event
-summary at startup.
+`nwpkg` dependency of the source-controlled demo module. `nwpkg` collects
+`#[nwnrs::events(module_load)]` functions and compiles an always-present
+`_nwnrs_onload` dispatcher. The native runtime runs that dispatcher at
+`CNWSModule::LoadModuleFinish`, before the original engine function, while the
+module's vanilla `Mod_OnModLoad` remains independently assigned to
+`x2_mod_def_load`.

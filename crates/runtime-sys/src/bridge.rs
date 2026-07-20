@@ -21,7 +21,7 @@ use super::{
     adapter::NativeRuntimeHost,
     engine::{
         Engine, EngineThreadToken,
-        abi::{FunctionManagement, MainLoop, ObjectId},
+        abi::{FunctionManagement, LoadModuleFinish, MainLoop, ObjectId},
     },
     write_diagnostic,
 };
@@ -45,6 +45,7 @@ const NWNX_POP_VECTOR: i32 = 1171;
 static ENGINE: OnceLock<Engine> = OnceLock::new();
 static FUNCTION_MANAGEMENT_ORIGINAL: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
 static MAIN_LOOP_ORIGINAL: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
+static LOAD_MODULE_FINISH_ORIGINAL: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
 
 thread_local! {
     static SCRIPT_BRIDGE: RefCell<ScriptBridge> = RefCell::new(ScriptBridge::default());
@@ -95,6 +96,7 @@ pub fn install_nwscript_bridge(context: &RuntimeContext) -> Result<(), BridgeIns
     let engine = resolved?;
     let hook_target = engine.hook_target();
     let main_loop_hook_target = engine.administration_main_loop_hook_target();
+    let module_load_hook_target = engine.module_load_hook_target();
     if ENGINE.set(engine).is_err() {
         return Err(BridgeInstallError::new(
             "NWScript bridge was initialized more than once",
@@ -119,6 +121,14 @@ pub fn install_nwscript_bridge(context: &RuntimeContext) -> Result<(), BridgeIns
             target,
             replacement: main_loop_replacement as MainLoop as *const () as usize,
             original: &MAIN_LOOP_ORIGINAL,
+        });
+    }
+    if let Some(target) = module_load_hook_target {
+        hooks.push(HookSpec {
+            name: "native module onload",
+            target,
+            replacement: load_module_finish_replacement as LoadModuleFinish as *const () as usize,
+            original: &LOAD_MODULE_FINISH_ORIGINAL,
         });
     }
     let result = install_hooks(interceptor, &hooks);
@@ -217,6 +227,34 @@ pub(crate) extern "C" fn main_loop_replacement(server_internal: *mut c_void) -> 
         call_original_main_loop(server_internal)
     }))
     .unwrap_or_default()
+}
+
+pub(crate) extern "C" fn load_module_finish_replacement(module: *mut c_void) -> u32 {
+    let result = panic::catch_unwind(AssertUnwindSafe(|| {
+        if let Some(engine) = ENGINE.get() {
+            // SAFETY: the replacement runs synchronously on NWServer's engine
+            // thread and the token cannot escape this callback.
+            let thread = unsafe { EngineThreadToken::new() };
+            match engine.run_module_onload(&thread) {
+                Ok(true) => {}
+                Ok(false) => write_diagnostic("generated _nwnrs_onload script did not run"),
+                Err(error) => write_diagnostic(&error.to_string()),
+            }
+        }
+        call_original_load_module_finish(module)
+    }));
+    result.unwrap_or_else(|_| call_original_load_module_finish(module))
+}
+
+fn call_original_load_module_finish(module: *mut c_void) -> u32 {
+    let original = LOAD_MODULE_FINISH_ORIGINAL.load(Ordering::Acquire);
+    if original.is_null() {
+        return 0;
+    }
+    // SAFETY: Gum published the exact LoadModuleFinish trampoline before
+    // enabling the replacement, and module is its original receiver.
+    let original = unsafe { std::mem::transmute::<*mut c_void, LoadModuleFinish>(original) };
+    original(module)
 }
 
 fn call_original_main_loop(server_internal: *mut c_void) -> i32 {

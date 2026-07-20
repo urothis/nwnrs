@@ -37,7 +37,7 @@ pub const SERVER_STATE_CAPABILITY_VERSION: u32 = 1;
 /// Version of the optional administration capability.
 pub const ADMINISTRATION_CAPABILITY_VERSION: u32 = 1;
 /// Version of the optional event-context capability.
-pub const EVENT_CONTEXT_CAPABILITY_VERSION: u32 = 1;
+pub const EVENT_CONTEXT_CAPABILITY_VERSION: u32 = 2;
 /// Enables initialization when set to `1` in an injected process.
 pub const ENV_ENABLED: &str = "NWNRS_ENABLED";
 /// Makes initialization failure fatal when set to `1`.
@@ -541,17 +541,30 @@ pub struct AdministrationTarget {
     pub get_alias_path: TargetAddress,
 }
 
-/// Capability marker for reading the active event-script layout.
+/// Native event boundary and active event-script context capability.
 ///
 /// ```
-/// let target = nwnrs_runtime::EventTarget { version: 1 };
-/// assert_eq!(target.version, 1);
+/// # use nwnrs_runtime::{EventTarget, TargetAddress};
+/// let address = TargetAddress::Offset { offset: 1 };
+/// let target = EventTarget {
+///     version: 2,
+///     load_module_finish: address.clone(),
+///     virtual_machine: address.clone(),
+///     run_script: address,
+/// };
+/// assert_eq!(target.version, 2);
 /// ```
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct EventTarget {
     /// Capability contract version.
-    pub version: u32,
+    pub version:            u32,
+    /// `CNWSModule::LoadModuleFinish` native hook boundary.
+    pub load_module_finish: TargetAddress,
+    /// Address of global `g_pVirtualMachine` storage.
+    pub virtual_machine:    TargetAddress,
+    /// `CVirtualMachine::RunScript`.
+    pub run_script:         TargetAddress,
 }
 
 /// Versioned runtime metadata for one exact server binary.
@@ -847,6 +860,13 @@ fn validate_target_pack_metadata(pack: &TargetPack) -> RuntimeResult<()> {
             events.version,
             EVENT_CONTEXT_CAPABILITY_VERSION,
         )?;
+        for (name, address) in [
+            ("load_module_finish", &events.load_module_finish),
+            ("virtual_machine", &events.virtual_machine),
+            ("run_script", &events.run_script),
+        ] {
+            validate_target_address("events", name, address)?;
+        }
     }
     Ok(())
 }
@@ -1879,7 +1899,16 @@ mod tests {
 
     fn fixture_event_target() -> EventTarget {
         EventTarget {
-            version: EVENT_CONTEXT_CAPABILITY_VERSION,
+            version:            EVENT_CONTEXT_CAPABILITY_VERSION,
+            load_module_finish: TargetAddress::Offset {
+                offset: 19
+            },
+            virtual_machine:    TargetAddress::Offset {
+                offset: 20
+            },
+            run_script:         TargetAddress::Offset {
+                offset: 21
+            },
         }
     }
 
