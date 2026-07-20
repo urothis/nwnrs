@@ -1,11 +1,13 @@
 #![forbid(unsafe_code)]
 #![doc = include_str!("../README.md")]
 
+mod dependency;
 mod fs;
 mod kind;
 mod lock;
 mod manifest;
 
+pub use dependency::{ResolvedIncludeDependency, resolve_include_dependencies};
 pub use fs::is_project_control_file;
 pub use kind::{ProjectKind, ProjectLayout};
 pub use lock::{
@@ -16,7 +18,9 @@ pub use lock::{
     write_new_erf_pack_metadata, write_new_key_pack_metadata, write_new_resource_pack_metadata,
     write_resource_pack_metadata,
 };
-pub use manifest::{ProjectManifest, read_project_manifest, write_project_manifest};
+pub use manifest::{
+    DependencySpec, PathDependency, ProjectManifest, read_project_manifest, write_project_manifest,
+};
 
 /// Canonical `nwproject.toml` filename.
 pub const PROJECT_MANIFEST_FILENAME: &str = "nwproject.toml";

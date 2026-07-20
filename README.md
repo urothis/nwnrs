@@ -80,6 +80,8 @@ table.set_columns(vec!["Label".to_string()])?;
   packing, and unpacking workflows
 - [`nwnrs-nwscript`](./crates/nwscript/README.md): NWScript frontend
   and compiler
+- [`nwnrs` include library](./include/nwnrs/nwnrs.nss): the NWScript bridge API,
+  consumed by modules as a local `nwpkg` dependency
 - [`nwnrs-runtime`](./crates/runtime/README.md): safe executable identity and
   exact target-pack selection
 - [`nwnrs-runtime-sys`](./crates/runtime-sys/README.md): Frida Gum and native

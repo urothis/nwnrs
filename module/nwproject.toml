@@ -4,3 +4,6 @@ kind = "mod"
 
 [source]
 path = "."
+
+[dependencies]
+nwnrs = { path = "../include/nwnrs" }

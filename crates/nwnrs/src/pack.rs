@@ -218,7 +218,7 @@ fn run_pack_erf(cmd: PackCmd) -> Result<(), String> {
         || infer_erf_type(output.as_path(), cmd.erf_type.as_deref()),
         |meta| meta.file_type.clone(),
     );
-    let compile_config = ScriptCompileConfig::from(&cmd);
+    let compile_config = ScriptCompileConfig::from_pack_cmd(&cmd, &input)?;
     let sources = collect_generic_pack_sources(&input, true, cmd.no_symlinks)?;
     let sources = apply_erf_entry_order(metadata.as_ref(), sources);
     let sources = normalize_pack_sources(sources)?;
@@ -415,7 +415,11 @@ fn pack_ncs_resource(input: &Path, output: &Path, cmd: &PackCmd) -> Result<(), S
         nwscript::assemble_ncs_bytes(&text, None)
             .map_err(|error| format!("failed to assemble {}: {error}", input.display()))?
     } else if is_nwscript_source_file(input) {
-        let options = pack_compile_options(&ScriptCompileConfig::from(cmd), Vec::new(), cmd.debug)?;
+        let options = pack_compile_options(
+            &ScriptCompileConfig::from_pack_cmd(cmd, input)?,
+            Vec::new(),
+            cmd.debug,
+        )?;
         let artifacts = compile_script_file(input, &options)?;
         ensure_output_file_ready(output, cmd.force)?;
         fs::write(output, &artifacts.ncs)
@@ -650,7 +654,7 @@ fn run_key_pack(cmd: KeyPackCmd) -> Result<(), String> {
         ));
     }
     let bif_prefix = "data";
-    let compile_config = ScriptCompileConfig::from(&cmd);
+    let compile_config = ScriptCompileConfig::from_key_pack_cmd(&cmd)?;
 
     let mut bifs = Vec::new();
     let mut source_entries = std::collections::HashMap::<resman::ResRef, PackSourceEntry>::new();
@@ -972,9 +976,9 @@ struct ScriptCompileConfig {
     jobs:                Option<usize>,
 }
 
-impl From<&PackCmd> for ScriptCompileConfig {
-    fn from(value: &PackCmd) -> Self {
-        Self {
+impl ScriptCompileConfig {
+    fn from_pack_cmd(value: &PackCmd, input: &Path) -> Result<Self, String> {
+        let mut config = Self {
             debug:               value.debug,
             no_entrypoint_check: value.no_entrypoint_check,
             langspec:            value.langspec.clone(),
@@ -982,13 +986,13 @@ impl From<&PackCmd> for ScriptCompileConfig {
             optimization:        value.optimization.clone(),
             optimization_flags:  value.optimization_flag.clone(),
             jobs:                value.jobs,
-        }
+        };
+        config.add_project_dependencies(input)?;
+        Ok(config)
     }
-}
 
-impl From<&KeyPackCmd> for ScriptCompileConfig {
-    fn from(value: &KeyPackCmd) -> Self {
-        Self {
+    fn from_key_pack_cmd(value: &KeyPackCmd) -> Result<Self, String> {
+        let mut config = Self {
             debug:               value.debug,
             no_entrypoint_check: value.no_entrypoint_check,
             langspec:            value.langspec.clone(),
@@ -996,7 +1000,18 @@ impl From<&KeyPackCmd> for ScriptCompileConfig {
             optimization:        value.optimization.clone(),
             optimization_flags:  value.optimization_flag.clone(),
             jobs:                value.jobs,
+        };
+        config.add_project_dependencies(&value.source)?;
+        Ok(config)
+    }
+
+    fn add_project_dependencies(&mut self, input: &Path) -> Result<(), String> {
+        for dependency in nwnrs_nwpkg::resolve_include_dependencies(input)? {
+            if !self.include_dirs.contains(&dependency.source_root) {
+                self.include_dirs.push(dependency.source_root);
+            }
         }
+        Ok(())
     }
 }
 
@@ -1404,6 +1419,60 @@ int FALSE = 0;
                 )
                 .is_err(),
             "include-only helper should not be packed as standalone NCS"
+        );
+
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn pack_resolves_local_nwpkg_include_dependency() {
+        let temp_dir = unique_test_dir("erf-pack-nwpkg-include");
+        let input = temp_dir.join("module");
+        let include = temp_dir.join("include");
+        let output = temp_dir.join("test.mod");
+        fs::create_dir_all(&input).expect("create module dir");
+        fs::create_dir_all(&include).expect("create include dir");
+        fs::write(
+            input.join("nwproject.toml"),
+            "[project]\nname = \"fixture\"\nkind = \"mod\"\n\n[source]\npath = \
+             \".\"\n\n[dependencies]\nfixture = { path = \"../include\" }\n",
+        )
+        .expect("write module manifest");
+        fs::write(
+            include.join("nwproject.toml"),
+            "[project]\nname = \"fixture\"\nkind = \"include\"\n\n[source]\npath = \".\"\n",
+        )
+        .expect("write include manifest");
+        fs::write(input.join("nwscript.nss"), minimal_langspec()).expect("write langspec");
+        fs::write(
+            include.join("fixture.nss"),
+            "int FixtureValue() { return TRUE; }\n",
+        )
+        .expect("write dependency include");
+        fs::write(
+            input.join("main.nss"),
+            "#include \"fixture\"\nvoid main() { int nValue = FixtureValue(); }\n",
+        )
+        .expect("write module script");
+
+        let mut cmd = base_pack_cmd(vec![input.clone(), output.clone()]);
+        cmd.force = true;
+        run_pack(cmd).expect("pack module with local include dependency");
+
+        let archive = erf::read_erf_from_file(&output).expect("read packed archive");
+        let compiled = archive
+            .demand(&resman::ResRef::new("main", resman::ResType(2010)).expect("build ncs rr"))
+            .expect("read compiled script")
+            .read_all(CachePolicy::Bypass)
+            .expect("read compiled bytes");
+        assert!(nwscript::decode_ncs_instructions(&compiled).is_ok());
+        assert!(
+            archive
+                .demand(
+                    &resman::ResRef::new("fixture", resman::ResType(2009)).expect("build nss rr")
+                )
+                .is_err(),
+            "dependency source should not be packed into the module"
         );
 
         let _ = fs::remove_dir_all(temp_dir);

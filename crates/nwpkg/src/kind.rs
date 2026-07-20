@@ -4,9 +4,10 @@ use std::{fmt, str::FromStr};
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 
-/// Supported `nwproject` output kinds.
+/// Supported `nwproject` kinds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ProjectKind {
+    Include,
     TwoDa,
     Are,
     Bic,
@@ -38,15 +39,16 @@ pub enum ProjectKind {
     Utw,
 }
 
-/// High-level packaging layout implied by one project kind.
+/// High-level source or packaging layout implied by one project kind.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ProjectLayout {
+    Include,
     Resource,
     Erf,
     Key,
 }
 
-const ALL_PROJECT_KINDS: [ProjectKind; 29] = [
+const ALL_PROJECT_KINDS: [ProjectKind; 30] = [
     ProjectKind::TwoDa,
     ProjectKind::Are,
     ProjectKind::Bic,
@@ -76,6 +78,7 @@ const ALL_PROJECT_KINDS: [ProjectKind; 29] = [
     ProjectKind::Uts,
     ProjectKind::Utt,
     ProjectKind::Utw,
+    ProjectKind::Include,
 ];
 
 impl ProjectKind {
@@ -92,6 +95,7 @@ impl ProjectKind {
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::Include => "include",
             Self::TwoDa => "2da",
             Self::Are => "are",
             Self::Bic => "bic",
@@ -128,6 +132,7 @@ impl ProjectKind {
     #[must_use]
     pub const fn layout(self) -> ProjectLayout {
         match self {
+            Self::Include => ProjectLayout::Include,
             Self::Erf | Self::Hak | Self::Mod | Self::Nwm => ProjectLayout::Erf,
             Self::Key => ProjectLayout::Key,
             _ => ProjectLayout::Resource,
@@ -146,6 +151,7 @@ impl FromStr for ProjectKind {
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value.to_ascii_lowercase().as_str() {
+            "include" => Ok(Self::Include),
             "2da" => Ok(Self::TwoDa),
             "are" => Ok(Self::Are),
             "bic" => Ok(Self::Bic),

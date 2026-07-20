@@ -3,6 +3,7 @@ name: Module checks
 on:
     pull_request:
         paths:
+            - include/nwnrs/**
             - module/**
             - crates/nwnrs/**
             - crates/nwpkg/**

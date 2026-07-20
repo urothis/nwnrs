@@ -1,6 +1,7 @@
 #![allow(missing_docs)]
 
 use std::{
+    collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
 };
@@ -12,8 +13,25 @@ use crate::{PROJECT_MANIFEST_FILENAME, ProjectKind, fs::ensure_output_file_ready
 /// Typed `nwproject.toml` contents.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProjectManifest {
-    pub project: ProjectSection,
-    pub source:  SourceSection,
+    pub project:      ProjectSection,
+    pub source:       SourceSection,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub dependencies: BTreeMap<String, DependencySpec>,
+}
+
+/// One project dependency. Only local paths are supported until the Git
+/// resolver and lock semantics are implemented.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum DependencySpec {
+    Path(PathDependency),
+}
+
+/// A dependency resolved relative to the declaring `nwproject.toml`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PathDependency {
+    pub path: PathBuf,
 }
 
 /// Top-level project metadata.
@@ -38,13 +56,14 @@ impl ProjectManifest {
         source_path: impl Into<PathBuf>,
     ) -> Self {
         Self {
-            project: ProjectSection {
+            project:      ProjectSection {
                 name: name.into(),
                 kind,
             },
-            source:  SourceSection {
+            source:       SourceSection {
                 path: source_path.into(),
             },
+            dependencies: BTreeMap::new(),
         }
     }
 }

@@ -385,8 +385,8 @@ pub(crate) struct UnpackCmd {
 /// initialize an NWN project in an existing directory
 pub(crate) struct InitCmd {
     #[argh(option)]
-    /// project output kind such as utc, 2da, tlk, ssf, mdl, tga, dds, plt, ncs,
-    /// mod, hak, nwm, erf, or key
+    /// project kind such as utc, 2da, tlk, ssf, mdl, tga, dds, plt, ncs,
+    /// mod, hak, nwm, erf, key, or include
     pub(crate) kind: Option<String>,
 
     #[argh(positional)]
@@ -400,8 +400,8 @@ pub(crate) struct InitCmd {
 /// create a new NWN project directory
 pub(crate) struct NewCmd {
     #[argh(option)]
-    /// project output kind such as utc, 2da, tlk, ssf, mdl, tga, dds, plt, ncs,
-    /// mod, hak, nwm, erf, or key
+    /// project kind such as utc, 2da, tlk, ssf, mdl, tga, dds, plt, ncs,
+    /// mod, hak, nwm, erf, key, or include
     pub(crate) kind: Option<String>,
 
     #[argh(positional)]

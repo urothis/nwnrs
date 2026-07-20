@@ -19,7 +19,8 @@ cover, and how they fit together with `nwnrs-types`, `nwnrs-nwscript`, and
 - inspect typed NWN resources and archives
 - convert between authored and compiled representations such as `MDL`, `OBJ`,
   and image formats
-- scaffold `nwproject` workspaces for resource, ERF, and KEY/BIF packaging
+- scaffold `nwproject` workspaces for include libraries and resource, ERF, or
+  KEY/BIF packaging
 - pack source trees back into distributable resources and archives
 - unpack existing resources and archives into editable source trees
 - work with `NWSync` manifests and repositories
@@ -297,7 +298,7 @@ target-pack selection, signal handling, crash-log preservation, and native
 server-log following.
 
 Once injected, the runtime installs the NWScript bridge described by the
-source-controlled `module/nwnrs.nss` include. It reports runtime identity,
+source-controlled `include/nwnrs/nwnrs.nss` include package. It reports runtime identity,
 server state, and active module/area/object event context, and exposes validated
 administration operations such as session settings, ban lists, graceful
 shutdown, rules reload, TURD recovery, and deferred server-vault character
@@ -324,11 +325,24 @@ deletion. No HTTP or metrics service is started.
 `nwnrs` relies on the `nwnrs-nwpkg` crate for project control files:
 
 - `nwproject.toml` describes project identity, kind, and source root
+- `[dependencies]` maps include-library names to local package paths; `pack`
+  and `compile` add their source roots to NWScript include resolution
 - `nwpkg.lock` stores repack metadata that helps preserve archive structure
   and reuse original content when possible
 
 That metadata is what makes unpack-edit-repack workflows more faithful than a
 blind “read everything and write everything from scratch” loop.
+
+For example, a module can consume a neighboring include package without
+copying its source into the module:
+
+```toml
+[dependencies]
+nwnrs = { path = "../include/nwnrs" }
+```
+
+Dependency paths are resolved relative to the declaring `nwproject.toml`.
+Only local `include` packages are supported currently.
 
 ## Relationship To The Other Crates
 

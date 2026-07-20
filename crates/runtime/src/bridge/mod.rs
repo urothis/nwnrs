@@ -1436,7 +1436,7 @@ mod tests {
 
     #[test]
     fn public_nwscript_header_matches_the_rust_contract() {
-        let header = include_str!("../../../../module/nwnrs.nss");
+        let header = include_str!("../../../../include/nwnrs/nwnrs.nss");
         assert!(header.contains(&format!(
             "const int NWNRS_API_VERSION = {RUNTIME_API_VERSION};"
         )));

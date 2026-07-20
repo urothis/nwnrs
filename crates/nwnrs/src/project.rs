@@ -33,14 +33,23 @@ pub(crate) fn run_new(cmd: NewCmd) -> Result<(), String> {
 
 fn scaffold_project(target: &Path, kind: &ProjectKind) -> Result<(), String> {
     let project_name = project_name_for_path(target)?;
-    let output_kind = project_output_kind(*kind)?;
     match kind.layout() {
+        ProjectLayout::Include => scaffold_include_project(target, &project_name),
         ProjectLayout::Resource => {
-            scaffold_resource_project(target, &project_name, *kind, output_kind)
+            scaffold_resource_project(target, &project_name, *kind, project_output_kind(*kind)?)
         }
         ProjectLayout::Erf => scaffold_erf_project(target, &project_name, *kind),
         ProjectLayout::Key => scaffold_key_project(target, &project_name, *kind),
     }
+}
+
+fn scaffold_include_project(target: &Path, project_name: &str) -> Result<(), String> {
+    let file_name = format!("{project_name}.nss");
+    let file_path = target.join(&file_name);
+    ensure_output_file_ready(&file_path, false)?;
+    fs::write(&file_path, format!("/// {project_name} include library.\n"))
+        .map_err(|error| format!("failed to write {}: {error}", file_path.display()))?;
+    write_project_manifest(target, ProjectKind::Include, project_name, ".", false)
 }
 
 fn resolve_project_kind(kind: Option<String>) -> Result<ProjectKind, String> {
@@ -275,6 +284,9 @@ fn write_resource_starter(
 }
 
 fn project_output_kind(kind: ProjectKind) -> Result<Kind, String> {
+    if kind == ProjectKind::Include {
+        return Err("include projects do not produce a packed resource".to_string());
+    }
     detect_kind(Path::new(&format!("placeholder.{kind}")))
         .ok_or_else(|| format!("unsupported project kind: {kind}"))
 }
@@ -425,6 +437,23 @@ mod tests {
             .expect("read lock")
             .expect("erf lock present");
         assert_eq!(metadata.file_type, "MOD ");
+
+        let _ = fs::remove_dir_all(target);
+    }
+
+    #[test]
+    fn new_scaffolds_include_project_without_artifact_lock() {
+        let target = unique_test_dir("new-include-project");
+        let expected_name = project_name_for_path(&target).expect("derive project name");
+        run_new(NewCmd {
+            kind: Some("include".to_string()),
+            path: target.clone(),
+        })
+        .expect("scaffold include project");
+
+        assert!(target.join("nwproject.toml").is_file());
+        assert!(target.join(format!("{expected_name}.nss")).is_file());
+        assert!(!target.join("nwpkg.lock").exists());
 
         let _ = fs::remove_dir_all(target);
     }

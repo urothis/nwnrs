@@ -1,0 +1,6 @@
+[project]
+name = "nwnrs"
+kind = "include"
+
+[source]
+path = "."

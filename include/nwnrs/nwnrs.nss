@@ -85,7 +85,7 @@ string NWNRS_GetServerBuild();
 /// Returns the server platform as "operating-system-architecture".
 string NWNRS_GetServerPlatform();
 
-/// Returns the server operating system, currently "macos" or "linux".
+/// Returns the server operating system: "macos", "linux", or "windows".
 string NWNRS_GetServerOperatingSystem();
 
 /// Returns the server architecture, currently "aarch64" or "x86_64".

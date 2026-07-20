@@ -41,7 +41,8 @@ error code and a diagnostic message on the current bridge thread.
 Native ABI provenance and regeneration rules are documented in
 [`ABI.md`](ABI.md).
 
-Module source includes [`nwnrs.nss`](../../module/nwnrs.nss). The
-source-controlled demo module compiles `module/nwnrs_init.nss` into its
-module-load event, preserves the stock `x2_mod_def_load` behavior, and writes a
-runtime, server, and module-load-event summary at startup.
+The [`nwnrs.nss`](../../include/nwnrs/nwnrs.nss) include is a separate local
+`nwpkg` dependency of the source-controlled demo module. The module compiles
+`module/nwnrs_init.nss` into its module-load event, preserves the stock
+`x2_mod_def_load` behavior, and writes a runtime, server, and module-load-event
+summary at startup.

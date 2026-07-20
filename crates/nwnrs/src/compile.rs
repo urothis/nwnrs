@@ -361,6 +361,14 @@ pub(crate) fn run_compile(cmd: CompileCmd) -> Result<(), String> {
         &cmd.language,
         cmd.load_ovr,
     )?;
+    let mut search_roots = cmd.include_dir.clone();
+    for input in &cmd.paths {
+        for dependency in nwnrs_nwpkg::resolve_include_dependencies(input)? {
+            if !search_roots.contains(&dependency.source_root) {
+                search_roots.push(dependency.source_root);
+            }
+        }
+    }
     let options = nwscript::BatchCompileOptions {
         driver: nwscript::CompilerDriverOptions {
             session: nwscript::CompilerSessionOptions {
@@ -385,7 +393,7 @@ pub(crate) fn run_compile(cmd: CompileCmd) -> Result<(), String> {
             skip_missing_entrypoint: !cmd.no_entrypoint_check,
             ..nwscript::CompilerDriverOptions::default()
         },
-        search_roots: cmd.include_dir.clone(),
+        search_roots,
         fallback_resolver,
         recurse: cmd.recurse,
         follow_symlinks: cmd.follow_symlinks,
@@ -604,6 +612,43 @@ int LOCAL_ONLY = 7;
         .expect("compile should succeed");
 
         assert!(!artifacts.ncs.is_empty(), "NCS output should exist");
+
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn compile_command_resolves_local_nwpkg_include_dependency() {
+        let temp_dir = unique_test_dir("nwscript-nwpkg-include");
+        let project = temp_dir.join("project");
+        let include = temp_dir.join("include");
+        fs::create_dir_all(&project).expect("create project dir");
+        fs::create_dir_all(&include).expect("create include dir");
+        fs::write(
+            project.join("nwproject.toml"),
+            "[project]\nname = \"fixture\"\nkind = \"mod\"\n\n[source]\npath = \
+             \".\"\n\n[dependencies]\nfixture = { path = \"../include\" }\n",
+        )
+        .expect("write project manifest");
+        fs::write(
+            include.join("nwproject.toml"),
+            "[project]\nname = \"fixture\"\nkind = \"include\"\n\n[source]\npath = \".\"\n",
+        )
+        .expect("write include manifest");
+        fs::write(project.join("nwscript.nss"), minimal_langspec()).expect("write langspec");
+        fs::write(
+            include.join("fixture.nss"),
+            "int FixtureValue() { return TRUE; }\n",
+        )
+        .expect("write dependency include");
+        let input = project.join("main.nss");
+        fs::write(
+            &input,
+            "#include \"fixture\"\nvoid main() { int nValue = FixtureValue(); }\n",
+        )
+        .expect("write project script");
+
+        run_compile(compile_cmd(input)).expect("compile with local include dependency");
+        assert!(project.join("main.ncs").is_file());
 
         let _ = fs::remove_dir_all(temp_dir);
     }
