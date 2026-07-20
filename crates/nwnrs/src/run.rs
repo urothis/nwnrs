@@ -783,7 +783,16 @@ async fn supervise(mut plan: LaunchPlan) -> Result<ExitCode, String> {
     );
     let mut log_followers = start_log_followers(&plan)?;
     if let Some(paths) = plan.log_paths.as_ref() {
-        let [output_path, error_path] = paths;
+        let [
+            (ServerLogKind::Output, output_path),
+            (ServerLogKind::Error, error_path),
+        ] = paths.as_slice()
+        else {
+            return Err(format!(
+                "expected output and error server log paths, found {} entries",
+                paths.len()
+            ));
+        };
         info!(
             target: "nwnrs::launcher",
             "following new server log output"

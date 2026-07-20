@@ -68,13 +68,13 @@ extern "C" std::size_t nwnrs_engine_get_string(
     void* object,
     char* output,
     std::size_t capacity) {
-    CExoString value;
 #if defined(_WIN32)
+    CExoString value;
     const auto function = reinterpret_cast<GetStringWindows>(address);
     function(object, &value);
 #else
     const auto function = reinterpret_cast<GetString>(address);
-    value = function(object);
+    CExoString value = function(object);
 #endif
     if (value.length != 0 && output != nullptr && capacity >= value.length) {
         std::copy_n(value.string, value.length, output);
