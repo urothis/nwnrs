@@ -194,16 +194,24 @@ architecture, and supervises the server process. macOS uses
 suspended, loads and initializes the matching runtime DLL, and resumes the
 primary thread only after initialization succeeds.
 
-On Windows, the runtime also themes the native NWServer control panel. The
+On Windows, `run` is headless by default: NWServer retains its hidden native
+window and message loop for compatibility while launcher and server output is
+rendered in the terminal. Pass `--gui` to show the native control panel.
+
+When enabled, the runtime themes the native NWServer control panel. The
 title bar, background, labels, inputs, lists, buttons, checkboxes, combo boxes,
 and numeric spinners use a dark palette; orange is limited to the window
 border, focus/checked states, dropdown and spinner glyphs, and a two-pixel
 client accent line. Painting is control-local and leaves the original native
 input and command behavior intact.
 
-The launcher mirrors new output from `logs.0/nwserverLog1.txt` and
-`logs.0/nwserverError1.txt` to its own output, forwards `TERM` and `HUP` to the
-server, cleans up the log follower, and returns the server's exit status.
+The launcher mirrors new server-log output to its terminal. macOS and Linux
+follow `logs.0/nwserverLog1.txt` and `logs.0/nwserverError1.txt`. Windows uses
+its native `logs` directory and follows `nwserverLog1.txt`,
+`nwserverError1.txt`, and the more detailed `nwengineLog.txt`. It cleans up the
+log followers and returns the server's exit status.
+
+On Unix the launcher forwards `TERM` and `HUP` to the server.
 Terminal `INT` (`Ctrl-C`) requests a clean NWServer shutdown. On Unix this
 sends the native interactive `quit` command; on Windows it posts `WM_QUIT` to
 the server's primary thread. Typing `quit` at the Windows launcher prompt uses

@@ -42,9 +42,13 @@ hooks or changing engine event behavior.
 Validated NWScript log calls are emitted through `tracing` under the
 `nwnrs::script` target. A supervising launcher preserves their requested level;
 directly preloaded servers render them from the injected runtime itself.
+Multiline messages are emitted as one event per line so every line retains the
+`nwnrs::script` target and requested level on every supported platform.
 
-The Windows runtime observes creation of the exact NWServer control-panel
-window and applies a native dark theme before it becomes visible. It uses DWM
+The Windows runtime keeps the NWServer control-panel window hidden by default
+while preserving its message loop and native controls for engine compatibility.
+The `nwnrs run --gui` flag makes it visible. The runtime observes creation of
+the exact control-panel window and applies a native dark theme before it becomes visible. It uses DWM
 for the frame, standard control themes and control-color messages for inputs
 and lists, and paint-only subclasses for legacy buttons, checkboxes, combo
 arrows, and numeric spinners. The subclasses delegate all non-paint messages

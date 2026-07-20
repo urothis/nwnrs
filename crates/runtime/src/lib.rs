@@ -48,6 +48,12 @@ pub const ENV_SUPERVISED: &str = "NWNRS_SUPERVISED";
 pub const ENV_TARGET_PACK: &str = "NWNRS_TARGET_PACK";
 /// Names the root directory used for hash-based target-pack lookup.
 pub const ENV_TARGET_DIR: &str = "NWNRS_TARGET_DIR";
+/// Enables the native Windows NWServer control panel when set to `1`.
+///
+/// The supervised Windows launcher is headless by default. This variable is
+/// launcher-to-runtime plumbing; users normally select it with `nwnrs run
+/// --gui`.
+pub const ENV_WINDOWS_GUI: &str = "NWNRS_WINDOWS_GUI";
 
 /// An error produced while identifying or configuring the runtime.
 ///

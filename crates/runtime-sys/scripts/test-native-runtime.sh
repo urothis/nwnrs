@@ -50,5 +50,8 @@ RUST_LOG='warn,nwnrs::launcher=info,nwnrs::runtime=info,nwnrs::script=trace' \
 grep -Fq 'TRACE nwnrs::script: fixture trace message' "$runtime_output"
 grep -Fq 'DEBUG nwnrs::script: fixture debug message' "$runtime_output"
 grep -Fq ' INFO nwnrs::script: fixture info message' "$runtime_output"
+grep -Fq ' INFO nwnrs::script: fixture multiline first' "$runtime_output"
+grep -Fq ' INFO nwnrs::script: fixture multiline second' "$runtime_output"
+grep -Fq ' INFO nwnrs::script: fixture multiline third' "$runtime_output"
 grep -Fq ' WARN nwnrs::script: fixture warn message' "$runtime_output"
 grep -Fq 'ERROR nwnrs::script: fixture error message' "$runtime_output"

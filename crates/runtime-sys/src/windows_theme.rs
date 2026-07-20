@@ -3,12 +3,13 @@
 #![allow(clippy::missing_safety_doc)]
 
 use std::{
+    env,
     ffi::c_void,
     panic::{self, AssertUnwindSafe},
     ptr,
     sync::{
         OnceLock,
-        atomic::{AtomicPtr, Ordering},
+        atomic::{AtomicBool, AtomicPtr, Ordering},
     },
 };
 
@@ -39,9 +40,10 @@ use windows_sys::Win32::{
             CBS_DROPDOWNLIST, CreateWindowExA, CreateWindowExW, EnumChildWindows, GA_ROOT,
             GCLP_HBRBACKGROUND, GWL_STYLE, GetAncestor, GetClassNameW, GetClientRect,
             GetWindowLongPtrW, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId,
-            HMENU, SendMessageW, SetClassLongPtrW, WM_CTLCOLORBTN, WM_CTLCOLORDLG, WM_CTLCOLOREDIT,
-            WM_CTLCOLORLISTBOX, WM_CTLCOLORSCROLLBAR, WM_CTLCOLORSTATIC, WM_ERASEBKGND, WM_GETFONT,
-            WM_NCDESTROY, WM_PAINT, WM_SETTINGCHANGE, WM_THEMECHANGED, WS_DISABLED,
+            HMENU, SW_HIDE, SendMessageW, SetClassLongPtrW, ShowWindow, WM_CTLCOLORBTN,
+            WM_CTLCOLORDLG, WM_CTLCOLOREDIT, WM_CTLCOLORLISTBOX, WM_CTLCOLORSCROLLBAR,
+            WM_CTLCOLORSTATIC, WM_ERASEBKGND, WM_GETFONT, WM_NCDESTROY, WM_PAINT, WM_SETTINGCHANGE,
+            WM_THEMECHANGED, WS_DISABLED, WS_VISIBLE,
         },
     },
 };
@@ -64,7 +66,9 @@ const MUTED: COLORREF = rgb(0x88, 0x88, 0x88);
 static RESOURCES: OnceLock<ThemeResources> = OnceLock::new();
 static CREATE_WINDOW_EX_A_ORIGINAL: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
 static CREATE_WINDOW_EX_W_ORIGINAL: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
+static SHOW_WINDOW_ORIGINAL: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
 static ALLOW_DARK_MODE_FOR_WINDOW: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
+static WINDOWS_GUI: AtomicBool = AtomicBool::new(false);
 
 type SetPreferredAppModeFunction = unsafe extern "system" fn(i32) -> i32;
 type AllowDarkModeForWindowFunction = unsafe extern "system" fn(HWND, i32) -> i32;
@@ -99,6 +103,8 @@ type CreateWindowExWFunction = unsafe extern "system" fn(
     HINSTANCE,
     *const c_void,
 ) -> HWND;
+
+type ShowWindowFunction = unsafe extern "system" fn(HWND, i32) -> i32;
 
 struct ThemeResources {
     background: usize,
@@ -157,6 +163,10 @@ pub(super) fn install() -> Result<(), String> {
     {
         return Ok(());
     }
+    WINDOWS_GUI.store(
+        env::var_os(nwnrs_runtime::ENV_WINDOWS_GUI).as_deref() == Some(std::ffi::OsStr::new("1")),
+        Ordering::Release,
+    );
     let resources = ThemeResources::create()?;
     RESOURCES.set(resources).map_err(|_resources| {
         "Windows theme resources were initialized more than once".to_string()
@@ -164,7 +174,11 @@ pub(super) fn install() -> Result<(), String> {
 
     enable_immersive_dark_mode();
     install_create_window_hooks()?;
-    tracing::debug!(target: "nwnrs::runtime", "installed Windows dark theme observer");
+    tracing::debug!(
+        target: "nwnrs::runtime",
+        gui = WINDOWS_GUI.load(Ordering::Acquire),
+        "installed Windows UI observer"
+    );
     Ok(())
 }
 
@@ -252,6 +266,12 @@ fn install_create_window_hooks() -> Result<(), String> {
             &CREATE_WINDOW_EX_W_ORIGINAL,
             "CreateWindowExW",
         ),
+        (
+            ShowWindow as *const () as *mut c_void,
+            show_window_replacement as ShowWindowFunction as *const () as *mut c_void,
+            &SHOW_WINDOW_ORIGINAL,
+            "ShowWindow",
+        ),
     ];
     let mut installed = Vec::new();
     let mut failure = None;
@@ -328,7 +348,9 @@ unsafe extern "system" fn create_window_ex_a_replacement(
     }
     // SAFETY: Gum returned a CreateWindowExA trampoline for this exact target.
     let original = unsafe { std::mem::transmute::<*mut c_void, CreateWindowExAFunction>(original) };
-    // SAFETY: all arguments are forwarded without modification.
+    let style = headless_creation_style(style, parent);
+    // SAFETY: all arguments except the optional top-level visibility bit are
+    // forwarded without modification.
     let window = unsafe {
         original(
             extended_style,
@@ -369,7 +391,9 @@ unsafe extern "system" fn create_window_ex_w_replacement(
     }
     // SAFETY: Gum returned a CreateWindowExW trampoline for this exact target.
     let original = unsafe { std::mem::transmute::<*mut c_void, CreateWindowExWFunction>(original) };
-    // SAFETY: all arguments are forwarded without modification.
+    let style = headless_creation_style(style, parent);
+    // SAFETY: all arguments except the optional top-level visibility bit are
+    // forwarded without modification.
     let window = unsafe {
         original(
             extended_style,
@@ -388,6 +412,43 @@ unsafe extern "system" fn create_window_ex_w_replacement(
     };
     theme_after_creation(window);
     window
+}
+
+fn headless_creation_style(style: u32, parent: HWND) -> u32 {
+    if WINDOWS_GUI.load(Ordering::Acquire) || !parent.is_null() {
+        style
+    } else {
+        style & !WS_VISIBLE
+    }
+}
+
+unsafe extern "system" fn show_window_replacement(window: HWND, command: i32) -> i32 {
+    let original = SHOW_WINDOW_ORIGINAL.load(Ordering::Acquire);
+    if original.is_null() {
+        return 0;
+    }
+    // SAFETY: Gum returned a ShowWindow trampoline for this exact target.
+    let original = unsafe { std::mem::transmute::<*mut c_void, ShowWindowFunction>(original) };
+    let command = if should_hide_top_level_window(window) {
+        SW_HIDE
+    } else {
+        command
+    };
+    // SAFETY: window and the selected ShowWindow command are forwarded to the
+    // original USER32 implementation.
+    unsafe { original(window, command) }
+}
+
+fn should_hide_top_level_window(window: HWND) -> bool {
+    if WINDOWS_GUI.load(Ordering::Acquire) || window.is_null() {
+        return false;
+    }
+    let mut process_id = 0_u32;
+    // SAFETY: window is supplied to ShowWindow and process_id is writable.
+    unsafe { GetWindowThreadProcessId(window, &raw mut process_id) };
+    process_id == unsafe { GetCurrentProcessId() }
+        // SAFETY: GA_ROOT does not retain caller-owned memory.
+        && unsafe { GetAncestor(window, GA_ROOT) } == window
 }
 
 fn theme_after_creation(window: HWND) {

@@ -113,6 +113,11 @@ pub(crate) struct RunCmd {
     /// start the server without mirroring its log and error files
     pub(crate) no_tail_logs: bool,
 
+    #[argh(switch)]
+    /// on Windows, show the dark native control panel instead of running
+    /// headless
+    pub(crate) gui: bool,
+
     #[argh(option)]
     /// native mode: path to the injected runtime dylib or shared object
     pub(crate) runtime: Option<PathBuf>,
@@ -601,6 +606,7 @@ mod tests {
             &["nwnrs"],
             &[
                 "run",
+                "--gui",
                 "--runtime",
                 "libnwnrs_runtime.so",
                 "--targets",
@@ -623,6 +629,7 @@ mod tests {
         );
         assert_eq!(command.color, super::ColorMode::Auto);
         assert!(!command.no_tail_logs);
+        assert!(command.gui);
         assert_eq!(
             command.arguments,
             vec!["/opt/nwn/nwserver", "-module", "nwnrs"]
@@ -1017,6 +1024,7 @@ mod supervisor_tests {
         assert!(!command.container);
         assert_eq!(command.color, super::ColorMode::Auto);
         assert!(!command.no_tail_logs);
+        assert!(!command.gui);
         assert_eq!(
             command.arguments,
             vec!["/opt/nwn/nwserver", "-module", "nwnrs"]

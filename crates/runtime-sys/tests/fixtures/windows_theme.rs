@@ -55,6 +55,8 @@ unsafe extern "system" {
     fn GetDC(window: Window) -> DeviceContext;
     fn ReleaseDC(window: Window, context: DeviceContext) -> i32;
     fn SendMessageW(window: Window, message: u32, wparam: usize, lparam: isize) -> isize;
+    fn IsWindowVisible(window: Window) -> i32;
+    fn ShowWindow(window: Window, command: i32) -> i32;
 }
 
 #[link(name = "dwmapi")]
@@ -77,6 +79,7 @@ const DWMWA_USE_IMMERSIVE_DARK_MODE: u32 = 20;
 const WM_CTLCOLORSTATIC: u32 = 312;
 const BM_GETCHECK: u32 = 240;
 const BM_CLICK: u32 = 245;
+const SW_SHOW: i32 = 5;
 
 pub(super) fn verify() {
     let root_class = wide(ROOT_CLASS);
@@ -105,7 +108,7 @@ pub(super) fn verify() {
             0,
             root_class.as_ptr(),
             wide("NWServer theme fixture").as_ptr(),
-            WS_OVERLAPPEDWINDOW,
+            WS_OVERLAPPEDWINDOW | WS_VISIBLE,
             0,
             0,
             480,
@@ -117,6 +120,16 @@ pub(super) fn verify() {
         )
     };
     assert!(!root.is_null(), "create themed NWServer root fixture");
+    // The launcher defaults to headless operation; --gui opts into the native
+    // control panel. Repeated ShowWindow calls must not defeat headless mode.
+    let expect_gui = std::env::var_os("NWNRS_WINDOWS_GUI").as_deref()
+        == Some(std::ffi::OsStr::new("1"));
+    unsafe { ShowWindow(root, SW_SHOW) };
+    assert_eq!(
+        unsafe { IsWindowVisible(root) } != 0,
+        expect_gui,
+        "runtime applied the selected Windows UI mode"
+    );
     let label = create_control(instance, root, "Static", "Fixture label", WS_VISIBLE);
     let checkbox = create_control(
         instance,

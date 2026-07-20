@@ -77,10 +77,23 @@ $process = Start-Process `
     -RedirectStandardError $output
 if ($process.ExitCode -ne 0) { throw "injected fixture failed with exit code $($process.ExitCode)" }
 
+$process = Start-Process `
+    -FilePath $launcher `
+    -ArgumentList @('run', '--gui', '--no-tail-logs', '--runtime', $runtime, '--targets', $targets, $fixtureHost) `
+    -NoNewWindow `
+    -Wait `
+    -PassThru `
+    -RedirectStandardOutput $consoleOutput `
+    -RedirectStandardError $output
+if ($process.ExitCode -ne 0) { throw "GUI fixture failed with exit code $($process.ExitCode)" }
+
 foreach ($expected in @(
     'TRACE nwnrs::script: fixture trace message',
     'DEBUG nwnrs::script: fixture debug message',
     ' INFO nwnrs::script: fixture info message',
+    ' INFO nwnrs::script: fixture multiline first',
+    ' INFO nwnrs::script: fixture multiline second',
+    ' INFO nwnrs::script: fixture multiline third',
     ' WARN nwnrs::script: fixture warn message',
     'ERROR nwnrs::script: fixture error message'
 )) {

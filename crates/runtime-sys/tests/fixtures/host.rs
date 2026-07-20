@@ -944,6 +944,12 @@ fn main() {
     call_log(&mut commands, &mut vm, 0, "fixture trace message");
     call_log(&mut commands, &mut vm, 1, "fixture debug message");
     call_log(&mut commands, &mut vm, 2, "fixture info message");
+    call_log(
+        &mut commands,
+        &mut vm,
+        2,
+        "fixture multiline first\nfixture multiline second\nfixture multiline third",
+    );
     call_log(&mut commands, &mut vm, 3, "fixture warn message");
     call_log(&mut commands, &mut vm, 4, "fixture error message");
 

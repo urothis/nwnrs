@@ -357,7 +357,17 @@ fn record_error(error: BridgeError) -> i32 {
 
 fn emit_script_log(log: &ScriptLog) {
     let message = String::from_utf8_lossy(&log.message);
-    match log.level {
+    if message.is_empty() {
+        emit_script_log_line(log.level, "");
+        return;
+    }
+    for line in message.lines() {
+        emit_script_log_line(log.level, line);
+    }
+}
+
+fn emit_script_log_line(level: ScriptLogLevel, message: &str) {
+    match level {
         ScriptLogLevel::Trace => tracing::trace!(target: "nwnrs::script", "{message}"),
         ScriptLogLevel::Debug => tracing::debug!(target: "nwnrs::script", "{message}"),
         ScriptLogLevel::Info => tracing::info!(target: "nwnrs::script", "{message}"),

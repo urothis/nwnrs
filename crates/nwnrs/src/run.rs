@@ -13,7 +13,7 @@ use std::{
 
 use nwnrs_runtime::{
     BinaryIdentity, ENV_ENABLED, ENV_REQUIRED, ENV_SUPERVISED, ENV_TARGET_DIR, ENV_TARGET_PACK,
-    OperatingSystem, Platform, resolve_target_pack,
+    ENV_WINDOWS_GUI, OperatingSystem, Platform, resolve_target_pack,
 };
 use tracing::{info, instrument};
 
@@ -40,11 +40,12 @@ enum ServerInput {
     Shutdown,
 }
 
-#[cfg(any(unix, windows))]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ServerLogKind {
     Output,
     Error,
+    #[cfg(windows)]
+    Engine,
 }
 
 #[cfg(any(unix, windows))]
@@ -60,8 +61,9 @@ struct LaunchPlan {
     working_directory: PathBuf,
     server_args:       Vec<String>,
     platform:          Platform,
-    log_paths:         Option<[PathBuf; 2]>,
+    log_paths:         Option<Vec<(ServerLogKind, PathBuf)>>,
     color:             ColorMode,
+    gui:               bool,
     #[cfg(target_os = "linux")]
     container:         Option<crate::container::ContainerState>,
 }
@@ -144,6 +146,7 @@ impl LaunchPlan {
             platform: server.platform,
             log_paths,
             color: command.color,
+            gui: command.gui,
             #[cfg(target_os = "linux")]
             container,
         })
@@ -157,6 +160,7 @@ impl LaunchPlan {
             .env_remove(LINUX_PRELOAD)
             .env_remove(MACOS_PRELOAD)
             .env_remove(ENV_TARGET_DIR)
+            .env_remove(ENV_WINDOWS_GUI)
             .env(ENV_ENABLED, "1")
             .env(ENV_REQUIRED, "1")
             .env(ENV_SUPERVISED, "1")
@@ -165,6 +169,9 @@ impl LaunchPlan {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        if self.platform.os == OperatingSystem::Windows && self.gui {
+            command.env(ENV_WINDOWS_GUI, "1");
+        }
         match self.platform.os {
             OperatingSystem::Macos => {
                 command.env(MACOS_PRELOAD, &self.runtime);
@@ -196,14 +203,7 @@ impl LaunchPlan {
 
     #[cfg(any(unix, windows))]
     fn log_follower_paths(&self) -> Vec<(ServerLogKind, PathBuf)> {
-        let Some(paths) = self.log_paths.as_ref() else {
-            return Vec::new();
-        };
-        [ServerLogKind::Output, ServerLogKind::Error]
-            .into_iter()
-            .zip(paths)
-            .map(|(kind, path)| (kind, path.clone()))
-            .collect()
+        self.log_paths.clone().unwrap_or_default()
     }
 }
 
@@ -451,7 +451,7 @@ fn isolate_process_group(_command: &mut ProcessCommand) {}
 fn server_log_paths(
     server_args: &[String],
     working_directory: &Path,
-) -> Result<[PathBuf; 2], String> {
+) -> Result<Vec<(ServerLogKind, PathBuf)>, String> {
     let mut forwarded_user_directory = None;
     let mut arguments = server_args.iter();
     while let Some(argument) = arguments.next() {
@@ -478,11 +478,26 @@ fn server_log_paths(
         Some(path) => working_directory.join(path),
         None => default_user_directory()?,
     };
+    Ok(platform_server_log_paths(&user_directory))
+}
+
+#[cfg(windows)]
+fn platform_server_log_paths(user_directory: &Path) -> Vec<(ServerLogKind, PathBuf)> {
+    let logs = user_directory.join("logs");
+    vec![
+        (ServerLogKind::Output, logs.join("nwserverLog1.txt")),
+        (ServerLogKind::Error, logs.join("nwserverError1.txt")),
+        (ServerLogKind::Engine, logs.join("nwengineLog.txt")),
+    ]
+}
+
+#[cfg(not(windows))]
+fn platform_server_log_paths(user_directory: &Path) -> Vec<(ServerLogKind, PathBuf)> {
     let logs = user_directory.join("logs.0");
-    Ok([
-        logs.join("nwserverLog1.txt"),
-        logs.join("nwserverError1.txt"),
-    ])
+    vec![
+        (ServerLogKind::Output, logs.join("nwserverLog1.txt")),
+        (ServerLogKind::Error, logs.join("nwserverError1.txt")),
+    ]
 }
 
 fn default_user_directory() -> Result<PathBuf, String> {
@@ -1083,6 +1098,7 @@ fn follow_server_log(path: &Path, kind: ServerLogKind, stop: &AtomicBool) {
                 match kind {
                     ServerLogKind::Output => info!(target: "nwnrs::server", "{line}"),
                     ServerLogKind::Error => tracing::error!(target: "nwnrs::server", "{line}"),
+                    ServerLogKind::Engine => relay_windows_engine_log_line(line),
                 }
             }
             Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
@@ -1092,6 +1108,21 @@ fn follow_server_log(path: &Path, kind: ServerLogKind, stop: &AtomicBool) {
                 position = 0;
             }
         }
+    }
+}
+
+#[cfg(windows)]
+fn relay_windows_engine_log_line(line: &str) {
+    if line.starts_with("E ") {
+        tracing::error!(target: "nwnrs::server", "{line}");
+    } else if line.starts_with("W ") {
+        tracing::warn!(target: "nwnrs::server", "{line}");
+    } else if line.starts_with("D ") {
+        tracing::debug!(target: "nwnrs::server", "{line}");
+    } else if line.starts_with("T ") {
+        tracing::trace!(target: "nwnrs::server", "{line}");
+    } else {
+        info!(target: "nwnrs::server", "{line}");
     }
 }
 
@@ -1385,11 +1416,12 @@ mod tests {
 
     use nwnrs_runtime::{
         AbiLayouts, Architecture, BinaryIdentity, BridgeTarget, CExoStringLayout, ENV_ENABLED,
-        ENV_REQUIRED, ENV_SUPERVISED, ENV_TARGET_PACK, EVENT_CONTEXT_CAPABILITY_VERSION,
-        EngineClassLayouts, EventTarget, NWSCRIPT_BRIDGE_CAPABILITY_VERSION, OperatingSystem,
-        Platform, PlayerListLayout, RUNTIME_API_VERSION, SERVER_STATE_CAPABILITY_VERSION,
-        ServerStateTarget, TARGET_PACK_SCHEMA_VERSION, TargetAddress, TargetPack, TargetServer,
-        TargetSource, VectorLayout,
+        ENV_REQUIRED, ENV_SUPERVISED, ENV_TARGET_PACK, ENV_WINDOWS_GUI,
+        EVENT_CONTEXT_CAPABILITY_VERSION, EngineClassLayouts, EventTarget,
+        NWSCRIPT_BRIDGE_CAPABILITY_VERSION, OperatingSystem, Platform, PlayerListLayout,
+        RUNTIME_API_VERSION, SERVER_STATE_CAPABILITY_VERSION, ServerStateTarget,
+        TARGET_PACK_SCHEMA_VERSION, TargetAddress, TargetPack, TargetServer, TargetSource,
+        VectorLayout,
     };
 
     #[cfg(feature = "tooling")]
@@ -1419,6 +1451,7 @@ mod tests {
             docker_arg:        vec!["network=host".to_string()],
             color:             ColorMode::Always,
             no_tail_logs:      true,
+            gui:               false,
             runtime:           None,
             targets:           None,
             working_directory: None,
@@ -1471,6 +1504,7 @@ mod tests {
             docker_arg:        Vec::new(),
             color:             ColorMode::Auto,
             no_tail_logs:      false,
+            gui:               false,
             runtime:           None,
             targets:           None,
             working_directory: None,
@@ -1510,6 +1544,7 @@ mod tests {
             docker_arg: Vec::new(),
             color: ColorMode::Never,
             no_tail_logs: true,
+            gui: false,
             runtime: Some(runtime),
             targets: Some(root.clone()),
             working_directory: Some(root.clone()),
@@ -1536,6 +1571,7 @@ mod tests {
             OperatingSystem::Windows => {
                 assert!(environment(&command, MACOS_PRELOAD).is_none());
                 assert!(environment(&command, LINUX_PRELOAD).is_none());
+                assert!(environment(&command, ENV_WINDOWS_GUI).is_none());
             }
         }
         fs::remove_dir_all(root)?;
@@ -1554,13 +1590,7 @@ mod tests {
             working_directory,
         )?;
 
-        assert_eq!(
-            paths,
-            [
-                PathBuf::from("/var/lib/nwn/logs.0/nwserverLog1.txt"),
-                PathBuf::from("/var/lib/nwn/logs.0/nwserverError1.txt"),
-            ]
-        );
+        assert_eq!(paths, expected_server_log_paths(Path::new("/var/lib/nwn")));
         Ok(())
     }
 
@@ -1573,10 +1603,7 @@ mod tests {
 
         assert_eq!(
             paths,
-            [
-                PathBuf::from("/srv/nwn/bin/server-home/logs.0/nwserverLog1.txt"),
-                PathBuf::from("/srv/nwn/bin/server-home/logs.0/nwserverError1.txt"),
-            ]
+            expected_server_log_paths(Path::new("/srv/nwn/bin/server-home"))
         );
         Ok(())
     }
@@ -1588,6 +1615,25 @@ mod tests {
             .ok_or_else(|| "missing value unexpectedly succeeded".to_string())?;
         assert!(error.contains("missing its directory"));
         Ok(())
+    }
+
+    #[cfg(windows)]
+    fn expected_server_log_paths(root: &Path) -> Vec<(super::ServerLogKind, PathBuf)> {
+        let logs = root.join("logs");
+        vec![
+            (super::ServerLogKind::Output, logs.join("nwserverLog1.txt")),
+            (super::ServerLogKind::Error, logs.join("nwserverError1.txt")),
+            (super::ServerLogKind::Engine, logs.join("nwengineLog.txt")),
+        ]
+    }
+
+    #[cfg(not(windows))]
+    fn expected_server_log_paths(root: &Path) -> Vec<(super::ServerLogKind, PathBuf)> {
+        let logs = root.join("logs.0");
+        vec![
+            (super::ServerLogKind::Output, logs.join("nwserverLog1.txt")),
+            (super::ServerLogKind::Error, logs.join("nwserverError1.txt")),
+        ]
     }
 
     #[cfg(unix)]
