@@ -1164,11 +1164,15 @@ fn compiler_driver_error_span(error: &CompilerDriverError) -> Option<crate::Span
     };
     match session_error {
         CompilerSessionError::Preprocess(crate::PreprocessError::Lex(error)) => Some(error.span),
+        CompilerSessionError::Preprocess(crate::PreprocessError::Macro(error)) => error.span,
         CompilerSessionError::Compile(compile_error) => match compile_error {
             crate::CompileError::Parse(crate::ResolvedParseError::Parse(error)) => Some(error.span),
             crate::CompileError::Parse(crate::ResolvedParseError::Preprocess(
                 crate::PreprocessError::Lex(error),
             )) => Some(error.span),
+            crate::CompileError::Parse(crate::ResolvedParseError::Preprocess(
+                crate::PreprocessError::Macro(error),
+            )) => error.span,
             crate::CompileError::Semantic(error) => Some(error.span),
             crate::CompileError::Hir(error) => Some(error.span),
             crate::CompileError::Codegen(error) => error.span,

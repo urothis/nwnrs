@@ -345,6 +345,10 @@ pub enum TokenKind {
     QuestionMark,
     /// `:`
     Colon,
+    /// `$`, reserved by the extended macro syntax.
+    Dollar,
+    /// `#` when it begins an extended attribute (`#[...]`).
+    Hash,
 }
 
 /// One token plus its source span and normalized payload.

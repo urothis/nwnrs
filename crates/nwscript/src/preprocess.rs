@@ -5,8 +5,9 @@ use std::{
 };
 
 use crate::{
-    Keyword, LexerError, ScriptResolver, SourceError, SourceFile, SourceId, SourceLoadOptions,
-    SourceMap, Token, TokenKind, lex_source,
+    Keyword, LexerError, MacroExpansionError, MacroExpansionOptions, MacroRegistry, ScriptResolver,
+    SourceError, SourceFile, SourceId, SourceLoadOptions, SourceMap, Token, TokenKind,
+    expand_source_macros, lex_source,
 };
 
 /// One include relationship discovered while traversing source files.
@@ -62,6 +63,8 @@ pub enum PreprocessError {
     Source(SourceError),
     /// Lexing failure while scanning include directives.
     Lex(LexerError),
+    /// Extended macro collection or expansion failed.
+    Macro(MacroExpansionError),
 }
 
 impl fmt::Display for PreprocessError {
@@ -69,6 +72,7 @@ impl fmt::Display for PreprocessError {
         match self {
             Self::Source(error) => error.fmt(f),
             Self::Lex(error) => error.fmt(f),
+            Self::Macro(error) => error.fmt(f),
         }
     }
 }
@@ -84,6 +88,12 @@ impl From<SourceError> for PreprocessError {
 impl From<LexerError> for PreprocessError {
     fn from(value: LexerError) -> Self {
         Self::Lex(value)
+    }
+}
+
+impl From<MacroExpansionError> for PreprocessError {
+    fn from(value: MacroExpansionError) -> Self {
+        Self::Macro(value)
     }
 }
 
@@ -115,9 +125,33 @@ pub fn load_source_bundle<R: ScriptResolver + ?Sized>(
 pub fn preprocess_source_bundle(
     bundle: &SourceBundle,
 ) -> Result<PreprocessedSource, PreprocessError> {
+    preprocess_source_bundle_with_macros(
+        bundle,
+        &mut MacroRegistry::new(),
+        MacroExpansionOptions::default(),
+    )
+}
+
+/// Preprocesses one source bundle with caller-provided built-in macros.
+///
+/// Object-like `#define` and include expansion runs first. Top-level
+/// source-defined `macro_rules!` definitions are then added to `registry`
+/// before all bang-macro invocations are recursively expanded.
+///
+/// # Errors
+///
+/// Returns [`PreprocessError`] if include loading, lexing, object-like macro
+/// expansion, declarative macro collection, or bang-macro expansion fails.
+pub fn preprocess_source_bundle_with_macros(
+    bundle: &SourceBundle,
+    registry: &mut MacroRegistry,
+    options: MacroExpansionOptions,
+) -> Result<PreprocessedSource, PreprocessError> {
     let mut preprocessor = BundlePreprocessor::new(bundle);
     preprocessor.expand_source(bundle.root_id)?;
-    preprocessor.finish(bundle.root_id)
+    let mut preprocessed = preprocessor.finish(bundle.root_id)?;
+    preprocessed.tokens = expand_source_macros(preprocessed.tokens, registry, options)?;
+    Ok(preprocessed)
 }
 
 struct SourceBundleLoader<'a, R: ScriptResolver + ?Sized> {
@@ -420,7 +454,7 @@ int UTIL = 1;"#,
         let error = load_source_bundle(&resolver, "root", SourceLoadOptions::default()).err();
         let code = error.and_then(|error| match error {
             super::PreprocessError::Source(source) => source.code(),
-            super::PreprocessError::Lex(_) => None,
+            super::PreprocessError::Lex(_) | super::PreprocessError::Macro(_) => None,
         });
 
         assert_eq!(code, Some(CompilerErrorCode::FileNotFound));
@@ -445,7 +479,7 @@ int UTIL = 1;"#,
         .err();
         let code = error.and_then(|error| match error {
             super::PreprocessError::Source(source) => source.code(),
-            super::PreprocessError::Lex(_) => None,
+            super::PreprocessError::Lex(_) | super::PreprocessError::Macro(_) => None,
         });
 
         assert_eq!(code, Some(CompilerErrorCode::IncludeTooManyLevels));
@@ -472,7 +506,7 @@ int UTIL = 1;"#,
             .err()
             .and_then(|error| match error {
                 super::PreprocessError::Source(source) => source.code(),
-                super::PreprocessError::Lex(_) => None,
+                super::PreprocessError::Lex(_) | super::PreprocessError::Macro(_) => None,
             });
 
         assert_eq!(code, Some(CompilerErrorCode::IncludeRecursive));

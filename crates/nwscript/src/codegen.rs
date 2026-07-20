@@ -412,6 +412,33 @@ pub fn compile_source_bundle(
     )
 }
 
+/// Parses and compiles one source bundle using caller-provided built-in macros
+/// and expansion limits.
+///
+/// Source-defined macros are retained in `registry`, allowing a build host to
+/// establish a shared macro environment explicitly across compilation units.
+///
+/// # Errors
+///
+/// Returns [`CompileError`] if preprocessing, macro execution, parsing,
+/// semantic analysis, or code generation fails.
+pub fn compile_source_bundle_with_macros(
+    bundle: &SourceBundle,
+    langspec: Option<&LangSpec>,
+    options: CompileOptions,
+    registry: &mut crate::MacroRegistry,
+    macro_options: crate::MacroExpansionOptions,
+) -> Result<CompileArtifacts, CompileError> {
+    let script = crate::parse_source_bundle_with_macros(bundle, langspec, registry, macro_options)?;
+    compile_script_with_source_map(
+        &script,
+        &bundle.source_map,
+        bundle.root_id,
+        langspec,
+        options,
+    )
+}
+
 fn compile_script_with_debug(
     script: &Script,
     source_map: Option<&SourceMap>,
@@ -1236,7 +1263,7 @@ impl<'a> O0Compiler<'a> {
             )),
             SemanticType::EngineStructure(name) => self.assembler.push(simple_aux_instruction(
                 NcsOpcode::RunstackAdd,
-                aux_for_engine_structure(name, self.hir, &self.structs)?,
+                aux_for_engine_structure(name, self.langspec)?,
             )),
             SemanticType::Vector => {
                 self.emit_stack_alloc(&SemanticType::Float)?;
@@ -2011,7 +2038,7 @@ impl FunctionEmitter<'_, '_> {
         span: Option<crate::Span>,
     ) -> Result<(), CodegenError> {
         let opcode = opcode_for_binary(op);
-        let auxcode = aux_for_binary(left, right, self.compiler.hir, &self.compiler.structs)?;
+        let auxcode = aux_for_binary(left, right, self.compiler.langspec)?;
         let left_size = size_of_type(left, &self.compiler.structs)?;
         let right_size = size_of_type(right, &self.compiler.structs)?;
         let result_size = size_of_binary_result(op, left, right, &self.compiler.structs)?;
@@ -2238,7 +2265,7 @@ fn emit_expr_common(
             };
             compiler.assembler.push(NcsInstruction {
                 opcode,
-                auxcode: aux_for_unary(&expr.ty, compiler.hir, &compiler.structs)?,
+                auxcode: aux_for_unary(&expr.ty, compiler.langspec)?,
                 extra: Vec::new(),
             });
             Ok(())
@@ -2282,7 +2309,7 @@ fn emit_expr_common(
             }
             emit_expr_common(compiler, temp_bytes, layout, right)?;
             let opcode = opcode_for_binary(*op);
-            let aux = aux_for_binary(&left.ty, &right.ty, compiler.hir, &compiler.structs)?;
+            let aux = aux_for_binary(&left.ty, &right.ty, compiler.langspec)?;
             let left_size = size_of_type(&left.ty, &compiler.structs)?;
             let right_size = size_of_type(&right.ty, &compiler.structs)?;
             let result_size = size_of_binary_result(*op, &left.ty, &right.ty, &compiler.structs)?;
@@ -2359,7 +2386,7 @@ fn emit_expr_common(
             };
             emit_expr_common(compiler, temp_bytes, layout, left)?;
             emit_expr_common(compiler, temp_bytes, layout, right)?;
-            let aux = aux_for_binary(&left.ty, &right.ty, compiler.hir, &compiler.structs)?;
+            let aux = aux_for_binary(&left.ty, &right.ty, compiler.langspec)?;
             let left_size = size_of_type(&left.ty, &compiler.structs)?;
             let right_size = size_of_type(&right.ty, &compiler.structs)?;
             let result_size =
@@ -2868,8 +2895,7 @@ fn opcode_for_binary(op: BinaryOp) -> NcsOpcode {
 fn aux_for_binary(
     left: &SemanticType,
     right: &SemanticType,
-    hir: &HirModule,
-    structs: &BTreeMap<String, &crate::HirStruct>,
+    langspec: Option<&LangSpec>,
 ) -> Result<NcsAuxCode, CodegenError> {
     match (left, right) {
         (SemanticType::Int, SemanticType::Int) => Ok(NcsAuxCode::TypeTypeIntegerInteger),
@@ -2885,7 +2911,7 @@ fn aux_for_binary(
         (SemanticType::EngineStructure(name), SemanticType::EngineStructure(other))
             if name == other =>
         {
-            aux_for_engine_structure(name, hir, structs).and_then(|left_aux| match left_aux {
+            aux_for_engine_structure(name, langspec).and_then(|left_aux| match left_aux {
                 NcsAuxCode::TypeEngst0 => Ok(NcsAuxCode::TypeTypeEngst0Engst0),
                 NcsAuxCode::TypeEngst1 => Ok(NcsAuxCode::TypeTypeEngst1Engst1),
                 NcsAuxCode::TypeEngst2 => Ok(NcsAuxCode::TypeTypeEngst2Engst2),
@@ -2908,8 +2934,7 @@ fn aux_for_binary(
 
 fn aux_for_unary(
     ty: &SemanticType,
-    hir: &HirModule,
-    structs: &BTreeMap<String, &crate::HirStruct>,
+    langspec: Option<&LangSpec>,
 ) -> Result<NcsAuxCode, CodegenError> {
     match ty {
         SemanticType::Int => Ok(NcsAuxCode::TypeInteger),
@@ -2917,7 +2942,7 @@ fn aux_for_unary(
         SemanticType::String => Ok(NcsAuxCode::TypeString),
         SemanticType::Object => Ok(NcsAuxCode::TypeObject),
         SemanticType::Vector => Ok(NcsAuxCode::TypeTypeVectorVector),
-        SemanticType::EngineStructure(name) => aux_for_engine_structure(name, hir, structs),
+        SemanticType::EngineStructure(name) => aux_for_engine_structure(name, langspec),
         SemanticType::Struct(_) => Ok(NcsAuxCode::TypeTypeStructStruct),
         SemanticType::Void | SemanticType::Action => Err(CodegenError::new(
             None,
@@ -2928,28 +2953,9 @@ fn aux_for_unary(
 
 fn aux_for_engine_structure(
     name: &str,
-    hir: &HirModule,
-    _structs: &BTreeMap<String, &crate::HirStruct>,
+    langspec: Option<&LangSpec>,
 ) -> Result<NcsAuxCode, CodegenError> {
-    let index = hir
-        .structs
-        .iter()
-        .position(|structure| structure.name == name)
-        .or_else(|| {
-            [
-                "effect",
-                "event",
-                "location",
-                "talent",
-                "itemproperty",
-                "sqlquery",
-                "cassowary",
-                "json",
-            ]
-            .iter()
-            .position(|candidate| *candidate == name)
-        })
-        .ok_or_else(|| CodegenError::new(None, format!("unknown engine structure {name:?}")))?;
+    let index = usize::from(engine_structure_index(name, langspec)?);
 
     Ok(match index {
         0 => NcsAuxCode::TypeEngst0,

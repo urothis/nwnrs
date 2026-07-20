@@ -171,6 +171,27 @@ pub fn parse_source_bundle(
     parse_tokens(preprocessed.tokens, langspec).map_err(ResolvedParseError::from)
 }
 
+/// Parses one source bundle with caller-provided built-in macros and expansion
+/// limits.
+///
+/// Source-defined declarative and procedural macros are collected into
+/// `registry` during preprocessing, so callers can retain the resulting
+/// definitions for later compilation units.
+///
+/// # Errors
+///
+/// Returns [`ResolvedParseError`] if preprocessing, macro expansion, or parsing
+/// fails.
+pub fn parse_source_bundle_with_macros(
+    bundle: &crate::SourceBundle,
+    langspec: Option<&LangSpec>,
+    registry: &mut crate::MacroRegistry,
+    options: crate::MacroExpansionOptions,
+) -> Result<Script, ResolvedParseError> {
+    let preprocessed = crate::preprocess_source_bundle_with_macros(bundle, registry, options)?;
+    parse_tokens(preprocessed.tokens, langspec).map_err(ResolvedParseError::from)
+}
+
 /// Resolves, preprocesses, and parses one named root script.
 ///
 /// # Errors

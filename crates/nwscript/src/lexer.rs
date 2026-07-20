@@ -112,6 +112,7 @@ impl<'a> Lexer<'a> {
                 self.lex_number()
             }
             Some(b'a'..=b'z' | b'A'..=b'Z' | b'_') => self.lex_identifier(),
+            Some(b'#') if self.peek_byte(1) == Some(b'[') => self.lex_punctuation(start),
             Some(b'#') => self.lex_hash_identifier_or_error(),
             Some(b'"') => self.lex_string(),
             Some(_) => self.lex_punctuation(start),
@@ -582,6 +583,8 @@ impl<'a> Lexer<'a> {
                 b'.' => TokenKind::StructurePartSpecify,
                 b'?' => TokenKind::QuestionMark,
                 b':' => TokenKind::Colon,
+                b'$' => TokenKind::Dollar,
+                b'#' => TokenKind::Hash,
                 _ => return None,
             };
             Some((kind, char::from(byte)))
@@ -741,6 +744,7 @@ fn is_token_start(byte: u8) -> bool {
                 | b'~'
                 | b'?'
                 | b':'
+                | b'$'
         )
 }
 

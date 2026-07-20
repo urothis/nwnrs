@@ -7,6 +7,7 @@ but owns the language pipeline itself.
 ## Scope
 
 - source loading and preprocessing
+- balanced token trees plus declarative and NWScript-implemented bang macros
 - lexing, parsing, semantic analysis, and optimization
 - emission of `NCS` and `NDB` artifacts
 - `NCS` asm and disassembly through the upstream-style `nwasm` text layer
@@ -15,7 +16,8 @@ but owns the language pipeline itself.
 
 ## Internal Structure
 
-- `source` and `preprocess`: source loading and include handling
+- `source`, `preprocess`, and `macro_expansion`: source loading, includes,
+  token trees, and compile-time macro expansion
 - `lexer`, `token`, and `parser`: tokenization and syntax construction
 - `ast`, `sema`, and `hir`: syntax, semantic analysis, and the lowered program
   form consumed directly by code generation
@@ -42,6 +44,74 @@ but owns the language pipeline itself.
 - `IncludeDirective`
 - `load_source_bundle`
 - `preprocess_source_bundle`
+- `preprocess_source_bundle_with_macros`
+
+### Extended macro syntax
+
+The extended frontend recognizes balanced `name!(...)`, `name![...]`, and
+`name!{...}` invocations. Macro syntax is expanded and removed before the
+ordinary NWScript parser or NCS code generator sees it.
+
+Fixed declarative transformations can live directly in source:
+
+```nss
+macro_rules! make_handler {
+    ($name:ident, $body:tokens) => {
+        void $name() { $body }
+    };
+}
+
+make_handler!(OnGeneratedEvent, DoWork();)
+```
+
+Procedural transformations can also be implemented in NWScript. A definition
+is compiled to NCS and executed in the bounded compiler VM whenever its bang
+form is expanded:
+
+```nss
+proc_macro! project::wrap {
+    tokenstream wrap(tokenstream input) {
+        return quote! {
+            void Generated() { $input }
+        };
+    }
+}
+
+project::wrap!(DoWork();)
+```
+
+The final path segment names the required implementation function. Its exact
+signature is `tokenstream name(tokenstream input)`. `quote!` supports `$value`
+tokenstream interpolation and `$$` for a literal dollar sign. The compiler
+lowers `quote!` to private VM operations, so none of the extended syntax is
+written to the resulting NCS.
+
+Procedural implementations receive an opaque, lossless token-tree stream. The
+compiler-only language specification exposes these operations inside a
+`proc_macro!` body:
+
+- `__NWNRS_TokenStreamLength(stream)` returns its top-level tree count.
+- `__NWNRS_TokenStreamGet(stream, index)` returns one top-level tree.
+- `__NWNRS_TokenIsGroup(tree)` distinguishes balanced groups from leaf tokens.
+- `__NWNRS_TokenKind(tree)` returns `group`, `identifier`, `keyword`, a literal
+  kind such as `integer` or `string`, or `punctuation`.
+- `__NWNRS_TokenText(tree)` returns normalized leaf text or canonical source
+  for a group.
+- `__NWNRS_TokenDelimiter(tree)` returns `0` for a leaf, `1` for parentheses,
+  `2` for brackets, or `3` for braces.
+- `__NWNRS_TokenParse(source)` lexes source into a new token stream.
+- `__NWNRS_MacroError(message)` terminates expansion with a diagnostic.
+
+Execution is deterministic and isolated from the game runtime: the compiler
+VM only registers these token operations, and enforces instruction, recursion,
+stack, expansion-depth, and output-token limits.
+
+The Rust host surface consists of `NwTokenStream`, `NwTokenTree`,
+`MacroRegistry`, `BangMacro`, `NwScriptMacro`, `expand_source_macros`,
+`register_nwscript_macro`, `quote_nwscript`, and
+`render_nwscript_tokens`. Rust-hosted quotation already supports repeated
+bindings; procedural `quote!` repetition awaits a collection-valued
+tokenstream ABI.
 
 ### Lexing and parsing
 
@@ -59,6 +129,7 @@ but owns the language pipeline itself.
 - `parse_tokens`
 - `parse_source`
 - `parse_source_bundle`
+- `parse_source_bundle_with_macros`
 - `lex_bytes`
 - `lex_text`
 - `lex_source`
@@ -173,6 +244,7 @@ select UTF-8 or a legacy code page; callers can request UTF-8 with
 - `compile_script`
 - `compile_script_with_source_map`
 - `compile_source_bundle`
+- `compile_source_bundle_with_macros`
 - `compile_hir_to_ncs`
 
 The three native optimization passes can be selected independently with
