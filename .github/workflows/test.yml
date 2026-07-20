@@ -34,7 +34,7 @@ jobs:
             matrix:
                 os: [ ubuntu-latest ] # disable for now: windows-latest, macos-latest]
         steps:
-            - uses: actions/checkout@v6.0.3
+            - uses: actions/checkout@v7.0.0
             - uses: ./.github/actions/setup-rust
             - run: cargo test -p nwnrs
 
@@ -46,7 +46,7 @@ jobs:
             matrix:
                 os: [ ubuntu-latest ] # disable for now: windows-latest, macos-latest]
         steps:
-            - uses: actions/checkout@v6.0.3
+            - uses: actions/checkout@v7.0.0
             - uses: ./.github/actions/setup-rust
             - run: cargo test -p nwnrs-nwpkg
 
@@ -58,7 +58,7 @@ jobs:
             matrix:
                 os: [ ubuntu-latest ] # disable for now: windows-latest, macos-latest]
         steps:
-            - uses: actions/checkout@v6.0.3
+            - uses: actions/checkout@v7.0.0
             - uses: ./.github/actions/setup-rust
             - run: cargo test -p nwnrs-nwscript
 
@@ -70,6 +70,6 @@ jobs:
             matrix:
                 os: [ ubuntu-latest ] # disable for now: windows-latest, macos-latest]
         steps:
-            - uses: actions/checkout@v6.0.3
+            - uses: actions/checkout@v7.0.0
             - uses: ./.github/actions/setup-rust
             - run: cargo test -p nwnrs-types

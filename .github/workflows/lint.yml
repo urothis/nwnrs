@@ -13,7 +13,7 @@ jobs:
         name: Lint
         runs-on: ubuntu-latest
         steps:
-            - uses: actions/checkout@v6.0.3
+            - uses: actions/checkout@v7.0.0
             - uses: ./.github/actions/setup-rust
               with:
                   components: rustfmt, clippy
