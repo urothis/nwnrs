@@ -5,9 +5,9 @@ use std::{
 };
 
 use crate::{
-    Keyword, LexerError, MacroExpansionError, MacroExpansionOptions, MacroRegistry, ScriptResolver,
-    SourceError, SourceFile, SourceId, SourceLoadOptions, SourceMap, Token, TokenKind,
-    expand_source_macros, lex_source,
+    Keyword, LexerError, MacroExpansionError, MacroExpansionOptions, MacroExpansionTrace,
+    MacroRegistry, ScriptResolver, SourceError, SourceFile, SourceId, SourceLoadOptions, SourceMap,
+    Token, TokenKind, expand_source_macros, expand_source_macros_traced, lex_source,
 };
 
 /// One include relationship discovered while traversing source files.
@@ -152,6 +152,27 @@ pub fn preprocess_source_bundle_with_macros(
     let mut preprocessed = preprocessor.finish(bundle.root_id)?;
     preprocessed.tokens = expand_source_macros(preprocessed.tokens, registry, options)?;
     Ok(preprocessed)
+}
+
+/// Preprocesses a source bundle and records each extended macro invocation.
+///
+/// Include and object-like `#define` processing is identical to
+/// [`preprocess_source_bundle_with_macros`].
+///
+/// # Errors
+///
+/// Returns the same diagnostics as [`preprocess_source_bundle_with_macros`].
+pub fn preprocess_source_bundle_with_macro_trace(
+    bundle: &SourceBundle,
+    registry: &mut MacroRegistry,
+    options: MacroExpansionOptions,
+) -> Result<(PreprocessedSource, Vec<MacroExpansionTrace>), PreprocessError> {
+    let mut preprocessor = BundlePreprocessor::new(bundle);
+    preprocessor.expand_source(bundle.root_id)?;
+    let mut preprocessed = preprocessor.finish(bundle.root_id)?;
+    let (tokens, trace) = expand_source_macros_traced(preprocessed.tokens, registry, options)?;
+    preprocessed.tokens = tokens;
+    Ok((preprocessed, trace))
 }
 
 struct SourceBundleLoader<'a, R: ScriptResolver + ?Sized> {

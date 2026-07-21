@@ -5,6 +5,7 @@ use nwnrs_runtime::TargetAddress;
 use crate::bridge::BridgeInstallError;
 
 pub(crate) enum HookTarget {}
+pub(crate) enum FunctionTarget {}
 pub(crate) enum GlobalStorage {}
 
 pub(crate) struct NativeAddress<T> {

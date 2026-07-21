@@ -13,6 +13,7 @@ Rust tools and libraries for Neverwinter Nights: Enhanced Edition.
 
 ## Start Here
 
+- [Visual guide: zero to a packaged, running module](./docs/src/README.md)
 - [`nwnrs` rustdoc](https://docs.rs/nwnrs/latest/nwnrs/)
 
 ## Quick Start
@@ -39,11 +40,13 @@ nwnrs convert out/model_ascii.mdl rebuilt/model.mdl
 nwnrs convert path/to/model.mdl out/model.obj
 nwnrs unpack path/to/module.mod -d out/
 nwnrs pack out/ rebuilt.mod
-nwnrs run --runtime path/to/libnwnrs_runtime_sys.dylib --targets crates/runtime/targets -- /path/to/nwserver -module module_name
+nwnrs run -- -module module_name
 nwnrs run --docker -- -module module_name
 ```
 
-On Windows, pass `nwnrs_runtime_sys.dll` and the native `nwserver.exe` instead.
+Native runs discover the Steam or Beamdog installation, host NWServer binary,
+runtime library, and exact target packs automatically. `--runtime`, `--targets`,
+and an explicit server executable remain available as overrides.
 
 ### Rust
 

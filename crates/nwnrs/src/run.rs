@@ -11,6 +11,8 @@ use std::{
     },
 };
 
+#[cfg(feature = "tooling")]
+use nwnrs_runtime::Architecture;
 use nwnrs_runtime::{
     BinaryIdentity, ENV_ENABLED, ENV_REQUIRED, ENV_SUPERVISED, ENV_TARGET_DIR, ENV_TARGET_PACK,
     ENV_WINDOWS_GUI, OperatingSystem, Platform, resolve_target_pack,
@@ -22,6 +24,8 @@ use crate::args::{ColorMode, RunCmd};
 const LINUX_PRELOAD: &str = "LD_PRELOAD";
 const MACOS_PRELOAD: &str = "DYLD_INSERT_LIBRARIES";
 const RUNTIME_COLOR: &str = "NWNRS_COLOR";
+#[cfg(feature = "tooling")]
+const RUNTIME_LIBRARY_ENV: &str = "NWNRS_RUNTIME";
 #[cfg(any(unix, windows))]
 const DUPLICATE_SHUTDOWN_SIGNAL_WINDOW: std::time::Duration = std::time::Duration::from_millis(500);
 #[cfg(feature = "tooling")]
@@ -95,11 +99,12 @@ impl LaunchPlan {
         let (command, container) = prepare_container_command(command)?;
         #[cfg(not(target_os = "linux"))]
         let command = validate_non_linux_container_mode(command)?;
+        let command = prepare_native_defaults(command)?;
         let runtime_path = command.runtime.ok_or_else(|| {
-            "native mode requires --runtime; use --docker to start the container image".to_string()
+            "native mode requires --runtime in this supervisor-only build".to_string()
         })?;
         let targets = command.targets.ok_or_else(|| {
-            "native mode requires --targets; use --docker to start the container image".to_string()
+            "native mode requires --targets in this supervisor-only build".to_string()
         })?;
         let (server_path, server_args) = command
             .arguments
@@ -205,6 +210,172 @@ impl LaunchPlan {
     fn log_follower_paths(&self) -> Vec<(ServerLogKind, PathBuf)> {
         self.log_paths.clone().unwrap_or_default()
     }
+}
+
+#[cfg(feature = "tooling")]
+fn prepare_native_defaults(mut command: RunCmd) -> Result<RunCmd, String> {
+    if command.container {
+        return Ok(command);
+    }
+
+    let host = Platform::host().map_err(|error| error.to_string())?;
+    if command.runtime.is_none() {
+        let runtime = discover_runtime_library(host)?;
+        info!(target: "nwnrs::launcher", path = %runtime.display(), "discovered native runtime library");
+        command.runtime = Some(runtime);
+    }
+    if command.targets.is_none() {
+        let targets = discover_target_directory()?;
+        info!(target: "nwnrs::launcher", path = %targets.display(), "discovered runtime target packs");
+        command.targets = Some(targets);
+    }
+    if command
+        .arguments
+        .first()
+        .is_none_or(|argument| argument.starts_with('-'))
+    {
+        let server = discover_server_binary(host)?;
+        info!(target: "nwnrs::launcher", path = %server.display(), "discovered native NWServer executable");
+        command
+            .arguments
+            .insert(0, server.to_string_lossy().into_owned());
+    }
+    Ok(command)
+}
+
+#[cfg(not(feature = "tooling"))]
+fn prepare_native_defaults(command: RunCmd) -> Result<RunCmd, String> {
+    Ok(command)
+}
+
+#[cfg(feature = "tooling")]
+fn discover_server_binary(platform: Platform) -> Result<PathBuf, String> {
+    let root = nwnrs_types::install::find_nwnrs_root("").map_err(|error| error.to_string())?;
+    resolve_server_binary(&root, platform)
+}
+
+#[cfg(feature = "tooling")]
+fn resolve_server_binary(root: &Path, platform: Platform) -> Result<PathBuf, String> {
+    let relative = match (platform.os, platform.architecture) {
+        (OperatingSystem::Linux, Architecture::X86_64) => "bin/linux-x86/nwserver-linux",
+        (OperatingSystem::Linux, Architecture::Aarch64) => "bin/linux-arm64/nwserver-linux",
+        (OperatingSystem::Macos, Architecture::Aarch64) => "bin/macos/nwserver-macos",
+        (OperatingSystem::Windows, Architecture::X86_64) => "bin/win32/nwserver.exe",
+        _ => {
+            return Err(format!(
+                "native NWServer discovery does not support host platform {platform}"
+            ));
+        }
+    };
+    let server = root.join(relative);
+    if !server.is_file() {
+        return Err(format!(
+            "discovered NWN installation {} does not contain the {platform} server executable {}",
+            root.display(),
+            server.display()
+        ));
+    }
+    Ok(server)
+}
+
+#[cfg(feature = "tooling")]
+fn discover_runtime_library(platform: Platform) -> Result<PathBuf, String> {
+    if let Some(path) = std::env::var_os(RUNTIME_LIBRARY_ENV).filter(|value| !value.is_empty()) {
+        let path = PathBuf::from(path);
+        return path.is_file().then_some(path.clone()).ok_or_else(|| {
+            format!(
+                "{RUNTIME_LIBRARY_ENV} does not name a runtime library file: {}",
+                path.display()
+            )
+        });
+    }
+
+    let name = match platform.os {
+        OperatingSystem::Linux => "libnwnrs_runtime_sys.so",
+        OperatingSystem::Macos => "libnwnrs_runtime_sys.dylib",
+        OperatingSystem::Windows => "nwnrs_runtime_sys.dll",
+    };
+    let executable = std::env::current_exe()
+        .map_err(|error| format!("failed to locate the nwnrs executable: {error}"))?;
+    let executable_dir = executable
+        .parent()
+        .ok_or_else(|| "nwnrs executable does not have a parent directory".to_string())?;
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let profile = if cfg!(debug_assertions) {
+        "debug"
+    } else {
+        "release"
+    };
+    first_existing_file(
+        "native runtime library",
+        [
+            executable_dir.join(name),
+            executable_dir.join("deps").join(name),
+            executable_dir.join("../lib").join(name),
+            workspace.join("target").join(profile).join(name),
+        ],
+    )
+}
+
+#[cfg(feature = "tooling")]
+fn discover_target_directory() -> Result<PathBuf, String> {
+    if let Some(path) = std::env::var_os(ENV_TARGET_DIR).filter(|value| !value.is_empty()) {
+        let path = PathBuf::from(path);
+        return path.is_dir().then_some(path.clone()).ok_or_else(|| {
+            format!(
+                "{ENV_TARGET_DIR} does not name a target-pack directory: {}",
+                path.display()
+            )
+        });
+    }
+
+    let executable = std::env::current_exe()
+        .map_err(|error| format!("failed to locate the nwnrs executable: {error}"))?;
+    let executable_dir = executable
+        .parent()
+        .ok_or_else(|| "nwnrs executable does not have a parent directory".to_string())?;
+    let candidates = [
+        executable_dir.join("targets"),
+        executable_dir.join("../share/nwnrs/targets"),
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../runtime/targets"),
+    ];
+    candidates
+        .iter()
+        .find(|candidate| candidate.is_dir())
+        .cloned()
+        .ok_or_else(|| {
+            let searched = candidates
+                .iter()
+                .map(|path| path.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!(
+                "could not discover runtime target packs; searched {searched}; use --targets or \
+                 {ENV_TARGET_DIR}"
+            )
+        })
+}
+
+#[cfg(feature = "tooling")]
+fn first_existing_file<const N: usize>(
+    description: &str,
+    candidates: [PathBuf; N],
+) -> Result<PathBuf, String> {
+    candidates
+        .iter()
+        .find(|candidate| candidate.is_file())
+        .cloned()
+        .ok_or_else(|| {
+            let searched = candidates
+                .iter()
+                .map(|path| path.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!(
+                "could not discover {description}; searched {searched}; use --runtime or \
+                 {RUNTIME_LIBRARY_ENV}"
+            )
+        })
 }
 
 #[cfg(target_os = "linux")]
@@ -1434,7 +1605,8 @@ mod tests {
 
     #[cfg(feature = "tooling")]
     use super::{
-        DEFAULT_DOCKER_HOME, DEFAULT_DOCKER_IMAGE, DockerLaunchPlan, validate_native_options,
+        DEFAULT_DOCKER_HOME, DEFAULT_DOCKER_IMAGE, DockerLaunchPlan, resolve_server_binary,
+        validate_native_options,
     };
     use super::{LINUX_PRELOAD, LaunchPlan, MACOS_PRELOAD, server_log_paths};
     #[cfg(unix)]
@@ -1445,6 +1617,56 @@ mod tests {
     use crate::args::{ColorMode, RunCmd};
 
     static NEXT_TEST_DIRECTORY: AtomicUsize = AtomicUsize::new(0);
+
+    #[cfg(feature = "tooling")]
+    #[test]
+    fn resolves_native_server_paths_for_supported_platforms() -> Result<(), String> {
+        let cases = [
+            (
+                Platform {
+                    os:           OperatingSystem::Linux,
+                    architecture: Architecture::X86_64,
+                },
+                "bin/linux-x86/nwserver-linux",
+            ),
+            (
+                Platform {
+                    os:           OperatingSystem::Linux,
+                    architecture: Architecture::Aarch64,
+                },
+                "bin/linux-arm64/nwserver-linux",
+            ),
+            (
+                Platform {
+                    os:           OperatingSystem::Macos,
+                    architecture: Architecture::Aarch64,
+                },
+                "bin/macos/nwserver-macos",
+            ),
+            (
+                Platform {
+                    os:           OperatingSystem::Windows,
+                    architecture: Architecture::X86_64,
+                },
+                "bin/win32/nwserver.exe",
+            ),
+        ];
+
+        for (platform, relative) in cases {
+            let root = test_directory();
+            let expected = root.join(relative);
+            fs::create_dir_all(
+                expected
+                    .parent()
+                    .ok_or_else(|| "server fixture path has no parent".to_string())?,
+            )
+            .map_err(|error| error.to_string())?;
+            fs::write(&expected, []).map_err(|error| error.to_string())?;
+            assert_eq!(resolve_server_binary(&root, platform)?, expected);
+            fs::remove_dir_all(root).map_err(|error| error.to_string())?;
+        }
+        Ok(())
+    }
 
     #[cfg(feature = "tooling")]
     #[test]
@@ -1867,10 +2089,12 @@ mod tests {
             offset: 1
         };
         EventTarget {
-            version:            EVENTS_CAPABILITY_VERSION,
-            load_module_finish: address(),
-            virtual_machine:    address(),
-            run_script:         address(),
+            version:               EVENTS_CAPABILITY_VERSION,
+            virtual_machine:       address(),
+            run_script:            address(),
+            game_object_id_offset: 8,
+            hooks:                 std::collections::BTreeMap::new(),
+            functions:             std::collections::BTreeMap::new(),
         }
     }
 

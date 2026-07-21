@@ -137,9 +137,10 @@ symbol = "_ZN9CNetLayer20GetSessionMaxPlayersEv"
 symbol = "_ZN9CNetLayer10GetUDPPortEv"
 
 [events]
-version = 2
+version = 3
+game_object_id_offset = 8
 
-[events.load_module_finish]
+[events.hooks.module_load]
 symbol = "_ZN10CNWSModule16LoadModuleFinishEv"
 
 [events.virtual_machine]
@@ -148,6 +149,83 @@ symbol = "g_pVirtualMachine"
 [events.run_script]
 symbol = "_ZN15CVirtualMachine9RunScriptEP10CExoStringjii"
 
+[events.hooks.associate_add]
+symbol = "_ZN12CNWSCreature12AddAssociateEjt"
+
+[events.hooks.associate_remove]
+symbol = "_ZN12CNWSCreature15RemoveAssociateEj"
+
+[events.hooks.associate_possess_familiar]
+symbol = "_ZN12CNWSCreature15PossessFamiliarEv"
+
+[events.hooks.associate_unpossess_familiar]
+symbol = "_ZN12CNWSCreature17UnpossessFamiliarEv"
+
+[events.functions.associate_get_id]
+symbol = "_ZN12CNWSCreature14GetAssociateIdEti"
+
+[events.hooks.object_lock]
+symbol = "_ZN10CNWSObject19AddLockObjectActionEj"
+
+[events.hooks.object_unlock]
+symbol = "_ZN10CNWSObject21AddUnlockObjectActionEjji"
+
+[events.hooks.object_use]
+symbol = "_ZN10CNWSObject18AddUseObjectActionEj"
+
+[events.hooks.placeable_open]
+symbol = "_ZN13CNWSPlaceable13OpenInventoryEj"
+
+[events.hooks.placeable_close]
+symbol = "_ZN13CNWSPlaceable14CloseInventoryEji"
+
+[events.hooks.inventory_add_gold]
+symbol = "_ZN12CNWSCreature7AddGoldEii"
+
+[events.hooks.inventory_remove_gold]
+symbol = "_ZN12CNWSCreature10RemoveGoldEii"
+
+[events.hooks.feat_use]
+symbol = "_ZN12CNWSCreature7UseFeatEttjjP6Vector"
+
+[events.hooks.journal_message]
+symbol = "_ZN11CNWSMessage34HandlePlayerToServerJournalMessageEP10CNWSPlayerh"
+
+[events.hooks.timing_bar_send]
+symbol = "_ZN11CNWSMessage32SendServerToPlayerGuiTimingEventEP10CNWSPlayerihj"
+
+[events.hooks.timing_bar_cancel]
+symbol = "_ZN11CNWSMessage45HandlePlayerToServerInputCancelGuiTimingEventEP10CNWSPlayer"
+
+[events.hooks.object_broadcast_safe_projectile]
+symbol = "_ZN10CNWSObject23BroadcastSafeProjectileEjj6VectorS0_jhjhh"
+
+[events.hooks.skill_use]
+symbol = "_ZN12CNWSCreature8UseSkillEhhj6Vectorjji"
+
+[events.hooks.item_use]
+symbol = "_ZN12CNWSCreature7UseItemEjhhj6Vectorji"
+
+[events.hooks.item_inventory_open]
+symbol = "_ZN8CNWSItem13OpenInventoryEj"
+
+[events.hooks.item_inventory_close]
+symbol = "_ZN8CNWSItem14CloseInventoryEji"
+
+[events.hooks.item_scroll_learn]
+symbol = "_ZN12CNWSCreature11LearnScrollEj"
+
+[events.hooks.item_use_lore]
+symbol = "_ZN12CNWSCreature13UseLoreOnItemEj"
+
+[events.hooks.item_pay_to_identify]
+symbol = "_ZN12CNWSCreature17PayToIdentifyItemEjj"
+
+[events.hooks.item_event_handler]
+symbol = "_ZN8CNWSItem12EventHandlerEjjPvjj"
+
+[events.functions.player_get_game_object]
+symbol = "_ZN10CNWSPlayer13GetGameObjectEv"
 [administration]
 version = 1
 

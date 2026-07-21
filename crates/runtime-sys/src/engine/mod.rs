@@ -2,25 +2,41 @@ pub(crate) mod abi;
 mod address;
 mod administration;
 mod event;
+mod events;
+pub(crate) mod hook;
 mod server;
 mod string;
 pub(crate) mod thread;
 mod vm;
 
-use std::ffi::c_void;
+use std::{collections::BTreeMap, ffi::c_void, sync::OnceLock};
 
 use address::Resolver;
 use administration::AdministrationEngine;
 use event::EventEngine;
+pub(crate) use event::{EventFrame, EventSpec};
+use hook::NativeHookSpec;
 use nwnrs_runtime::{
-    AdministrationCommand, BannedLists, EventCommand, EventPayload, HostCommandResult,
-    RuntimeContext,
+    AdministrationCommand, BannedLists, EventCommand, EventObjectId, EventPayload, EventValue,
+    HostCommandResult, RuntimeContext,
 };
 use server::ServerEngine;
 pub(crate) use thread::EngineThreadToken;
 use vm::VirtualMachineEngine;
 
 use crate::bridge::BridgeInstallError;
+
+static ACTIVE_ENGINE: OnceLock<Engine> = OnceLock::new();
+
+pub(crate) fn set_active_engine(engine: Engine) -> Result<(), BridgeInstallError> {
+    ACTIVE_ENGINE.set(engine).map_err(|_engine| {
+        BridgeInstallError::new("NWScript bridge was initialized more than once")
+    })
+}
+
+pub(crate) fn active_engine() -> Option<&'static Engine> {
+    ACTIVE_ENGINE.get()
+}
 
 pub(crate) struct Engine {
     vm:             VirtualMachineEngine,
@@ -94,22 +110,44 @@ impl Engine {
             .map(AdministrationEngine::main_loop_hook_target)
     }
 
-    pub(crate) fn module_load_hook_target(&self) -> Option<usize> {
-        self.event
-            .as_ref()
-            .map(EventEngine::module_load_hook_target)
+    pub(crate) fn event_hook_target(&self, name: &str) -> Option<usize> {
+        self.event.as_ref()?.hook_target(name)
     }
 
-    pub(crate) fn run_module_onload(
+    pub(crate) fn event_function_target(&self, name: &str) -> Option<usize> {
+        self.event.as_ref()?.function_target(name)
+    }
+
+    pub(crate) fn event_game_object_id(
         &self,
         thread: &EngineThreadToken,
-    ) -> Result<bool, BridgeInstallError> {
+        object: *const c_void,
+    ) -> Result<EventObjectId, BridgeInstallError> {
         self.event
             .as_ref()
             .ok_or_else(|| {
                 BridgeInstallError::new("target pack does not provide the events capability")
             })?
-            .run_module_onload(thread)
+            .game_object_id(thread, object)
+    }
+
+    pub(crate) fn dispatch_event(
+        &self,
+        thread: &EngineThreadToken,
+        spec: EventSpec,
+        target: EventObjectId,
+        data: BTreeMap<String, EventValue>,
+    ) -> Result<(bool, EventFrame), BridgeInstallError> {
+        self.event
+            .as_ref()
+            .ok_or_else(|| {
+                BridgeInstallError::new("target pack does not provide the events capability")
+            })?
+            .dispatch(thread, spec, target, data)
+    }
+
+    pub(crate) fn event_hook_specs(&self) -> Result<Vec<NativeHookSpec>, BridgeInstallError> {
+        events::hook_specs(self)
     }
 
     pub(crate) fn process_deferred_administration(

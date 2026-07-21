@@ -51,6 +51,8 @@ pub(crate) enum Command {
     #[cfg(feature = "tooling")]
     Convert(ConvertCmd),
     #[cfg(feature = "tooling")]
+    Expand(ExpandCmd),
+    #[cfg(feature = "tooling")]
     Inspect(InspectCmd),
     #[cfg(feature = "tooling")]
     Init(InitCmd),
@@ -71,8 +73,8 @@ pub(crate) enum Command {
 #[argh(subcommand, name = "run")]
 /// start an NWN server under nwnrs supervision
 pub(crate) struct RunCmd {
-    #[argh(switch)]
-    /// configure and supervise the bundled server inside its container image
+    #[argh(switch, hidden_help)]
+    /// internal: configure the bundled server when already inside its image
     pub(crate) container: bool,
 
     #[cfg(feature = "tooling")]
@@ -119,11 +121,11 @@ pub(crate) struct RunCmd {
     pub(crate) gui: bool,
 
     #[argh(option)]
-    /// native mode: path to the injected runtime dylib or shared object
+    /// override the automatically discovered native runtime library
     pub(crate) runtime: Option<PathBuf>,
 
     #[argh(option)]
-    /// native mode: root directory containing exact runtime target packs
+    /// override the automatically discovered runtime target-pack directory
     pub(crate) targets: Option<PathBuf>,
 
     #[argh(option)]
@@ -131,7 +133,7 @@ pub(crate) struct RunCmd {
     pub(crate) working_directory: Option<PathBuf>,
 
     #[argh(positional, greedy)]
-    /// native server path and arguments, or Docker image command arguments
+    /// optional native server path followed by arguments, or Docker arguments
     pub(crate) arguments: Vec<String>,
 }
 
@@ -231,6 +233,52 @@ pub(crate) struct CompileCmd {
     #[argh(positional)]
     /// source files or directories to compile
     pub(crate) paths: Vec<PathBuf>,
+}
+
+#[cfg(feature = "tooling")]
+#[derive(FromArgs, Clone)]
+#[argh(subcommand, name = "expand")]
+/// preprocess includes and print fully expanded NWScript source
+pub(crate) struct ExpandCmd {
+    #[argh(switch, short = 'f')]
+    /// overwrite an existing --output file
+    pub(crate) force: bool,
+
+    #[argh(switch)]
+    /// report each macro invocation and its immediate expansion on stderr
+    pub(crate) trace_macros: bool,
+
+    #[argh(option, short = 'o')]
+    /// write expanded source to this file instead of stdout
+    pub(crate) output: Option<PathBuf>,
+
+    #[argh(option)]
+    /// extra directory to search for #include files; may be repeated
+    pub(crate) include_dir: Vec<PathBuf>,
+
+    #[argh(option, default = "16")]
+    /// maximum recursive include depth from 1 through 200
+    pub(crate) max_include_depth: usize,
+
+    #[argh(option)]
+    /// explicit Neverwinter Nights installation root
+    pub(crate) root: Option<PathBuf>,
+
+    #[argh(option)]
+    /// explicit Neverwinter Nights user directory
+    pub(crate) user: Option<PathBuf>,
+
+    #[argh(option, default = "String::from(\"english\")")]
+    /// installation language used for resource lookup
+    pub(crate) language: String,
+
+    #[argh(switch)]
+    /// include the installation override directory in resource lookup
+    pub(crate) load_ovr: bool,
+
+    #[argh(positional)]
+    /// NWScript source file to expand
+    pub(crate) input: PathBuf,
 }
 
 #[cfg(feature = "tooling")]
@@ -601,6 +649,22 @@ mod tests {
 
     #[test]
     #[cfg(feature = "supervisor")]
+    fn parses_native_run_without_manual_paths() {
+        let cli = Cli::from_args(&["nwnrs"], &["run"])
+            .unwrap_or_else(|error| panic!("parse native run args: {error:?}"));
+
+        let Command::Run(command) = cli.command else {
+            panic!("expected run command");
+        };
+        assert!(!command.container);
+        assert!(!command.docker);
+        assert_eq!(command.runtime, None);
+        assert_eq!(command.targets, None);
+        assert!(command.arguments.is_empty());
+    }
+
+    #[test]
+    #[cfg(feature = "supervisor")]
     fn parses_run_command_and_preserves_server_arguments() {
         let cli = Cli::from_args(
             &["nwnrs"],
@@ -711,6 +775,39 @@ mod tests {
         assert_eq!(cmd.graphviz, Some(PathBuf::from("graphs")));
         assert_eq!(cmd.graphviz_format, "svg");
         assert_eq!(cmd.paths, vec![PathBuf::from("scripts")]);
+    }
+
+    #[test]
+    fn parses_expand_command_with_trace_and_resolution_controls() {
+        let cli = Cli::from_args(
+            &["nwnrs"],
+            &[
+                "expand",
+                "--trace-macros",
+                "--include-dir",
+                "inc/a",
+                "--include-dir",
+                "inc/b",
+                "--max-include-depth",
+                "24",
+                "--output",
+                "expanded.nss",
+                "script.nss",
+            ],
+        )
+        .unwrap_or_else(|error| panic!("parse expand args: {error:?}"));
+
+        let Command::Expand(cmd) = cli.command else {
+            panic!("expected expand command");
+        };
+        assert!(cmd.trace_macros);
+        assert_eq!(
+            cmd.include_dir,
+            vec![PathBuf::from("inc/a"), PathBuf::from("inc/b")]
+        );
+        assert_eq!(cmd.max_include_depth, 24);
+        assert_eq!(cmd.output, Some(PathBuf::from("expanded.nss")));
+        assert_eq!(cmd.input, PathBuf::from("script.nss"));
     }
 
     #[test]

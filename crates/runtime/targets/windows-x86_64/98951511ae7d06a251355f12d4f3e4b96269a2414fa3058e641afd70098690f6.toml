@@ -137,9 +137,10 @@ offset = 0x000c3390
 offset = 0x000c33d0
 
 [events]
-version = 2
+version = 3
+game_object_id_offset = 8
 
-[events.load_module_finish]
+[events.hooks.module_load]
 symbol = "?LoadModuleFinish@CNWSModule@@QEAAIXZ"
 
 [events.virtual_machine]
@@ -147,6 +148,84 @@ symbol = "?g_pVirtualMachine@@3PEAVCVirtualMachine@@EA"
 
 [events.run_script]
 symbol = "?RunScript@CVirtualMachine@@QEAAHPEAVCExoString@@IHH@Z"
+
+[events.hooks.associate_add]
+symbol = "?AddAssociate@CNWSCreature@@QEAAXIG@Z"
+
+[events.hooks.associate_remove]
+symbol = "?RemoveAssociate@CNWSCreature@@QEAAXI@Z"
+
+[events.hooks.associate_possess_familiar]
+symbol = "?PossessFamiliar@CNWSCreature@@QEAAXXZ"
+
+[events.hooks.associate_unpossess_familiar]
+symbol = "?UnpossessFamiliar@CNWSCreature@@QEAAXXZ"
+
+[events.functions.associate_get_id]
+symbol = "?GetAssociateId@CNWSCreature@@QEAAIGH@Z"
+
+[events.hooks.object_lock]
+symbol = "?AddLockObjectAction@CNWSObject@@QEAAHI@Z"
+
+[events.hooks.object_unlock]
+symbol = "?AddUnlockObjectAction@CNWSObject@@QEAAHIIH@Z"
+
+[events.hooks.object_use]
+symbol = "?AddUseObjectAction@CNWSObject@@QEAAHI@Z"
+
+[events.hooks.placeable_open]
+symbol = "?OpenInventory@CNWSPlaceable@@QEAAXI@Z"
+
+[events.hooks.placeable_close]
+symbol = "?CloseInventory@CNWSPlaceable@@QEAAXIH@Z"
+
+[events.hooks.inventory_add_gold]
+symbol = "?AddGold@CNWSCreature@@QEAAXHH@Z"
+
+[events.hooks.inventory_remove_gold]
+symbol = "?RemoveGold@CNWSCreature@@QEAAXHH@Z"
+
+[events.hooks.feat_use]
+symbol = "?UseFeat@CNWSCreature@@QEAAHGGIIPEAVVector@@@Z"
+
+[events.hooks.journal_message]
+symbol = "?HandlePlayerToServerJournalMessage@CNWSMessage@@QEAAHPEAVCNWSPlayer@@E@Z"
+
+[events.hooks.timing_bar_send]
+symbol = "?SendServerToPlayerGuiTimingEvent@CNWSMessage@@QEAAHPEAVCNWSPlayer@@HEI@Z"
+
+[events.hooks.timing_bar_cancel]
+symbol = "?HandlePlayerToServerInputCancelGuiTimingEvent@CNWSMessage@@QEAAHPEAVCNWSPlayer@@@Z"
+
+[events.hooks.object_broadcast_safe_projectile]
+symbol = "?BroadcastSafeProjectile@CNWSObject@@QEAAXIIVVector@@0IEIEE@Z"
+
+[events.hooks.skill_use]
+symbol = "?UseSkill@CNWSCreature@@QEAAHEEIVVector@@IIH@Z"
+
+[events.hooks.item_use]
+symbol = "?UseItem@CNWSCreature@@QEAAHIEEIVVector@@IH@Z"
+
+[events.hooks.item_inventory_open]
+symbol = "?OpenInventory@CNWSItem@@QEAAXI@Z"
+
+[events.hooks.item_inventory_close]
+symbol = "?CloseInventory@CNWSItem@@QEAAXIH@Z"
+
+[events.hooks.item_scroll_learn]
+symbol = "?LearnScroll@CNWSCreature@@QEAAHI@Z"
+
+[events.hooks.item_use_lore]
+symbol = "?UseLoreOnItem@CNWSCreature@@QEAAHI@Z"
+
+[events.hooks.item_pay_to_identify]
+symbol = "?PayToIdentifyItem@CNWSCreature@@QEAAXII@Z"
+
+[events.hooks.item_event_handler]
+symbol = "?EventHandler@CNWSItem@@UEAAXIIPEAXII@Z"
+
+[events.functions.player_get_game_object]
+symbol = "?GetGameObject@CNWSPlayer@@QEAAPEAVCNWSObject@@XZ"
 
 [administration]
 version = 1

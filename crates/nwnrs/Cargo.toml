@@ -34,6 +34,7 @@ image = { workspace = true, optional = true }
 nwnrs-nwpkg = { package = "nwnrs-nwpkg", path = "../nwpkg", version = "0.0.1", optional = true }
 nwnrs-nwscript = { package = "nwnrs-nwscript", path = "../nwscript", version = "0.0.1", optional = true }
 nwnrs-runtime = { path = "../runtime", version = "0.0.1", optional = true }
+nwnrs-runtime-sys = { path = "../runtime-sys", version = "0.0.1", optional = true }
 nwnrs-types = { package = "nwnrs-types", path = "../types", version = "0.0.1", optional = true }
 reqwest = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true }
@@ -42,9 +43,6 @@ tracing-subscriber.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 nix = { workspace = true, optional = true }
-
-[target.'cfg(windows)'.dependencies]
-nwnrs-runtime-sys = { path = "../runtime-sys", version = "0.0.1", optional = true }
 
 [dev-dependencies]
 toml.workspace = true

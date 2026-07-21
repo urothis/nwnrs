@@ -8,19 +8,62 @@ use nwnrs_runtime::{EventCommand, EventControls, EventObjectId, EventPayload, Ev
 
 use super::{
     abi::{CExoString, RunScript},
-    address::{GlobalStorage, HookTarget, NativeAddress, Resolver},
+    address::{FunctionTarget, GlobalStorage, HookTarget, NativeAddress, Resolver},
     thread::EngineThreadToken,
 };
 use crate::bridge::BridgeInstallError;
 
 const MAX_EVENT_DEPTH: usize = 64;
-const MODULE_LOAD_EVENT_ID: i32 = 3002;
-const MODULE_LOAD_DISPATCHER: &str = "_nwnrs_onload";
+const EVENT_DISPATCHER: &str = "_nwnrs_onload";
 
-struct EventFrame {
+#[derive(Clone, Copy)]
+pub(crate) struct EventSpec {
+    pub(crate) name:     &'static str,
+    pub(crate) id:       i32,
+    pub(crate) phase:    &'static str,
+    pub(crate) controls: EventControls,
+}
+
+impl EventSpec {
+    pub(crate) const fn read_only(name: &'static str, phase: &'static str) -> Self {
+        Self {
+            name,
+            id: -1,
+            phase,
+            controls: EventControls {
+                skippable: false,
+                result:    false,
+            },
+        }
+    }
+
+    pub(crate) const fn skippable(name: &'static str, phase: &'static str) -> Self {
+        Self {
+            name,
+            id: -1,
+            phase,
+            controls: EventControls {
+                skippable: true,
+                result:    false,
+            },
+        }
+    }
+}
+
+pub(crate) struct EventFrame {
     payload: EventPayload,
     skipped: bool,
     result:  Option<Vec<u8>>,
+}
+
+impl EventFrame {
+    pub(crate) fn skipped(&self) -> bool {
+        self.skipped
+    }
+
+    pub(crate) fn result(&self) -> Option<&[u8]> {
+        self.result.as_deref()
+    }
 }
 
 struct EventScope<'event> {
@@ -113,9 +156,11 @@ impl Drop for EventScope<'_> {
 }
 
 pub(crate) struct EventEngine {
-    load_module_finish:      NativeAddress<HookTarget>,
     virtual_machine_storage: NativeAddress<GlobalStorage>,
     run_script:              RunScript,
+    hook_targets:            BTreeMap<String, NativeAddress<HookTarget>>,
+    function_targets:        BTreeMap<String, NativeAddress<FunctionTarget>>,
+    game_object_id_offset:   usize,
     frames:                  EventFrames,
 }
 
@@ -124,11 +169,6 @@ impl EventEngine {
         resolver: &Resolver,
         target: &EventTarget,
     ) -> Result<Self, BridgeInstallError> {
-        let load_module_finish = resolver.resolve::<HookTarget>(
-            "events",
-            "load_module_finish",
-            &target.load_module_finish,
-        )?;
         let virtual_machine_storage = resolver.resolve::<GlobalStorage>(
             "events",
             "virtual_machine",
@@ -140,62 +180,107 @@ impl EventEngine {
         // CVirtualMachine::RunScript for the selected server binary.
         let run_script =
             unsafe { std::mem::transmute::<usize, RunScript>(run_script_address.get()) };
+        let mut hook_targets = BTreeMap::new();
+        for (name, address) in &target.hooks {
+            hook_targets.insert(
+                name.clone(),
+                resolver.resolve::<HookTarget>("events.hooks", name, address)?,
+            );
+        }
+        let mut function_targets = BTreeMap::new();
+        for (name, address) in &target.functions {
+            function_targets.insert(
+                name.clone(),
+                resolver.resolve::<FunctionTarget>("events.functions", name, address)?,
+            );
+        }
+        let game_object_id_offset =
+            usize::try_from(target.game_object_id_offset).map_err(|_error| {
+                BridgeInstallError::new("events.game_object_id_offset exceeds usize")
+            })?;
         Ok(Self {
-            load_module_finish,
             virtual_machine_storage,
             run_script,
+            hook_targets,
+            function_targets,
+            game_object_id_offset,
             frames: EventFrames::default(),
         })
     }
 
-    pub(crate) fn module_load_hook_target(&self) -> usize {
-        self.load_module_finish.get()
+    pub(crate) fn hook_target(&self, name: &str) -> Option<usize> {
+        self.hook_targets.get(name).map(NativeAddress::get)
     }
 
-    pub(crate) fn run_module_onload(
+    pub(crate) fn function_target(&self, name: &str) -> Option<usize> {
+        self.function_targets.get(name).map(NativeAddress::get)
+    }
+
+    pub(crate) fn game_object_id(
         &self,
         _thread: &EngineThreadToken,
-    ) -> Result<bool, BridgeInstallError> {
-        let storage = self.virtual_machine_storage.get() as *const *mut c_void;
-        // SAFETY: the target pack identifies live global g_pVirtualMachine
-        // storage and this read is synchronous on the engine thread.
-        let vm = unsafe { storage.read() };
-        if vm.is_null() {
+        object: *const c_void,
+    ) -> Result<EventObjectId, BridgeInstallError> {
+        if object.is_null() {
             return Err(BridgeInstallError::new(
-                "g_pVirtualMachine was null at module-load completion",
+                "event hook received a null game object",
             ));
         }
+        // SAFETY: the callback's ABI supplies a live CGameObject-derived
+        // receiver and the exact target pack owns m_idSelf's byte offset.
+        let value = unsafe {
+            object
+                .cast::<u8>()
+                .add(self.game_object_id_offset)
+                .cast::<u32>()
+                .read_unaligned()
+        };
+        Ok(EventObjectId::new(value))
+    }
 
-        let scope = self.frames.enter(EventPayload {
-            name:     "module.on_module_load".to_string(),
-            id:       MODULE_LOAD_EVENT_ID,
-            script:   MODULE_LOAD_DISPATCHER.to_string(),
-            phase:    "before".to_string(),
-            depth:    0,
-            target:   EventObjectId::new(0),
-            controls: EventControls::default(),
-            data:     BTreeMap::new(),
-        })?;
-        let mut script_name = format!("{MODULE_LOAD_DISPATCHER}\0").into_bytes();
-        let string_length = u32::try_from(MODULE_LOAD_DISPATCHER.len()).map_err(|_error| {
-            BridgeInstallError::new("module-load dispatcher resref exceeds u32")
-        })?;
-        let buffer_length = string_length.checked_add(1).ok_or_else(|| {
-            BridgeInstallError::new("module-load dispatcher buffer length overflowed")
-        })?;
+    pub(crate) fn dispatch(
+        &self,
+        _thread: &EngineThreadToken,
+        spec: EventSpec,
+        target: EventObjectId,
+        data: BTreeMap<String, nwnrs_runtime::EventValue>,
+    ) -> Result<(bool, EventFrame), BridgeInstallError> {
+        let payload = EventPayload {
+            name: spec.name.to_string(),
+            id: spec.id,
+            script: EVENT_DISPATCHER.to_string(),
+            phase: spec.phase.to_string(),
+            depth: 0,
+            target,
+            controls: spec.controls,
+            data,
+        };
+        let scope = self.frames.enter(payload)?;
+        let vm = self.virtual_machine()?;
+        let mut script_name = format!("{EVENT_DISPATCHER}\0").into_bytes();
+        let string_length = u32::try_from(EVENT_DISPATCHER.len())
+            .map_err(|_error| BridgeInstallError::new("event dispatcher resref exceeds u32"))?;
+        let buffer_length = string_length
+            .checked_add(1)
+            .ok_or_else(|| BridgeInstallError::new("event dispatcher buffer length overflowed"))?;
         let mut script = CExoString {
             string: script_name.as_mut_ptr().cast(),
             string_length,
             buffer_length,
         };
-        let ran = (self.run_script)(vm, &raw mut script, 0, 1, 0) != 0;
-        let frame = scope.finish()?;
-        if frame.skipped || frame.result.is_some() {
-            return Err(BridgeInstallError::new(
-                "module-load event accepted an unsupported control mutation",
-            ));
+        let ran = (self.run_script)(vm, &raw mut script, target.raw(), 1, 0) != 0;
+        Ok((ran, scope.finish()?))
+    }
+
+    fn virtual_machine(&self) -> Result<*mut c_void, BridgeInstallError> {
+        let storage = self.virtual_machine_storage.get() as *const *mut c_void;
+        // SAFETY: the target pack identifies live global g_pVirtualMachine
+        // storage and this read is synchronous on the engine thread.
+        let vm = unsafe { storage.read() };
+        if vm.is_null() {
+            return Err(BridgeInstallError::new("g_pVirtualMachine was null"));
         }
-        Ok(ran)
+        Ok(vm)
     }
 
     pub(crate) fn current_event(

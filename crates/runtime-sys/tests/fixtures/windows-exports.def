@@ -47,3 +47,32 @@ EXPORTS
     nwnrs_fixture_disconnect_player
     nwnrs_fixture_exo_base DATA
     nwnrs_fixture_get_alias_path
+    nwnrs_fixture_virtual_machine DATA
+    nwnrs_fixture_load_module_finish
+    nwnrs_fixture_run_script
+    nwnrs_fixture_add_associate
+    nwnrs_fixture_remove_associate
+    nwnrs_fixture_get_associate_id
+    nwnrs_fixture_possess_familiar
+    nwnrs_fixture_unpossess_familiar
+    nwnrs_fixture_object_lock
+    nwnrs_fixture_object_unlock
+    nwnrs_fixture_object_use
+    nwnrs_fixture_placeable_open
+    nwnrs_fixture_placeable_close
+    nwnrs_fixture_inventory_add_gold
+    nwnrs_fixture_inventory_remove_gold
+    nwnrs_fixture_feat_use
+    nwnrs_fixture_player_get_game_object
+    nwnrs_fixture_journal_message
+    nwnrs_fixture_timing_bar_send
+    nwnrs_fixture_timing_bar_cancel
+    nwnrs_fixture_object_broadcast_safe_projectile
+    nwnrs_fixture_skill_use
+    nwnrs_fixture_item_use
+    nwnrs_fixture_item_inventory_open
+    nwnrs_fixture_item_inventory_close
+    nwnrs_fixture_item_scroll_learn
+    nwnrs_fixture_item_use_lore
+    nwnrs_fixture_item_pay_to_identify
+    nwnrs_fixture_item_event_handler

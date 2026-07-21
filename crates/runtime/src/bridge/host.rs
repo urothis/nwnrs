@@ -213,6 +213,8 @@ pub enum EventValue {
     Boolean(bool),
     /// Signed integer event field.
     Integer(i32),
+    /// Unsigned integer event field.
+    Unsigned(u32),
     /// Floating-point event field.
     Float(f32),
     /// UTF-8 string event field.

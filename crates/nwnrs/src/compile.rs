@@ -241,10 +241,28 @@ fn script_search_roots(input: &Path, include_dirs: &[PathBuf]) -> Vec<PathBuf> {
     roots
 }
 
-struct CliCompilerHost {
+pub(crate) struct CliCompilerHost {
     resolver:       nwscript::FileSystemScriptResolver,
     install_resman: Option<SharedInstallResMan>,
     overlay:        Option<(String, Vec<u8>)>,
+}
+
+impl CliCompilerHost {
+    pub(crate) fn for_source(
+        input: &Path,
+        include_dirs: &[PathBuf],
+        install_resman: Option<SharedInstallResMan>,
+    ) -> Self {
+        let mut resolver = nwscript::FileSystemScriptResolver::new();
+        for root in script_search_roots(input, include_dirs) {
+            resolver.add_root(root);
+        }
+        Self {
+            resolver,
+            install_resman,
+            overlay: None,
+        }
+    }
 }
 
 impl nwscript::ScriptResolver for CliCompilerHost {

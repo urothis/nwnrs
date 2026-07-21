@@ -45,6 +45,7 @@ but owns the language pipeline itself.
 - `load_source_bundle`
 - `preprocess_source_bundle`
 - `preprocess_source_bundle_with_macros`
+- `preprocess_source_bundle_with_macro_trace`
 
 ### Extended macro syntax
 
@@ -52,8 +53,8 @@ The extended frontend recognizes balanced `name!(...)`, `name![...]`, and
 `name!{...}` invocations. Macro syntax is expanded and removed before the
 ordinary NWScript parser or NCS code generator sees it.
 
-Compiler attributes use the same erasure rule. The first project-wide
-collector is the native module-load registration:
+Compiler attributes use the same erasure rule. The first project-wide NSS
+macro implements native module-load registration:
 
 ```nss
 #[nwnrs::events(module_load)]
@@ -63,16 +64,18 @@ void ProjectStart(json jEvent)
 }
 ```
 
-The frontend removes the complete `#[...]` syntax before parsing. Unsupported
-attributes and event identities are errors, so extended text can neither leak
-into NCS nor be silently ignored.
+During module packaging, the `nwnrs::__build_event_dispatcher!` project macro
+receives the module source token streams, validates these attributes, and
+quotes the virtual `_nwnrs_onload.nss` source. The frontend removes the
+complete `#[...]` syntax after macro expansion, so extended text cannot leak
+into the ordinary parser or NCS.
 
 Fixed declarative transformations can live directly in source:
 
 ```nss
 macro_rules! make_handler {
-    ($name:ident, $body:tokens) => {
-        void $name() { $body }
+    ($name:ident, $($body:tokens)*) => {
+        void $name() { $($body)* }
     };
 }
 
@@ -97,9 +100,15 @@ project::wrap!(DoWork();)
 
 The final path segment names the required implementation function. Its exact
 signature is `tokenstream name(tokenstream input)`. `quote!` supports `$value`
-tokenstream interpolation and `$$` for a literal dollar sign. The compiler
-lowers `quote!` to private VM operations, so none of the extended syntax is
-written to the resulting NCS.
+tokenstream interpolation, `$$` for a literal dollar sign, and Rust-style
+`$($value),*`, `$($value)+`, and `$($value)?` repetition. Repetitions can be
+nested; variables at the same level are zipped and must have equal lengths.
+The compiler lowers `quote!` to private VM operations, so none of the extended
+syntax is written to the resulting NCS.
+
+Declarative matchers support the same `*`, `+`, and `?` quantifiers, optional
+single-token separators, nested repetition, and zipped captures. Available
+fragment specifiers are `ident`, `literal`, `tt`, `expr`, and `tokens`.
 
 Procedural implementations receive an opaque, lossless token-tree stream. The
 compiler-only language specification exposes these operations inside a
@@ -115,7 +124,21 @@ compiler-only language specification exposes these operations inside a
 - `__NWNRS_TokenDelimiter(tree)` returns `0` for a leaf, `1` for parentheses,
   `2` for brackets, or `3` for braces.
 - `__NWNRS_TokenParse(source)` lexes source into a new token stream.
+- `__NWNRS_TokenStreamListNew()`, `...Push`, `...PushList`, `...Length`,
+  `...Get`, and `...GetList` construct flat or nested collections for quoted
+  repetition.
+- `__NWNRS_TokenStreamListSort(list)` returns a deterministic text-sorted
+  collection for project finalizers.
+- `__NWNRS_TokenGroupContents(group)` exposes the inner stream of one balanced
+  delimiter group without reparsing rendered source.
+- `__NWNRS_TokenCursorNew(stream)` creates a mutable parser cursor;
+  `...Position`, `...IsEnd`, `...Peek`, `...Next`, `...Consume`, `...Expect`,
+  and `...Remaining` provide lossless navigation.
+- Cursor parsers consume `Identifier`, `Literal`, `Tree`, `Path`, `Expression`,
+  `Type`, `Statement`, `Function`, or `Struct` fragments. `...ParseSeparated`
+  returns a `tokenstream_list`; use `0` as its maximum for no upper bound.
 - `__NWNRS_MacroError(message)` terminates expansion with a diagnostic.
+- `__NWNRS_MacroErrorAt(stream, message)` associates a diagnostic with input.
 
 Execution is deterministic and isolated from the game runtime: the compiler
 VM only registers these token operations, and enforces instruction, recursion,
@@ -123,10 +146,8 @@ stack, expansion-depth, and output-token limits.
 
 The Rust host surface consists of `NwTokenStream`, `NwTokenTree`,
 `MacroRegistry`, `BangMacro`, `NwScriptMacro`, `expand_source_macros`,
-`register_nwscript_macro`, `quote_nwscript`, and
-`render_nwscript_tokens`. Rust-hosted quotation already supports repeated
-bindings; procedural `quote!` repetition awaits a collection-valued
-tokenstream ABI.
+`expand_source_macros_traced`, `register_nwscript_macro`, `quote_nwscript`, and
+`render_nwscript_tokens`.
 
 ### Lexing and parsing
 

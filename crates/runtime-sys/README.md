@@ -34,9 +34,9 @@ byte-identical `.deletedN` hard-link backup when requested, removes the active
 BIC, and cleans the matching TURD without retaining an engine pointer between
 ticks.
 
-Event capability version 2 also identifies the exact
-`CNWSModule::LoadModuleFinish`, `CVirtualMachine::RunScript`, and
-`g_pVirtualMachine` symbols. A Frida replacement runs the generated
+Event capability version 3 identifies the exact event-hook, helper-function,
+`CVirtualMachine::RunScript`, and `g_pVirtualMachine` symbols. The
+`module_load` hook at `CNWSModule::LoadModuleFinish` runs the generated
 `_nwnrs_onload` script with owner `0` before calling the original module-load
 completion function. Script failure is diagnostic only: the original engine
 function is always called. This does not read or rewrite `Mod_OnModLoad`.
@@ -48,6 +48,13 @@ their parent frame, and scope cleanup removes a frame after normal failure or
 Rust unwinding. JSON never contains borrowed engine pointers. Skip and result
 requests mutate only the top frame and are rejected unless its event schema
 advertises that control.
+
+Native event families live in `src/engine/events/<family>.rs`. Each family owns
+its target-pack keys, hook specifications, original trampolines, native
+callbacks, payload construction, and family-specific validation. The shared
+`engine/event.rs` code only manages dispatch frames and `_nwnrs_onload`;
+`engine/hook.rs` only installs physical detours. Event implementations do not
+belong in `bridge.rs`.
 
 Validated NWScript log calls are emitted through `tracing` under the
 `nwnrs::script` target. A supervising launcher preserves their requested level;

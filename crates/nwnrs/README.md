@@ -17,6 +17,7 @@ cover, and how they fit together with `nwnrs-types`, `nwnrs-nwscript`, and
 `nwnrs` exposes these high-level workflows behind one executable:
 
 - inspect typed NWN resources and archives
+- compile NWScript or inspect its fully macro-expanded source
 - convert between authored and compiled representations such as `MDL`, `OBJ`,
   and image formats
 - scaffold `nwproject` workspaces for include libraries and resource, ERF, or
@@ -49,6 +50,8 @@ cargo run -p nwnrs -- convert --root /path/to/NWN --user /path/to/NWN path/to/cr
 cargo run -p nwnrs -- unpack path/to/module.mod -d out/
 cargo run -p nwnrs -- pack out/ rebuilt.mod
 cargo run -p nwnrs -- compile -g -o rebuilt/script.ncs path/to/script.nss
+cargo run -p nwnrs -- expand --trace-macros path/to/script.nss
+cargo run -p nwnrs -- expand -o rebuilt/script.expanded.nss path/to/script.nss
 cargo run -p nwnrs -- compile -R -d rebuilt/scripts scripts/
 cargo run -p nwnrs -- compile -R -d rebuilt/scripts --graphviz graphs --graphviz-format svg scripts/
 cargo run -p nwnrs -- compile --optimization O0 --optimization-flag remove-dead-branches path/to/script.nss
@@ -61,12 +64,13 @@ cargo run -p nwnrs -- nwsync fetch https://example.com/manifest/abc123 -o repo/
 cargo run -p nwnrs -- nwsync prune path/to/repository --dry-run
 cargo run -p nwnrs -- nwsync prune path/to/repository
 cargo run -p nwnrs -- nwsync write path/to/resources/ output.manifest
-cargo run -p nwnrs -- run --runtime target/debug/libnwnrs_runtime_sys.dylib --targets crates/runtime/targets -- /path/to/nwserver -module module_name
+cargo run -p nwnrs -- run -- -module module_name
 ```
 
-The equivalent Windows runtime path is
-`target\debug\nwnrs_runtime_sys.dll`, and the server path ends in
-`nwserver.exe`.
+Native launching discovers the Steam or Beamdog installation, the
+platform-specific NWServer executable, the adjacent runtime library, and the
+workspace or installed target packs automatically on Linux, macOS, and
+Windows.
 
 The default build enables both Cargo features:
 
@@ -165,6 +169,19 @@ preserving directory hierarchy for recursive builds. SVG is the default;
 and PDF rendering require the Graphviz `dot` executable. Recompiling without
 debug output removes a stale sibling NDB.
 
+### `expand`
+
+`expand` loads one `.nss` file with the same local, repeated `--include-dir`,
+local `nwpkg` dependency, and optional NWN installation lookup used by
+compilation. It preprocesses includes and object-like defines, collects source
+`macro_rules!` and `proc_macro!` definitions, recursively expands bang macros,
+and prints canonical NWScript to stdout without compiling or writing files.
+
+Use `--trace-macros` to write each invocation, its source location, nesting
+depth, input, and immediate output to stderr. `-o`/`--output` writes source to
+an explicit file instead; an existing file requires `--force`, and the input
+source itself is never a valid output target.
+
 `inspect` uses the same installation-backed `nwscript.nss` lookup for NCS
 action names and falls back to installed NSS resources when weaving NDB source
 references. Use its matching `--root`, `--user`, `--language`, and `--load-ovr`
@@ -239,8 +256,20 @@ Color defaults to automatic terminal detection and honors `NO_COLOR`. Use
 launcher owns final rendering for both NWServer and injected-runtime output, so
 each emitted line uses the same color policy.
 
-Both `--runtime` and `--targets` are explicit. Put `--` before the server path
-when passing server options so they are forwarded without interpretation:
+Native mode is the default. With no path overrides, `nwnrs run` uses the shared
+installation discovery to locate Steam or Beamdog, selects the host NWServer
+executable, finds the platform runtime library next to `nwnrs`, and resolves
+the installed or workspace target packs. `NWNRS_RUNTIME` and
+`NWNRS_TARGET_DIR` provide environment overrides.
+
+Put `--` before NWServer options so they are forwarded without interpretation:
+
+```bash
+nwnrs run -- -module module_name -userdirectory path/to/server-home
+```
+
+The lower-level paths remain optional overrides for development and unusual
+install layouts:
 
 ```bash
 nwnrs run \

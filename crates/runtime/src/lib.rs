@@ -6,6 +6,7 @@ mod identity;
 mod platform;
 
 use std::{
+    collections::BTreeMap,
     env,
     error::Error,
     fmt,
@@ -38,7 +39,7 @@ pub const SERVER_STATE_CAPABILITY_VERSION: u32 = 1;
 /// Version of the optional administration capability.
 pub const ADMINISTRATION_CAPABILITY_VERSION: u32 = 1;
 /// Version of the optional events capability.
-pub const EVENTS_CAPABILITY_VERSION: u32 = 2;
+pub const EVENTS_CAPABILITY_VERSION: u32 = 3;
 /// Enables initialization when set to `1` in an injected process.
 pub const ENV_ENABLED: &str = "NWNRS_ENABLED";
 /// Makes initialization failure fatal when set to `1`.
@@ -548,24 +549,32 @@ pub struct AdministrationTarget {
 /// # use nwnrs_runtime::{EventTarget, TargetAddress};
 /// let address = TargetAddress::Offset { offset: 1 };
 /// let target = EventTarget {
-///     version: 2,
-///     load_module_finish: address.clone(),
+///     version: 3,
 ///     virtual_machine: address.clone(),
 ///     run_script: address,
+///     game_object_id_offset: 8,
+///     hooks: std::collections::BTreeMap::new(),
+///     functions: std::collections::BTreeMap::new(),
 /// };
-/// assert_eq!(target.version, 2);
+/// assert_eq!(target.version, 3);
 /// ```
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct EventTarget {
     /// Capability contract version.
-    pub version:            u32,
-    /// `CNWSModule::LoadModuleFinish` native hook boundary.
-    pub load_module_finish: TargetAddress,
+    pub version:               u32,
     /// Address of global `g_pVirtualMachine` storage.
-    pub virtual_machine:    TargetAddress,
+    pub virtual_machine:       TargetAddress,
     /// `CVirtualMachine::RunScript`.
-    pub run_script:         TargetAddress,
+    pub run_script:            TargetAddress,
+    /// Offset of `CGameObject::m_idSelf` from its primary object pointer.
+    pub game_object_id_offset: u64,
+    /// Native event hook boundaries keyed by stable physical-hook identity.
+    #[serde(default)]
+    pub hooks:                 BTreeMap<String, TargetAddress>,
+    /// Native helper functions used to construct event payloads.
+    #[serde(default)]
+    pub functions:             BTreeMap<String, TargetAddress>,
 }
 
 /// Versioned runtime metadata for one exact server binary.
@@ -858,11 +867,31 @@ fn validate_target_pack_metadata(pack: &TargetPack) -> RuntimeResult<()> {
     if let Some(events) = pack.events.as_ref() {
         validate_capability_version("events", events.version, EVENTS_CAPABILITY_VERSION)?;
         for (name, address) in [
-            ("load_module_finish", &events.load_module_finish),
             ("virtual_machine", &events.virtual_machine),
             ("run_script", &events.run_script),
         ] {
             validate_target_address("events", name, address)?;
+        }
+        if !events.game_object_id_offset.is_multiple_of(4) {
+            return Err(RuntimeError::new(
+                "target pack events.game_object_id_offset is not four-byte aligned",
+            ));
+        }
+        for (name, address) in &events.hooks {
+            if name.is_empty() {
+                return Err(RuntimeError::new(
+                    "target pack events hook identity must not be empty",
+                ));
+            }
+            validate_target_address("events.hooks", name, address)?;
+        }
+        for (name, address) in &events.functions {
+            if name.is_empty() {
+                return Err(RuntimeError::new(
+                    "target pack events function identity must not be empty",
+                ));
+            }
+            validate_target_address("events.functions", name, address)?;
         }
     }
     Ok(())
@@ -1896,16 +1925,16 @@ mod tests {
 
     fn fixture_event_target() -> EventTarget {
         EventTarget {
-            version:            EVENTS_CAPABILITY_VERSION,
-            load_module_finish: TargetAddress::Offset {
-                offset: 19
-            },
-            virtual_machine:    TargetAddress::Offset {
+            version:               EVENTS_CAPABILITY_VERSION,
+            virtual_machine:       TargetAddress::Offset {
                 offset: 20
             },
-            run_script:         TargetAddress::Offset {
+            run_script:            TargetAddress::Offset {
                 offset: 21
             },
+            game_object_id_offset: 8,
+            hooks:                 std::collections::BTreeMap::new(),
+            functions:             std::collections::BTreeMap::new(),
         }
     }
 

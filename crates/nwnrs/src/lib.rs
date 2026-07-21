@@ -12,6 +12,8 @@ mod container;
 #[cfg(feature = "tooling")]
 mod convert;
 #[cfg(feature = "tooling")]
+mod expand;
+#[cfg(feature = "tooling")]
 mod inspect;
 mod logging;
 #[cfg(feature = "tooling")]
@@ -68,6 +70,8 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
         Command::Compile(cmd) => compile::run_compile(cmd).map(|()| ExitCode::SUCCESS),
         #[cfg(feature = "tooling")]
         Command::Convert(cmd) => convert::run_convert(&cmd).map(|()| ExitCode::SUCCESS),
+        #[cfg(feature = "tooling")]
+        Command::Expand(cmd) => expand::run_expand(cmd).map(|()| ExitCode::SUCCESS),
         #[cfg(feature = "tooling")]
         Command::Inspect(cmd) => inspect::run_inspect(&cmd).map(|()| ExitCode::SUCCESS),
         #[cfg(feature = "tooling")]

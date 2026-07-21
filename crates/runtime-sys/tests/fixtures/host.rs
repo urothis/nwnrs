@@ -155,6 +155,39 @@ pub static mut nwnrs_fixture_app_manager: *mut c_void = std::ptr::null_mut();
 pub static mut nwnrs_fixture_virtual_machine: *mut c_void = std::ptr::null_mut();
 
 static MODULE_ONLOAD_CALLS: AtomicU32 = AtomicU32::new(0);
+static ASSOCIATE_EVENT_CALLS: AtomicU32 = AtomicU32::new(0);
+static ADD_ASSOCIATE_ORIGINAL_CALLS: AtomicU32 = AtomicU32::new(0);
+static REMOVE_ASSOCIATE_ORIGINAL_CALLS: AtomicU32 = AtomicU32::new(0);
+static FAMILIAR_EVENT_CALLS: AtomicU32 = AtomicU32::new(0);
+static POSSESS_FAMILIAR_ORIGINAL_CALLS: AtomicU32 = AtomicU32::new(0);
+static UNPOSSESS_FAMILIAR_ORIGINAL_CALLS: AtomicU32 = AtomicU32::new(0);
+static OBJECT_EVENT_CALLS: AtomicU32 = AtomicU32::new(0);
+static OBJECT_ORIGINAL_CALLS: AtomicU32 = AtomicU32::new(0);
+static INVENTORY_EVENT_CALLS: AtomicU32 = AtomicU32::new(0);
+static INVENTORY_ORIGINAL_CALLS: AtomicU32 = AtomicU32::new(0);
+static FEAT_EVENT_CALLS: AtomicU32 = AtomicU32::new(0);
+static FEAT_ORIGINAL_CALLS: AtomicU32 = AtomicU32::new(0);
+static JOURNAL_EVENT_CALLS: AtomicU32 = AtomicU32::new(0);
+static JOURNAL_ORIGINAL_CALLS: AtomicU32 = AtomicU32::new(0);
+static TIMING_BAR_EVENT_CALLS: AtomicU32 = AtomicU32::new(0);
+static TIMING_BAR_ORIGINAL_CALLS: AtomicU32 = AtomicU32::new(0);
+static PROJECTILE_EVENT_CALLS: AtomicU32 = AtomicU32::new(0);
+static PROJECTILE_ORIGINAL_CALLS: AtomicU32 = AtomicU32::new(0);
+static SKILL_EVENT_CALLS: AtomicU32 = AtomicU32::new(0);
+static SKILL_ORIGINAL_CALLS: AtomicU32 = AtomicU32::new(0);
+static ITEM_EVENT_CALLS: AtomicU32 = AtomicU32::new(0);
+static ITEM_ORIGINAL_CALLS: AtomicU32 = AtomicU32::new(0);
+
+#[repr(C)]
+struct FixtureGameObject {
+    vtable:    *mut c_void,
+    object_id: u32,
+}
+
+#[repr(C)]
+struct FixturePlayer {
+    game_object: *mut c_void,
+}
 
 unsafe extern "C" {
     static mut nwnrs_fixture_enable_combat_debugging: i32;
@@ -422,6 +455,278 @@ pub extern "C" fn nwnrs_fixture_load_module_finish(_module: *mut c_void) -> u32 
 }
 
 #[unsafe(no_mangle)]
+#[inline(never)]
+pub extern "C" fn nwnrs_fixture_add_associate(
+    _creature: *mut c_void,
+    _associate: u32,
+    _associate_type: u16,
+) {
+    ADD_ASSOCIATE_ORIGINAL_CALLS.fetch_add(1, Ordering::Relaxed);
+}
+
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub extern "C" fn nwnrs_fixture_remove_associate(_creature: *mut c_void, _associate: u32) {
+    REMOVE_ASSOCIATE_ORIGINAL_CALLS.fetch_add(1, Ordering::Relaxed);
+}
+
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub extern "C" fn nwnrs_fixture_get_associate_id(
+    _creature: *mut c_void,
+    associate_type: u16,
+    nth: i32,
+) -> u32 {
+    assert_eq!(associate_type, 3);
+    assert_eq!(nth, 1);
+    0x0e0f_1011
+}
+
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub extern "C" fn nwnrs_fixture_possess_familiar(_creature: *mut c_void) {
+    POSSESS_FAMILIAR_ORIGINAL_CALLS.fetch_add(1, Ordering::Relaxed);
+}
+
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub extern "C" fn nwnrs_fixture_unpossess_familiar(_creature: *mut c_void) {
+    UNPOSSESS_FAMILIAR_ORIGINAL_CALLS.fetch_add(1, Ordering::Relaxed);
+}
+
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub extern "C" fn nwnrs_fixture_object_lock(_object: *mut c_void, _door: u32) -> i32 {
+    OBJECT_ORIGINAL_CALLS.fetch_add(1, Ordering::Relaxed);
+    11
+}
+
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub extern "C" fn nwnrs_fixture_object_unlock(
+    _object: *mut c_void,
+    _door: u32,
+    _thieves_tool: u32,
+    _active_property_index: i32,
+) -> i32 {
+    OBJECT_ORIGINAL_CALLS.fetch_add(1, Ordering::Relaxed);
+    12
+}
+
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub extern "C" fn nwnrs_fixture_object_use(_object: *mut c_void, _used: u32) -> i32 {
+    OBJECT_ORIGINAL_CALLS.fetch_add(1, Ordering::Relaxed);
+    13
+}
+
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub extern "C" fn nwnrs_fixture_placeable_open(_placeable: *mut c_void, _opener: u32) {
+    OBJECT_ORIGINAL_CALLS.fetch_add(1, Ordering::Relaxed);
+}
+
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub extern "C" fn nwnrs_fixture_placeable_close(
+    _placeable: *mut c_void,
+    _closer: u32,
+    _update_player: i32,
+) {
+    OBJECT_ORIGINAL_CALLS.fetch_add(1, Ordering::Relaxed);
+}
+
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub extern "C" fn nwnrs_fixture_inventory_add_gold(
+    _creature: *mut c_void,
+    _gold: i32,
+    _feedback: i32,
+) {
+    INVENTORY_ORIGINAL_CALLS.fetch_add(1, Ordering::Relaxed);
+}
+
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub extern "C" fn nwnrs_fixture_inventory_remove_gold(
+    _creature: *mut c_void,
+    _gold: i32,
+    _feedback: i32,
+) {
+    INVENTORY_ORIGINAL_CALLS.fetch_add(1, Ordering::Relaxed);
+}
+
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub extern "C" fn nwnrs_fixture_feat_use(
+    _creature: *mut c_void,
+    feat: u16,
+    subfeat: u16,
+    target: u32,
+    area: u32,
+    position: *const Vector,
+) -> i32 {
+    assert_eq!((feat, subfeat, target, area), (42, 7, 0x1112_1314, 0x2122_2324));
+    assert!(!position.is_null());
+    // SAFETY: the fixture call supplies this live vector synchronously.
+    let position = unsafe { &*position };
+    assert_eq!((position.x, position.y, position.z), (1.5, 2.5, 3.5));
+    FEAT_ORIGINAL_CALLS.fetch_add(1, Ordering::Relaxed);
+    14
+}
+
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub extern "C" fn nwnrs_fixture_player_get_game_object(player: *mut c_void) -> *mut c_void {
+    assert!(!player.is_null());
+    // SAFETY: player points to the live FixturePlayer used by the call.
+    unsafe { (*player.cast::<FixturePlayer>()).game_object }
+}
+
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub extern "C" fn nwnrs_fixture_journal_message(
+    _message: *mut c_void,
+    _player: *mut c_void,
+    _minor: u8,
+) -> i32 {
+    JOURNAL_ORIGINAL_CALLS.fetch_add(1, Ordering::Relaxed);
+    21
+}
+
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub extern "C" fn nwnrs_fixture_timing_bar_send(
+    _message: *mut c_void,
+    _player: *mut c_void,
+    _starting: i32,
+    _event_id: u8,
+    _duration: u32,
+) -> i32 {
+    TIMING_BAR_ORIGINAL_CALLS.fetch_add(1, Ordering::Relaxed);
+    22
+}
+
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub extern "C" fn nwnrs_fixture_timing_bar_cancel(
+    _message: *mut c_void,
+    _player: *mut c_void,
+) -> i32 {
+    TIMING_BAR_ORIGINAL_CALLS.fetch_add(1, Ordering::Relaxed);
+    23
+}
+
+#[unsafe(no_mangle)]
+#[inline(never)]
+#[allow(clippy::too_many_arguments)]
+pub extern "C" fn nwnrs_fixture_object_broadcast_safe_projectile(
+    _object: *mut c_void,
+    _originator: u32,
+    _target: u32,
+    _originator_position: Vector,
+    _target_position: Vector,
+    _delta: u32,
+    _projectile_type: u8,
+    _spell_id: u32,
+    _attack_result: u8,
+    _projectile_path_type: u8,
+) {
+    PROJECTILE_ORIGINAL_CALLS.fetch_add(1, Ordering::Relaxed);
+}
+
+#[unsafe(no_mangle)]
+#[inline(never)]
+#[allow(clippy::too_many_arguments)]
+pub extern "C" fn nwnrs_fixture_skill_use(
+    _creature: *mut c_void,
+    skill: u8,
+    subskill: u8,
+    target: u32,
+    position: Vector,
+    area: u32,
+    used_item: u32,
+    active_property_index: i32,
+) -> i32 {
+    assert_eq!((skill, subskill), (6, 2));
+    assert_eq!((target, area, used_item), (0x1112_1314, 0x2122_2324, 0x3132_3334));
+    assert_eq!((position.x, position.y, position.z), (4.5, 5.5, 6.5));
+    assert_eq!(active_property_index, 8);
+    SKILL_ORIGINAL_CALLS.fetch_add(1, Ordering::Relaxed);
+    31
+}
+
+#[unsafe(no_mangle)]
+#[inline(never)]
+#[allow(clippy::too_many_arguments)]
+pub extern "C" fn nwnrs_fixture_item_use(
+    _creature: *mut c_void,
+    _item: u32,
+    _active_property_index: u8,
+    _sub_property_index: u8,
+    _target: u32,
+    _position: Vector,
+    _area: u32,
+    _use_charges: i32,
+) -> i32 {
+    ITEM_ORIGINAL_CALLS.fetch_add(1, Ordering::Relaxed);
+    32
+}
+
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub extern "C" fn nwnrs_fixture_item_inventory_open(_item: *mut c_void, _owner: u32) {
+    ITEM_ORIGINAL_CALLS.fetch_add(1, Ordering::Relaxed);
+}
+
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub extern "C" fn nwnrs_fixture_item_inventory_close(
+    _item: *mut c_void,
+    _owner: u32,
+    _update_player: i32,
+) {
+    ITEM_ORIGINAL_CALLS.fetch_add(1, Ordering::Relaxed);
+}
+
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub extern "C" fn nwnrs_fixture_item_scroll_learn(_creature: *mut c_void, _scroll: u32) -> i32 {
+    ITEM_ORIGINAL_CALLS.fetch_add(1, Ordering::Relaxed);
+    33
+}
+
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub extern "C" fn nwnrs_fixture_item_use_lore(_creature: *mut c_void, _item: u32) -> i32 {
+    ITEM_ORIGINAL_CALLS.fetch_add(1, Ordering::Relaxed);
+    34
+}
+
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub extern "C" fn nwnrs_fixture_item_pay_to_identify(
+    _creature: *mut c_void,
+    _item: u32,
+    _store: u32,
+) {
+    ITEM_ORIGINAL_CALLS.fetch_add(1, Ordering::Relaxed);
+}
+
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub extern "C" fn nwnrs_fixture_item_event_handler(
+    _item: *mut c_void,
+    _event_id: u32,
+    _caller: u32,
+    _script: *mut c_void,
+    _calendar_day: u32,
+    _time_of_day: u32,
+) {
+    ITEM_ORIGINAL_CALLS.fetch_add(1, Ordering::Relaxed);
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn nwnrs_fixture_run_script(
     vm: *mut c_void,
     script: *mut CExoString,
@@ -429,7 +734,7 @@ pub extern "C" fn nwnrs_fixture_run_script(
     owner_is_valid: i32,
     event_id: i32,
 ) -> i32 {
-    if vm.is_null() || script.is_null() || owner != 0 || owner_is_valid != 1 || event_id != 0 {
+    if vm.is_null() || script.is_null() || owner_is_valid != 1 || event_id != 0 {
         return 0;
     }
     // SAFETY: the fixture bridge supplies one live CExoString for the
@@ -453,16 +758,237 @@ pub extern "C" fn nwnrs_fixture_run_script(
     // complete synchronous RunScript call.
     let vm = unsafe { &mut *vm.cast::<VirtualMachine>() };
     assert_eq!(call_integer(&mut commands, vm, "GetIsInEvent"), 1);
-    assert_eq!(
-        call_string(&mut commands, vm, "GetCurrentEvent"),
-        concat!(
-            "{\"name\":\"module.on_module_load\",\"id\":3002,",
-            "\"script\":\"_nwnrs_onload\",\"phase\":\"before\",",
-            "\"depth\":1,\"target\":\"00000000\",",
-            "\"controls\":{\"skippable\":false,\"result\":false},\"data\":{}}"
-        )
-    );
-    MODULE_ONLOAD_CALLS.fetch_add(1, Ordering::Relaxed);
+    let current = call_string(&mut commands, vm, "GetCurrentEvent");
+    if owner == 0 {
+        assert_eq!(
+            current,
+            concat!(
+                "{\"name\":\"module.load\",\"id\":3002,",
+                "\"script\":\"_nwnrs_onload\",\"phase\":\"before\",",
+                "\"depth\":1,\"target\":\"00000000\",",
+                "\"controls\":{\"skippable\":false,\"result\":false},\"data\":{}}"
+            )
+        );
+        MODULE_ONLOAD_CALLS.fetch_add(1, Ordering::Relaxed);
+    } else {
+        assert_eq!(owner, 0x0102_0304);
+        let associate_events = [
+            concat!(
+                "{\"name\":\"associate.add\",\"id\":-1,",
+                "\"script\":\"_nwnrs_onload\",\"phase\":\"before\",",
+                "\"depth\":1,\"target\":\"01020304\",",
+                "\"controls\":{\"skippable\":false,\"result\":false},",
+                "\"data\":{\"associate\":\"0a0b0c0d\",\"associate_type\":5}}"
+            ),
+            concat!(
+                "{\"name\":\"associate.add\",\"id\":-1,",
+                "\"script\":\"_nwnrs_onload\",\"phase\":\"after\",",
+                "\"depth\":1,\"target\":\"01020304\",",
+                "\"controls\":{\"skippable\":false,\"result\":false},",
+                "\"data\":{\"associate\":\"0a0b0c0d\",\"associate_type\":5}}"
+            ),
+            concat!(
+                "{\"name\":\"associate.remove\",\"id\":-1,",
+                "\"script\":\"_nwnrs_onload\",\"phase\":\"before\",",
+                "\"depth\":1,\"target\":\"01020304\",",
+                "\"controls\":{\"skippable\":false,\"result\":false},",
+                "\"data\":{\"associate\":\"0a0b0c0d\"}}"
+            ),
+            concat!(
+                "{\"name\":\"associate.remove\",\"id\":-1,",
+                "\"script\":\"_nwnrs_onload\",\"phase\":\"after\",",
+                "\"depth\":1,\"target\":\"01020304\",",
+                "\"controls\":{\"skippable\":false,\"result\":false},",
+                "\"data\":{\"associate\":\"0a0b0c0d\"}}"
+            ),
+        ];
+        let familiar_events = [
+            concat!(
+                "{\"name\":\"associate.possess_familiar\",\"id\":-1,",
+                "\"script\":\"_nwnrs_onload\",\"phase\":\"before\",",
+                "\"depth\":1,\"target\":\"01020304\",",
+                "\"controls\":{\"skippable\":true,\"result\":false},",
+                "\"data\":{\"familiar\":\"0e0f1011\"}}"
+            ),
+            concat!(
+                "{\"name\":\"associate.possess_familiar\",\"id\":-1,",
+                "\"script\":\"_nwnrs_onload\",\"phase\":\"after\",",
+                "\"depth\":1,\"target\":\"01020304\",",
+                "\"controls\":{\"skippable\":false,\"result\":false},",
+                "\"data\":{\"familiar\":\"0e0f1011\"}}"
+            ),
+            concat!(
+                "{\"name\":\"associate.unpossess_familiar\",\"id\":-1,",
+                "\"script\":\"_nwnrs_onload\",\"phase\":\"before\",",
+                "\"depth\":1,\"target\":\"01020304\",",
+                "\"controls\":{\"skippable\":true,\"result\":false},",
+                "\"data\":{\"familiar\":\"0e0f1011\"}}"
+            ),
+            concat!(
+                "{\"name\":\"associate.unpossess_familiar\",\"id\":-1,",
+                "\"script\":\"_nwnrs_onload\",\"phase\":\"after\",",
+                "\"depth\":1,\"target\":\"01020304\",",
+                "\"controls\":{\"skippable\":false,\"result\":false},",
+                "\"data\":{\"familiar\":\"0e0f1011\"}}"
+            ),
+        ];
+        if associate_events.contains(&current.as_str()) {
+            ASSOCIATE_EVENT_CALLS.fetch_add(1, Ordering::Relaxed);
+        } else if familiar_events.contains(&current.as_str()) {
+            FAMILIAR_EVENT_CALLS.fetch_add(1, Ordering::Relaxed);
+            if current.contains("associate.unpossess_familiar")
+                && current.contains("\"phase\":\"before\"")
+            {
+                call_without_result(&mut commands, vm, "SkipCurrentEvent");
+            }
+        } else if (current.contains("\"name\":\"object.")
+            && !current.contains("\"name\":\"object.broadcast_safe_projectile\""))
+            || current.contains("\"name\":\"placeable.")
+        {
+            assert!(current.contains("\"target\":\"01020304\""));
+            assert!(current.contains("\"depth\":1"));
+            if current.contains("\"name\":\"object.lock\"") {
+                assert!(current.contains("\"door\":\"11121314\""));
+                if current.contains("\"phase\":\"after\"") {
+                    assert!(current.contains("\"action_result\":11"));
+                }
+            } else if current.contains("\"name\":\"object.unlock\"") {
+                assert!(current.contains("\"active_property_index\":7"));
+                assert!(current.contains("\"door\":\"11121314\""));
+                assert!(current.contains("\"thieves_tool\":\"15161718\""));
+                if current.contains("\"phase\":\"after\"") {
+                    assert!(current.contains("\"action_result\":12"));
+                }
+            } else if current.contains("\"name\":\"object.use\"") {
+                assert!(current.contains("\"object\":\"11121314\""));
+                if current.contains("\"phase\":\"before\"") {
+                    call_without_result(&mut commands, vm, "SkipCurrentEvent");
+                } else {
+                    assert!(current.contains("\"action_result\":0"));
+                }
+            } else if current.contains("\"name\":\"placeable.open\"") {
+                assert!(current.contains("\"object\":\"11121314\""));
+                if current.contains("\"phase\":\"before\"") {
+                    call_without_result(&mut commands, vm, "SkipCurrentEvent");
+                } else {
+                    assert!(current.contains("\"before_skipped\":true"));
+                }
+            } else {
+                assert!(current.contains("\"name\":\"placeable.close\""));
+                assert!(current.contains("\"object\":\"11121314\""));
+                assert!(current.contains("\"skippable\":false"));
+            }
+            OBJECT_EVENT_CALLS.fetch_add(1, Ordering::Relaxed);
+        } else if current.contains("\"name\":\"inventory.") {
+            assert!(current.contains("\"gold\":500"));
+            if current.contains("\"name\":\"inventory.remove_gold\"")
+                && current.contains("\"phase\":\"before\"")
+            {
+                call_without_result(&mut commands, vm, "SkipCurrentEvent");
+            }
+            INVENTORY_EVENT_CALLS.fetch_add(1, Ordering::Relaxed);
+        } else if current.contains("\"name\":\"feat.use\"") {
+            assert!(current.contains("\"name\":\"feat.use\""));
+            assert!(current.contains("\"area\":\"21222324\""));
+            assert!(current.contains("\"feat\":42"));
+            assert!(current.contains("\"position\":{\"x\":1.5,\"y\":2.5,\"z\":3.5}"));
+            assert!(current.contains("\"subfeat\":7"));
+            assert!(current.contains("\"target\":\"11121314\""));
+            if current.contains("\"phase\":\"after\"") {
+                assert!(current.contains("\"action_result\":14"));
+            }
+            FEAT_EVENT_CALLS.fetch_add(1, Ordering::Relaxed);
+        } else if current.contains("\"name\":\"journal.") {
+            assert!(
+                current.contains("\"name\":\"journal.open\"")
+                    || current.contains("\"name\":\"journal.close\"")
+            );
+            assert!(current.contains("\"skippable\":false"));
+            assert!(current.contains("\"data\":{}"));
+            JOURNAL_EVENT_CALLS.fetch_add(1, Ordering::Relaxed);
+        } else if current.contains("\"name\":\"timing_bar.") {
+            assert!(current.contains("\"name\":\"timing_bar."));
+            if current.contains("\"name\":\"timing_bar.start\"") {
+                assert!(current.contains("\"duration\":4294967295"));
+                assert!(current.contains("\"event_id\":9"));
+            } else {
+                assert!(current.contains("\"data\":{}"));
+            }
+            TIMING_BAR_EVENT_CALLS.fetch_add(1, Ordering::Relaxed);
+        } else if current.contains("\"name\":\"object.broadcast_safe_projectile\"") {
+            assert!(current.contains("\"originator\":\"11121314\""));
+            assert!(current.contains("\"target\":\"21222324\""));
+            assert!(current.contains("\"originator_position\":{\"x\":1.0,\"y\":2.0,\"z\":3.0}"));
+            assert!(current.contains("\"target_position\":{\"x\":4.0,\"y\":5.0,\"z\":6.0}"));
+            assert!(current.contains("\"delta\":4294967295"));
+            assert!(current.contains("\"projectile_type\":7"));
+            assert!(current.contains("\"spell_id\":4294967294"));
+            assert!(current.contains("\"attack_result\":8"));
+            assert!(current.contains("\"projectile_path_type\":9"));
+            if current.contains("\"phase\":\"before\"") {
+                call_without_result(&mut commands, vm, "SkipCurrentEvent");
+            }
+            PROJECTILE_EVENT_CALLS.fetch_add(1, Ordering::Relaxed);
+        } else if current.contains("\"name\":\"skill.use\"") {
+            assert!(current.contains("\"active_property_index\":8"));
+            assert!(current.contains("\"area\":\"21222324\""));
+            assert!(current.contains("\"position\":{\"x\":4.5,\"y\":5.5,\"z\":6.5}"));
+            assert!(current.contains("\"skill\":6"));
+            assert!(current.contains("\"subskill\":2"));
+            assert!(current.contains("\"target\":\"11121314\""));
+            assert!(current.contains("\"used_item\":\"31323334\""));
+            if current.contains("\"phase\":\"after\"") {
+                assert!(current.contains("\"action_result\":31"));
+            }
+            SKILL_EVENT_CALLS.fetch_add(1, Ordering::Relaxed);
+        } else {
+            assert!(current.contains("\"name\":\"item."));
+            if current.contains("\"name\":\"item.use\"") {
+                assert!(current.contains("\"item\":\"11121314\""));
+                assert!(current.contains("\"target\":\"21222324\""));
+                assert!(current.contains("\"active_property_index\":3"));
+                assert!(current.contains("\"sub_property_index\":4"));
+                assert!(current.contains("\"position\":{\"x\":7.5,\"y\":8.5,\"z\":9.5}"));
+                assert!(current.contains("\"area\":\"31323334\""));
+                assert!(current.contains("\"use_charges\":true"));
+                if current.contains("\"phase\":\"after\"") {
+                    assert!(current.contains("\"action_result\":32"));
+                }
+            } else if current.contains("\"name\":\"item.inventory_") {
+                assert!(current.contains("\"owner\":\"11121314\""));
+                if current.contains("\"name\":\"item.inventory_open\"")
+                    && current.contains("\"phase\":\"before\"")
+                {
+                    call_without_result(&mut commands, vm, "SkipCurrentEvent");
+                }
+            } else if current.contains("\"name\":\"item.scroll_learn\"") {
+                assert!(current.contains("\"scroll\":\"11121314\""));
+                if current.contains("\"phase\":\"after\"") {
+                    assert!(current.contains("\"action_result\":33"));
+                }
+            } else if current.contains("\"name\":\"item.use_lore\"") {
+                assert!(current.contains("\"item\":\"11121314\""));
+                if current.contains("\"phase\":\"before\"") {
+                    call_without_result(&mut commands, vm, "SkipCurrentEvent");
+                } else {
+                    assert!(current.contains("\"action_result\":0"));
+                }
+            } else if current.contains("\"name\":\"item.pay_to_identify\"") {
+                assert!(current.contains("\"item\":\"11121314\""));
+                assert!(current.contains("\"store\":\"21222324\""));
+            } else {
+                assert!(current.contains("\"name\":\"item.destroy\"")
+                    || current.contains("\"name\":\"item.decrement_stack_size\""));
+                assert!(current.contains("\"data\":{}"));
+                if current.contains("\"name\":\"item.decrement_stack_size\"")
+                    && current.contains("\"phase\":\"before\"")
+                {
+                    call_without_result(&mut commands, vm, "SkipCurrentEvent");
+                }
+            }
+            ITEM_EVENT_CALLS.fetch_add(1, Ordering::Relaxed);
+        }
+    }
     1
 }
 
@@ -641,6 +1167,7 @@ fn assert_fixture_layout() {
     assert_eq!(std::mem::offset_of!(ServerInfo, joining), 136);
     assert_eq!(std::mem::offset_of!(ServerInfo, play_options), 252);
     assert_eq!(std::mem::offset_of!(ServerInfo, persistent_world_options), 404);
+    assert_eq!(std::mem::offset_of!(FixtureGameObject, object_id), 8);
 }
 
 fn main() {
@@ -747,6 +1274,154 @@ fn main() {
     }
     assert_eq!(nwnrs_fixture_load_module_finish(std::ptr::null_mut()), 1);
     assert_eq!(MODULE_ONLOAD_CALLS.load(Ordering::Relaxed), 1);
+    let mut creature = FixtureGameObject {
+        vtable: std::ptr::null_mut(),
+        object_id: 0x0102_0304,
+    };
+    nwnrs_fixture_add_associate((&raw mut creature).cast(), 0x0a0b_0c0d, 5);
+    nwnrs_fixture_remove_associate((&raw mut creature).cast(), 0x0a0b_0c0d);
+    nwnrs_fixture_possess_familiar((&raw mut creature).cast());
+    nwnrs_fixture_unpossess_familiar((&raw mut creature).cast());
+    assert_eq!(ADD_ASSOCIATE_ORIGINAL_CALLS.load(Ordering::Relaxed), 1);
+    assert_eq!(REMOVE_ASSOCIATE_ORIGINAL_CALLS.load(Ordering::Relaxed), 1);
+    assert_eq!(ASSOCIATE_EVENT_CALLS.load(Ordering::Relaxed), 4);
+    assert_eq!(POSSESS_FAMILIAR_ORIGINAL_CALLS.load(Ordering::Relaxed), 1);
+    assert_eq!(UNPOSSESS_FAMILIAR_ORIGINAL_CALLS.load(Ordering::Relaxed), 0);
+    assert_eq!(FAMILIAR_EVENT_CALLS.load(Ordering::Relaxed), 4);
+    assert_eq!(nwnrs_fixture_object_lock((&raw mut creature).cast(), 0x1112_1314), 11);
+    assert_eq!(
+        nwnrs_fixture_object_unlock(
+            (&raw mut creature).cast(),
+            0x1112_1314,
+            0x1516_1718,
+            7,
+        ),
+        12
+    );
+    assert_eq!(nwnrs_fixture_object_use((&raw mut creature).cast(), 0x1112_1314), 0);
+    nwnrs_fixture_placeable_open((&raw mut creature).cast(), 0x1112_1314);
+    nwnrs_fixture_placeable_close((&raw mut creature).cast(), 0x1112_1314, 1);
+    assert_eq!(OBJECT_EVENT_CALLS.load(Ordering::Relaxed), 10);
+    assert_eq!(OBJECT_ORIGINAL_CALLS.load(Ordering::Relaxed), 3);
+    nwnrs_fixture_inventory_add_gold((&raw mut creature).cast(), 500, 1);
+    nwnrs_fixture_inventory_remove_gold((&raw mut creature).cast(), 500, 1);
+    assert_eq!(INVENTORY_EVENT_CALLS.load(Ordering::Relaxed), 4);
+    assert_eq!(INVENTORY_ORIGINAL_CALLS.load(Ordering::Relaxed), 1);
+    let position = Vector {
+        x: 1.5,
+        y: 2.5,
+        z: 3.5,
+    };
+    assert_eq!(
+        nwnrs_fixture_feat_use(
+            (&raw mut creature).cast(),
+            42,
+            7,
+            0x1112_1314,
+            0x2122_2324,
+            &raw const position,
+        ),
+        14
+    );
+    assert_eq!(FEAT_EVENT_CALLS.load(Ordering::Relaxed), 2);
+    assert_eq!(FEAT_ORIGINAL_CALLS.load(Ordering::Relaxed), 1);
+    let mut player = FixturePlayer {
+        game_object: (&raw mut creature).cast(),
+    };
+    let player = (&raw mut player).cast();
+    assert_eq!(nwnrs_fixture_journal_message(std::ptr::null_mut(), player, 0x0a), 21);
+    assert_eq!(nwnrs_fixture_journal_message(std::ptr::null_mut(), player, 0x0b), 21);
+    assert_eq!(JOURNAL_EVENT_CALLS.load(Ordering::Relaxed), 4);
+    assert_eq!(JOURNAL_ORIGINAL_CALLS.load(Ordering::Relaxed), 2);
+    assert_eq!(
+        nwnrs_fixture_timing_bar_send(
+            std::ptr::null_mut(),
+            player,
+            1,
+            9,
+            u32::MAX,
+        ),
+        22
+    );
+    assert_eq!(
+        nwnrs_fixture_timing_bar_send(std::ptr::null_mut(), player, 0, 0, 0),
+        22
+    );
+    assert_eq!(
+        nwnrs_fixture_timing_bar_cancel(std::ptr::null_mut(), player),
+        23
+    );
+    assert_eq!(TIMING_BAR_EVENT_CALLS.load(Ordering::Relaxed), 6);
+    assert_eq!(TIMING_BAR_ORIGINAL_CALLS.load(Ordering::Relaxed), 3);
+    nwnrs_fixture_object_broadcast_safe_projectile(
+        (&raw mut creature).cast(),
+        0x1112_1314,
+        0x2122_2324,
+        Vector { x: 1.0, y: 2.0, z: 3.0 },
+        Vector { x: 4.0, y: 5.0, z: 6.0 },
+        u32::MAX,
+        7,
+        u32::MAX - 1,
+        8,
+        9,
+    );
+    assert_eq!(PROJECTILE_EVENT_CALLS.load(Ordering::Relaxed), 2);
+    assert_eq!(PROJECTILE_ORIGINAL_CALLS.load(Ordering::Relaxed), 0);
+    assert_eq!(
+        nwnrs_fixture_skill_use(
+            (&raw mut creature).cast(),
+            6,
+            2,
+            0x1112_1314,
+            Vector { x: 4.5, y: 5.5, z: 6.5 },
+            0x2122_2324,
+            0x3132_3334,
+            8,
+        ),
+        31
+    );
+    assert_eq!(SKILL_EVENT_CALLS.load(Ordering::Relaxed), 2);
+    assert_eq!(SKILL_ORIGINAL_CALLS.load(Ordering::Relaxed), 1);
+    assert_eq!(
+        nwnrs_fixture_item_use(
+            (&raw mut creature).cast(),
+            0x1112_1314,
+            3,
+            4,
+            0x2122_2324,
+            Vector { x: 7.5, y: 8.5, z: 9.5 },
+            0x3132_3334,
+            1,
+        ),
+        32
+    );
+    nwnrs_fixture_item_inventory_open((&raw mut creature).cast(), 0x1112_1314);
+    nwnrs_fixture_item_inventory_close((&raw mut creature).cast(), 0x1112_1314, 1);
+    assert_eq!(nwnrs_fixture_item_scroll_learn((&raw mut creature).cast(), 0x1112_1314), 33);
+    assert_eq!(nwnrs_fixture_item_use_lore((&raw mut creature).cast(), 0x1112_1314), 0);
+    nwnrs_fixture_item_pay_to_identify(
+        (&raw mut creature).cast(),
+        0x1112_1314,
+        0x2122_2324,
+    );
+    nwnrs_fixture_item_event_handler(
+        (&raw mut creature).cast(),
+        11,
+        0x1112_1314,
+        std::ptr::null_mut(),
+        1,
+        2,
+    );
+    nwnrs_fixture_item_event_handler(
+        (&raw mut creature).cast(),
+        16,
+        0x1112_1314,
+        std::ptr::null_mut(),
+        1,
+        2,
+    );
+    assert_eq!(ITEM_EVENT_CALLS.load(Ordering::Relaxed), 16);
+    assert_eq!(ITEM_ORIGINAL_CALLS.load(Ordering::Relaxed), 5);
     let mut commands = Commands {
         virtual_machine: (&raw mut vm).cast(),
     };
@@ -758,7 +1433,7 @@ fn main() {
     assert_eq!(call_capability_version(&mut commands, &mut vm, "nwscript_bridge"), 1);
     assert_eq!(call_capability_version(&mut commands, &mut vm, "server_state"), 1);
     assert_eq!(call_capability_version(&mut commands, &mut vm, "administration"), 1);
-    assert_eq!(call_capability_version(&mut commands, &mut vm, "events"), 2);
+    assert_eq!(call_capability_version(&mut commands, &mut vm, "events"), 3);
     assert_eq!(call_has_capability(&mut commands, &mut vm, "server_state", 1), 1);
     assert_eq!(call_has_capability(&mut commands, &mut vm, "server_state", 2), 0);
     assert_eq!(call_integer(&mut commands, &mut vm, "GetLastErrorCode"), 0);
@@ -1004,6 +1679,23 @@ fn keep_abi_symbols() {
     std::hint::black_box(nwnrs_fixture_main_loop as *const ());
     std::hint::black_box(nwnrs_fixture_load_module_finish as *const ());
     std::hint::black_box(nwnrs_fixture_run_script as *const ());
+    std::hint::black_box(nwnrs_fixture_add_associate as *const ());
+    std::hint::black_box(nwnrs_fixture_remove_associate as *const ());
+    std::hint::black_box(nwnrs_fixture_get_associate_id as *const ());
+    std::hint::black_box(nwnrs_fixture_possess_familiar as *const ());
+    std::hint::black_box(nwnrs_fixture_unpossess_familiar as *const ());
+    std::hint::black_box(nwnrs_fixture_object_lock as *const ());
+    std::hint::black_box(nwnrs_fixture_object_unlock as *const ());
+    std::hint::black_box(nwnrs_fixture_object_use as *const ());
+    std::hint::black_box(nwnrs_fixture_placeable_open as *const ());
+    std::hint::black_box(nwnrs_fixture_placeable_close as *const ());
+    std::hint::black_box(nwnrs_fixture_inventory_add_gold as *const ());
+    std::hint::black_box(nwnrs_fixture_inventory_remove_gold as *const ());
+    std::hint::black_box(nwnrs_fixture_feat_use as *const ());
+    std::hint::black_box(nwnrs_fixture_player_get_game_object as *const ());
+    std::hint::black_box(nwnrs_fixture_journal_message as *const ());
+    std::hint::black_box(nwnrs_fixture_timing_bar_send as *const ());
+    std::hint::black_box(nwnrs_fixture_timing_bar_cancel as *const ());
     std::hint::black_box(&raw const nwnrs_fixture_app_manager);
     std::hint::black_box(&raw const nwnrs_fixture_virtual_machine);
     std::hint::black_box(&raw const nwnrs_fixture_enable_combat_debugging);

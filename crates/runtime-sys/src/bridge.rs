@@ -5,10 +5,7 @@ use std::{
     fmt,
     panic::{self, AssertUnwindSafe},
     ptr,
-    sync::{
-        OnceLock,
-        atomic::{AtomicPtr, Ordering},
-    },
+    sync::atomic::{AtomicPtr, Ordering},
 };
 
 use nwnrs_runtime::{
@@ -21,7 +18,10 @@ use super::{
     adapter::NativeRuntimeHost,
     engine::{
         Engine, EngineThreadToken,
-        abi::{FunctionManagement, LoadModuleFinish, MainLoop, ObjectId},
+        abi::{FunctionManagement, MainLoop, ObjectId},
+        active_engine,
+        hook::{NativeHookSpec, install_native_hooks},
+        set_active_engine,
     },
     write_diagnostic,
 };
@@ -42,10 +42,8 @@ const NWNX_POP_OBJECT: i32 = 1169;
 const NWNX_POP_STRING: i32 = 1170;
 const NWNX_POP_VECTOR: i32 = 1171;
 
-static ENGINE: OnceLock<Engine> = OnceLock::new();
 static FUNCTION_MANAGEMENT_ORIGINAL: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
 static MAIN_LOOP_ORIGINAL: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
-static LOAD_MODULE_FINISH_ORIGINAL: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
 
 thread_local! {
     static SCRIPT_BRIDGE: RefCell<ScriptBridge> = RefCell::new(ScriptBridge::default());
@@ -96,111 +94,23 @@ pub fn install_nwscript_bridge(context: &RuntimeContext) -> Result<(), BridgeIns
     let engine = resolved?;
     let hook_target = engine.hook_target();
     let main_loop_hook_target = engine.administration_main_loop_hook_target();
-    let module_load_hook_target = engine.module_load_hook_target();
-    if ENGINE.set(engine).is_err() {
-        return Err(BridgeInstallError::new(
-            "NWScript bridge was initialized more than once",
+    let mut hooks = vec![NativeHookSpec::new(
+        "NWScript bridge",
+        hook_target,
+        function_management_replacement as FunctionManagement as *const () as usize,
+        &FUNCTION_MANAGEMENT_ORIGINAL,
+    )];
+    if let Some(target) = main_loop_hook_target {
+        hooks.push(NativeHookSpec::new(
+            "deferred administration",
+            target,
+            main_loop_replacement as MainLoop as *const () as usize,
+            &MAIN_LOOP_ORIGINAL,
         ));
     }
-
-    // SAFETY: Gum is initialized and returns a retained interceptor or null.
-    let interceptor = unsafe { frida_gum_sys::gum_interceptor_obtain() };
-    if interceptor.is_null() {
-        return Err(BridgeInstallError::new("Frida Gum returned no interceptor"));
-    }
-    let bridge_hook = HookSpec {
-        name:        "NWScript bridge",
-        target:      hook_target,
-        replacement: function_management_replacement as FunctionManagement as *const () as usize,
-        original:    &FUNCTION_MANAGEMENT_ORIGINAL,
-    };
-    let mut hooks = vec![bridge_hook];
-    if let Some(target) = main_loop_hook_target {
-        hooks.push(HookSpec {
-            name: "deferred administration",
-            target,
-            replacement: main_loop_replacement as MainLoop as *const () as usize,
-            original: &MAIN_LOOP_ORIGINAL,
-        });
-    }
-    if let Some(target) = module_load_hook_target {
-        hooks.push(HookSpec {
-            name: "native module onload",
-            target,
-            replacement: load_module_finish_replacement as LoadModuleFinish as *const () as usize,
-            original: &LOAD_MODULE_FINISH_ORIGINAL,
-        });
-    }
-    let result = install_hooks(interceptor, &hooks);
-    release_interceptor(interceptor);
-    result
-}
-
-struct HookSpec {
-    name:        &'static str,
-    target:      usize,
-    replacement: usize,
-    original:    &'static AtomicPtr<c_void>,
-}
-
-fn install_hooks(
-    interceptor: *mut frida_gum_sys::GumInterceptor,
-    hooks: &[HookSpec],
-) -> Result<(), BridgeInstallError> {
-    let mut installed = Vec::with_capacity(hooks.len());
-    let mut failure = None;
-    // SAFETY: target packs bind each exact address to its replacement's ABI.
-    unsafe {
-        frida_gum_sys::gum_interceptor_begin_transaction(interceptor);
-        for hook in hooks {
-            let mut original = ptr::null_mut();
-            let status = frida_gum_sys::gum_interceptor_replace(
-                interceptor,
-                hook.target as *mut c_void,
-                hook.replacement as *mut c_void,
-                ptr::null_mut(),
-                &raw mut original,
-            );
-            if status == 0 && !original.is_null() {
-                hook.original.store(original, Ordering::Release);
-                installed.push(hook);
-            } else {
-                failure = Some(format!(
-                    "Frida Gum could not install {}: status {status}, trampoline {}",
-                    hook.name,
-                    if original.is_null() {
-                        "missing"
-                    } else {
-                        "present"
-                    }
-                ));
-                break;
-            }
-        }
-        frida_gum_sys::gum_interceptor_end_transaction(interceptor);
-        let _flushed = frida_gum_sys::gum_interceptor_flush(interceptor);
-    }
-    let Some(failure) = failure else {
-        return Ok(());
-    };
-    // SAFETY: installed contains only replacements added above.
-    unsafe {
-        frida_gum_sys::gum_interceptor_begin_transaction(interceptor);
-        for hook in installed {
-            frida_gum_sys::gum_interceptor_revert(interceptor, hook.target as *mut c_void);
-            hook.original.store(ptr::null_mut(), Ordering::Release);
-        }
-        frida_gum_sys::gum_interceptor_end_transaction(interceptor);
-        let _flushed = frida_gum_sys::gum_interceptor_flush(interceptor);
-    }
-    Err(BridgeInstallError::new(failure))
-}
-
-fn release_interceptor(interceptor: *mut frida_gum_sys::GumInterceptor) {
-    // SAFETY: gum_interceptor_obtain returned one retained GObject reference.
-    unsafe {
-        frida_gum_sys::g_object_unref(interceptor.cast());
-    }
+    hooks.extend(engine.event_hook_specs()?);
+    set_active_engine(engine)?;
+    install_native_hooks(&hooks)
 }
 
 pub(crate) extern "C" fn function_management_replacement(
@@ -216,7 +126,7 @@ pub(crate) extern "C" fn function_management_replacement(
 
 pub(crate) extern "C" fn main_loop_replacement(server_internal: *mut c_void) -> i32 {
     panic::catch_unwind(AssertUnwindSafe(|| {
-        if let Some(engine) = ENGINE.get() {
+        if let Some(engine) = active_engine() {
             // SAFETY: the replacement runs synchronously on the NWServer main
             // loop thread and does not retain the callback token.
             let thread = unsafe { EngineThreadToken::new() };
@@ -227,34 +137,6 @@ pub(crate) extern "C" fn main_loop_replacement(server_internal: *mut c_void) -> 
         call_original_main_loop(server_internal)
     }))
     .unwrap_or_default()
-}
-
-pub(crate) extern "C" fn load_module_finish_replacement(module: *mut c_void) -> u32 {
-    let result = panic::catch_unwind(AssertUnwindSafe(|| {
-        if let Some(engine) = ENGINE.get() {
-            // SAFETY: the replacement runs synchronously on NWServer's engine
-            // thread and the token cannot escape this callback.
-            let thread = unsafe { EngineThreadToken::new() };
-            match engine.run_module_onload(&thread) {
-                Ok(true) => {}
-                Ok(false) => write_diagnostic("generated _nwnrs_onload script did not run"),
-                Err(error) => write_diagnostic(&error.to_string()),
-            }
-        }
-        call_original_load_module_finish(module)
-    }));
-    result.unwrap_or_else(|_| call_original_load_module_finish(module))
-}
-
-fn call_original_load_module_finish(module: *mut c_void) -> u32 {
-    let original = LOAD_MODULE_FINISH_ORIGINAL.load(Ordering::Acquire);
-    if original.is_null() {
-        return 0;
-    }
-    // SAFETY: Gum published the exact LoadModuleFinish trampoline before
-    // enabling the replacement, and module is its original receiver.
-    let original = unsafe { std::mem::transmute::<*mut c_void, LoadModuleFinish>(original) };
-    original(module)
 }
 
 fn call_original_main_loop(server_internal: *mut c_void) -> i32 {
@@ -269,7 +151,7 @@ fn call_original_main_loop(server_internal: *mut c_void) -> i32 {
 }
 
 fn handle_function_management(commands: *mut c_void, command: i32, parameters: i32) -> i32 {
-    let Some(engine) = ENGINE.get() else {
+    let Some(engine) = active_engine() else {
         return VM_FAKE_ABORT_SCRIPT;
     };
     // SAFETY: this entire scope runs synchronously inside the engine's command

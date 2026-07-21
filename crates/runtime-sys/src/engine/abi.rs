@@ -24,6 +24,32 @@ pub(crate) type RemoveLinkedListNode = extern "C" fn(*mut c_void, *mut c_void) -
 pub(crate) type MainLoop = extern "C" fn(*mut c_void) -> i32;
 pub(crate) type LoadModuleFinish = extern "C" fn(*mut c_void) -> u32;
 pub(crate) type RunScript = extern "C" fn(*mut c_void, *mut CExoString, u32, i32, i32) -> i32;
+pub(crate) type AddAssociate = extern "C" fn(*mut c_void, u32, u16);
+pub(crate) type RemoveAssociate = extern "C" fn(*mut c_void, u32);
+pub(crate) type FamiliarAction = extern "C" fn(*mut c_void);
+pub(crate) type GetAssociateId = extern "C" fn(*mut c_void, u16, i32) -> u32;
+pub(crate) type ObjectAction = extern "C" fn(*mut c_void, u32) -> i32;
+pub(crate) type UnlockObjectAction = extern "C" fn(*mut c_void, u32, u32, i32) -> i32;
+pub(crate) type OpenInventory = extern "C" fn(*mut c_void, u32);
+pub(crate) type CloseInventory = extern "C" fn(*mut c_void, u32, i32);
+pub(crate) type ModifyGold = extern "C" fn(*mut c_void, i32, i32);
+pub(crate) type UseFeat =
+    extern "C" fn(*mut c_void, u16, u16, u32, u32, *const EngineVector) -> i32;
+pub(crate) type UseSkill =
+    extern "C" fn(*mut c_void, u8, u8, u32, EngineVector, u32, u32, i32) -> i32;
+pub(crate) type UseItem =
+    extern "C" fn(*mut c_void, u32, u8, u8, u32, EngineVector, u32, i32) -> i32;
+pub(crate) type ItemObjectAction = extern "C" fn(*mut c_void, u32) -> i32;
+pub(crate) type ItemInventoryOpen = extern "C" fn(*mut c_void, u32);
+pub(crate) type ItemInventoryClose = extern "C" fn(*mut c_void, u32, i32);
+pub(crate) type PayToIdentifyItem = extern "C" fn(*mut c_void, u32, u32);
+pub(crate) type ItemEventHandler = extern "C" fn(*mut c_void, u32, u32, *mut c_void, u32, u32);
+pub(crate) type BroadcastSafeProjectile =
+    extern "C" fn(*mut c_void, u32, u32, EngineVector, EngineVector, u32, u8, u32, u8, u8);
+pub(crate) type GetPlayerGameObject = extern "C" fn(*mut c_void) -> *mut c_void;
+pub(crate) type PlayerMessage = extern "C" fn(*mut c_void, *mut c_void, u8) -> i32;
+pub(crate) type SendTimingEvent = extern "C" fn(*mut c_void, *mut c_void, i32, u8, u32) -> i32;
+pub(crate) type CancelTimingEvent = extern "C" fn(*mut c_void, *mut c_void) -> i32;
 pub(crate) type GetClientObjectByObjectId = extern "C" fn(*mut c_void, u32) -> *mut c_void;
 pub(crate) type GetCreatureByGameObjectId = extern "C" fn(*mut c_void, u32) -> *mut c_void;
 pub(crate) type GetPlayerInfo = extern "C" fn(*mut c_void, u32) -> *mut c_void;

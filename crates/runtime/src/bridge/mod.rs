@@ -1128,7 +1128,7 @@ mod tests {
             max_players: 64,
             udp_port: 5121,
             event: Some(EventPayload {
-                name:     "module.on_module_load".to_string(),
+                name:     "module.load".to_string(),
                 id:       3002,
                 script:   "_nwnrs_onload".to_string(),
                 phase:    "before".to_string(),
@@ -1158,7 +1158,7 @@ mod tests {
         let event: serde_json::Value = serde_json::from_slice(&bridge.pop_string()?)?;
         assert_eq!(
             event.pointer("/name").and_then(serde_json::Value::as_str),
-            Some("module.on_module_load")
+            Some("module.load")
         );
         assert_eq!(
             event.pointer("/id").and_then(serde_json::Value::as_i64),
@@ -1625,10 +1625,12 @@ mod tests {
             offset: 1
         };
         EventTarget {
-            version:            EVENTS_CAPABILITY_VERSION,
-            load_module_finish: address(),
-            virtual_machine:    address(),
-            run_script:         address(),
+            version:               EVENTS_CAPABILITY_VERSION,
+            virtual_machine:       address(),
+            run_script:            address(),
+            game_object_id_offset: 8,
+            hooks:                 std::collections::BTreeMap::new(),
+            functions:             std::collections::BTreeMap::new(),
         }
     }
 

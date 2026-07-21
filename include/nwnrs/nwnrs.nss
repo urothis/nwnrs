@@ -1,6 +1,8 @@
 /// @file nwnrs.nss
 /// @brief Server identity, live state, administration, JSON events, and structured logging.
 
+#include "nwnrs_macros"
+
 const string NWNRS_NAMESPACE = "NWNRS"; ///< @private
 
 const int NWNRS_API_VERSION = 1;

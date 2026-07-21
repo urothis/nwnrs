@@ -26,11 +26,16 @@ must be complete and use the one contract version supported by this runtime.
 NWScript can inspect these versions with `NWNRS_GetCapabilityVersion` and
 `NWNRS_HasCapability`.
 
-Event capability version 2 contains exact addresses for
-`CNWSModule::LoadModuleFinish`, global
-`g_pVirtualMachine`, and `CVirtualMachine::RunScript`. These implement the
-native `_nwnrs_onload` bootstrap without assigning or patching the module's
-vanilla `Mod_OnModLoad` field.
+Event capability version 3 contains exact addresses for global
+`g_pVirtualMachine`, `CVirtualMachine::RunScript`, and a keyed map of physical
+engine boundaries under `events.hooks`. The `module_load` hook points at
+`CNWSModule::LoadModuleFinish` and implements the native `_nwnrs_onload`
+bootstrap without assigning or patching the module's vanilla `Mod_OnModLoad`
+field. Hook keys are stable across platforms while each value is the symbol or
+offset for that exact executable; multiple logical event phases sharing one
+engine function use one map entry and one detour.
+`events.functions` separately records callable engine helpers needed to build
+owned payload data; these addresses are never installed as detours.
 
 Addresses are either exact native symbols:
 

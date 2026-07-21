@@ -43,12 +43,16 @@ Native ABI provenance and regeneration rules are documented in
 [`ABI.md`](ABI.md).
 
 The [`nwnrs.nss`](../../include/nwnrs/nwnrs.nss) include is a separate local
-`nwpkg` dependency of the source-controlled demo module. `nwpkg` collects
-`#[nwnrs::events(module_load)]` functions and compiles an always-present
-`_nwnrs_onload` dispatcher. Handlers use the exact `void Handler(json event)`
-signature. The dispatcher retrieves and parses the current payload once, then
-passes the same value to every handler. The native runtime runs that dispatcher
-at `CNWSModule::LoadModuleFinish`, before the original engine function, while
+`nwpkg` dependency of the source-controlled demo module. Its compiler-only
+[`nwnrs_macros.nss`](../../include/nwnrs/nwnrs_macros.nss) procedural macro
+collects `#[nwnrs::events(module_load)]` and native event phase functions
+during the project preprocessing pass and quotes the always-present
+`_nwnrs_onload` dispatcher.
+Handlers use the exact `void Handler(json event)` signature. The dispatcher is
+then compiled and baked by `nwpkg`; it retrieves and parses the current payload
+once and passes the same value only to handlers registered for that event and
+phase. The native runtime runs that dispatcher at
+`CNWSModule::LoadModuleFinish`, before the original engine function, while
 the module's vanilla `Mod_OnModLoad` remains independently assigned to
 `x2_mod_def_load`.
 
@@ -56,7 +60,7 @@ The stable event envelope is:
 
 ```json
 {
-  "name": "module.on_module_load",
+  "name": "module.load",
   "id": 3002,
   "script": "_nwnrs_onload",
   "phase": "before",
@@ -72,3 +76,21 @@ vectors as `{ "x", "y", "z" }`, and locations as an area identifier,
 position, and facing. Native strings and compound values are copied before the
 dispatcher runs; no borrowed engine pointer enters JSON. Event frames are
 nested, bounded, and removed by scope cleanup even when dispatch fails.
+
+The first native hook family uses
+`#[nwnrs::events(associate_add_before)]`,
+`#[nwnrs::events(associate_add_after)]`,
+`#[nwnrs::events(associate_remove_before)]`, and
+`#[nwnrs::events(associate_remove_after)]`. Familiar possession uses the same
+pattern with `associate_possess_familiar_*` and
+`associate_unpossess_familiar_*`. Payload names are `associate.add`,
+`associate.remove`, `associate.possess_familiar`, and
+`associate.unpossess_familiar`. `data.associate` is an object ID,
+`data.associate_type` is an integer for add events, and familiar events expose
+`data.familiar`. Their before phases are skippable. Object lock, unlock, use,
+placeable open/close and safe-projectile hooks live in the separate Object
+family. Inventory gold mutation, feat use, skill use, and item operations each
+have their own family module. All paired NWScript registrations use stable
+`<family>_<operation>_before` and `<family>_<operation>_after` identities.
+Journal open/close and timing-bar start/stop/cancel events use a verified
+player-to-game-object helper instead of hard-coded `CNWSPlayer` field offsets.

@@ -1401,6 +1401,21 @@ int FALSE = 0;
 "#
     }
 
+    fn event_langspec() -> &'static str {
+        r#"
+#define ENGINE_NUM_STRUCTURES 1
+#define ENGINE_STRUCTURE_0 json
+
+int TRUE = 1;
+int FALSE = 0;
+void NWNXCall(string sNamespace, string sFunction);
+string NWNXPopString();
+json JsonParse(string sJson);
+json JsonObjectGet(json jObject, string sKey);
+string JsonGetString(json jValue);
+"#
+    }
+
     #[test]
     fn pack_compiles_nwscript_sources_into_erf_entries() {
         let temp_dir = unique_test_dir("erf-pack-nwscript");
@@ -1511,6 +1526,47 @@ int FALSE = 0;
                 .is_err(),
             "dependency source should not be packed into the module"
         );
+
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn pack_bakes_nss_generated_event_dispatcher() {
+        let temp_dir = unique_test_dir("erf-pack-event-macro");
+        let input = temp_dir.join("module");
+        let output = temp_dir.join("test.mod");
+        fs::create_dir_all(&input).expect("create module dir");
+        fs::write(
+            input.join("nwproject.toml"),
+            "[project]\nname = \"fixture\"\nkind = \"mod\"\n\n[source]\npath = \".\"\n",
+        )
+        .expect("write module manifest");
+        fs::write(input.join("nwscript.nss"), event_langspec()).expect("write langspec");
+        fs::write(
+            input.join("startup.nss"),
+            "#[nwnrs::events(module_load)]\nvoid ProjectStart(json jEvent) \
+             {}\n#[nwnrs::events(associate_add_before)]\nvoid BeforeAssociateAdded(json jEvent) \
+             {}\n#[nwnrs::events(object_broadcast_safe_projectile_after)]\nvoid \
+             AfterProjectile(json jEvent) {}\n#[nwnrs::events(skill_use_before)]\nvoid \
+             BeforeSkill(json jEvent) {}\n#[nwnrs::events(item_decrement_stack_size_after)]\nvoid \
+             AfterStackChange(json jEvent) {}\n",
+        )
+        .expect("write event source");
+
+        let mut cmd = base_pack_cmd(vec![input.clone(), output.clone()]);
+        cmd.force = true;
+        run_pack(cmd).expect("pack module with NSS event macro");
+
+        let archive = erf::read_erf_from_file(&output).expect("read packed archive");
+        let compiled = archive
+            .demand(
+                &resman::ResRef::new("_nwnrs_onload", resman::ResType(2010))
+                    .expect("build dispatcher ncs rr"),
+            )
+            .expect("read generated dispatcher")
+            .read_all(CachePolicy::Bypass)
+            .expect("read dispatcher bytes");
+        assert!(nwscript::decode_ncs_instructions(&compiled).is_ok());
 
         let _ = fs::remove_dir_all(temp_dir);
     }

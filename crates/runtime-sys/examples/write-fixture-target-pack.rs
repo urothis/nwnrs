@@ -1,6 +1,6 @@
 //! Writes the exact-hash target pack used by the native runtime fixture.
 
-use std::{error::Error, ffi::OsString, fs, path::PathBuf};
+use std::{collections::BTreeMap, error::Error, ffi::OsString, fs, path::PathBuf};
 
 use nwnrs_runtime::{
     ADMINISTRATION_CAPABILITY_VERSION, AbiLayouts, AdministrationTarget, BinaryIdentity,
@@ -101,10 +101,110 @@ fn main() -> Result<(), Box<dyn Error>> {
             get_alias_path: symbol("nwnrs_fixture_get_alias_path"),
         }),
         events:         Some(EventTarget {
-            version:            EVENTS_CAPABILITY_VERSION,
-            load_module_finish: symbol("nwnrs_fixture_load_module_finish"),
-            virtual_machine:    symbol("nwnrs_fixture_virtual_machine"),
-            run_script:         symbol("nwnrs_fixture_run_script"),
+            version:               EVENTS_CAPABILITY_VERSION,
+            virtual_machine:       symbol("nwnrs_fixture_virtual_machine"),
+            run_script:            symbol("nwnrs_fixture_run_script"),
+            game_object_id_offset: 8,
+            hooks:                 BTreeMap::from([
+                (
+                    "module_load".to_string(),
+                    symbol("nwnrs_fixture_load_module_finish"),
+                ),
+                (
+                    "associate_add".to_string(),
+                    symbol("nwnrs_fixture_add_associate"),
+                ),
+                (
+                    "associate_remove".to_string(),
+                    symbol("nwnrs_fixture_remove_associate"),
+                ),
+                (
+                    "associate_possess_familiar".to_string(),
+                    symbol("nwnrs_fixture_possess_familiar"),
+                ),
+                (
+                    "associate_unpossess_familiar".to_string(),
+                    symbol("nwnrs_fixture_unpossess_familiar"),
+                ),
+                (
+                    "object_lock".to_string(),
+                    symbol("nwnrs_fixture_object_lock"),
+                ),
+                (
+                    "object_unlock".to_string(),
+                    symbol("nwnrs_fixture_object_unlock"),
+                ),
+                ("object_use".to_string(), symbol("nwnrs_fixture_object_use")),
+                (
+                    "placeable_open".to_string(),
+                    symbol("nwnrs_fixture_placeable_open"),
+                ),
+                (
+                    "placeable_close".to_string(),
+                    symbol("nwnrs_fixture_placeable_close"),
+                ),
+                (
+                    "inventory_add_gold".to_string(),
+                    symbol("nwnrs_fixture_inventory_add_gold"),
+                ),
+                (
+                    "inventory_remove_gold".to_string(),
+                    symbol("nwnrs_fixture_inventory_remove_gold"),
+                ),
+                ("feat_use".to_string(), symbol("nwnrs_fixture_feat_use")),
+                (
+                    "journal_message".to_string(),
+                    symbol("nwnrs_fixture_journal_message"),
+                ),
+                (
+                    "timing_bar_send".to_string(),
+                    symbol("nwnrs_fixture_timing_bar_send"),
+                ),
+                (
+                    "timing_bar_cancel".to_string(),
+                    symbol("nwnrs_fixture_timing_bar_cancel"),
+                ),
+                (
+                    "object_broadcast_safe_projectile".to_string(),
+                    symbol("nwnrs_fixture_object_broadcast_safe_projectile"),
+                ),
+                ("skill_use".to_string(), symbol("nwnrs_fixture_skill_use")),
+                ("item_use".to_string(), symbol("nwnrs_fixture_item_use")),
+                (
+                    "item_inventory_open".to_string(),
+                    symbol("nwnrs_fixture_item_inventory_open"),
+                ),
+                (
+                    "item_inventory_close".to_string(),
+                    symbol("nwnrs_fixture_item_inventory_close"),
+                ),
+                (
+                    "item_scroll_learn".to_string(),
+                    symbol("nwnrs_fixture_item_scroll_learn"),
+                ),
+                (
+                    "item_use_lore".to_string(),
+                    symbol("nwnrs_fixture_item_use_lore"),
+                ),
+                (
+                    "item_pay_to_identify".to_string(),
+                    symbol("nwnrs_fixture_item_pay_to_identify"),
+                ),
+                (
+                    "item_event_handler".to_string(),
+                    symbol("nwnrs_fixture_item_event_handler"),
+                ),
+            ]),
+            functions:             BTreeMap::from([
+                (
+                    "associate_get_id".to_string(),
+                    symbol("nwnrs_fixture_get_associate_id"),
+                ),
+                (
+                    "player_get_game_object".to_string(),
+                    symbol("nwnrs_fixture_player_get_game_object"),
+                ),
+            ]),
         }),
     };
     let directory = PathBuf::from(targets).join(identity.platform.directory_name());
