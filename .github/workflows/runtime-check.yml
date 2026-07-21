@@ -6,8 +6,10 @@ on:
             - crates/runtime/**
             - crates/runtime-sys/**
             - crates/nwnrs/**
+            - crates/nwpkg/**
+            - crates/nwscript/**
             - include/nwnrs/**
-            - module/nwnrs_init.nss
+            - module/nwnrs_startup.nss
             - Cargo.toml
             - Cargo.lock
             - .github/workflows/runtime-check.yml

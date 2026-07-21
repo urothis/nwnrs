@@ -14,6 +14,7 @@ categories = ["config", "game-development"]
 
 [dependencies]
 nwnrs-nwscript = { path = "../nwscript", version = "0.0.1" }
+nwnrs-runtime = { path = "../runtime", version = "0.0.1" }
 nwnrs-types = { path = "../types", version = "0.0.1", default-features = false, features = [
     "checksums",
     "compressedbuf",

@@ -1596,9 +1596,8 @@ mod tests {
 
     use nwnrs_runtime::{
         AbiLayouts, Architecture, BinaryIdentity, BridgeTarget, CExoStringLayout, ENV_ENABLED,
-        ENV_REQUIRED, ENV_SUPERVISED, ENV_TARGET_PACK, ENV_WINDOWS_GUI, EVENTS_CAPABILITY_VERSION,
-        EngineClassLayouts, EventTarget, NWSCRIPT_BRIDGE_CAPABILITY_VERSION, OperatingSystem,
-        Platform, PlayerListLayout, RUNTIME_API_VERSION, SERVER_STATE_CAPABILITY_VERSION,
+        ENV_REQUIRED, ENV_SUPERVISED, ENV_TARGET_PACK, ENV_WINDOWS_GUI, EngineClassLayouts,
+        EventTarget, OperatingSystem, Platform, PlayerListLayout, RUNTIME_API_VERSION,
         ServerStateTarget, TARGET_PACK_SCHEMA_VERSION, TargetAddress, TargetPack, TargetServer,
         TargetSource, VectorLayout,
     };
@@ -2053,7 +2052,6 @@ mod tests {
             offset: 1
         };
         BridgeTarget {
-            version:                NWSCRIPT_BRIDGE_CAPABILITY_VERSION,
             function_management:    address(),
             stack_pop_integer:      address(),
             stack_push_integer:     address(),
@@ -2074,7 +2072,6 @@ mod tests {
             offset: 1
         };
         ServerStateTarget {
-            version:                 SERVER_STATE_CAPABILITY_VERSION,
             app_manager:             address(),
             get_server_info:         address(),
             get_player_list:         address(),
@@ -2089,12 +2086,13 @@ mod tests {
             offset: 1
         };
         EventTarget {
-            version:               EVENTS_CAPABILITY_VERSION,
-            virtual_machine:       address(),
-            run_script:            address(),
-            game_object_id_offset: 8,
-            hooks:                 std::collections::BTreeMap::new(),
-            functions:             std::collections::BTreeMap::new(),
+            virtual_machine: address(),
+            run_script:      address(),
+            hooks:           std::collections::BTreeMap::from([(
+                "module_load".to_string(),
+                address(),
+            )]),
+            functions:       std::collections::BTreeMap::new(),
         }
     }
 
@@ -2131,6 +2129,24 @@ mod tests {
                 z_offset:  8,
             },
             classes:      EngineClassLayouts {
+                game_object_id_offset: 8,
+                game_object_type_offset: None,
+                item_repository_parent_offset: None,
+                creature_stats_base_creature_offset: None,
+                creature_stats_experience_offset: None,
+                item_base_item_offset: None,
+                item_possessor_offset: None,
+                message_read_buffer_offset: None,
+                message_read_buffer_size_offset: None,
+                message_read_buffer_position_offset: None,
+                message_read_fragments_size_offset: None,
+                message_read_fragments_position_offset: None,
+                message_current_read_bit_offset: None,
+                message_last_byte_bits_offset: None,
+                player_object_id_offset: None,
+                player_inventory_gui_offset: None,
+                player_other_inventory_gui_offset: None,
+                inventory_gui_selected_panel_offset: None,
                 command_implementer_vm_offset: 0,
                 app_manager_server_offset: 8,
                 server_info_module_offset: 8,

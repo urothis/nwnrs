@@ -5,13 +5,14 @@ pub(crate) struct EngineThreadToken {
 }
 
 impl EngineThreadToken {
-    /// Creates a token while executing synchronously inside the engine's VM
-    /// command callback.
+    /// Creates a token while executing synchronously inside an NWServer
+    /// callback.
     ///
     /// # Safety
     ///
-    /// The caller must be the active engine VM callback and must not retain the
-    /// token after that callback returns.
+    /// The caller must be on NWServer's active execution thread and must not
+    /// retain the token after that callback returns. Event dispatch separately
+    /// binds and verifies the single-threaded stack invariant used by Unified.
     pub(crate) unsafe fn new() -> Self {
         Self {
             not_send_or_sync: PhantomData,

@@ -44,16 +44,12 @@ extern "C" fn replacement(module: *mut c_void) -> u32 {
 fn dispatch() -> Result<bool, BridgeInstallError> {
     let engine = active_engine()
         .ok_or_else(|| BridgeInstallError::new("event engine is not initialized"))?;
+    let subscriptions = engine.begin_event_subscription_update()?;
     // SAFETY: this token is scoped to the synchronous native engine hook.
     let thread = unsafe { EngineThreadToken::new() };
     let (ran, frame) = engine.dispatch_event(
         &thread,
-        EventSpec {
-            name:     "module.load",
-            id:       EVENT_ID,
-            phase:    "before",
-            controls: nwnrs_runtime::EventControls::default(),
-        },
+        EventSpec::catalog("module.load", "before")?.with_id(EVENT_ID),
         EventObjectId::new(0),
         BTreeMap::new(),
     )?;
@@ -61,6 +57,9 @@ fn dispatch() -> Result<bool, BridgeInstallError> {
         return Err(BridgeInstallError::new(
             "module.load accepted an unsupported control mutation",
         ));
+    }
+    if ran {
+        subscriptions.commit()?;
     }
     Ok(ran)
 }

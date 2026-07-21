@@ -1042,6 +1042,7 @@ name = "nwnrs-nwpkg"
 version = "0.0.1"
 dependencies = [
  "nwnrs-nwscript",
+ "nwnrs-runtime",
  "nwnrs-types",
  "serde",
  "serde_json",
@@ -1073,6 +1074,7 @@ dependencies = [
  "cc",
  "frida-gum-sys",
  "nwnrs-runtime",
+ "serde_json",
  "toml",
  "tracing",
  "tracing-subscriber",

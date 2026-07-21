@@ -38,6 +38,7 @@ y_offset = 4
 z_offset = 8
 
 [layouts.classes]
+game_object_id_offset = 8
 command_implementer_vm_offset = 16
 app_manager_server_offset = 8
 server_info_module_offset = 8
@@ -77,7 +78,6 @@ vm_script_name_offset = 24
 vm_script_event_id_offset = 72
 
 [bridge]
-version = 1
 
 [bridge.function_management]
 offset = 0x00529550
@@ -116,7 +116,6 @@ offset = 0x00112a80
 offset = 0x006d96ec
 
 [server_state]
-version = 1
 
 [server_state.app_manager]
 offset = 0x00b4a900
@@ -137,8 +136,6 @@ offset = 0x000c3390
 offset = 0x000c33d0
 
 [events]
-version = 3
-game_object_id_offset = 8
 
 [events.hooks.module_load]
 symbol = "?LoadModuleFinish@CNWSModule@@QEAAIXZ"
@@ -228,7 +225,6 @@ symbol = "?EventHandler@CNWSItem@@UEAAXIIPEAXII@Z"
 symbol = "?GetGameObject@CNWSPlayer@@QEAAPEAVCNWSObject@@XZ"
 
 [administration]
-version = 1
 
 [administration.get_session_name]
 offset = 0x000c33a0

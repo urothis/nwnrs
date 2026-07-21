@@ -34,20 +34,31 @@ byte-identical `.deletedN` hard-link backup when requested, removes the active
 BIC, and cleans the matching TURD without retaining an engine pointer between
 ticks.
 
-Event capability version 3 identifies the exact event-hook, helper-function,
+The unversioned event target map identifies the exact event-hook, helper-function,
 `CVirtualMachine::RunScript`, and `g_pVirtualMachine` symbols. The
 `module_load` hook at `CNWSModule::LoadModuleFinish` runs the generated
 `_nwnrs_onload` script with owner `0` before calling the original module-load
 completion function. Script failure is diagnostic only: the original engine
 function is always called. This does not read or rewrite `Mod_OnModLoad`.
+The generated dispatcher registers its annotation identities during that
+bootstrap. Other physical hooks are installed on first subscription, and an
+installed hook bypasses event dispatch when a later module load no longer
+subscribes to either of its phases. Registration is staged for the complete
+`_nwnrs_onload` execution and replaces the live set only when the script
+finishes successfully; failure preserves the previous coherent set.
 
 Each native event dispatch pushes one owned, typed frame onto a bounded stack.
 The safe bridge serializes the active frame once and the generated NWScript
 dispatcher parses it once before invoking its handlers. Nested hooks restore
 their parent frame, and scope cleanup removes a frame after normal failure or
-Rust unwinding. JSON never contains borrowed engine pointers. Skip and result
+Rust unwinding. Like Unified, this stack belongs to NWServer's single event
+execution thread; callbacks entering from another native thread are rejected
+before they can observe or mutate a frame. JSON never contains borrowed engine pointers. Skip and result
 requests mutate only the top frame and are rejected unless its event schema
-advertises that control.
+advertises that control. Result JSON is validated against the catalog's result
+type; `item.use` before handlers currently accept a boolean replacement result.
+Safe-projectile dispatch also follows Unified's independently configurable
+projectile-type and spell-ID whitelist checks.
 
 Native event families live in `src/engine/events/<family>.rs`. Each family owns
 its target-pack keys, hook specifications, original trampolines, native

@@ -96,7 +96,7 @@ pub fn generate_event_dispatcher(input: &Path) -> Result<Option<GeneratedEventDi
         macro_input.push_str(&render_nwscript_tokens(&stream));
         macro_input.push_str(" }\n");
     }
-    let macro_source = resolve_event_dispatcher_macro(input)?;
+    let macro_source = materialize_event_catalog(&resolve_event_dispatcher_macro(input)?)?;
     let generated = run_event_dispatcher_macro(&macro_input, &macro_source)?;
     Ok(Some(GeneratedEventDispatcher {
         name:         "_nwnrs_onload".to_string(),
@@ -118,6 +118,48 @@ fn resolve_event_dispatcher_macro(input: &Path) -> Result<String, String> {
         }
     }
     Ok(EVENT_DISPATCHER_MACRO_SOURCE.to_string())
+}
+
+fn materialize_event_catalog(template: &str) -> Result<String, String> {
+    const BEGIN: &str = "// NWNRS_EVENT_CATALOG_BEGIN";
+    const END: &str = "// NWNRS_EVENT_CATALOG_END";
+    let Some(begin) = template.find(BEGIN) else {
+        if template.contains(END) {
+            return Err("nwnrs event macro is missing its catalog begin marker".to_string());
+        }
+        return Ok(template.to_string());
+    };
+    let end = template
+        .find(END)
+        .ok_or_else(|| "nwnrs event macro is missing its catalog end marker".to_string())?;
+    if end <= begin {
+        return Err("nwnrs event macro catalog markers are out of order".to_string());
+    }
+
+    let mut generated = String::new();
+    for (index, event) in nwnrs_runtime::EVENT_CATALOG.iter().enumerate() {
+        if index == 0 {
+            generated.push_str("if");
+        } else {
+            generated.push_str("else if");
+        }
+        generated.push_str(" (event_name == \"");
+        generated.push_str(event.identity);
+        generated.push_str("\")\n{\n    dispatcher = quote! { if (sEventName == \"");
+        generated.push_str(event.name);
+        generated.push_str("\" && sEventPhase == \"");
+        generated.push_str(event.phase);
+        generated.push_str("\") { $handler(jEvent); } };\n");
+        generated.push_str("    subscription = quote! { NWNXPushString(\"");
+        generated.push_str(event.identity);
+        generated.push_str("\"); NWNXCall(\"NWNRS\", \"SubscribeEvent\"); };\n}\n");
+    }
+
+    let mut materialized = String::with_capacity(template.len() + generated.len());
+    materialized.push_str(&template[..begin]);
+    materialized.push_str(&generated);
+    materialized.push_str(&template[end + END.len()..]);
+    Ok(materialized)
 }
 
 fn run_event_dispatcher_macro(input: &str, macro_source: &str) -> Result<String, String> {
@@ -208,7 +250,9 @@ mod tests {
         time::{SystemTime, UNIX_EPOCH},
     };
 
-    use super::{EVENT_DISPATCHER_MACRO_SOURCE, generate_event_dispatcher};
+    use super::{
+        EVENT_DISPATCHER_MACRO_SOURCE, generate_event_dispatcher, materialize_event_catalog,
+    };
 
     fn assert_dispatcher_parses(source: &str) -> Result<(), String> {
         let tokens = nwnrs_nwscript::lex_text(nwnrs_nwscript::SourceId::new(0), source)
@@ -381,12 +425,18 @@ mod tests {
     }
 
     #[test]
-    fn include_package_macro_matches_embedded_project_macro() -> Result<(), String> {
+    fn include_and_embedded_templates_use_the_runtime_catalog() -> Result<(), String> {
         let workspace_copy =
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../include/nwnrs/nwnrs_macros.nss");
         if workspace_copy.is_file() {
             let source = fs::read_to_string(&workspace_copy).map_err(|error| error.to_string())?;
             assert_eq!(source, EVENT_DISPATCHER_MACRO_SOURCE);
+            for template in [&source, EVENT_DISPATCHER_MACRO_SOURCE] {
+                let materialized = materialize_event_catalog(template)?;
+                for event in nwnrs_runtime::EVENT_CATALOG {
+                    assert!(materialized.contains(event.identity));
+                }
+            }
         }
         Ok(())
     }

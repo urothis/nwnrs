@@ -38,6 +38,7 @@ y_offset = 4
 z_offset = 8
 
 [layouts.classes]
+game_object_id_offset = 8
 command_implementer_vm_offset = 16
 app_manager_server_offset = 8
 server_info_module_offset = 8
@@ -77,7 +78,6 @@ vm_script_name_offset = 24
 vm_script_event_id_offset = 72
 
 [bridge]
-version = 1
 
 [bridge.function_management]
 symbol = "_ZN26CNWSVirtualMachineCommands36ExecuteCommandNWNXFunctionManagementEii"
@@ -116,7 +116,6 @@ symbol = "_ZN15CVirtualMachine15StackPushVectorE6Vector"
 symbol = "_ZdaPv"
 
 [server_state]
-version = 1
 
 [server_state.app_manager]
 symbol = "g_pAppManager"
@@ -137,8 +136,6 @@ symbol = "_ZN9CNetLayer20GetSessionMaxPlayersEv"
 symbol = "_ZN9CNetLayer10GetUDPPortEv"
 
 [events]
-version = 3
-game_object_id_offset = 8
 
 [events.hooks.module_load]
 symbol = "_ZN10CNWSModule16LoadModuleFinishEv"
@@ -227,7 +224,6 @@ symbol = "_ZN8CNWSItem12EventHandlerEjjPvjj"
 [events.functions.player_get_game_object]
 symbol = "_ZN10CNWSPlayer13GetGameObjectEv"
 [administration]
-version = 1
 
 [administration.get_session_name]
 symbol = "_ZN9CNetLayer14GetSessionNameEv"

@@ -33,12 +33,34 @@ pub(crate) type UnlockObjectAction = extern "C" fn(*mut c_void, u32, u32, i32) -
 pub(crate) type OpenInventory = extern "C" fn(*mut c_void, u32);
 pub(crate) type CloseInventory = extern "C" fn(*mut c_void, u32, i32);
 pub(crate) type ModifyGold = extern "C" fn(*mut c_void, i32, i32);
+pub(crate) type RepositoryAddItem =
+    extern "C" fn(*mut c_void, *mut *mut c_void, u8, u8, i32, i32) -> i32;
+pub(crate) type RepositoryRemoveItem = extern "C" fn(*mut c_void, *mut c_void) -> i32;
+pub(crate) type InventoryStatus = extern "C" fn(*mut c_void, *mut c_void, i32, u32) -> i32;
+pub(crate) type InventoryGuiSetOpen = extern "C" fn(*mut c_void, i32, i32);
+pub(crate) type InventorySelectPanel = extern "C" fn(*mut c_void, u32, u8) -> i32;
+pub(crate) type SetExperience = extern "C" fn(*mut c_void, u32, i32);
 pub(crate) type UseFeat =
     extern "C" fn(*mut c_void, u16, u16, u32, u32, *const EngineVector) -> i32;
+pub(crate) type DecrementFeatRemainingUses = extern "C" fn(*mut c_void, u16);
+pub(crate) type HasFeat = extern "C" fn(*mut c_void, u16) -> i32;
+pub(crate) type GetFeatRemainingUses = extern "C" fn(*mut c_void, u16) -> u8;
 pub(crate) type UseSkill =
     extern "C" fn(*mut c_void, u8, u8, u32, EngineVector, u32, u32, i32) -> i32;
 pub(crate) type UseItem =
     extern "C" fn(*mut c_void, u32, u8, u8, u32, EngineVector, u32, i32) -> i32;
+pub(crate) type ValidateUseItem = extern "C" fn(*mut c_void, *mut c_void, i32) -> i32;
+pub(crate) type FindItemWithBaseItemId = extern "C" fn(*mut c_void, u32, i32) -> u32;
+pub(crate) type ValidateEquipItem =
+    extern "C" fn(*mut c_void, *mut c_void, *mut u32, i32, i32, i32, *mut c_void) -> u8;
+pub(crate) type RunEquip = extern "C" fn(*mut c_void, u32, u32, u32) -> i32;
+pub(crate) type RunUnequip = extern "C" fn(*mut c_void, u32, u32, u8, u8, i32, u32) -> i32;
+pub(crate) type SplitItem = extern "C" fn(*mut c_void, *mut c_void, i32);
+pub(crate) type MergeItem = extern "C" fn(*mut c_void, *mut c_void, *mut c_void);
+pub(crate) type AcquireItem =
+    extern "C" fn(*mut c_void, *mut *mut c_void, u32, u32, u8, u8, i32, i32) -> i32;
+pub(crate) type InventoryEquipCancel = extern "C" fn(*mut c_void, u32, u32, u32, i32) -> i32;
+pub(crate) type InventoryUnequipCancel = extern "C" fn(*mut c_void, u32, u32, i32) -> i32;
 pub(crate) type ItemObjectAction = extern "C" fn(*mut c_void, u32) -> i32;
 pub(crate) type ItemInventoryOpen = extern "C" fn(*mut c_void, u32);
 pub(crate) type ItemInventoryClose = extern "C" fn(*mut c_void, u32, i32);

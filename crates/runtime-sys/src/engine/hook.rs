@@ -30,6 +30,10 @@ impl NativeHookSpec {
             original,
         }
     }
+
+    pub(crate) const fn target(&self) -> usize {
+        self.target
+    }
 }
 
 pub(crate) fn install_native_hooks(hooks: &[NativeHookSpec]) -> Result<(), BridgeInstallError> {

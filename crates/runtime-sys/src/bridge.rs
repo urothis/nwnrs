@@ -108,7 +108,7 @@ pub fn install_nwscript_bridge(context: &RuntimeContext) -> Result<(), BridgeIns
             &MAIN_LOOP_ORIGINAL,
         ));
     }
-    hooks.extend(engine.event_hook_specs()?);
+    hooks.extend(engine.event_bootstrap_hook_specs()?);
     set_active_engine(engine)?;
     install_native_hooks(&hooks)
 }

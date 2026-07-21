@@ -1409,6 +1409,7 @@ int FALSE = 0;
 int TRUE = 1;
 int FALSE = 0;
 void NWNXCall(string sNamespace, string sFunction);
+void NWNXPushString(string sValue);
 string NWNXPopString();
 json JsonParse(string sJson);
 json JsonObjectGet(json jObject, string sKey);

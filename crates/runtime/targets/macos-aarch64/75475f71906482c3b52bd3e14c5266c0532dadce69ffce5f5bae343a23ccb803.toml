@@ -38,6 +38,24 @@ y_offset = 4
 z_offset = 8
 
 [layouts.classes]
+game_object_id_offset = 8
+game_object_type_offset = 12
+item_repository_parent_offset = 8
+creature_stats_base_creature_offset = 48
+creature_stats_experience_offset = 168
+item_base_item_offset = 64
+item_possessor_offset = 944
+message_read_buffer_offset = 56
+message_read_buffer_size_offset = 64
+message_read_buffer_position_offset = 68
+message_read_fragments_size_offset = 80
+message_read_fragments_position_offset = 84
+message_current_read_bit_offset = 92
+message_last_byte_bits_offset = 93
+player_object_id_offset = 84
+player_inventory_gui_offset = 152
+player_other_inventory_gui_offset = 160
+inventory_gui_selected_panel_offset = 12
 command_implementer_vm_offset = 16
 app_manager_server_offset = 8
 server_info_module_offset = 8
@@ -77,7 +95,6 @@ vm_script_name_offset = 24
 vm_script_event_id_offset = 72
 
 [bridge]
-version = 1
 
 [bridge.function_management]
 symbol = "_ZN26CNWSVirtualMachineCommands36ExecuteCommandNWNXFunctionManagementEii"
@@ -116,7 +133,6 @@ symbol = "_ZN15CVirtualMachine15StackPushVectorE6Vector"
 symbol = "_ZdaPv"
 
 [server_state]
-version = 1
 
 [server_state.app_manager]
 symbol = "g_pAppManager"
@@ -137,8 +153,6 @@ symbol = "_ZN9CNetLayer20GetSessionMaxPlayersEv"
 symbol = "_ZN9CNetLayer10GetUDPPortEv"
 
 [events]
-version = 3
-game_object_id_offset = 8
 
 [events.hooks.module_load]
 symbol = "_ZN10CNWSModule16LoadModuleFinishEv"
@@ -224,10 +238,78 @@ symbol = "_ZN12CNWSCreature17PayToIdentifyItemEjj"
 [events.hooks.item_event_handler]
 symbol = "_ZN8CNWSItem12EventHandlerEjjPvjj"
 
+[events.hooks.object_set_experience]
+symbol = "_ZN17CNWSCreatureStats13SetExperienceEji"
+
+[events.hooks.feat_decrement_remaining_uses]
+symbol = "_ZN17CNWSCreatureStats26DecrementFeatRemainingUsesEt"
+
+[events.hooks.feat_has]
+symbol = "_ZN17CNWSCreatureStats7HasFeatEt"
+
+[events.hooks.inventory_message]
+symbol = "_ZN11CNWSMessage39HandlePlayerToServerGuiInventoryMessageEP10CNWSPlayerh"
+
+[events.hooks.inventory_add_item]
+symbol = "_ZN15CItemRepository7AddItemEPP8CNWSItemhhii"
+
+[events.hooks.inventory_remove_item]
+symbol = "_ZN15CItemRepository10RemoveItemEP8CNWSItem"
+
+[events.hooks.item_validate_use]
+symbol = "_ZN12CNWSCreature10CanUseItemEP8CNWSItemi"
+
+[events.hooks.item_ammo_reload]
+symbol = "_ZN15CItemRepository22FindItemWithBaseItemIdEji"
+
+[events.hooks.item_validate_equip]
+symbol = "_ZN12CNWSCreature12CanEquipItemEP8CNWSItemPjiiiP10CNWSPlayer"
+
+[events.hooks.item_equip]
+symbol = "_ZN12CNWSCreature8RunEquipEjjj"
+
+[events.hooks.item_unequip]
+symbol = "_ZN12CNWSCreature10RunUnequipEjjhhij"
+
+[events.hooks.item_split]
+symbol = "_ZN12CNWSCreature9SplitItemEP8CNWSItemi"
+
+[events.hooks.item_merge]
+symbol = "_ZN12CNWSCreature9MergeItemEP8CNWSItemS1_"
+
+[events.hooks.item_acquire]
+symbol = "_ZN12CNWSCreature11AcquireItemEPP8CNWSItemjjhhii"
+
 [events.functions.player_get_game_object]
 symbol = "_ZN10CNWSPlayer13GetGameObjectEv"
+
+[events.functions.stats_get_feat_remaining_uses]
+symbol = "_ZN17CNWSCreatureStats20GetFeatRemainingUsesEt"
+
+[events.functions.server_get_game_object]
+symbol = "_ZN13CServerExoApp13GetGameObjectEj"
+
+[events.functions.server_get_client_object]
+symbol = "_ZN13CServerExoApp25GetClientObjectByObjectIdEj"
+
+[events.functions.server_get_nws_message]
+symbol = "_ZN13CServerExoApp13GetNWSMessageEv"
+
+[events.functions.inventory_status]
+symbol = "_ZN11CNWSMessage37SendPlayerToServerGuiInventory_StatusEP10CNWSPlayerij"
+
+[events.functions.inventory_gui_set_open]
+symbol = "_ZN22CNWSPlayerInventoryGUI7SetOpenEii"
+
+[events.functions.inventory_select_panel]
+symbol = "_ZN11CNWSMessage39SendServerToPlayerInventory_SelectPanelEjh"
+
+[events.functions.inventory_equip_cancel]
+symbol = "_ZN11CNWSMessage39SendServerToPlayerInventory_EquipCancelEjjji"
+
+[events.functions.inventory_unequip_cancel]
+symbol = "_ZN11CNWSMessage41SendServerToPlayerInventory_UnequipCancelEjji"
 [administration]
-version = 1
 
 [administration.get_session_name]
 symbol = "_ZN9CNetLayer14GetSessionNameEv"

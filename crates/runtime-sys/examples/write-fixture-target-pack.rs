@@ -3,11 +3,10 @@
 use std::{collections::BTreeMap, error::Error, ffi::OsString, fs, path::PathBuf};
 
 use nwnrs_runtime::{
-    ADMINISTRATION_CAPABILITY_VERSION, AbiLayouts, AdministrationTarget, BinaryIdentity,
-    BridgeTarget, CExoStringLayout, EVENTS_CAPABILITY_VERSION, EngineClassLayouts, EventTarget,
-    NWSCRIPT_BRIDGE_CAPABILITY_VERSION, OperatingSystem, PlayerListLayout, RUNTIME_API_VERSION,
-    SERVER_STATE_CAPABILITY_VERSION, ServerStateTarget, ShutdownTarget, TARGET_PACK_SCHEMA_VERSION,
-    TargetAddress, TargetPack, TargetServer, TargetSource, VectorLayout,
+    AbiLayouts, AdministrationTarget, BinaryIdentity, BridgeTarget, CExoStringLayout,
+    EngineClassLayouts, EventTarget, OperatingSystem, PlayerListLayout, RUNTIME_API_VERSION,
+    ServerStateTarget, ShutdownTarget, TARGET_PACK_SCHEMA_VERSION, TargetAddress, TargetPack,
+    TargetServer, TargetSource, VectorLayout,
 };
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -24,7 +23,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         OperatingSystem::Linux => 152,
         OperatingSystem::Windows => 160,
     };
-    let pack = TargetPack {
+    let macos_events = identity.platform.os == OperatingSystem::Macos;
+    let mut pack = TargetPack {
         schema_version: TARGET_PACK_SCHEMA_VERSION,
         runtime_api:    RUNTIME_API_VERSION,
         server:         TargetServer {
@@ -40,7 +40,6 @@ fn main() -> Result<(), Box<dyn Error>> {
         },
         layouts:        abi_layouts(script_size, 0),
         bridge:         BridgeTarget {
-            version:                NWSCRIPT_BRIDGE_CAPABILITY_VERSION,
             function_management:    symbol("nwnrs_fixture_function_management"),
             stack_pop_integer:      symbol("nwnrs_fixture_stack_pop_integer"),
             stack_push_integer:     symbol("nwnrs_fixture_stack_push_integer"),
@@ -55,7 +54,6 @@ fn main() -> Result<(), Box<dyn Error>> {
             free_exo_string_buffer: symbol("nwnrs_fixture_free_exo_string_buffer"),
         },
         server_state:   Some(ServerStateTarget {
-            version:                 SERVER_STATE_CAPABILITY_VERSION,
             app_manager:             symbol("nwnrs_fixture_app_manager"),
             get_server_info:         symbol("nwnrs_fixture_get_server_info"),
             get_player_list:         symbol("nwnrs_fixture_get_player_list"),
@@ -64,7 +62,6 @@ fn main() -> Result<(), Box<dyn Error>> {
             get_udp_port:            symbol("nwnrs_fixture_get_udp_port"),
         }),
         administration: Some(AdministrationTarget {
-            version: ADMINISTRATION_CAPABILITY_VERSION,
             get_session_name: symbol("nwnrs_fixture_get_session_name"),
             set_session_name: symbol("nwnrs_fixture_set_session_name"),
             get_player_password: symbol("nwnrs_fixture_get_player_password"),
@@ -101,11 +98,9 @@ fn main() -> Result<(), Box<dyn Error>> {
             get_alias_path: symbol("nwnrs_fixture_get_alias_path"),
         }),
         events:         Some(EventTarget {
-            version:               EVENTS_CAPABILITY_VERSION,
-            virtual_machine:       symbol("nwnrs_fixture_virtual_machine"),
-            run_script:            symbol("nwnrs_fixture_run_script"),
-            game_object_id_offset: 8,
-            hooks:                 BTreeMap::from([
+            virtual_machine: symbol("nwnrs_fixture_virtual_machine"),
+            run_script:      symbol("nwnrs_fixture_run_script"),
+            hooks:           BTreeMap::from([
                 (
                     "module_load".to_string(),
                     symbol("nwnrs_fixture_load_module_finish"),
@@ -195,7 +190,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                     symbol("nwnrs_fixture_item_event_handler"),
                 ),
             ]),
-            functions:             BTreeMap::from([
+            functions:       BTreeMap::from([
                 (
                     "associate_get_id".to_string(),
                     symbol("nwnrs_fixture_get_associate_id"),
@@ -207,12 +202,94 @@ fn main() -> Result<(), Box<dyn Error>> {
             ]),
         }),
     };
+    if macos_events {
+        enable_macos_events(&mut pack)?;
+    }
     let directory = PathBuf::from(targets).join(identity.platform.directory_name());
     fs::create_dir_all(&directory)?;
     fs::write(
         directory.join(format!("{}.toml", identity.sha256)),
         toml::to_string_pretty(&pack)?,
     )?;
+    Ok(())
+}
+
+fn enable_macos_events(pack: &mut TargetPack) -> Result<(), &'static str> {
+    let classes = &mut pack.layouts.classes;
+    classes.game_object_type_offset = Some(12);
+    classes.item_repository_parent_offset = Some(8);
+    classes.creature_stats_base_creature_offset = Some(48);
+    classes.creature_stats_experience_offset = Some(168);
+    classes.item_base_item_offset = Some(64);
+    classes.item_possessor_offset = Some(944);
+    classes.message_read_buffer_offset = Some(56);
+    classes.message_read_buffer_size_offset = Some(64);
+    classes.message_read_buffer_position_offset = Some(68);
+    classes.message_read_fragments_size_offset = Some(80);
+    classes.message_read_fragments_position_offset = Some(84);
+    classes.message_current_read_bit_offset = Some(92);
+    classes.message_last_byte_bits_offset = Some(93);
+    classes.player_object_id_offset = Some(84);
+    classes.player_inventory_gui_offset = Some(152);
+    classes.player_other_inventory_gui_offset = Some(160);
+    classes.inventory_gui_selected_panel_offset = Some(12);
+
+    let events = pack.events.as_mut().ok_or("fixture has no event targets")?;
+    for (name, fixture) in [
+        ("object_set_experience", "nwnrs_fixture_set_experience"),
+        (
+            "feat_decrement_remaining_uses",
+            "nwnrs_fixture_decrement_feat_remaining_uses",
+        ),
+        ("feat_has", "nwnrs_fixture_has_feat"),
+        ("inventory_message", "nwnrs_fixture_inventory_message"),
+        ("inventory_add_item", "nwnrs_fixture_inventory_add_item"),
+        (
+            "inventory_remove_item",
+            "nwnrs_fixture_inventory_remove_item",
+        ),
+        ("item_validate_use", "nwnrs_fixture_item_validate_use"),
+        ("item_ammo_reload", "nwnrs_fixture_item_ammo_reload"),
+        ("item_validate_equip", "nwnrs_fixture_item_validate_equip"),
+        ("item_equip", "nwnrs_fixture_item_equip"),
+        ("item_unequip", "nwnrs_fixture_item_unequip"),
+        ("item_split", "nwnrs_fixture_item_split"),
+        ("item_merge", "nwnrs_fixture_item_merge"),
+        ("item_acquire", "nwnrs_fixture_item_acquire"),
+    ] {
+        events.hooks.insert(name.to_string(), symbol(fixture));
+    }
+    for (name, fixture) in [
+        (
+            "stats_get_feat_remaining_uses",
+            "nwnrs_fixture_get_feat_remaining_uses",
+        ),
+        ("server_get_game_object", "nwnrs_fixture_get_game_object"),
+        (
+            "server_get_client_object",
+            "nwnrs_fixture_get_client_object",
+        ),
+        ("server_get_nws_message", "nwnrs_fixture_get_nws_message"),
+        ("inventory_status", "nwnrs_fixture_inventory_status"),
+        (
+            "inventory_gui_set_open",
+            "nwnrs_fixture_inventory_gui_set_open",
+        ),
+        (
+            "inventory_select_panel",
+            "nwnrs_fixture_inventory_select_panel",
+        ),
+        (
+            "inventory_equip_cancel",
+            "nwnrs_fixture_inventory_equip_cancel",
+        ),
+        (
+            "inventory_unequip_cancel",
+            "nwnrs_fixture_inventory_unequip_cancel",
+        ),
+    ] {
+        events.functions.insert(name.to_string(), symbol(fixture));
+    }
     Ok(())
 }
 
@@ -240,6 +317,24 @@ fn abi_layouts(script_size: u64, command_implementer_vm_offset: u64) -> AbiLayou
             z_offset:  8,
         },
         classes:      EngineClassLayouts {
+            game_object_id_offset: 8,
+            game_object_type_offset: None,
+            item_repository_parent_offset: None,
+            creature_stats_base_creature_offset: None,
+            creature_stats_experience_offset: None,
+            item_base_item_offset: None,
+            item_possessor_offset: None,
+            message_read_buffer_offset: None,
+            message_read_buffer_size_offset: None,
+            message_read_buffer_position_offset: None,
+            message_read_fragments_size_offset: None,
+            message_read_fragments_position_offset: None,
+            message_current_read_bit_offset: None,
+            message_last_byte_bits_offset: None,
+            player_object_id_offset: None,
+            player_inventory_gui_offset: None,
+            player_other_inventory_gui_offset: None,
+            inventory_gui_selected_panel_offset: None,
             command_implementer_vm_offset,
             app_manager_server_offset: 8,
             server_info_module_offset: 8,

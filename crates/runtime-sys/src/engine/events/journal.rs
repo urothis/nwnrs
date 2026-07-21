@@ -7,7 +7,7 @@ use std::{
 
 use super::{
     super::{Engine, EventSpec, abi::PlayerMessage, hook::NativeHookSpec},
-    dispatch, require_player_game_object,
+    dispatch,
 };
 use crate::bridge::BridgeInstallError;
 
@@ -21,7 +21,12 @@ pub(super) fn append_hook_specs(
     engine: &Engine,
     hooks: &mut Vec<NativeHookSpec>,
 ) -> Result<(), BridgeInstallError> {
-    require_player_game_object(engine, &[HOOK])?;
+    if engine
+        .event_function_target("player_get_game_object")
+        .is_none()
+    {
+        return Ok(());
+    }
     if let Some(target) = engine.event_hook_target(HOOK) {
         hooks.push(NativeHookSpec::new(
             "CNWSMessage::HandlePlayerToServerJournalMessage events",
@@ -39,13 +44,9 @@ extern "C" fn replacement(message: *mut c_void, player: *mut c_void, minor: u8) 
         QUEST_SCREEN_CLOSED => "journal.close",
         _ => return call_original(message, player, minor),
     };
-    dispatch::player(
-        player,
-        EventSpec::read_only(name, "before"),
-        BTreeMap::new(),
-    );
+    dispatch::player(player, EventSpec::catalog(name, "before"), BTreeMap::new());
     let result = call_original(message, player, minor);
-    dispatch::player(player, EventSpec::read_only(name, "after"), BTreeMap::new());
+    dispatch::player(player, EventSpec::catalog(name, "after"), BTreeMap::new());
     result
 }
 

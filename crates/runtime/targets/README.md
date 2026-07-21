@@ -13,29 +13,33 @@ contains four kinds of evidence:
 - `server`: exact binary identity and human-readable build;
 - `source`: the full Unified commit and its NWN build tuple;
 - `layouts`: compiler-measured sizes, alignments, and member offsets;
-- versioned capability blocks: `bridge`, optional `server_state`, optional
-  `administration`, and optional `events`.
+- an unversioned `bridge` block and optional `server_state`, `administration`,
+  and `events` target blocks.
 
 Administration packs declare their shutdown mechanism explicitly. Unix packs
 use a verified engine exit-flag address; Windows uses the current engine
 thread's message queue and therefore does not invent an address for an absent
 global.
 
-An absent optional block means that capability is unavailable. A present block
-must be complete and use the one contract version supported by this runtime.
-NWScript can inspect these versions with `NWNRS_GetCapabilityVersion` and
-`NWNRS_HasCapability`.
+An absent optional block means that functionality is unavailable.
+`NWNRS_HasCapability` reports block presence without a version. Event support
+is checked per identity with `NWNRS_GetEventSupported`.
 
-Event capability version 3 contains exact addresses for global
+The event target map contains exact addresses for global
 `g_pVirtualMachine`, `CVirtualMachine::RunScript`, and a keyed map of physical
 engine boundaries under `events.hooks`. The `module_load` hook points at
 `CNWSModule::LoadModuleFinish` and implements the native `_nwnrs_onload`
 bootstrap without assigning or patching the module's vanilla `Mod_OnModLoad`
-field. Hook keys are stable across platforms while each value is the symbol or
+field. Every event target map requires that bootstrap hook. Hook and helper
+keys must exist in the shared event catalog; unknown keys and duplicate
+resolved hook addresses are rejected. Hook keys are stable across platforms while each value is the symbol or
 offset for that exact executable; multiple logical event phases sharing one
 engine function use one map entry and one detour.
 `events.functions` separately records callable engine helpers needed to build
-owned payload data; these addresses are never installed as detours.
+owned payload data; these addresses are never installed as detours. The
+machine-probed `layouts.classes.game_object_id_offset` supplies the exact
+`CGameObject::m_idSelf` offset. `NWNRS_GetEventSupported` checks an individual
+catalog identity against its required hook and helper on the active target.
 
 Addresses are either exact native symbols:
 

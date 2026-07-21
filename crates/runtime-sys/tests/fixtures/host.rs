@@ -4,7 +4,7 @@ use std::{
     ffi::c_void,
     fs,
     slice,
-    sync::atomic::{AtomicU32, Ordering},
+    sync::atomic::{AtomicBool, AtomicU32, Ordering},
 };
 
 #[cfg(windows)]
@@ -155,6 +155,7 @@ pub static mut nwnrs_fixture_app_manager: *mut c_void = std::ptr::null_mut();
 pub static mut nwnrs_fixture_virtual_machine: *mut c_void = std::ptr::null_mut();
 
 static MODULE_ONLOAD_CALLS: AtomicU32 = AtomicU32::new(0);
+static SUBSCRIBE_EVENTS: AtomicBool = AtomicBool::new(true);
 static ASSOCIATE_EVENT_CALLS: AtomicU32 = AtomicU32::new(0);
 static ADD_ASSOCIATE_ORIGINAL_CALLS: AtomicU32 = AtomicU32::new(0);
 static REMOVE_ASSOCIATE_ORIGINAL_CALLS: AtomicU32 = AtomicU32::new(0);
@@ -178,10 +179,100 @@ static SKILL_ORIGINAL_CALLS: AtomicU32 = AtomicU32::new(0);
 static ITEM_EVENT_CALLS: AtomicU32 = AtomicU32::new(0);
 static ITEM_ORIGINAL_CALLS: AtomicU32 = AtomicU32::new(0);
 
+const EVENT_IDENTITIES: &[&str] = &[
+    "module_load",
+    "associate_add_before",
+    "associate_add_after",
+    "associate_remove_before",
+    "associate_remove_after",
+    "associate_possess_familiar_before",
+    "associate_possess_familiar_after",
+    "associate_unpossess_familiar_before",
+    "associate_unpossess_familiar_after",
+    "object_lock_before",
+    "object_lock_after",
+    "object_unlock_before",
+    "object_unlock_after",
+    "object_use_before",
+    "object_use_after",
+    "placeable_open_before",
+    "placeable_open_after",
+    "placeable_close_before",
+    "placeable_close_after",
+    "inventory_add_gold_before",
+    "inventory_add_gold_after",
+    "inventory_remove_gold_before",
+    "inventory_remove_gold_after",
+    "feat_use_before",
+    "feat_use_after",
+    "journal_open_before",
+    "journal_open_after",
+    "journal_close_before",
+    "journal_close_after",
+    "timing_bar_start_before",
+    "timing_bar_start_after",
+    "timing_bar_stop_before",
+    "timing_bar_stop_after",
+    "timing_bar_cancel_before",
+    "timing_bar_cancel_after",
+    "object_broadcast_safe_projectile_before",
+    "object_broadcast_safe_projectile_after",
+    "skill_use_before",
+    "skill_use_after",
+    "item_use_before",
+    "item_use_after",
+    "item_inventory_open_before",
+    "item_inventory_open_after",
+    "item_inventory_close_before",
+    "item_inventory_close_after",
+    "item_scroll_learn_before",
+    "item_scroll_learn_after",
+    "item_use_lore_before",
+    "item_use_lore_after",
+    "item_pay_to_identify_before",
+    "item_pay_to_identify_after",
+    "item_destroy_before",
+    "item_destroy_after",
+    "item_decrement_stack_size_before",
+    "item_decrement_stack_size_after",
+    "object_set_experience_before",
+    "object_set_experience_after",
+    "feat_decrement_remaining_uses_before",
+    "feat_decrement_remaining_uses_after",
+    "feat_has_before",
+    "feat_has_after",
+    "inventory_open_before",
+    "inventory_open_after",
+    "inventory_select_panel_before",
+    "inventory_select_panel_after",
+    "inventory_add_item_before",
+    "inventory_add_item_after",
+    "inventory_remove_item_before",
+    "inventory_remove_item_after",
+    "item_validate_use_before",
+    "item_validate_use_after",
+    "item_ammo_reload_before",
+    "item_ammo_reload_after",
+    "item_validate_equip_before",
+    "item_validate_equip_after",
+    "item_equip_before",
+    "item_equip_after",
+    "item_unequip_before",
+    "item_unequip_after",
+    "item_split_before",
+    "item_split_after",
+    "item_merge_before",
+    "item_merge_after",
+    "item_acquire_before",
+    "item_acquire_after",
+];
+
 #[repr(C)]
 struct FixtureGameObject {
     vtable:    *mut c_void,
     object_id: u32,
+    object_type: u8,
+    padding: [u8; 3],
 }
 
 #[repr(C)]
@@ -727,6 +818,243 @@ pub extern "C" fn nwnrs_fixture_item_event_handler(
 }
 
 #[unsafe(no_mangle)]
+#[inline(never)]
+pub extern "C" fn nwnrs_fixture_set_experience(
+    _stats: *mut c_void,
+    _experience: u32,
+    _do_level: i32,
+) {
+}
+
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub extern "C" fn nwnrs_fixture_decrement_feat_remaining_uses(
+    _stats: *mut c_void,
+    _feat: u16,
+) {
+}
+
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub extern "C" fn nwnrs_fixture_has_feat(_stats: *mut c_void, _feat: u16) -> i32 {
+    1
+}
+
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub extern "C" fn nwnrs_fixture_get_feat_remaining_uses(
+    _stats: *mut c_void,
+    _feat: u16,
+) -> u8 {
+    3
+}
+
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub extern "C" fn nwnrs_fixture_inventory_message(
+    _message: *mut c_void,
+    _player: *mut c_void,
+    _minor: u8,
+) -> i32 {
+    1
+}
+
+#[unsafe(no_mangle)]
+#[inline(never)]
+#[allow(clippy::too_many_arguments)]
+pub extern "C" fn nwnrs_fixture_inventory_add_item(
+    _repository: *mut c_void,
+    _item: *mut *mut c_void,
+    _x: u8,
+    _y: u8,
+    _allow_encumbrance: i32,
+    _merge: i32,
+) -> i32 {
+    1
+}
+
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub extern "C" fn nwnrs_fixture_inventory_remove_item(
+    _repository: *mut c_void,
+    _item: *mut c_void,
+) -> i32 {
+    1
+}
+
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub extern "C" fn nwnrs_fixture_item_validate_use(
+    _creature: *mut c_void,
+    _item: *mut c_void,
+    _ignore_identified: i32,
+) -> i32 {
+    1
+}
+
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub extern "C" fn nwnrs_fixture_item_ammo_reload(
+    _repository: *mut c_void,
+    _base_item: u32,
+    _nth: i32,
+) -> u32 {
+    0x7f00_0000
+}
+
+#[unsafe(no_mangle)]
+#[inline(never)]
+#[allow(clippy::too_many_arguments)]
+pub extern "C" fn nwnrs_fixture_item_validate_equip(
+    _creature: *mut c_void,
+    _item: *mut c_void,
+    _slot: *mut u32,
+    _equipping: i32,
+    _loading: i32,
+    _feedback: i32,
+    _player: *mut c_void,
+) -> u8 {
+    1
+}
+
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub extern "C" fn nwnrs_fixture_item_equip(
+    _creature: *mut c_void,
+    _item: u32,
+    _slot: u32,
+    _feedback_player: u32,
+) -> i32 {
+    1
+}
+
+#[unsafe(no_mangle)]
+#[inline(never)]
+#[allow(clippy::too_many_arguments)]
+pub extern "C" fn nwnrs_fixture_item_unequip(
+    _creature: *mut c_void,
+    _item: u32,
+    _repository: u32,
+    _x: u8,
+    _y: u8,
+    _merge: i32,
+    _feedback_player: u32,
+) -> i32 {
+    1
+}
+
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub extern "C" fn nwnrs_fixture_item_split(
+    _creature: *mut c_void,
+    _item: *mut c_void,
+    _amount: i32,
+) {
+}
+
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub extern "C" fn nwnrs_fixture_item_merge(
+    _creature: *mut c_void,
+    _into: *mut c_void,
+    _merged: *mut c_void,
+) {
+}
+
+#[unsafe(no_mangle)]
+#[inline(never)]
+#[allow(clippy::too_many_arguments)]
+pub extern "C" fn nwnrs_fixture_item_acquire(
+    _creature: *mut c_void,
+    _item: *mut *mut c_void,
+    _possessor: u32,
+    _repository: u32,
+    _x: u8,
+    _y: u8,
+    _from_script: i32,
+    _feedback: i32,
+) -> i32 {
+    1
+}
+
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub extern "C" fn nwnrs_fixture_get_game_object(
+    _server: *mut c_void,
+    _object: u32,
+) -> *mut c_void {
+    std::ptr::null_mut()
+}
+
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub extern "C" fn nwnrs_fixture_get_client_object(
+    _server: *mut c_void,
+    _object: u32,
+) -> *mut c_void {
+    std::ptr::null_mut()
+}
+
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub extern "C" fn nwnrs_fixture_get_nws_message(_server: *mut c_void) -> *mut c_void {
+    std::ptr::null_mut()
+}
+
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub extern "C" fn nwnrs_fixture_inventory_status(
+    _message: *mut c_void,
+    _player: *mut c_void,
+    _active: i32,
+    _inventory: u32,
+) -> i32 {
+    1
+}
+
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub extern "C" fn nwnrs_fixture_inventory_gui_set_open(
+    _gui: *mut c_void,
+    _open: i32,
+    _client_directed: i32,
+) {
+}
+
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub extern "C" fn nwnrs_fixture_inventory_select_panel(
+    _message: *mut c_void,
+    _player: u32,
+    _panel: u8,
+) -> i32 {
+    1
+}
+
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub extern "C" fn nwnrs_fixture_inventory_equip_cancel(
+    _message: *mut c_void,
+    _player: u32,
+    _item: u32,
+    _slot: u32,
+    _non_player: i32,
+) -> i32 {
+    1
+}
+
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub extern "C" fn nwnrs_fixture_inventory_unequip_cancel(
+    _message: *mut c_void,
+    _player: u32,
+    _item: u32,
+    _non_player: i32,
+) -> i32 {
+    1
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn nwnrs_fixture_run_script(
     vm: *mut c_void,
     script: *mut CExoString,
@@ -769,6 +1097,14 @@ pub extern "C" fn nwnrs_fixture_run_script(
                 "\"controls\":{\"skippable\":false,\"result\":false},\"data\":{}}"
             )
         );
+        if SUBSCRIBE_EVENTS.load(Ordering::Relaxed) {
+            for identity in EVENT_IDENTITIES {
+                vm.stack.push(Value::String((*identity).to_string()));
+                assert_eq!(call(&mut commands, NWNX_PUSH_STRING), 0);
+                assert_eq!(call_integer(&mut commands, vm, "GetEventSupported"), 1);
+                call_with_string(&mut commands, vm, "SubscribeEvent", identity);
+            }
+        }
         MODULE_ONLOAD_CALLS.fetch_add(1, Ordering::Relaxed);
     } else {
         assert_eq!(owner, 0x0102_0304);
@@ -1049,20 +1385,11 @@ fn call_log(commands: &mut Commands, vm: &mut VirtualMachine, level: i32, messag
     assert_eq!(call(commands, NWNX_CALL), 0);
 }
 
-fn call_capability_version(commands: &mut Commands, vm: &mut VirtualMachine, capability: &str) -> i32 {
-    vm.stack.push(Value::String(capability.to_string()));
-    assert_eq!(call(commands, NWNX_PUSH_STRING), 0);
-    call_integer(commands, vm, "GetCapabilityVersion")
-}
-
 fn call_has_capability(
     commands: &mut Commands,
     vm: &mut VirtualMachine,
     capability: &str,
-    minimum: i32,
 ) -> i32 {
-    vm.stack.push(Value::Integer(minimum));
-    assert_eq!(call(commands, NWNX_PUSH_INTEGER), 0);
     vm.stack.push(Value::String(capability.to_string()));
     assert_eq!(call(commands, NWNX_PUSH_STRING), 0);
     call_integer(commands, vm, "HasCapability")
@@ -1083,6 +1410,20 @@ fn call_with_string(commands: &mut Commands, vm: &mut VirtualMachine, function: 
 fn call_with_integer(commands: &mut Commands, vm: &mut VirtualMachine, function: &str, value: i32) {
     vm.stack.push(Value::Integer(value));
     assert_eq!(call(commands, NWNX_PUSH_INTEGER), 0);
+    call_without_result(commands, vm, function);
+}
+
+fn call_with_string_and_integer(
+    commands: &mut Commands,
+    vm: &mut VirtualMachine,
+    function: &str,
+    name: &str,
+    value: i32,
+) {
+    vm.stack.push(Value::Integer(value));
+    assert_eq!(call(commands, NWNX_PUSH_INTEGER), 0);
+    vm.stack.push(Value::String(name.to_string()));
+    assert_eq!(call(commands, NWNX_PUSH_STRING), 0);
     call_without_result(commands, vm, function);
 }
 
@@ -1277,6 +1618,8 @@ fn main() {
     let mut creature = FixtureGameObject {
         vtable: std::ptr::null_mut(),
         object_id: 0x0102_0304,
+        object_type: 5,
+        padding: [0; 3],
     };
     nwnrs_fixture_add_associate((&raw mut creature).cast(), 0x0a0b_0c0d, 5);
     nwnrs_fixture_remove_associate((&raw mut creature).cast(), 0x0a0b_0c0d);
@@ -1367,6 +1710,79 @@ fn main() {
     );
     assert_eq!(PROJECTILE_EVENT_CALLS.load(Ordering::Relaxed), 2);
     assert_eq!(PROJECTILE_ORIGINAL_CALLS.load(Ordering::Relaxed), 0);
+    let mut event_commands = Commands {
+        virtual_machine: (&raw mut vm).cast(),
+    };
+    call_with_string_and_integer(
+        &mut event_commands,
+        &mut vm,
+        "ToggleEventIdWhitelist",
+        "object.broadcast_safe_projectile.projectile_type",
+        1,
+    );
+    nwnrs_fixture_object_broadcast_safe_projectile(
+        (&raw mut creature).cast(),
+        0x1112_1314,
+        0x2122_2324,
+        Vector { x: 1.0, y: 2.0, z: 3.0 },
+        Vector { x: 4.0, y: 5.0, z: 6.0 },
+        u32::MAX,
+        7,
+        u32::MAX - 1,
+        8,
+        9,
+    );
+    assert_eq!(PROJECTILE_EVENT_CALLS.load(Ordering::Relaxed), 2);
+    assert_eq!(PROJECTILE_ORIGINAL_CALLS.load(Ordering::Relaxed), 1);
+    call_with_string_and_integer(
+        &mut event_commands,
+        &mut vm,
+        "AddEventIdToWhitelist",
+        "object.broadcast_safe_projectile.projectile_type",
+        7,
+    );
+    call_with_string_and_integer(
+        &mut event_commands,
+        &mut vm,
+        "ToggleEventIdWhitelist",
+        "object.broadcast_safe_projectile.spell_id",
+        1,
+    );
+    nwnrs_fixture_object_broadcast_safe_projectile(
+        (&raw mut creature).cast(),
+        0x1112_1314,
+        0x2122_2324,
+        Vector { x: 1.0, y: 2.0, z: 3.0 },
+        Vector { x: 4.0, y: 5.0, z: 6.0 },
+        u32::MAX,
+        7,
+        u32::MAX - 1,
+        8,
+        9,
+    );
+    assert_eq!(PROJECTILE_EVENT_CALLS.load(Ordering::Relaxed), 2);
+    assert_eq!(PROJECTILE_ORIGINAL_CALLS.load(Ordering::Relaxed), 2);
+    call_with_string_and_integer(
+        &mut event_commands,
+        &mut vm,
+        "AddEventIdToWhitelist",
+        "object.broadcast_safe_projectile.spell_id",
+        -2,
+    );
+    nwnrs_fixture_object_broadcast_safe_projectile(
+        (&raw mut creature).cast(),
+        0x1112_1314,
+        0x2122_2324,
+        Vector { x: 1.0, y: 2.0, z: 3.0 },
+        Vector { x: 4.0, y: 5.0, z: 6.0 },
+        u32::MAX,
+        7,
+        u32::MAX - 1,
+        8,
+        9,
+    );
+    assert_eq!(PROJECTILE_EVENT_CALLS.load(Ordering::Relaxed), 4);
+    assert_eq!(PROJECTILE_ORIGINAL_CALLS.load(Ordering::Relaxed), 2);
     assert_eq!(
         nwnrs_fixture_skill_use(
             (&raw mut creature).cast(),
@@ -1430,12 +1846,9 @@ fn main() {
     assert!(matches!(vm.stack.pop(), Some(Value::Integer(1))));
 
     assert_eq!(call_integer(&mut commands, &mut vm, "GetApiVersion"), 1);
-    assert_eq!(call_capability_version(&mut commands, &mut vm, "nwscript_bridge"), 1);
-    assert_eq!(call_capability_version(&mut commands, &mut vm, "server_state"), 1);
-    assert_eq!(call_capability_version(&mut commands, &mut vm, "administration"), 1);
-    assert_eq!(call_capability_version(&mut commands, &mut vm, "events"), 3);
-    assert_eq!(call_has_capability(&mut commands, &mut vm, "server_state", 1), 1);
-    assert_eq!(call_has_capability(&mut commands, &mut vm, "server_state", 2), 0);
+    assert_eq!(call_has_capability(&mut commands, &mut vm, "nwscript_bridge"), 1);
+    assert_eq!(call_has_capability(&mut commands, &mut vm, "server_state"), 1);
+    assert_eq!(call_has_capability(&mut commands, &mut vm, "administration"), 1);
     assert_eq!(call_integer(&mut commands, &mut vm, "GetLastErrorCode"), 0);
     call_without_result(&mut commands, &mut vm, "NotRegistered");
     assert_eq!(call_integer(&mut commands, &mut vm, "GetLastErrorCode"), 2);
@@ -1641,6 +2054,15 @@ fn main() {
     }
     assert_eq!(call_integer(&mut commands, &mut vm, "GetIsInEvent"), 0);
     assert_eq!(call_string(&mut commands, &mut vm, "GetCurrentEvent"), "null");
+    SUBSCRIBE_EVENTS.store(false, Ordering::Relaxed);
+    assert_eq!(nwnrs_fixture_load_module_finish(std::ptr::null_mut()), 1);
+    assert_eq!(MODULE_ONLOAD_CALLS.load(Ordering::Relaxed), 2);
+    assert_eq!(
+        nwnrs_fixture_object_lock((&raw mut creature).cast(), 0x1112_1314),
+        11
+    );
+    assert_eq!(OBJECT_EVENT_CALLS.load(Ordering::Relaxed), 10);
+    assert_eq!(OBJECT_ORIGINAL_CALLS.load(Ordering::Relaxed), 4);
     call_log(&mut commands, &mut vm, 0, "fixture trace message");
     call_log(&mut commands, &mut vm, 1, "fixture debug message");
     call_log(&mut commands, &mut vm, 2, "fixture info message");
@@ -1696,6 +2118,29 @@ fn keep_abi_symbols() {
     std::hint::black_box(nwnrs_fixture_journal_message as *const ());
     std::hint::black_box(nwnrs_fixture_timing_bar_send as *const ());
     std::hint::black_box(nwnrs_fixture_timing_bar_cancel as *const ());
+    std::hint::black_box(nwnrs_fixture_set_experience as *const ());
+    std::hint::black_box(nwnrs_fixture_decrement_feat_remaining_uses as *const ());
+    std::hint::black_box(nwnrs_fixture_has_feat as *const ());
+    std::hint::black_box(nwnrs_fixture_get_feat_remaining_uses as *const ());
+    std::hint::black_box(nwnrs_fixture_inventory_message as *const ());
+    std::hint::black_box(nwnrs_fixture_inventory_add_item as *const ());
+    std::hint::black_box(nwnrs_fixture_inventory_remove_item as *const ());
+    std::hint::black_box(nwnrs_fixture_item_validate_use as *const ());
+    std::hint::black_box(nwnrs_fixture_item_ammo_reload as *const ());
+    std::hint::black_box(nwnrs_fixture_item_validate_equip as *const ());
+    std::hint::black_box(nwnrs_fixture_item_equip as *const ());
+    std::hint::black_box(nwnrs_fixture_item_unequip as *const ());
+    std::hint::black_box(nwnrs_fixture_item_split as *const ());
+    std::hint::black_box(nwnrs_fixture_item_merge as *const ());
+    std::hint::black_box(nwnrs_fixture_item_acquire as *const ());
+    std::hint::black_box(nwnrs_fixture_get_game_object as *const ());
+    std::hint::black_box(nwnrs_fixture_get_client_object as *const ());
+    std::hint::black_box(nwnrs_fixture_get_nws_message as *const ());
+    std::hint::black_box(nwnrs_fixture_inventory_status as *const ());
+    std::hint::black_box(nwnrs_fixture_inventory_gui_set_open as *const ());
+    std::hint::black_box(nwnrs_fixture_inventory_select_panel as *const ());
+    std::hint::black_box(nwnrs_fixture_inventory_equip_cancel as *const ());
+    std::hint::black_box(nwnrs_fixture_inventory_unequip_cancel as *const ());
     std::hint::black_box(&raw const nwnrs_fixture_app_manager);
     std::hint::black_box(&raw const nwnrs_fixture_virtual_machine);
     std::hint::black_box(&raw const nwnrs_fixture_enable_combat_debugging);

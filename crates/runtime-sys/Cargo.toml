@@ -19,6 +19,7 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 frida-gum-sys.workspace = true
 nwnrs-runtime = { path = "../runtime", version = "0.0.1" }
+serde_json.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 

@@ -100,13 +100,36 @@ pub enum HostQuery {
     CurrentEvent,
 }
 
-/// Mutations supported by the currently active event frame.
+/// Event-frame controls and event-system configuration commands.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum EventCommand {
     /// Prevents a skippable event's original engine operation.
     Skip,
     /// Replaces the event's JSON result.
     SetResult(Vec<u8>),
+    /// Registers one generated module event subscription.
+    Subscribe(String),
+    /// Enables or disables one named integer whitelist.
+    ToggleIdWhitelist {
+        /// Stable whitelist name.
+        name:    String,
+        /// Whether the whitelist is enabled.
+        enabled: bool,
+    },
+    /// Adds one integer to an enabled whitelist.
+    AddIdToWhitelist {
+        /// Stable whitelist name.
+        name: String,
+        /// Integer identifier to permit.
+        id:   i32,
+    },
+    /// Removes one integer from an enabled whitelist.
+    RemoveIdFromWhitelist {
+        /// Stable whitelist name.
+        name: String,
+        /// Integer identifier to remove.
+        id:   i32,
+    },
 }
 
 /// The three administration ban lists returned as one coherent value.

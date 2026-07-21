@@ -2,11 +2,12 @@
 #![doc = include_str!("../README.md")]
 
 mod bridge;
+mod event_catalog;
 mod identity;
 mod platform;
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     env,
     error::Error,
     fmt,
@@ -21,6 +22,11 @@ pub use bridge::{
     EventValue, EventVector, HostCommandResult, HostQuery, HostValue, RuntimeHost, ScriptBridge,
     ScriptLog, ScriptLogLevel, Vector,
 };
+pub use event_catalog::{
+    EVENT_CATALOG, EventDefinition, EventResultKind, FEAT_HAS_ID_WHITELIST,
+    PROJECTILE_SPELL_ID_WHITELIST, PROJECTILE_TYPE_ID_WHITELIST, event_definition,
+    runtime_event_definition,
+};
 pub use identity::{BinaryIdentity, FileSha256};
 pub use platform::{Architecture, OperatingSystem, Platform};
 use serde::{Deserialize, Serialize};
@@ -32,14 +38,6 @@ pub const TARGET_PACK_SCHEMA_VERSION: u32 = 2;
 pub const RUNTIME_API_VERSION: u32 = 1;
 /// The supported machine-generated Unified ABI snapshot format.
 pub const ABI_SNAPSHOT_SCHEMA_VERSION: u32 = 1;
-/// Version of the mandatory NWScript bridge capability.
-pub const NWSCRIPT_BRIDGE_CAPABILITY_VERSION: u32 = 1;
-/// Version of the optional server-state capability.
-pub const SERVER_STATE_CAPABILITY_VERSION: u32 = 1;
-/// Version of the optional administration capability.
-pub const ADMINISTRATION_CAPABILITY_VERSION: u32 = 1;
-/// Version of the optional events capability.
-pub const EVENTS_CAPABILITY_VERSION: u32 = 3;
 /// Enables initialization when set to `1` in an injected process.
 pub const ENV_ENABLED: &str = "NWNRS_ENABLED";
 /// Makes initialization failure fatal when set to `1`.
@@ -230,6 +228,58 @@ pub struct VectorLayout {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct EngineClassLayouts {
+    /// Offset of `CGameObject::m_idSelf` from its primary object pointer.
+    pub game_object_id_offset: u64,
+    /// Offset of `CGameObject::m_nObjectType`, when event hooks for this target
+    /// use it.
+    pub game_object_type_offset: Option<u64>,
+    /// Offset of `CItemRepository::m_oidParent`, when repository events are
+    /// supported.
+    pub item_repository_parent_offset: Option<u64>,
+    /// Offset of `CNWSCreatureStats::m_pBaseCreature`, when stats events are
+    /// supported.
+    pub creature_stats_base_creature_offset: Option<u64>,
+    /// Offset of `CNWSCreatureStats::m_nExperience`, when experience events are
+    /// supported.
+    pub creature_stats_experience_offset: Option<u64>,
+    /// Offset of `CNWSItem::m_nBaseItem`, when item-result validation is
+    /// supported.
+    pub item_base_item_offset: Option<u64>,
+    /// Offset of `CNWSItem::m_oidPossessor`, when item-result validation is
+    /// supported.
+    pub item_possessor_offset: Option<u64>,
+    /// Offset of `CNWMessage::m_pnReadBuffer`, when client-message events are
+    /// supported.
+    pub message_read_buffer_offset: Option<u64>,
+    /// Offset of `CNWMessage::m_nReadBufferSize`, when client-message events
+    /// are supported.
+    pub message_read_buffer_size_offset: Option<u64>,
+    /// Offset of `CNWMessage::m_nReadBufferPtr`, when client-message events are
+    /// supported.
+    pub message_read_buffer_position_offset: Option<u64>,
+    /// Offset of `CNWMessage::m_nReadFragmentsBufferSize`, when message
+    /// cancellation is supported.
+    pub message_read_fragments_size_offset: Option<u64>,
+    /// Offset of `CNWMessage::m_nReadFragmentsBufferPtr`, when message
+    /// cancellation is supported.
+    pub message_read_fragments_position_offset: Option<u64>,
+    /// Offset of `CNWMessage::m_nCurReadBit`, when message cancellation is
+    /// supported.
+    pub message_current_read_bit_offset: Option<u64>,
+    /// Offset of `CNWMessage::m_nLastByteBits`, when message cancellation is
+    /// supported.
+    pub message_last_byte_bits_offset: Option<u64>,
+    /// Offset of `CNWSPlayer::m_oidNWSObject`, when inventory UI events are
+    /// supported.
+    pub player_object_id_offset: Option<u64>,
+    /// Offset of `CNWSPlayer::m_pInventoryGUI`, when inventory UI events are
+    /// supported.
+    pub player_inventory_gui_offset: Option<u64>,
+    /// Offset of `CNWSPlayer::m_pOtherInventoryGUI`, when inventory UI events
+    /// are supported.
+    pub player_other_inventory_gui_offset: Option<u64>,
+    /// Offset of `CNWSPlayerInventoryGUI::m_nSelectedInventoryPanel`.
+    pub inventory_gui_selected_panel_offset: Option<u64>,
     /// Offset of `CVirtualMachineCmdImplementer::m_pVM`.
     pub command_implementer_vm_offset: u64,
     /// Offset of `CAppManager::m_pServerExoApp`.
@@ -359,15 +409,13 @@ pub enum Capability {
     ServerState,
     /// Runtime administration controls.
     Administration,
-    /// Scoped native events and their NWScript dispatch.
-    Events,
 }
 
 impl Capability {
     /// Returns the stable external capability name.
     ///
     /// ```
-    /// assert_eq!(nwnrs_runtime::Capability::Events.name(), "events");
+    /// assert_eq!(nwnrs_runtime::Capability::ServerState.name(), "server_state");
     /// ```
     #[must_use]
     pub const fn name(self) -> &'static str {
@@ -375,7 +423,6 @@ impl Capability {
             Self::NwscriptBridge => "nwscript_bridge",
             Self::ServerState => "server_state",
             Self::Administration => "administration",
-            Self::Events => "events",
         }
     }
 
@@ -393,7 +440,6 @@ impl Capability {
             "nwscript_bridge" => Some(Self::NwscriptBridge),
             "server_state" => Some(Self::ServerState),
             "administration" => Some(Self::Administration),
-            "events" => Some(Self::Events),
             _ => None,
         }
     }
@@ -408,8 +454,6 @@ impl Capability {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct BridgeTarget {
-    /// Capability contract version.
-    pub version:                u32,
     /// `CNWSVirtualMachineCommands::ExecuteCommandNWNXFunctionManagement`.
     pub function_management:    TargetAddress,
     /// `CVirtualMachine::StackPopInteger`.
@@ -446,8 +490,6 @@ pub struct BridgeTarget {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ServerStateTarget {
-    /// Capability contract version.
-    pub version:                 u32,
     /// Address of the global `CAppManager*` storage.
     pub app_manager:             TargetAddress,
     /// `CServerExoApp::GetServerInfo`.
@@ -479,8 +521,6 @@ pub enum ShutdownTarget {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct AdministrationTarget {
-    /// Capability contract version.
-    pub version: u32,
     /// `CNetLayer::GetSessionName`.
     pub get_session_name: TargetAddress,
     /// `CNetLayer::SetSessionName`.
@@ -543,38 +583,32 @@ pub struct AdministrationTarget {
     pub get_alias_path: TargetAddress,
 }
 
-/// Native event boundary and active event-script context capability.
+/// Native event boundaries and active event-script context.
 ///
 /// ```
 /// # use nwnrs_runtime::{EventTarget, TargetAddress};
 /// let address = TargetAddress::Offset { offset: 1 };
 /// let target = EventTarget {
-///     version: 3,
 ///     virtual_machine: address.clone(),
 ///     run_script: address,
-///     game_object_id_offset: 8,
 ///     hooks: std::collections::BTreeMap::new(),
 ///     functions: std::collections::BTreeMap::new(),
 /// };
-/// assert_eq!(target.version, 3);
+/// assert!(target.hooks.is_empty());
 /// ```
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct EventTarget {
-    /// Capability contract version.
-    pub version:               u32,
     /// Address of global `g_pVirtualMachine` storage.
-    pub virtual_machine:       TargetAddress,
+    pub virtual_machine: TargetAddress,
     /// `CVirtualMachine::RunScript`.
-    pub run_script:            TargetAddress,
-    /// Offset of `CGameObject::m_idSelf` from its primary object pointer.
-    pub game_object_id_offset: u64,
+    pub run_script:      TargetAddress,
     /// Native event hook boundaries keyed by stable physical-hook identity.
     #[serde(default)]
-    pub hooks:                 BTreeMap<String, TargetAddress>,
+    pub hooks:           BTreeMap<String, TargetAddress>,
     /// Native helper functions used to construct event payloads.
     #[serde(default)]
-    pub functions:             BTreeMap<String, TargetAddress>,
+    pub functions:       BTreeMap<String, TargetAddress>,
 }
 
 /// Versioned runtime metadata for one exact server binary.
@@ -607,26 +641,73 @@ pub struct TargetPack {
 }
 
 impl TargetPack {
-    /// Returns the supported version of a capability, or zero when absent.
+    /// Reports whether the target pack contains a capability.
     ///
     /// ```no_run
     /// # let pack: nwnrs_runtime::TargetPack = unimplemented!();
-    /// let version = pack.capability_version(nwnrs_runtime::Capability::ServerState);
-    /// assert!(version <= 1);
+    /// let available = pack.has_capability(nwnrs_runtime::Capability::ServerState);
+    /// assert_eq!(available, pack.server_state.is_some());
     /// ```
     #[must_use]
-    pub fn capability_version(&self, capability: Capability) -> u32 {
+    pub fn has_capability(&self, capability: Capability) -> bool {
         match capability {
-            Capability::NwscriptBridge => self.bridge.version,
-            Capability::ServerState => self
-                .server_state
-                .as_ref()
-                .map_or(0, |target| target.version),
-            Capability::Administration => self
-                .administration
-                .as_ref()
-                .map_or(0, |target| target.version),
-            Capability::Events => self.events.as_ref().map_or(0, |target| target.version),
+            Capability::NwscriptBridge => true,
+            Capability::ServerState => self.server_state.is_some(),
+            Capability::Administration => self.administration.is_some(),
+        }
+    }
+
+    /// Reports whether this exact target pack can provide one event identity.
+    #[must_use]
+    pub fn supports_event(&self, identity: &str) -> bool {
+        let Some(definition) = event_definition(identity) else {
+            return false;
+        };
+        let Some(events) = &self.events else {
+            return false;
+        };
+        events.hooks.contains_key("module_load")
+            && events.hooks.contains_key(definition.hook)
+            && definition
+                .helper
+                .is_none_or(|helper| events.functions.contains_key(helper))
+            && definition
+                .requirements
+                .functions
+                .iter()
+                .all(|helper| events.functions.contains_key(*helper))
+            && (!definition.requirements.server_state || self.server_state.is_some())
+            && definition
+                .requirements
+                .layouts
+                .iter()
+                .all(|layout| self.layouts.classes.has_event_layout(layout))
+    }
+}
+
+impl EngineClassLayouts {
+    fn has_event_layout(&self, name: &str) -> bool {
+        match name {
+            "game_object_type" => self.game_object_type_offset.is_some(),
+            "item_repository_parent" => self.item_repository_parent_offset.is_some(),
+            "creature_stats_base_creature" => self.creature_stats_base_creature_offset.is_some(),
+            "creature_stats_experience" => self.creature_stats_experience_offset.is_some(),
+            "item_base_item" => self.item_base_item_offset.is_some(),
+            "item_possessor" => self.item_possessor_offset.is_some(),
+            "message_read_buffer" => self.message_read_buffer_offset.is_some(),
+            "message_read_buffer_size" => self.message_read_buffer_size_offset.is_some(),
+            "message_read_buffer_position" => self.message_read_buffer_position_offset.is_some(),
+            "message_read_fragments_size" => self.message_read_fragments_size_offset.is_some(),
+            "message_read_fragments_position" => {
+                self.message_read_fragments_position_offset.is_some()
+            }
+            "message_current_read_bit" => self.message_current_read_bit_offset.is_some(),
+            "message_last_byte_bits" => self.message_last_byte_bits_offset.is_some(),
+            "player_object_id" => self.player_object_id_offset.is_some(),
+            "player_inventory_gui" => self.player_inventory_gui_offset.is_some(),
+            "player_other_inventory_gui" => self.player_other_inventory_gui_offset.is_some(),
+            "inventory_gui_selected_panel" => self.inventory_gui_selected_panel_offset.is_some(),
+            _ => false,
         }
     }
 }
@@ -819,20 +900,10 @@ fn validate_target_pack_metadata(pack: &TargetPack) -> RuntimeResult<()> {
         ));
     }
     validate_layouts(&pack.layouts)?;
-    validate_capability_version(
-        "nwscript_bridge",
-        pack.bridge.version,
-        NWSCRIPT_BRIDGE_CAPABILITY_VERSION,
-    )?;
     for (name, address) in bridge_addresses(&pack.bridge) {
         validate_target_address("bridge", name, address)?;
     }
     if let Some(server_state) = pack.server_state.as_ref() {
-        validate_capability_version(
-            "server_state",
-            server_state.version,
-            SERVER_STATE_CAPABILITY_VERSION,
-        )?;
         for (name, address) in server_state_addresses(server_state) {
             validate_target_address("server_state", name, address)?;
         }
@@ -843,11 +914,6 @@ fn validate_target_pack_metadata(pack: &TargetPack) -> RuntimeResult<()> {
                 "target pack administration capability requires server_state",
             ));
         }
-        validate_capability_version(
-            "administration",
-            administration.version,
-            ADMINISTRATION_CAPABILITY_VERSION,
-        )?;
         for (name, address) in administration_addresses(administration) {
             validate_target_address("administration", name, address)?;
         }
@@ -865,16 +931,30 @@ fn validate_target_pack_metadata(pack: &TargetPack) -> RuntimeResult<()> {
         }
     }
     if let Some(events) = pack.events.as_ref() {
-        validate_capability_version("events", events.version, EVENTS_CAPABILITY_VERSION)?;
+        if !events.hooks.contains_key("module_load") {
+            return Err(RuntimeError::new(
+                "target pack events require the module_load bootstrap hook",
+            ));
+        }
+        let known_hooks: BTreeSet<_> = EVENT_CATALOG.iter().map(|event| event.hook).collect();
+        let known_functions: BTreeSet<_> = EVENT_CATALOG
+            .iter()
+            .flat_map(|event| {
+                event
+                    .helper
+                    .into_iter()
+                    .chain(event.requirements.functions.iter().copied())
+            })
+            .collect();
         for (name, address) in [
             ("virtual_machine", &events.virtual_machine),
             ("run_script", &events.run_script),
         ] {
             validate_target_address("events", name, address)?;
         }
-        if !events.game_object_id_offset.is_multiple_of(4) {
+        if !pack.layouts.classes.game_object_id_offset.is_multiple_of(4) {
             return Err(RuntimeError::new(
-                "target pack events.game_object_id_offset is not four-byte aligned",
+                "target pack layouts.classes.game_object_id_offset is not four-byte aligned",
             ));
         }
         for (name, address) in &events.hooks {
@@ -882,6 +962,11 @@ fn validate_target_pack_metadata(pack: &TargetPack) -> RuntimeResult<()> {
                 return Err(RuntimeError::new(
                     "target pack events hook identity must not be empty",
                 ));
+            }
+            if !known_hooks.contains(name.as_str()) {
+                return Err(RuntimeError::new(format!(
+                    "target pack events hook identity {name} is absent from the event catalog"
+                )));
             }
             validate_target_address("events.hooks", name, address)?;
         }
@@ -891,17 +976,13 @@ fn validate_target_pack_metadata(pack: &TargetPack) -> RuntimeResult<()> {
                     "target pack events function identity must not be empty",
                 ));
             }
+            if !known_functions.contains(name.as_str()) {
+                return Err(RuntimeError::new(format!(
+                    "target pack events function identity {name} is absent from the event catalog"
+                )));
+            }
             validate_target_address("events.functions", name, address)?;
         }
-    }
-    Ok(())
-}
-
-fn validate_capability_version(name: &str, actual: u32, supported: u32) -> RuntimeResult<()> {
-    if actual != supported {
-        return Err(RuntimeError::new(format!(
-            "target pack capability {name} has version {actual}; expected {supported}"
-        )));
     }
     Ok(())
 }
@@ -1095,6 +1176,91 @@ fn validate_layouts(layouts: &AbiLayouts) -> RuntimeResult<()> {
         ),
     ] {
         if !offset.is_multiple_of(alignment) {
+            return Err(RuntimeError::new(format!(
+                "target pack layout {name} is not {alignment}-byte aligned"
+            )));
+        }
+    }
+    for (name, offset, alignment) in [
+        (
+            "game_object_type_offset",
+            classes.game_object_type_offset,
+            1,
+        ),
+        (
+            "item_repository_parent_offset",
+            classes.item_repository_parent_offset,
+            4,
+        ),
+        (
+            "creature_stats_base_creature_offset",
+            classes.creature_stats_base_creature_offset,
+            8,
+        ),
+        (
+            "creature_stats_experience_offset",
+            classes.creature_stats_experience_offset,
+            4,
+        ),
+        ("item_base_item_offset", classes.item_base_item_offset, 4),
+        ("item_possessor_offset", classes.item_possessor_offset, 4),
+        (
+            "message_read_buffer_offset",
+            classes.message_read_buffer_offset,
+            8,
+        ),
+        (
+            "message_read_buffer_size_offset",
+            classes.message_read_buffer_size_offset,
+            4,
+        ),
+        (
+            "message_read_buffer_position_offset",
+            classes.message_read_buffer_position_offset,
+            4,
+        ),
+        (
+            "message_read_fragments_size_offset",
+            classes.message_read_fragments_size_offset,
+            4,
+        ),
+        (
+            "message_read_fragments_position_offset",
+            classes.message_read_fragments_position_offset,
+            4,
+        ),
+        (
+            "message_current_read_bit_offset",
+            classes.message_current_read_bit_offset,
+            1,
+        ),
+        (
+            "message_last_byte_bits_offset",
+            classes.message_last_byte_bits_offset,
+            1,
+        ),
+        (
+            "player_object_id_offset",
+            classes.player_object_id_offset,
+            4,
+        ),
+        (
+            "player_inventory_gui_offset",
+            classes.player_inventory_gui_offset,
+            8,
+        ),
+        (
+            "player_other_inventory_gui_offset",
+            classes.player_other_inventory_gui_offset,
+            8,
+        ),
+        (
+            "inventory_gui_selected_panel_offset",
+            classes.inventory_gui_selected_panel_offset,
+            1,
+        ),
+    ] {
+        if offset.is_some_and(|offset| !offset.is_multiple_of(alignment)) {
             return Err(RuntimeError::new(format!(
                 "target pack layout {name} is not {alignment}-byte aligned"
             )));
@@ -1630,13 +1796,11 @@ mod tests {
     };
 
     use super::{
-        AbiLayouts, Architecture, BinaryIdentity, BridgeTarget, CExoStringLayout, Capability,
-        EVENTS_CAPABILITY_VERSION, EngineClassLayouts, EventTarget,
-        NWSCRIPT_BRIDGE_CAPABILITY_VERSION, OperatingSystem, Platform, PlayerListLayout,
-        RUNTIME_API_VERSION, SERVER_STATE_CAPABILITY_VERSION, ServerStateTarget,
-        TARGET_PACK_SCHEMA_VERSION, TargetAddress, TargetPack, TargetServer, TargetSource,
-        VectorLayout, bridge_addresses, parse_platform, resolve_target_pack,
-        server_state_addresses, validate_target_pack_metadata,
+        AbiLayouts, Architecture, BinaryIdentity, BridgeTarget, CExoStringLayout,
+        EngineClassLayouts, EventTarget, OperatingSystem, Platform, PlayerListLayout,
+        RUNTIME_API_VERSION, ServerStateTarget, TARGET_PACK_SCHEMA_VERSION, TargetAddress,
+        TargetPack, TargetServer, TargetSource, VectorLayout, bridge_addresses, parse_platform,
+        resolve_target_pack, server_state_addresses, validate_target_pack_metadata,
     };
 
     static NEXT_TEST_DIRECTORY: AtomicUsize = AtomicUsize::new(0);
@@ -1773,17 +1937,11 @@ mod tests {
         pack.events = None;
         fs::write(&selected.path, toml::to_string(&pack)?)?;
         let selected_without_optional_capabilities = resolve_target_pack(&root, &identity)?;
-        assert_eq!(
+        assert!(
             selected_without_optional_capabilities
                 .pack
-                .capability_version(Capability::ServerState),
-            0
-        );
-        assert_eq!(
-            selected_without_optional_capabilities
-                .pack
-                .capability_version(Capability::Events),
-            0
+                .server_state
+                .is_none()
         );
 
         pack.server.sha256 = "0".repeat(64);
@@ -1857,9 +2015,74 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn event_support_requires_bootstrap_and_rejects_unknown_target_keys()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut events = fixture_event_target();
+        events.hooks.insert(
+            "object_lock".to_string(),
+            TargetAddress::Offset {
+                offset: 22
+            },
+        );
+        let mut pack = TargetPack {
+            schema_version: TARGET_PACK_SCHEMA_VERSION,
+            runtime_api:    RUNTIME_API_VERSION,
+            server:         TargetServer {
+                sha256:   "0".repeat(64),
+                platform: Platform {
+                    os:           OperatingSystem::Linux,
+                    architecture: Architecture::X86_64,
+                },
+                build:    None,
+            },
+            source:         fixture_source(),
+            layouts:        fixture_layouts(),
+            bridge:         fixture_bridge_target(),
+            server_state:   None,
+            administration: None,
+            events:         Some(events),
+        };
+        assert!(pack.supports_event("object_lock_before"));
+        pack.events
+            .as_mut()
+            .ok_or("fixture events")?
+            .hooks
+            .remove("module_load");
+        assert!(!pack.supports_event("object_lock_before"));
+        assert!(validate_target_pack_metadata(&pack).is_err());
+
+        let events = pack.events.as_mut().ok_or("fixture events")?;
+        events.hooks.insert(
+            "module_load".to_string(),
+            TargetAddress::Offset {
+                offset: 19
+            },
+        );
+        events.hooks.insert(
+            "object_set_experience".to_string(),
+            TargetAddress::Offset {
+                offset: 24
+            },
+        );
+        assert!(!pack.supports_event("object_set_experience_before"));
+        pack.layouts.classes.creature_stats_base_creature_offset = Some(48);
+        pack.layouts.classes.creature_stats_experience_offset = Some(168);
+        assert!(pack.supports_event("object_set_experience_before"));
+
+        let events = pack.events.as_mut().ok_or("fixture events")?;
+        events.hooks.insert(
+            "unknown".to_string(),
+            TargetAddress::Offset {
+                offset: 23
+            },
+        );
+        assert!(validate_target_pack_metadata(&pack).is_err());
+        Ok(())
+    }
+
     fn fixture_bridge_target() -> BridgeTarget {
         BridgeTarget {
-            version:                NWSCRIPT_BRIDGE_CAPABILITY_VERSION,
             function_management:    TargetAddress::Offset {
                 offset: 1
             },
@@ -1901,7 +2124,6 @@ mod tests {
 
     fn fixture_server_state_target() -> ServerStateTarget {
         ServerStateTarget {
-            version:                 SERVER_STATE_CAPABILITY_VERSION,
             app_manager:             TargetAddress::Offset {
                 offset: 13
             },
@@ -1924,17 +2146,21 @@ mod tests {
     }
 
     fn fixture_event_target() -> EventTarget {
+        let hooks = std::collections::BTreeMap::from([(
+            "module_load".to_string(),
+            TargetAddress::Offset {
+                offset: 19
+            },
+        )]);
         EventTarget {
-            version:               EVENTS_CAPABILITY_VERSION,
-            virtual_machine:       TargetAddress::Offset {
+            virtual_machine: TargetAddress::Offset {
                 offset: 20
             },
-            run_script:            TargetAddress::Offset {
+            run_script: TargetAddress::Offset {
                 offset: 21
             },
-            game_object_id_offset: 8,
-            hooks:                 std::collections::BTreeMap::new(),
-            functions:             std::collections::BTreeMap::new(),
+            hooks,
+            functions: std::collections::BTreeMap::new(),
         }
     }
 
@@ -1971,6 +2197,24 @@ mod tests {
                 z_offset:  8,
             },
             classes:      EngineClassLayouts {
+                game_object_id_offset: 8,
+                game_object_type_offset: None,
+                item_repository_parent_offset: None,
+                creature_stats_base_creature_offset: None,
+                creature_stats_experience_offset: None,
+                item_base_item_offset: None,
+                item_possessor_offset: None,
+                message_read_buffer_offset: None,
+                message_read_buffer_size_offset: None,
+                message_read_buffer_position_offset: None,
+                message_read_fragments_size_offset: None,
+                message_read_fragments_position_offset: None,
+                message_current_read_bit_offset: None,
+                message_last_byte_bits_offset: None,
+                player_object_id_offset: None,
+                player_inventory_gui_offset: None,
+                player_other_inventory_gui_offset: None,
+                inventory_gui_selected_panel_offset: None,
                 command_implementer_vm_offset: 0,
                 app_manager_server_offset: 8,
                 server_info_module_offset: 8,

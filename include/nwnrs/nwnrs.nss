@@ -10,7 +10,6 @@ const int NWNRS_API_VERSION = 1;
 const string NWNRS_CAPABILITY_NWSCRIPT_BRIDGE = "nwscript_bridge";
 const string NWNRS_CAPABILITY_SERVER_STATE = "server_state";
 const string NWNRS_CAPABILITY_ADMINISTRATION = "administration";
-const string NWNRS_CAPABILITY_EVENTS = "events";
 
 const int NWNRS_ERROR_NONE = 0;
 const int NWNRS_ERROR_UNKNOWN_NAMESPACE = 1;
@@ -52,17 +51,19 @@ const int NWNRS_DEBUG_SAVING_THROW = 1;
 const int NWNRS_DEBUG_MOVEMENT_SPEED = 2;
 const int NWNRS_DEBUG_HIT_DIE = 3;
 
+const string NWNRS_EVENT_ID_WHITELIST_PROJECTILE_TYPE =
+    "object.broadcast_safe_projectile.projectile_type";
+const string NWNRS_EVENT_ID_WHITELIST_PROJECTILE_SPELL_ID =
+    "object.broadcast_safe_projectile.spell_id";
+
 /// Returns TRUE when the nwnrs NWScript bridge is installed.
 int NWNRS_GetIsAvailable();
 
 /// Returns the integer version of the stable NWScript bridge contract.
 int NWNRS_GetApiVersion();
 
-/// Returns the supported version of a named capability, or zero when absent.
-int NWNRS_GetCapabilityVersion(string sCapability);
-
-/// Returns TRUE when a capability meets the requested minimum version.
-int NWNRS_HasCapability(string sCapability, int nMinimumVersion = 1);
+/// Returns TRUE when a named capability is present in the selected target pack.
+int NWNRS_HasCapability(string sCapability);
 
 /// Returns the most recent NWNRS_ERROR_* value on this script thread.
 int NWNRS_GetLastErrorCode();
@@ -212,6 +213,22 @@ void NWNRS_SkipCurrentEvent();
 /// Sets the current event result when its schema supports a JSON result.
 void NWNRS_SetCurrentEventResult(json jResult);
 
+/// Returns TRUE when this exact server target supports an event annotation.
+int NWNRS_GetEventSupported(string sEventIdentity);
+
+/// Internal: generated dispatchers register subscriptions during module.load.
+/// Unsupported target-pack events emit a warning and remain unsubscribed.
+void NWNRS_SubscribeEvent(string sEventIdentity);
+
+/// Enables or disables a named integer whitelist. Enabling starts with no IDs.
+void NWNRS_ToggleEventIdWhitelist(string sWhitelist, int bEnabled);
+
+/// Adds an integer to an enabled event whitelist.
+void NWNRS_AddEventIdToWhitelist(string sWhitelist, int nId);
+
+/// Removes an integer from an enabled event whitelist.
+void NWNRS_RemoveEventIdFromWhitelist(string sWhitelist, int nId);
+
 int NWNRS_GetIsAvailable()
 {
     return NWNXGetIsAvailable();
@@ -223,16 +240,8 @@ int NWNRS_GetApiVersion()
     return NWNXPopInt();
 }
 
-int NWNRS_GetCapabilityVersion(string sCapability)
+int NWNRS_HasCapability(string sCapability)
 {
-    NWNXPushString(sCapability);
-    NWNXCall(NWNRS_NAMESPACE, "GetCapabilityVersion");
-    return NWNXPopInt();
-}
-
-int NWNRS_HasCapability(string sCapability, int nMinimumVersion = 1)
-{
-    NWNXPushInt(nMinimumVersion);
     NWNXPushString(sCapability);
     NWNXCall(NWNRS_NAMESPACE, "HasCapability");
     return NWNXPopInt();
@@ -514,4 +523,38 @@ void NWNRS_SetCurrentEventResult(json jResult)
 {
     NWNXPushString(JsonDump(jResult));
     NWNXCall(NWNRS_NAMESPACE, "SetCurrentEventResult");
+}
+
+int NWNRS_GetEventSupported(string sEventIdentity)
+{
+    NWNXPushString(sEventIdentity);
+    NWNXCall(NWNRS_NAMESPACE, "GetEventSupported");
+    return NWNXPopInt();
+}
+
+void NWNRS_SubscribeEvent(string sEventIdentity)
+{
+    NWNXPushString(sEventIdentity);
+    NWNXCall(NWNRS_NAMESPACE, "SubscribeEvent");
+}
+
+void NWNRS_ToggleEventIdWhitelist(string sWhitelist, int bEnabled)
+{
+    NWNXPushInt(bEnabled);
+    NWNXPushString(sWhitelist);
+    NWNXCall(NWNRS_NAMESPACE, "ToggleEventIdWhitelist");
+}
+
+void NWNRS_AddEventIdToWhitelist(string sWhitelist, int nId)
+{
+    NWNXPushInt(nId);
+    NWNXPushString(sWhitelist);
+    NWNXCall(NWNRS_NAMESPACE, "AddEventIdToWhitelist");
+}
+
+void NWNRS_RemoveEventIdFromWhitelist(string sWhitelist, int nId)
+{
+    NWNXPushInt(nId);
+    NWNXPushString(sWhitelist);
+    NWNXCall(NWNRS_NAMESPACE, "RemoveEventIdFromWhitelist");
 }

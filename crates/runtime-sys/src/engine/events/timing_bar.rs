@@ -13,7 +13,7 @@ use super::{
         abi::{CancelTimingEvent, SendTimingEvent},
         hook::NativeHookSpec,
     },
-    dispatch, require_player_game_object,
+    dispatch,
 };
 use crate::bridge::BridgeInstallError;
 
@@ -27,7 +27,12 @@ pub(super) fn append_hook_specs(
     engine: &Engine,
     hooks: &mut Vec<NativeHookSpec>,
 ) -> Result<(), BridgeInstallError> {
-    require_player_game_object(engine, &[SEND_HOOK, CANCEL_HOOK])?;
+    if engine
+        .event_function_target("player_get_game_object")
+        .is_none()
+    {
+        return Ok(());
+    }
     if let Some(target) = engine.event_hook_target(SEND_HOOK) {
         hooks.push(NativeHookSpec::new(
             "CNWSMessage::SendServerToPlayerGuiTimingEvent events",
@@ -68,22 +73,22 @@ extern "C" fn send_replacement(
     } else {
         ("timing_bar.stop", BTreeMap::new())
     };
-    dispatch::player(player, EventSpec::read_only(name, "before"), data.clone());
+    dispatch::player(player, EventSpec::catalog(name, "before"), data.clone());
     let result = call_send(message, player, starting, event_id, duration);
-    dispatch::player(player, EventSpec::read_only(name, "after"), data);
+    dispatch::player(player, EventSpec::catalog(name, "after"), data);
     result
 }
 
 extern "C" fn cancel_replacement(message: *mut c_void, player: *mut c_void) -> i32 {
     dispatch::player(
         player,
-        EventSpec::read_only("timing_bar.cancel", "before"),
+        EventSpec::catalog("timing_bar.cancel", "before"),
         BTreeMap::new(),
     );
     let result = call_cancel(message, player);
     dispatch::player(
         player,
-        EventSpec::read_only("timing_bar.cancel", "after"),
+        EventSpec::catalog("timing_bar.cancel", "after"),
         BTreeMap::new(),
     );
     result

@@ -5,20 +5,24 @@ use std::{
     sync::atomic::{AtomicPtr, Ordering},
 };
 
-use nwnrs_runtime::{EventObjectId, EventValue, EventVector};
+use nwnrs_runtime::{
+    EventObjectId, EventValue, EventVector, PROJECTILE_SPELL_ID_WHITELIST,
+    PROJECTILE_TYPE_ID_WHITELIST,
+};
 
 use super::{
     super::{
-        Engine, EventSpec,
+        Engine, EventFrame, EventSpec,
         abi::{
             BroadcastSafeProjectile, CloseInventory, EngineVector, ObjectAction, OpenInventory,
-            UnlockObjectAction,
+            SetExperience, UnlockObjectAction,
         },
+        active_engine,
         hook::NativeHookSpec,
     },
-    dispatch,
+    dispatch, native,
 };
-use crate::write_diagnostic;
+use crate::bridge::BridgeInstallError;
 
 const LOCK_HOOK: &str = "object_lock";
 const UNLOCK_HOOK: &str = "object_unlock";
@@ -26,6 +30,7 @@ const USE_HOOK: &str = "object_use";
 const PLACEABLE_OPEN_HOOK: &str = "placeable_open";
 const PLACEABLE_CLOSE_HOOK: &str = "placeable_close";
 const BROADCAST_SAFE_PROJECTILE_HOOK: &str = "object_broadcast_safe_projectile";
+const SET_EXPERIENCE_HOOK: &str = "object_set_experience";
 
 static LOCK_ORIGINAL: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
 static UNLOCK_ORIGINAL: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
@@ -33,6 +38,7 @@ static USE_ORIGINAL: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
 static PLACEABLE_OPEN_ORIGINAL: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
 static PLACEABLE_CLOSE_ORIGINAL: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
 static BROADCAST_SAFE_PROJECTILE_ORIGINAL: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
+static SET_EXPERIENCE_ORIGINAL: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
 
 pub(super) fn append_hook_specs(engine: &Engine, hooks: &mut Vec<NativeHookSpec>) {
     append(
@@ -83,6 +89,56 @@ pub(super) fn append_hook_specs(engine: &Engine, hooks: &mut Vec<NativeHookSpec>
         broadcast_safe_projectile_replacement as BroadcastSafeProjectile as *const () as usize,
         &BROADCAST_SAFE_PROJECTILE_ORIGINAL,
     );
+    append(
+        engine,
+        hooks,
+        SET_EXPERIENCE_HOOK,
+        "CNWSCreatureStats::SetExperience events",
+        set_experience_replacement as SetExperience as *const () as usize,
+        &SET_EXPERIENCE_ORIGINAL,
+    );
+}
+
+extern "C" fn set_experience_replacement(stats: *mut c_void, value: u32, do_level: i32) {
+    if native::read_field::<u32>(stats, "creature_stats_experience") == Some(value) {
+        return;
+    }
+    if do_level == 0 {
+        call_set_experience(stats, value, do_level);
+        return;
+    }
+    let Some(creature) = native::stats_creature(stats) else {
+        call_set_experience(stats, value, do_level);
+        return;
+    };
+    let data = BTreeMap::from([("xp".to_string(), EventValue::Unsigned(value))]);
+    let before = dispatch::game_object(
+        creature,
+        EventSpec::catalog("object.set_experience", "before"),
+        data.clone(),
+    );
+    if before.as_ref().is_none_or(|frame| !frame.skipped()) {
+        call_set_experience(stats, value, do_level);
+    } else if let Some(replacement) =
+        native::parse_unsigned_result(before.as_ref().and_then(EventFrame::result))
+    {
+        call_set_experience(stats, replacement, do_level);
+    }
+    dispatch::game_object(
+        creature,
+        EventSpec::catalog("object.set_experience", "after"),
+        data,
+    );
+}
+
+fn call_set_experience(stats: *mut c_void, value: u32, do_level: i32) {
+    let original = SET_EXPERIENCE_ORIGINAL.load(Ordering::Acquire);
+    if original.is_null() {
+        return;
+    }
+    // SAFETY: Gum published the CNWSCreatureStats::SetExperience trampoline.
+    let original = unsafe { std::mem::transmute::<*mut c_void, SetExperience>(original) };
+    original(stats, value, do_level);
 }
 
 fn append(
@@ -125,7 +181,7 @@ fn object_action(
     original: &'static AtomicPtr<c_void>,
     argument: u32,
 ) -> i32 {
-    let skipped = emit(object, EventSpec::skippable(name, "before"), data.clone())
+    let skipped = emit(object, EventSpec::catalog(name, "before"), data.clone())
         .is_some_and(|frame| frame.skipped());
     let result = if skipped {
         0
@@ -134,7 +190,7 @@ fn object_action(
     };
     let mut after = data;
     after.insert("action_result".to_string(), EventValue::Integer(result));
-    emit(object, EventSpec::read_only(name, "after"), after);
+    emit(object, EventSpec::catalog(name, "after"), after);
     result
 }
 
@@ -154,7 +210,7 @@ extern "C" fn unlock_replacement(
     ]);
     let skipped = emit(
         object,
-        EventSpec::skippable("object.unlock", "before"),
+        EventSpec::catalog("object.unlock", "before"),
         data.clone(),
     )
     .is_some_and(|frame| frame.skipped());
@@ -165,11 +221,7 @@ extern "C" fn unlock_replacement(
     };
     let mut after = data;
     after.insert("action_result".to_string(), EventValue::Integer(result));
-    emit(
-        object,
-        EventSpec::read_only("object.unlock", "after"),
-        after,
-    );
+    emit(object, EventSpec::catalog("object.unlock", "after"), after);
     result
 }
 
@@ -177,7 +229,7 @@ extern "C" fn placeable_open_replacement(placeable: *mut c_void, opener: u32) {
     let data = BTreeMap::from([object_value("object", opener)]);
     let skipped = emit(
         placeable,
-        EventSpec::skippable("placeable.open", "before"),
+        EventSpec::catalog("placeable.open", "before"),
         data.clone(),
     )
     .is_some_and(|frame| frame.skipped());
@@ -188,7 +240,7 @@ extern "C" fn placeable_open_replacement(placeable: *mut c_void, opener: u32) {
     after.insert("before_skipped".to_string(), EventValue::Boolean(skipped));
     emit(
         placeable,
-        EventSpec::read_only("placeable.open", "after"),
+        EventSpec::catalog("placeable.open", "after"),
         after,
     );
 }
@@ -197,13 +249,13 @@ extern "C" fn placeable_close_replacement(placeable: *mut c_void, closer: u32, u
     let data = BTreeMap::from([object_value("object", closer)]);
     emit(
         placeable,
-        EventSpec::read_only("placeable.close", "before"),
+        EventSpec::catalog("placeable.close", "before"),
         data.clone(),
     );
     call_close(placeable, closer, update_player);
     emit(
         placeable,
-        EventSpec::read_only("placeable.close", "after"),
+        EventSpec::catalog("placeable.close", "after"),
         data,
     );
 }
@@ -221,6 +273,25 @@ extern "C" fn broadcast_safe_projectile_replacement(
     attack_result: u8,
     projectile_path_type: u8,
 ) {
+    let whitelisted = active_engine().is_some_and(|engine| {
+        engine.event_id_is_whitelisted(PROJECTILE_TYPE_ID_WHITELIST, i32::from(projectile_type))
+            && engine.event_id_is_whitelisted(PROJECTILE_SPELL_ID_WHITELIST, spell_id as i32)
+    });
+    if !whitelisted {
+        call_broadcast_safe_projectile(
+            object,
+            originator,
+            target,
+            originator_position,
+            target_position,
+            delta,
+            projectile_type,
+            spell_id,
+            attack_result,
+            projectile_path_type,
+        );
+        return;
+    }
     let data = BTreeMap::from([
         object_value("originator", originator),
         object_value("target", target),
@@ -249,7 +320,7 @@ extern "C" fn broadcast_safe_projectile_replacement(
     ]);
     let skipped = emit(
         object,
-        EventSpec::skippable("object.broadcast_safe_projectile", "before"),
+        EventSpec::catalog("object.broadcast_safe_projectile", "before"),
         data.clone(),
     )
     .is_some_and(|frame| frame.skipped());
@@ -269,7 +340,7 @@ extern "C" fn broadcast_safe_projectile_replacement(
     }
     emit(
         object,
-        EventSpec::read_only("object.broadcast_safe_projectile", "after"),
+        EventSpec::catalog("object.broadcast_safe_projectile", "after"),
         data,
     );
 }
@@ -284,19 +355,10 @@ fn event_vector(value: EngineVector) -> EventVector {
 
 fn emit(
     object: *mut c_void,
-    spec: EventSpec,
+    spec: Result<EventSpec, BridgeInstallError>,
     data: BTreeMap<String, EventValue>,
 ) -> Option<super::super::EventFrame> {
-    let frame = dispatch::game_object(object, spec, data);
-    if let Some(frame) = &frame
-        && frame.result().is_some()
-    {
-        write_diagnostic(&format!(
-            "event {} {} accepted an unsupported result mutation",
-            spec.name, spec.phase
-        ));
-    }
-    frame
+    dispatch::game_object(object, spec, data)
 }
 
 fn object_value(name: &str, value: u32) -> (String, EventValue) {

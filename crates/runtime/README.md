@@ -34,9 +34,10 @@ can emit trace, debug, info, warning, and error records through the runtime's
 structured tracing pipeline. None of this requires a plugin loader, HTTP API,
 or metrics service.
 
-The NWScript contract is integer-versioned and statically registered. Scripts
-can query the core, server-state, administration, and events capability
-versions before using optional functions. Dispatch failures retain a stable
+The core NWScript contract is integer-versioned and statically registered.
+Scripts can query the core, server-state, and administration capability
+versions before using optional functions. Events are intentionally
+unversioned and are queried by identity. Dispatch failures retain a stable
 error code and a diagnostic message on the current bridge thread.
 
 Native ABI provenance and regeneration rules are documented in
@@ -94,3 +95,9 @@ have their own family module. All paired NWScript registrations use stable
 `<family>_<operation>_before` and `<family>_<operation>_after` identities.
 Journal open/close and timing-bar start/stop/cancel events use a verified
 player-to-game-object helper instead of hard-coded `CNWSPlayer` field offsets.
+Module-load subscriptions are committed as one set only after the generated
+dispatcher finishes successfully. Event controls come from the shared catalog,
+so native hook code cannot independently redefine skippability or result
+support. Safe-projectile handlers may use the two
+`NWNRS_EVENT_ID_WHITELIST_PROJECTILE_*` names with the event ID whitelist API
+to match Unified's projectile-type and spell-ID filtering.

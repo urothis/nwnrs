@@ -75,7 +75,7 @@ extern "C" fn use_replacement(
     ]);
     let skipped = dispatch::game_object(
         creature,
-        EventSpec::skippable("skill.use", "before"),
+        EventSpec::catalog("skill.use", "before"),
         data.clone(),
     )
     .is_some_and(|frame| frame.skipped());
@@ -95,7 +95,7 @@ extern "C" fn use_replacement(
     };
     let mut after = data;
     after.insert("action_result".to_string(), EventValue::Integer(result));
-    dispatch::game_object(creature, EventSpec::read_only("skill.use", "after"), after);
+    dispatch::game_object(creature, EventSpec::catalog("skill.use", "after"), after);
     result
 }
 

@@ -1,4 +1,7 @@
-use crate::{Capability, RUNTIME_API_VERSION, RuntimeContext};
+use crate::{
+    Capability, EventResultKind, RUNTIME_API_VERSION, RuntimeContext, event_definition,
+    runtime_event_definition,
+};
 
 mod error;
 mod host;
@@ -22,9 +25,7 @@ const OBJECT_INVALID: u32 = 0x7f00_0000;
 pub enum BridgeFunction {
     /// Returns the integer bridge API version.
     GetApiVersion,
-    /// Returns a named target-pack capability version.
-    GetCapabilityVersion,
-    /// Checks whether a named capability satisfies a minimum version.
+    /// Checks whether a named capability is present.
     HasCapability,
     /// Returns the most recent bridge error code on this thread.
     GetLastErrorCode,
@@ -116,6 +117,16 @@ pub enum BridgeFunction {
     SkipCurrentEvent,
     /// Sets the current event's JSON result when its schema permits it.
     SetCurrentEventResult,
+    /// Reports whether the exact target pack supports an event identity.
+    GetEventSupported,
+    /// Registers one generated dispatcher subscription during module load.
+    SubscribeEvent,
+    /// Enables or disables one named event integer whitelist.
+    ToggleEventIdWhitelist,
+    /// Adds one integer to an enabled event whitelist.
+    AddEventIdToWhitelist,
+    /// Removes one integer from an enabled event whitelist.
+    RemoveEventIdFromWhitelist,
 }
 
 impl BridgeFunction {
@@ -125,9 +136,8 @@ impl BridgeFunction {
     /// assert!(nwnrs_runtime::BridgeFunction::ALL
     ///     .contains(&nwnrs_runtime::BridgeFunction::Log));
     /// ```
-    pub const ALL: [Self; 48] = [
+    pub const ALL: [Self; 52] = [
         Self::GetApiVersion,
-        Self::GetCapabilityVersion,
         Self::HasCapability,
         Self::GetLastErrorCode,
         Self::GetLastErrorMessage,
@@ -174,6 +184,11 @@ impl BridgeFunction {
         Self::GetCurrentEvent,
         Self::SkipCurrentEvent,
         Self::SetCurrentEventResult,
+        Self::GetEventSupported,
+        Self::SubscribeEvent,
+        Self::ToggleEventIdWhitelist,
+        Self::AddEventIdToWhitelist,
+        Self::RemoveEventIdFromWhitelist,
     ];
 
     /// Returns the exact public function name.
@@ -181,7 +196,6 @@ impl BridgeFunction {
     pub const fn name(self) -> &'static str {
         match self {
             Self::GetApiVersion => "GetApiVersion",
-            Self::GetCapabilityVersion => "GetCapabilityVersion",
             Self::HasCapability => "HasCapability",
             Self::GetLastErrorCode => "GetLastErrorCode",
             Self::GetLastErrorMessage => "GetLastErrorMessage",
@@ -228,6 +242,11 @@ impl BridgeFunction {
             Self::GetCurrentEvent => "GetCurrentEvent",
             Self::SkipCurrentEvent => "SkipCurrentEvent",
             Self::SetCurrentEventResult => "SetCurrentEventResult",
+            Self::GetEventSupported => "GetEventSupported",
+            Self::SubscribeEvent => "SubscribeEvent",
+            Self::ToggleEventIdWhitelist => "ToggleEventIdWhitelist",
+            Self::AddEventIdToWhitelist => "AddEventIdToWhitelist",
+            Self::RemoveEventIdFromWhitelist => "RemoveEventIdFromWhitelist",
         }
     }
 
@@ -236,7 +255,6 @@ impl BridgeFunction {
     pub fn from_name(name: &str) -> Option<Self> {
         match name {
             "GetApiVersion" => Some(Self::GetApiVersion),
-            "GetCapabilityVersion" => Some(Self::GetCapabilityVersion),
             "HasCapability" => Some(Self::HasCapability),
             "GetLastErrorCode" => Some(Self::GetLastErrorCode),
             "GetLastErrorMessage" => Some(Self::GetLastErrorMessage),
@@ -283,6 +301,11 @@ impl BridgeFunction {
             "GetCurrentEvent" => Some(Self::GetCurrentEvent),
             "SkipCurrentEvent" => Some(Self::SkipCurrentEvent),
             "SetCurrentEventResult" => Some(Self::SetCurrentEventResult),
+            "GetEventSupported" => Some(Self::GetEventSupported),
+            "SubscribeEvent" => Some(Self::SubscribeEvent),
+            "ToggleEventIdWhitelist" => Some(Self::ToggleEventIdWhitelist),
+            "AddEventIdToWhitelist" => Some(Self::AddEventIdToWhitelist),
+            "RemoveEventIdFromWhitelist" => Some(Self::RemoveEventIdFromWhitelist),
             _ => None,
         }
     }
@@ -323,10 +346,6 @@ impl BridgeFunction {
             | Self::ReloadRules
             | Self::DeletePlayerCharacter
             | Self::DeleteTurd => Some(Capability::Administration),
-            Self::GetIsInEvent
-            | Self::GetCurrentEvent
-            | Self::SkipCurrentEvent
-            | Self::SetCurrentEventResult => Some(Capability::Events),
             _ => None,
         }
     }
@@ -337,13 +356,15 @@ impl BridgeFunction {
 
     const fn argument_count(self) -> usize {
         match self {
-            Self::HasCapability
-            | Self::Log
+            Self::Log
             | Self::SetPlayOption
             | Self::SetDebugValue
-            | Self::DeleteTurd => 2,
+            | Self::DeleteTurd
+            | Self::ToggleEventIdWhitelist
+            | Self::AddEventIdToWhitelist
+            | Self::RemoveEventIdFromWhitelist => 2,
             Self::DeletePlayerCharacter => 3,
-            Self::GetCapabilityVersion
+            Self::HasCapability
             | Self::SetServerName
             | Self::SetModuleName
             | Self::SetPlayerPassword
@@ -358,7 +379,9 @@ impl BridgeFunction {
             | Self::RemoveBannedCdKey
             | Self::AddBannedPlayerName
             | Self::RemoveBannedPlayerName
-            | Self::SetCurrentEventResult => 1,
+            | Self::SetCurrentEventResult
+            | Self::GetEventSupported
+            | Self::SubscribeEvent => 1,
             _ => 0,
         }
     }
@@ -505,7 +528,7 @@ impl ScriptBridge {
             )
         })?;
         if let Some(capability) = function.required_capability()
-            && context.target.pack.capability_version(capability) == 0
+            && !context.target.pack.has_capability(capability)
         {
             return Err(BridgeError::new(
                 BridgeErrorCode::MissingCapability,
@@ -525,29 +548,10 @@ impl ScriptBridge {
             return self.dispatch_log();
         }
         let value = match function {
-            BridgeFunction::GetCapabilityVersion => {
-                let capability = self.pop_capability()?;
-                Some(BridgeValue::Integer(capability_version(
-                    context, capability,
-                )?))
-            }
             BridgeFunction::HasCapability => {
                 let capability = self.pop_capability()?;
-                let minimum = match self.pop_argument("integer")? {
-                    BridgeValue::Integer(value) if value >= 0 => {
-                        u32::try_from(value).map_err(|_error| {
-                            invalid_argument("minimum capability version exceeds u32")
-                        })?
-                    }
-                    BridgeValue::Integer(value) => {
-                        return Err(invalid_argument(format!(
-                            "minimum capability version cannot be {value}"
-                        )));
-                    }
-                    _ => return Err(invalid_argument("minimum capability version changed type")),
-                };
                 Some(BridgeValue::Integer(i32::from(
-                    context.target.pack.capability_version(capability) >= minimum,
+                    context.target.pack.has_capability(capability),
                 )))
             }
             BridgeFunction::GetLastErrorCode => Some(BridgeValue::Integer(
@@ -798,7 +802,92 @@ impl ScriptBridge {
             BridgeFunction::SetCurrentEventResult => {
                 let result = self.pop_string_argument("event result")?;
                 self.ensure_no_arguments(function)?;
-                host.control_event(EventCommand::SetResult(validate_event_json(result)?))?;
+                let current = host_current_event(host)?.ok_or_else(|| {
+                    invalid_argument("event result requested outside nwnrs event dispatch")
+                })?;
+                let definition = runtime_event_definition(&current.name, &current.phase)
+                    .ok_or_else(|| invalid_argument("current event is absent from the catalog"))?;
+                host.control_event(EventCommand::SetResult(validate_event_result(
+                    result,
+                    definition.result_kind,
+                )?))?;
+                None
+            }
+            BridgeFunction::GetEventSupported => {
+                let identity = self.pop_nonempty_string_argument("event identity")?;
+                self.ensure_no_arguments(function)?;
+                let identity = std::str::from_utf8(&identity)
+                    .map_err(|_error| invalid_argument("event identity is not UTF-8"))?;
+                Some(BridgeValue::Integer(i32::from(
+                    context.target.pack.supports_event(identity),
+                )))
+            }
+            BridgeFunction::SubscribeEvent => {
+                let identity = self.pop_nonempty_string_argument("event identity")?;
+                self.ensure_no_arguments(function)?;
+                let identity = std::str::from_utf8(&identity)
+                    .map_err(|_error| invalid_argument("event identity is not UTF-8"))?;
+                let current = host_current_event(host)?.ok_or_else(|| {
+                    invalid_argument("event subscription requested outside module.load")
+                })?;
+                if current.name != "module.load" {
+                    return Err(invalid_argument(
+                        "event subscriptions may only be registered during module.load",
+                    ));
+                }
+                if event_definition(identity).is_none() {
+                    return Err(invalid_argument(
+                        "event identity is absent from the catalog",
+                    ));
+                }
+                if !context.target.pack.supports_event(identity) {
+                    self.logs.push(ScriptLog {
+                        level:   ScriptLogLevel::Warn,
+                        message: format!(
+                            "event subscription {identity} is unsupported by the selected target \
+                             pack; its handler will not run"
+                        )
+                        .into_bytes(),
+                    });
+                    return Ok(());
+                }
+                host.control_event(EventCommand::Subscribe(identity.to_string()))?;
+                None
+            }
+            BridgeFunction::ToggleEventIdWhitelist => {
+                let name = self.pop_nonempty_string_argument("event ID whitelist")?;
+                let enabled = self.pop_boolean_argument("event ID whitelist enabled")? != 0;
+                self.ensure_no_arguments(function)?;
+                let name = String::from_utf8(name)
+                    .map_err(|_error| invalid_argument("event ID whitelist is not UTF-8"))?;
+                host.control_event(EventCommand::ToggleIdWhitelist {
+                    name,
+                    enabled,
+                })?;
+                None
+            }
+            BridgeFunction::AddEventIdToWhitelist => {
+                let name = self.pop_nonempty_string_argument("event ID whitelist")?;
+                let id = self.pop_integer_argument("event whitelist ID")?;
+                self.ensure_no_arguments(function)?;
+                let name = String::from_utf8(name)
+                    .map_err(|_error| invalid_argument("event ID whitelist is not UTF-8"))?;
+                host.control_event(EventCommand::AddIdToWhitelist {
+                    name,
+                    id,
+                })?;
+                None
+            }
+            BridgeFunction::RemoveEventIdFromWhitelist => {
+                let name = self.pop_nonempty_string_argument("event ID whitelist")?;
+                let id = self.pop_integer_argument("event whitelist ID")?;
+                self.ensure_no_arguments(function)?;
+                let name = String::from_utf8(name)
+                    .map_err(|_error| invalid_argument("event ID whitelist is not UTF-8"))?;
+                host.control_event(EventCommand::RemoveIdFromWhitelist {
+                    name,
+                    id,
+                })?;
                 None
             }
             BridgeFunction::Log => unreachable!("logging dispatched before value matching"),
@@ -1043,7 +1132,7 @@ fn current_event_json(host: &mut impl RuntimeHost) -> BridgeResult<Vec<u8>> {
     Ok(json)
 }
 
-fn validate_event_json(value: Vec<u8>) -> BridgeResult<Vec<u8>> {
+fn validate_event_result(value: Vec<u8>, kind: EventResultKind) -> BridgeResult<Vec<u8>> {
     if value.len() > MAX_EVENT_JSON_BYTES {
         return Err(invalid_argument(format!(
             "event JSON exceeds {MAX_EVENT_JSON_BYTES} bytes"
@@ -1051,6 +1140,37 @@ fn validate_event_json(value: Vec<u8>) -> BridgeResult<Vec<u8>> {
     }
     let value: serde_json::Value = serde_json::from_slice(&value)
         .map_err(|error| invalid_argument(format!("event result is not valid JSON: {error}")))?;
+    match kind {
+        EventResultKind::None => {
+            return Err(invalid_argument("current event does not accept a result"));
+        }
+        EventResultKind::Boolean if !value.is_boolean() => {
+            return Err(invalid_argument(
+                "current event result must be a JSON boolean",
+            ));
+        }
+        EventResultKind::Boolean => {}
+        EventResultKind::Unsigned
+            if !value
+                .as_u64()
+                .is_some_and(|value| u32::try_from(value).is_ok()) =>
+        {
+            return Err(invalid_argument(
+                "current event result must be a JSON unsigned 32-bit integer",
+            ));
+        }
+        EventResultKind::Unsigned => {}
+        EventResultKind::ObjectId
+            if !value.as_str().is_some_and(|value| {
+                value.len() == 8 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+            }) =>
+        {
+            return Err(invalid_argument(
+                "current event result must be an eight-digit hexadecimal JSON object ID string",
+            ));
+        }
+        EventResultKind::ObjectId => {}
+    }
     serde_json::to_vec(&value).map_err(|error| {
         BridgeError::new(
             BridgeErrorCode::Engine,
@@ -1086,15 +1206,6 @@ fn banned_list_json(lists: BannedLists) -> BridgeResult<Vec<u8>> {
     })
 }
 
-fn capability_version(context: &RuntimeContext, capability: Capability) -> BridgeResult<i32> {
-    i32::try_from(context.target.pack.capability_version(capability)).map_err(|_error| {
-        invalid_argument(format!(
-            "{} capability version exceeds NWScript integer range",
-            capability.name()
-        ))
-    })
-}
-
 fn string_value(value: &str) -> BridgeValue {
     BridgeValue::String(value.as_bytes().to_vec())
 }
@@ -1107,16 +1218,36 @@ mod tests {
         AdministrationCommand, BannedLists, BridgeError, BridgeErrorCode, BridgeResult,
         BridgeValue, EventCommand, EventControls, EventObjectId, EventPayload, HostCommandResult,
         HostQuery, HostValue, RuntimeHost, ScriptBridge, ScriptLog, ScriptLogLevel, Vector,
+        validate_event_result,
     };
     use crate::{
-        ADMINISTRATION_CAPABILITY_VERSION, AbiLayouts, AdministrationTarget, Architecture,
-        BinaryIdentity, BridgeTarget, CExoStringLayout, EVENTS_CAPABILITY_VERSION,
-        EngineClassLayouts, EventTarget, FileSha256, NWSCRIPT_BRIDGE_CAPABILITY_VERSION,
+        AbiLayouts, AdministrationTarget, Architecture, BinaryIdentity, BridgeTarget,
+        CExoStringLayout, EngineClassLayouts, EventResultKind, EventTarget, FileSha256,
         OperatingSystem, Platform, PlayerListLayout, RUNTIME_API_VERSION, RuntimeContext,
-        SERVER_STATE_CAPABILITY_VERSION, SelectedTargetPack, ShutdownTarget,
-        TARGET_PACK_SCHEMA_VERSION, TargetAddress, TargetPack, TargetServer, TargetSource,
-        VectorLayout,
+        SelectedTargetPack, ShutdownTarget, TARGET_PACK_SCHEMA_VERSION, TargetAddress, TargetPack,
+        TargetServer, TargetSource, VectorLayout,
     };
+
+    #[test]
+    fn validates_unsigned_and_object_id_event_results() {
+        assert_eq!(
+            validate_event_result(b"4294967295".to_vec(), EventResultKind::Unsigned)
+                .expect("u32 maximum should be accepted"),
+            b"4294967295"
+        );
+        assert!(validate_event_result(b"-1".to_vec(), EventResultKind::Unsigned).is_err());
+        assert!(validate_event_result(b"4294967296".to_vec(), EventResultKind::Unsigned).is_err());
+
+        assert_eq!(
+            validate_event_result(b"\"7f00A1b2\"".to_vec(), EventResultKind::ObjectId)
+                .expect("eight hexadecimal digits should be accepted"),
+            b"\"7f00A1b2\""
+        );
+        assert!(validate_event_result(b"\"7f00a1b\"".to_vec(), EventResultKind::ObjectId).is_err());
+        assert!(
+            validate_event_result(b"\"7f00a1bz\"".to_vec(), EventResultKind::ObjectId).is_err()
+        );
+    }
 
     #[test]
     fn dispatches_server_identity_and_clears_failed_calls() -> Result<(), Box<dyn std::error::Error>>
@@ -1128,8 +1259,8 @@ mod tests {
             max_players: 64,
             udp_port: 5121,
             event: Some(EventPayload {
-                name:     "module.load".to_string(),
-                id:       3002,
+                name:     "item.use".to_string(),
+                id:       -1,
                 script:   "_nwnrs_onload".to_string(),
                 phase:    "before".to_string(),
                 depth:    1,
@@ -1158,11 +1289,11 @@ mod tests {
         let event: serde_json::Value = serde_json::from_slice(&bridge.pop_string()?)?;
         assert_eq!(
             event.pointer("/name").and_then(serde_json::Value::as_str),
-            Some("module.load")
+            Some("item.use")
         );
         assert_eq!(
             event.pointer("/id").and_then(serde_json::Value::as_i64),
-            Some(3002)
+            Some(-1)
         );
         assert_eq!(
             event.pointer("/script").and_then(serde_json::Value::as_str),
@@ -1188,13 +1319,13 @@ mod tests {
         );
 
         bridge.call("NWNRS", "SkipCurrentEvent", &context, &mut host)?;
-        bridge.push_argument(BridgeValue::String(b"{\"accepted\":true}".to_vec()));
+        bridge.push_argument(BridgeValue::String(b"true".to_vec()));
         bridge.call("NWNRS", "SetCurrentEventResult", &context, &mut host)?;
         assert_eq!(
             host.event_commands,
             [
                 EventCommand::Skip,
-                EventCommand::SetResult(b"{\"accepted\":true}".to_vec())
+                EventCommand::SetResult(b"true".to_vec())
             ]
         );
 
@@ -1234,6 +1365,76 @@ mod tests {
                 y: 2.0,
                 z: 3.0,
             }
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn dispatches_event_id_whitelist_commands() -> Result<(), Box<dyn std::error::Error>> {
+        let context = context();
+        let mut bridge = ScriptBridge::default();
+        let mut host = FakeHost::default();
+        let name = b"object.broadcast_safe_projectile.projectile_type";
+
+        for (function, value) in [
+            ("ToggleEventIdWhitelist", 1),
+            ("AddEventIdToWhitelist", 7),
+            ("RemoveEventIdFromWhitelist", 7),
+        ] {
+            bridge.push_argument(BridgeValue::Integer(value));
+            bridge.push_argument(BridgeValue::String(name.to_vec()));
+            bridge.call("NWNRS", function, &context, &mut host)?;
+        }
+
+        let name = String::from_utf8(name.to_vec())?;
+        assert_eq!(
+            host.event_commands,
+            [
+                EventCommand::ToggleIdWhitelist {
+                    name:    name.clone(),
+                    enabled: true,
+                },
+                EventCommand::AddIdToWhitelist {
+                    name: name.clone(),
+                    id:   7,
+                },
+                EventCommand::RemoveIdFromWhitelist {
+                    name,
+                    id: 7
+                },
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn unsupported_event_subscription_emits_a_warning() -> Result<(), Box<dyn std::error::Error>> {
+        let context = context();
+        let mut bridge = ScriptBridge::default();
+        let mut host = FakeHost {
+            event: Some(EventPayload {
+                name:     "module.load".to_string(),
+                id:       3002,
+                script:   "_nwnrs_onload".to_string(),
+                phase:    "before".to_string(),
+                depth:    1,
+                target:   EventObjectId::new(0),
+                controls: EventControls::default(),
+                data:     BTreeMap::new(),
+            }),
+            ..FakeHost::default()
+        };
+
+        bridge.push_argument(BridgeValue::String(b"item_use_before".to_vec()));
+        bridge.call("NWNRS", "SubscribeEvent", &context, &mut host)?;
+
+        assert!(host.event_commands.is_empty());
+        assert_eq!(
+            bridge.take_logs(),
+            vec![ScriptLog {
+                level:   ScriptLogLevel::Warn,
+                message: b"event subscription item_use_before is unsupported by the selected target pack; its handler will not run".to_vec(),
+            }]
         );
         Ok(())
     }
@@ -1373,7 +1574,7 @@ mod tests {
     }
 
     #[test]
-    fn exposes_versions_capabilities_and_stable_errors() -> Result<(), Box<dyn std::error::Error>> {
+    fn exposes_capabilities_and_stable_errors() -> Result<(), Box<dyn std::error::Error>> {
         let mut context = context();
         let mut bridge = ScriptBridge::default();
         let mut host = FakeHost::default();
@@ -1382,7 +1583,7 @@ mod tests {
         assert_eq!(bridge.pop_integer()?, 1);
 
         bridge.push_argument(BridgeValue::String(b"server_state".to_vec()));
-        bridge.call("NWNRS", "GetCapabilityVersion", &context, &mut host)?;
+        bridge.call("NWNRS", "HasCapability", &context, &mut host)?;
         assert_eq!(bridge.pop_integer()?, 1);
 
         let error = bridge
@@ -1418,12 +1619,7 @@ mod tests {
             );
             assert!(header.contains(function.name()));
         }
-        for name in [
-            "NWSCRIPT_BRIDGE",
-            "SERVER_STATE",
-            "ADMINISTRATION",
-            "EVENTS",
-        ] {
+        for name in ["NWSCRIPT_BRIDGE", "SERVER_STATE", "ADMINISTRATION"] {
             assert!(header.contains(&format!("NWNRS_CAPABILITY_{name}")));
         }
         for (name, code) in [
@@ -1589,7 +1785,6 @@ mod tests {
             offset: 1
         };
         BridgeTarget {
-            version:                NWSCRIPT_BRIDGE_CAPABILITY_VERSION,
             function_management:    address(),
             stack_pop_integer:      address(),
             stack_push_integer:     address(),
@@ -1610,7 +1805,6 @@ mod tests {
             offset: 1
         };
         crate::ServerStateTarget {
-            version:                 SERVER_STATE_CAPABILITY_VERSION,
             app_manager:             address(),
             get_server_info:         address(),
             get_player_list:         address(),
@@ -1625,12 +1819,10 @@ mod tests {
             offset: 1
         };
         EventTarget {
-            version:               EVENTS_CAPABILITY_VERSION,
-            virtual_machine:       address(),
-            run_script:            address(),
-            game_object_id_offset: 8,
-            hooks:                 std::collections::BTreeMap::new(),
-            functions:             std::collections::BTreeMap::new(),
+            virtual_machine: address(),
+            run_script:      address(),
+            hooks:           std::collections::BTreeMap::new(),
+            functions:       std::collections::BTreeMap::new(),
         }
     }
 
@@ -1639,7 +1831,6 @@ mod tests {
             offset: 1
         };
         AdministrationTarget {
-            version: ADMINISTRATION_CAPABILITY_VERSION,
             get_session_name: address(),
             set_session_name: address(),
             get_player_password: address(),
@@ -1708,6 +1899,24 @@ mod tests {
                 z_offset:  8,
             },
             classes:      EngineClassLayouts {
+                game_object_id_offset: 8,
+                game_object_type_offset: None,
+                item_repository_parent_offset: None,
+                creature_stats_base_creature_offset: None,
+                creature_stats_experience_offset: None,
+                item_base_item_offset: None,
+                item_possessor_offset: None,
+                message_read_buffer_offset: None,
+                message_read_buffer_size_offset: None,
+                message_read_buffer_position_offset: None,
+                message_read_fragments_size_offset: None,
+                message_read_fragments_position_offset: None,
+                message_current_read_bit_offset: None,
+                message_last_byte_bits_offset: None,
+                player_object_id_offset: None,
+                player_inventory_gui_offset: None,
+                player_other_inventory_gui_offset: None,
+                inventory_gui_selected_panel_offset: None,
                 command_implementer_vm_offset: 0,
                 app_manager_server_offset: 8,
                 server_info_module_offset: 8,

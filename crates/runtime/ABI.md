@@ -38,12 +38,16 @@ The relevant Unified declarations are:
 - `NWNXLib/API/API/CPersistantWorldOptions.hpp`: server-vault directory policy;
 - `NWNXLib/API/API/CJoiningRestrictions.hpp`: minimum and maximum levels;
 - `NWNXLib/API/API/CPlayOptions.hpp`: live administration option fields;
-- `NWNXLib/API/API/CServerExoApp.hpp`: server accessors;
+- `NWNXLib/API/API/CServerExoApp.hpp`: server object, player, and message accessors;
 - `NWNXLib/API/API/CNWSModule.hpp`: module TURD-list location;
 - `NWNXLib/API/API/CNWSPlayerTURD.hpp`: player and character identity fields;
-- `NWNXLib/API/API/CNWSPlayer.hpp`: player ID, vault resref, and community name;
-- `NWNXLib/API/API/CNWSCreature.hpp`: live creature-stat ownership;
-- `NWNXLib/API/API/CNWSCreatureStats.hpp`: localized character identity;
+- `NWNXLib/API/API/CNWSPlayer.hpp`: player ID, inventory GUIs, vault resref, and community name;
+- `NWNXLib/API/API/CNWSPlayerInventoryGUI.hpp`: selected-panel state and inventory rollback;
+- `NWNXLib/API/API/CNWSMessage.hpp`: inventory message parsing and client rollback messages;
+- `NWNXLib/API/API/CItemRepository.hpp`: inventory parentage, item mutation, and ammunition lookup;
+- `NWNXLib/API/API/CNWSItem.hpp`: base-item and possessor validation;
+- `NWNXLib/API/API/CNWSCreature.hpp`: live creature-stat ownership and item operations;
+- `NWNXLib/API/API/CNWSCreatureStats.hpp`: localized character identity, experience, and feat-use state;
 - `NWNXLib/API/API/CNetLayer.hpp`: session identity, passwords, player limit,
   UDP listening port, player lookup, and disconnection;
 - `NWNXLib/API/API/CNetLayerPlayerInfo.hpp`: active player CD-key data;
@@ -55,6 +59,11 @@ or called method in addition to emitting object layouts. A signature change in
 Unified therefore fails the platform check before Rust is compiled against a
 new pack.
 
+The expanded Object, Feat, Inventory, and Item event layouts and symbols are
+currently populated only in the macOS target pack. Linux and Windows keep
+those event identities unsupported until their native probes are run on those
+platforms and their target packs are filled in.
+
 ## Rules
 
 - C++ engine objects remain opaque outside `nwnrs-runtime-sys`.
@@ -63,8 +72,9 @@ new pack.
   header fields may be copied while executing on the VM thread.
 - Non-trivial `CExoString` returns and by-value parameters cross a compiled C++
   thunk so each target compiler applies its own hidden-return convention.
-- Capability blocks are complete and versioned. An absent block means the
-  capability is unavailable.
+- Target blocks are unversioned. Optional capability presence comes directly
+  from block presence, while event support is determined per identity from its
+  exact hook and helper requirements.
 - A target pack with mismatched provenance, layout, platform, API version, or
   binary hash is rejected before hooks are installed.
 - New unsafe operations require a Unified declaration, target-pack data, a
@@ -98,7 +108,7 @@ following before the pack is released:
 
 - the runtime initializes and the module reaches `Server: Module loaded`;
 - `NWNRS_GetApiVersion()` equals `NWNRS_API_VERSION`;
-- every declared capability reports its target-pack version;
+- every declared optional capability reports its target-block presence;
 - the module-load callback reports the correct module, player state, UDP port,
   server name, access restrictions, event ID, script name, phase, and depth
   through `nwnrs::script`;

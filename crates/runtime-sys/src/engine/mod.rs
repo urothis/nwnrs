@@ -13,9 +13,9 @@ use std::{collections::BTreeMap, ffi::c_void, sync::OnceLock};
 
 use address::Resolver;
 use administration::AdministrationEngine;
-use event::EventEngine;
+use event::{EventEngine, EventSubscriptionUpdate};
 pub(crate) use event::{EventFrame, EventSpec};
-use hook::NativeHookSpec;
+use hook::{NativeHookSpec, install_native_hooks};
 use nwnrs_runtime::{
     AdministrationCommand, BannedLists, EventCommand, EventObjectId, EventPayload, EventValue,
     HostCommandResult, RuntimeContext,
@@ -76,7 +76,14 @@ impl Engine {
             .pack
             .events
             .as_ref()
-            .map(|target| EventEngine::resolve(&resolver, target))
+            .map(|target| {
+                EventEngine::resolve(
+                    &resolver,
+                    target,
+                    &layouts.classes,
+                    context.target.pack.server_state.as_ref(),
+                )
+            })
             .transpose()?;
         let administration = context
             .target
@@ -118,6 +125,20 @@ impl Engine {
         self.event.as_ref()?.function_target(name)
     }
 
+    pub(crate) fn event_layout_offset(&self, name: &str) -> Option<usize> {
+        self.event.as_ref()?.layout_offset(name)
+    }
+
+    pub(crate) fn event_server(
+        &self,
+        thread: &EngineThreadToken,
+    ) -> Result<*mut c_void, BridgeInstallError> {
+        self.event
+            .as_ref()
+            .ok_or_else(|| BridgeInstallError::new("target pack does not provide event targets"))?
+            .server(thread)
+    }
+
     pub(crate) fn event_game_object_id(
         &self,
         thread: &EngineThreadToken,
@@ -125,9 +146,7 @@ impl Engine {
     ) -> Result<EventObjectId, BridgeInstallError> {
         self.event
             .as_ref()
-            .ok_or_else(|| {
-                BridgeInstallError::new("target pack does not provide the events capability")
-            })?
+            .ok_or_else(|| BridgeInstallError::new("target pack does not provide event targets"))?
             .game_object_id(thread, object)
     }
 
@@ -140,14 +159,35 @@ impl Engine {
     ) -> Result<(bool, EventFrame), BridgeInstallError> {
         self.event
             .as_ref()
-            .ok_or_else(|| {
-                BridgeInstallError::new("target pack does not provide the events capability")
-            })?
+            .ok_or_else(|| BridgeInstallError::new("target pack does not provide event targets"))?
             .dispatch(thread, spec, target, data)
     }
 
-    pub(crate) fn event_hook_specs(&self) -> Result<Vec<NativeHookSpec>, BridgeInstallError> {
-        events::hook_specs(self)
+    pub(crate) fn event_bootstrap_hook_specs(
+        &self,
+    ) -> Result<Vec<NativeHookSpec>, BridgeInstallError> {
+        events::bootstrap_hook_specs(self)
+    }
+
+    pub(crate) fn event_is_subscribed(&self, name: &str, phase: &str) -> bool {
+        self.event
+            .as_ref()
+            .is_some_and(|event| event.is_subscribed(name, phase))
+    }
+
+    pub(crate) fn begin_event_subscription_update(
+        &self,
+    ) -> Result<EventSubscriptionUpdate<'_>, BridgeInstallError> {
+        self.event
+            .as_ref()
+            .ok_or_else(|| BridgeInstallError::new("target pack does not provide event targets"))?
+            .begin_subscription_update()
+    }
+
+    pub(crate) fn event_id_is_whitelisted(&self, name: &str, id: i32) -> bool {
+        self.event
+            .as_ref()
+            .is_some_and(|event| event.id_is_whitelisted(name, id))
     }
 
     pub(crate) fn process_deferred_administration(
@@ -275,12 +315,44 @@ impl Engine {
         thread: &EngineThreadToken,
         command: EventCommand,
     ) -> Result<(), BridgeInstallError> {
-        self.event
+        let event = self
+            .event
             .as_ref()
-            .ok_or_else(|| {
-                BridgeInstallError::new("target pack does not provide the events capability")
-            })?
-            .control_event(thread, command)
+            .ok_or_else(|| BridgeInstallError::new("target pack does not provide event targets"))?;
+        match command {
+            EventCommand::Subscribe(identity) => {
+                if let Some(target) = event.subscription_target(&identity)? {
+                    let hooks: Vec<_> = events::hook_specs(self)?
+                        .into_iter()
+                        .filter(|hook| hook.target() == target)
+                        .collect();
+                    if hooks.len() != 1 {
+                        return Err(BridgeInstallError::new(format!(
+                            "event subscription {identity} resolved to {} physical hooks",
+                            hooks.len()
+                        )));
+                    }
+                    install_native_hooks(&hooks)?;
+                    event.mark_hook_installed(target)?;
+                }
+                event.record_subscription(&identity)
+            }
+            EventCommand::ToggleIdWhitelist {
+                name,
+                enabled,
+            } => event.toggle_id_whitelist(name, enabled),
+            EventCommand::AddIdToWhitelist {
+                name,
+                id,
+            } => event.add_id_to_whitelist(name, id),
+            EventCommand::RemoveIdFromWhitelist {
+                name,
+                id,
+            } => event.remove_id_from_whitelist(&name, id),
+            command @ (EventCommand::Skip | EventCommand::SetResult(_)) => {
+                event.control_event(thread, command)
+            }
+        }
     }
 
     fn server(&self) -> Result<&ServerEngine, BridgeInstallError> {

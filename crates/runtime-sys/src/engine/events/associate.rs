@@ -34,14 +34,6 @@ pub(super) fn append_hook_specs(
     engine: &Engine,
     hooks: &mut Vec<NativeHookSpec>,
 ) -> Result<(), BridgeInstallError> {
-    if (engine.event_hook_target(POSSESS_FAMILIAR_HOOK).is_some()
-        || engine.event_hook_target(UNPOSSESS_FAMILIAR_HOOK).is_some())
-        && engine.event_function_target(GET_ID_FUNCTION).is_none()
-    {
-        return Err(BridgeInstallError::new(
-            "familiar event hooks require events.functions.associate_get_id",
-        ));
-    }
     if let Some(target) = engine.event_hook_target(ADD_HOOK) {
         hooks.push(NativeHookSpec::new(
             "CNWSCreature::AddAssociate events",
@@ -58,7 +50,10 @@ pub(super) fn append_hook_specs(
             &REMOVE_ORIGINAL,
         ));
     }
-    if let Some(target) = engine.event_hook_target(POSSESS_FAMILIAR_HOOK) {
+    if let Some(target) = engine
+        .event_function_target(GET_ID_FUNCTION)
+        .and_then(|_| engine.event_hook_target(POSSESS_FAMILIAR_HOOK))
+    {
         hooks.push(NativeHookSpec::new(
             "CNWSCreature::PossessFamiliar events",
             target,
@@ -66,7 +61,10 @@ pub(super) fn append_hook_specs(
             &POSSESS_FAMILIAR_ORIGINAL,
         ));
     }
-    if let Some(target) = engine.event_hook_target(UNPOSSESS_FAMILIAR_HOOK) {
+    if let Some(target) = engine
+        .event_function_target(GET_ID_FUNCTION)
+        .and_then(|_| engine.event_hook_target(UNPOSSESS_FAMILIAR_HOOK))
+    {
         hooks.push(NativeHookSpec::new(
             "CNWSCreature::UnpossessFamiliar events",
             target,
@@ -82,14 +80,14 @@ extern "C" fn add_replacement(creature: *mut c_void, associate: u32, associate_t
         creature,
         associate,
         Some(associate_type),
-        EventSpec::read_only("associate.add", "before"),
+        EventSpec::catalog("associate.add", "before"),
     );
     call_original_add(creature, associate, associate_type);
     emit_associate(
         creature,
         associate,
         Some(associate_type),
-        EventSpec::read_only("associate.add", "after"),
+        EventSpec::catalog("associate.add", "after"),
     );
 }
 
@@ -98,14 +96,14 @@ extern "C" fn remove_replacement(creature: *mut c_void, associate: u32) {
         creature,
         associate,
         None,
-        EventSpec::read_only("associate.remove", "before"),
+        EventSpec::catalog("associate.remove", "before"),
     );
     call_original_remove(creature, associate);
     emit_associate(
         creature,
         associate,
         None,
-        EventSpec::read_only("associate.remove", "after"),
+        EventSpec::catalog("associate.remove", "after"),
     );
 }
 
@@ -131,10 +129,10 @@ fn emit_familiar_pair(
     original: &'static AtomicPtr<c_void>,
 ) {
     let familiar = familiar_id(creature);
-    if !emit_familiar(creature, familiar, EventSpec::skippable(name, "before")) {
+    if !emit_familiar(creature, familiar, EventSpec::catalog(name, "before")) {
         call_original_familiar(original, creature);
     }
-    emit_familiar(creature, familiar, EventSpec::read_only(name, "after"));
+    emit_familiar(creature, familiar, EventSpec::catalog(name, "after"));
 }
 
 fn familiar_id(creature: *mut c_void) -> u32 {
@@ -161,7 +159,11 @@ fn familiar_id(creature: *mut c_void) -> u32 {
     }
 }
 
-fn emit_familiar(creature: *mut c_void, familiar: u32, spec: EventSpec) -> bool {
+fn emit_familiar(
+    creature: *mut c_void,
+    familiar: u32,
+    spec: Result<EventSpec, BridgeInstallError>,
+) -> bool {
     let data = BTreeMap::from([(
         "familiar".to_string(),
         EventValue::Object(EventObjectId::new(familiar)),
@@ -173,7 +175,7 @@ fn emit_associate(
     creature: *mut c_void,
     associate: u32,
     associate_type: Option<u16>,
-    spec: EventSpec,
+    spec: Result<EventSpec, BridgeInstallError>,
 ) {
     let mut data = BTreeMap::from([(
         "associate".to_string(),
@@ -185,31 +187,15 @@ fn emit_associate(
             EventValue::Integer(i32::from(associate_type)),
         );
     }
-    if let Some(frame) = dispatch(creature, spec, data)
-        && (frame.skipped() || frame.result().is_some())
-    {
-        write_diagnostic(&format!(
-            "read-only event {} {} accepted an unsupported control mutation",
-            spec.name, spec.phase
-        ));
-    }
+    let _frame = dispatch(creature, spec, data);
 }
 
 fn dispatch(
     creature: *mut c_void,
-    spec: EventSpec,
+    spec: Result<EventSpec, BridgeInstallError>,
     data: BTreeMap<String, EventValue>,
 ) -> Option<super::super::EventFrame> {
-    let frame = event_dispatch::game_object(creature, spec, data);
-    if let Some(frame) = &frame
-        && frame.result().is_some()
-    {
-        write_diagnostic(&format!(
-            "event {} {} accepted an unsupported result mutation",
-            spec.name, spec.phase
-        ));
-    }
-    frame
+    event_dispatch::game_object(creature, spec, data)
 }
 
 fn call_original_add(creature: *mut c_void, associate: u32, associate_type: u16) {

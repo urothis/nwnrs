@@ -19,12 +19,19 @@ struct Vector;
 #include "API/CNetLayerPlayerCDKeyInfo.hpp"
 #include "API/CNetLayerPlayerInfo.hpp"
 #include "API/CJoiningRestrictions.hpp"
+#include "API/CGameObject.hpp"
+#include "API/CItemRepository.hpp"
 #include "API/CPersistantWorldOptions.hpp"
 #include "API/CPlayOptions.hpp"
 #include "API/CVirtualMachine.hpp"
 #include "API/CNWSVirtualMachineCommands.hpp"
 #include "API/CNWSModule.hpp"
+#include "API/CNWSObject.hpp"
+#include "API/CNWSPlaceable.hpp"
+#include "API/CNWSItem.hpp"
+#include "API/CNWSMessage.hpp"
 #include "API/CNWSPlayer.hpp"
+#include "API/CNWSPlayerInventoryGUI.hpp"
 #include "API/CNWSPlayerTURD.hpp"
 #include "API/CNWSCreature.hpp"
 #include "API/CNWSCreatureStats.hpp"
@@ -83,6 +90,21 @@ int main()
         BOOL (CVirtualMachine::*)(const CExoString&)>);
     static_assert(std::is_same_v<decltype(&CVirtualMachine::StackPopVector), BOOL (CVirtualMachine::*)(Vector*)>);
     static_assert(std::is_same_v<decltype(&CVirtualMachine::StackPushVector), BOOL (CVirtualMachine::*)(Vector)>);
+    static_assert(std::is_same_v<decltype(&CNWSCreatureStats::SetExperience), void (CNWSCreatureStats::*)(uint32_t, BOOL)>);
+    static_assert(std::is_same_v<decltype(&CNWSCreatureStats::DecrementFeatRemainingUses), void (CNWSCreatureStats::*)(uint16_t)>);
+    static_assert(std::is_same_v<decltype(&CNWSCreatureStats::HasFeat), BOOL (CNWSCreatureStats::*)(uint16_t)>);
+    static_assert(std::is_same_v<decltype(&CNWSCreatureStats::GetFeatRemainingUses), uint8_t (CNWSCreatureStats::*)(uint16_t)>);
+    static_assert(std::is_same_v<decltype(&CItemRepository::AddItem), BOOL (CItemRepository::*)(CNWSItem**, uint8_t, uint8_t, BOOL, BOOL)>);
+    static_assert(std::is_same_v<decltype(&CItemRepository::RemoveItem), BOOL (CItemRepository::*)(CNWSItem*)>);
+    static_assert(std::is_same_v<decltype(&CItemRepository::FindItemWithBaseItemId), OBJECT_ID (CItemRepository::*)(uint32_t, int32_t)>);
+    static_assert(std::is_same_v<decltype(&CNWSCreature::CanUseItem), BOOL (CNWSCreature::*)(CNWSItem*, BOOL)>);
+    static_assert(std::is_same_v<decltype(&CNWSCreature::CanEquipItem), uint8_t (CNWSCreature::*)(CNWSItem*, uint32_t*, BOOL, BOOL, BOOL, CNWSPlayer*)>);
+    static_assert(std::is_same_v<decltype(&CNWSCreature::RunEquip), BOOL (CNWSCreature::*)(OBJECT_ID, uint32_t, OBJECT_ID)>);
+    static_assert(std::is_same_v<decltype(&CNWSCreature::RunUnequip), BOOL (CNWSCreature::*)(OBJECT_ID, OBJECT_ID, uint8_t, uint8_t, BOOL, OBJECT_ID)>);
+    static_assert(std::is_same_v<decltype(&CNWSCreature::SplitItem), void (CNWSCreature::*)(CNWSItem*, int32_t)>);
+    static_assert(std::is_same_v<decltype(&CNWSCreature::MergeItem), void (CNWSCreature::*)(CNWSItem*, CNWSItem*)>);
+    static_assert(std::is_same_v<decltype(&CNWSCreature::AcquireItem), BOOL (CNWSCreature::*)(CNWSItem**, OBJECT_ID, OBJECT_ID, uint8_t, uint8_t, BOOL, BOOL)>);
+    static_assert(std::is_same_v<decltype(&CNWSMessage::HandlePlayerToServerGuiInventoryMessage), BOOL (CNWSMessage::*)(CNWSPlayer*, uint8_t)>);
     static_assert(std::is_same_v<decltype(&CServerExoApp::GetServerInfo), CServerInfo* (CServerExoApp::*)()>);
     static_assert(std::is_same_v<decltype(&CServerExoApp::GetPlayerList), const PlayerList& (CServerExoApp::*)()>);
     static_assert(std::is_same_v<decltype(&CServerExoApp::GetNetLayer), CNetLayer* (CServerExoApp::*)()>);
@@ -125,6 +147,52 @@ int main()
     static_assert(std::is_same_v<
         decltype(&CExoAliasList::GetAliasPath),
         const CExoString& (CExoAliasList::*)(const CExoString&, int32_t) const>);
+    static_assert(std::is_same_v<decltype(&CNWSModule::LoadModuleFinish), uint32_t (CNWSModule::*)()>);
+    static_assert(std::is_same_v<
+        decltype(&CVirtualMachine::RunScript),
+        BOOL (CVirtualMachine::*)(CExoString*, OBJECT_ID, BOOL, int32_t)>);
+    static_assert(std::is_same_v<decltype(&CNWSCreature::AddAssociate), void (CNWSCreature::*)(OBJECT_ID, uint16_t)>);
+    static_assert(std::is_same_v<decltype(&CNWSCreature::RemoveAssociate), void (CNWSCreature::*)(OBJECT_ID)>);
+    static_assert(std::is_same_v<decltype(&CNWSCreature::PossessFamiliar), void (CNWSCreature::*)()>);
+    static_assert(std::is_same_v<decltype(&CNWSCreature::UnpossessFamiliar), void (CNWSCreature::*)()>);
+    static_assert(std::is_same_v<decltype(&CNWSCreature::GetAssociateId), OBJECT_ID (CNWSCreature::*)(uint16_t, int32_t)>);
+    static_assert(std::is_same_v<decltype(&CNWSObject::AddLockObjectAction), BOOL (CNWSObject::*)(OBJECT_ID)>);
+    static_assert(std::is_same_v<decltype(&CNWSObject::AddUnlockObjectAction), BOOL (CNWSObject::*)(OBJECT_ID, OBJECT_ID, int32_t)>);
+    static_assert(std::is_same_v<decltype(&CNWSObject::AddUseObjectAction), BOOL (CNWSObject::*)(OBJECT_ID)>);
+    static_assert(std::is_same_v<decltype(&CNWSPlaceable::OpenInventory), void (CNWSPlaceable::*)(OBJECT_ID)>);
+    static_assert(std::is_same_v<decltype(&CNWSPlaceable::CloseInventory), void (CNWSPlaceable::*)(OBJECT_ID, BOOL)>);
+    static_assert(std::is_same_v<decltype(&CNWSCreature::AddGold), void (CNWSCreature::*)(int32_t, BOOL)>);
+    static_assert(std::is_same_v<decltype(&CNWSCreature::RemoveGold), void (CNWSCreature::*)(int32_t, BOOL)>);
+    static_assert(std::is_same_v<
+        decltype(&CNWSCreature::UseFeat),
+        BOOL (CNWSCreature::*)(uint16_t, uint16_t, OBJECT_ID, OBJECT_ID, Vector*)>);
+    static_assert(std::is_same_v<
+        decltype(&CNWSCreature::UseSkill),
+        BOOL (CNWSCreature::*)(uint8_t, uint8_t, OBJECT_ID, Vector, OBJECT_ID, OBJECT_ID, int32_t)>);
+    static_assert(std::is_same_v<
+        decltype(&CNWSCreature::UseItem),
+        BOOL (CNWSCreature::*)(OBJECT_ID, uint8_t, uint8_t, OBJECT_ID, Vector, OBJECT_ID, BOOL)>);
+    static_assert(std::is_same_v<decltype(&CNWSItem::OpenInventory), void (CNWSItem::*)(OBJECT_ID)>);
+    static_assert(std::is_same_v<decltype(&CNWSItem::CloseInventory), void (CNWSItem::*)(OBJECT_ID, BOOL)>);
+    static_assert(std::is_same_v<decltype(&CNWSCreature::LearnScroll), BOOL (CNWSCreature::*)(OBJECT_ID)>);
+    static_assert(std::is_same_v<decltype(&CNWSCreature::UseLoreOnItem), BOOL (CNWSCreature::*)(OBJECT_ID)>);
+    static_assert(std::is_same_v<decltype(&CNWSCreature::PayToIdentifyItem), void (CNWSCreature::*)(OBJECT_ID, OBJECT_ID)>);
+    static_assert(std::is_same_v<
+        decltype(&CNWSItem::EventHandler),
+        void (CNWSItem::*)(uint32_t, OBJECT_ID, void*, uint32_t, uint32_t)>);
+    static_assert(std::is_same_v<
+        decltype(&CNWSObject::BroadcastSafeProjectile),
+        void (CNWSObject::*)(OBJECT_ID, OBJECT_ID, Vector, Vector, uint32_t, uint8_t, uint32_t, uint8_t, uint8_t)>);
+    static_assert(std::is_same_v<
+        decltype(&CNWSMessage::HandlePlayerToServerJournalMessage),
+        BOOL (CNWSMessage::*)(CNWSPlayer*, uint8_t)>);
+    static_assert(std::is_same_v<
+        decltype(&CNWSMessage::SendServerToPlayerGuiTimingEvent),
+        BOOL (CNWSMessage::*)(CNWSPlayer*, BOOL, uint8_t, uint32_t)>);
+    static_assert(std::is_same_v<
+        decltype(&CNWSMessage::HandlePlayerToServerInputCancelGuiTimingEvent),
+        BOOL (CNWSMessage::*)(CNWSPlayer*)>);
+    static_assert(std::is_same_v<decltype(&CNWSPlayer::GetGameObject), CNWSObject* (CNWSPlayer::*)()>);
 
     std::cout
         << "schema_version = 1\n"
@@ -156,6 +224,24 @@ int main()
         << "y_offset = " << offsetof(Vector, y) << "\n"
         << "z_offset = " << offsetof(Vector, z) << "\n\n"
         << "[layouts.classes]\n"
+        << "game_object_id_offset = " << offsetof(CGameObject, m_idSelf) << "\n"
+        << "game_object_type_offset = " << offsetof(CGameObject, m_nObjectType) << "\n"
+        << "item_repository_parent_offset = " << offsetof(CItemRepository, m_oidParent) << "\n"
+        << "creature_stats_base_creature_offset = " << offsetof(CNWSCreatureStats, m_pBaseCreature) << "\n"
+        << "creature_stats_experience_offset = " << offsetof(CNWSCreatureStats, m_nExperience) << "\n"
+        << "item_base_item_offset = " << offsetof(CNWSItem, m_nBaseItem) << "\n"
+        << "item_possessor_offset = " << offsetof(CNWSItem, m_oidPossessor) << "\n"
+        << "message_read_buffer_offset = " << offsetof(CNWMessage, m_pnReadBuffer) << "\n"
+        << "message_read_buffer_size_offset = " << offsetof(CNWMessage, m_nReadBufferSize) << "\n"
+        << "message_read_buffer_position_offset = " << offsetof(CNWMessage, m_nReadBufferPtr) << "\n"
+        << "message_read_fragments_size_offset = " << offsetof(CNWMessage, m_nReadFragmentsBufferSize) << "\n"
+        << "message_read_fragments_position_offset = " << offsetof(CNWMessage, m_nReadFragmentsBufferPtr) << "\n"
+        << "message_current_read_bit_offset = " << offsetof(CNWMessage, m_nCurReadBit) << "\n"
+        << "message_last_byte_bits_offset = " << offsetof(CNWMessage, m_nLastByteBits) << "\n"
+        << "player_object_id_offset = " << offsetof(CNWSPlayer, m_oidNWSObject) << "\n"
+        << "player_inventory_gui_offset = " << offsetof(CNWSPlayer, m_pInventoryGUI) << "\n"
+        << "player_other_inventory_gui_offset = " << offsetof(CNWSPlayer, m_pOtherInventoryGUI) << "\n"
+        << "inventory_gui_selected_panel_offset = " << offsetof(CNWSPlayerInventoryGUI, m_nSelectedInventoryPanel) << "\n"
         << "command_implementer_vm_offset = "
         << offsetof(CVirtualMachineCmdImplementer, m_pVM) << "\n"
         << "app_manager_server_offset = " << offsetof(CAppManager, m_pServerExoApp) << "\n"
