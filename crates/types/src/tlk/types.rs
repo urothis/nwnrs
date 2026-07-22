@@ -398,6 +398,31 @@ impl SingleTlk {
         self.set_entry(str_ref, TlkEntry::new(text, String::new(), 0.0));
     }
 
+    /// Returns whether `str_ref` currently has an authored in-memory override.
+    #[must_use]
+    pub fn has_override(&self, str_ref: StrRef) -> bool {
+        self.static_entries.contains_key(&str_ref)
+    }
+
+    /// Removes an authored override for `str_ref`.
+    ///
+    /// For stream-backed tables this reveals the original on-disk entry again;
+    /// callers that need to encode an explicitly empty entry should use
+    /// [`set_entry`](Self::set_entry) with an empty [`TlkEntry`].
+    pub fn remove_override(&mut self, str_ref: StrRef) -> Option<TlkEntry> {
+        if let Some(cache) = self.io_cache.as_mut() {
+            cache.remove(&str_ref);
+        }
+        let removed = self.static_entries.remove(&str_ref);
+        self.static_entries_highest = self
+            .static_entries
+            .keys()
+            .copied()
+            .max()
+            .map_or(-1, |value| i32::try_from(value).unwrap_or(i32::MAX));
+        removed
+    }
+
     fn get_from_io(&self, str_ref: StrRef) -> TlkResult<(usize, TlkEntry)> {
         crate::tlk::io::get_from_io(self, str_ref)
     }

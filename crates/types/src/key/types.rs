@@ -382,6 +382,51 @@ impl KeyTable {
 
         Ok(by_bif)
     }
+
+    /// Returns a writer-ready description of the table's BIF layout.
+    ///
+    /// The result preserves recorded filenames, drive flags, BIF OIDs, and
+    /// resource order. It is intended for editors and archive transformation
+    /// tools that need to modify payloads without discarding container
+    /// metadata.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`KeyError`] if a referenced BIF cannot be loaded or its
+    /// recorded filename is invalid.
+    pub fn archive_layout(&self) -> KeyResult<Vec<KeyBifEntry>> {
+        let mut result = Vec::with_capacity(self.bifs.len());
+        for (bif_index, contents) in self.bif_contents()?.into_iter().enumerate() {
+            let handle = self
+                .bifs
+                .get(bif_index)
+                .ok_or_else(|| KeyError::msg("missing bif handle"))?;
+            let loaded = handle.load()?;
+            let path = std::path::Path::new(&contents.filename);
+            let name = path
+                .file_stem()
+                .and_then(|value| value.to_str())
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| {
+                    KeyError::msg(format!("invalid bif filename {}", contents.filename))
+                })?
+                .to_string();
+            let directory = path
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+                .map(|parent| parent.to_string_lossy().replace('\\', "/"))
+                .unwrap_or_default();
+            result.push(KeyBifEntry {
+                directory,
+                name,
+                recorded_filename: Some(contents.filename),
+                drives: handle.drives,
+                bif_oid: loaded.raw_oid.clone(),
+                entries: contents.resources,
+            });
+        }
+        Ok(result)
+    }
 }
 
 impl BifHandle {

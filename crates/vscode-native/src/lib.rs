@@ -1,5 +1,8 @@
 //! In-process Node-API access to reusable nwnrs editor tooling.
 
+mod resource_editor;
+mod viewer;
+
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},

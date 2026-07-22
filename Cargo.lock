@@ -1237,12 +1237,14 @@ dependencies = [
 name = "nwnrs-vscode-native"
 version = "0.0.1"
 dependencies = [
+ "base64",
  "napi",
  "napi-build",
  "napi-derive",
  "nwnrs",
  "nwnrs-nwpkg",
  "nwnrs-nwscript",
+ "nwnrs-types",
  "serde",
  "serde_json",
  "toml",

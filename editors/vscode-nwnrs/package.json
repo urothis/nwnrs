@@ -2,7 +2,7 @@
   "name": "nwnrs",
   "displayName": "nwnrs",
   "description": "NWScript diagnostics and language support powered by the nwnrs compiler.",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "publisher": "nwnrs",
   "license": "GPL-3.0-only",
   "icon": "images/icon.png",
@@ -35,6 +35,10 @@
     "onCommand:nwnrs.checkWorkspace",
     "onCommand:nwnrs.showStatusMenu",
     "onCommand:nwnrs.showCompilerOutput",
+    "onCustomEditor:nwnrs.resourceEditor",
+    "onView:nwnrs.project",
+    "onView:nwnrs.resources",
+    "onView:nwnrs.tools",
     "workspaceContains:**/*.nss"
   ],
   "contributes": {
@@ -72,6 +76,91 @@
         "language": "nwpkg",
         "scopeName": "source.nwpkg",
         "path": "./syntaxes/nwpkg.tmLanguage.json"
+      }
+    ],
+    "customEditors": [
+      {
+        "viewType": "nwnrs.resourceEditor",
+        "displayName": "nwnrs Resource Editor",
+        "selector": [
+          { "filenamePattern": "*.2da" },
+          { "filenamePattern": "*.tlk" },
+          { "filenamePattern": "*.dds" },
+          { "filenamePattern": "*.tga" },
+          { "filenamePattern": "*.plt" },
+          { "filenamePattern": "*.gff" },
+          { "filenamePattern": "*.utc" },
+          { "filenamePattern": "*.utd" },
+          { "filenamePattern": "*.ute" },
+          { "filenamePattern": "*.uti" },
+          { "filenamePattern": "*.utm" },
+          { "filenamePattern": "*.utp" },
+          { "filenamePattern": "*.uts" },
+          { "filenamePattern": "*.utt" },
+          { "filenamePattern": "*.utw" },
+          { "filenamePattern": "*.git" },
+          { "filenamePattern": "*.are" },
+          { "filenamePattern": "*.gic" },
+          { "filenamePattern": "*.ifo" },
+          { "filenamePattern": "*.fac" },
+          { "filenamePattern": "*.dlg" },
+          { "filenamePattern": "*.itp" },
+          { "filenamePattern": "*.bic" },
+          { "filenamePattern": "*.jrl" },
+          { "filenamePattern": "*.gui" },
+          { "filenamePattern": "*.erf" },
+          { "filenamePattern": "*.hak" },
+          { "filenamePattern": "*.mod" },
+          { "filenamePattern": "*.nwm" },
+          { "filenamePattern": "*.key" },
+          { "filenamePattern": "*.mdl" },
+          { "filenamePattern": "*.wok" },
+          { "filenamePattern": "*.dwk" },
+          { "filenamePattern": "*.pwk" }
+        ],
+        "priority": "default"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "nwnrs",
+          "title": "nwnrs",
+          "icon": "images/activity-bar.svg"
+        }
+      ]
+    },
+    "views": {
+      "nwnrs": [
+        {
+          "id": "nwnrs.project",
+          "name": "Project",
+          "visibility": "visible"
+        },
+        {
+          "id": "nwnrs.resources",
+          "name": "Resources",
+          "visibility": "collapsed"
+        },
+        {
+          "id": "nwnrs.tools",
+          "name": "Tools",
+          "visibility": "collapsed"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "nwnrs.project",
+        "contents": "nwnrs project tools will appear here."
+      },
+      {
+        "view": "nwnrs.resources",
+        "contents": "nwnrs resource tools will appear here."
+      },
+      {
+        "view": "nwnrs.tools",
+        "contents": "Additional nwnrs tools will appear here."
       }
     ],
     "commands": [
@@ -154,6 +243,11 @@
           "default": "",
           "description": "Optional Neverwinter Nights user directory. Empty uses nwnrs auto-discovery."
         },
+        "nwnrs.overrideDirectory": {
+          "type": "string",
+          "default": "",
+          "description": "Destination used by Save as Override for protected game resources. Empty uses the configured userPath/override directory or prompts for a destination."
+        },
         "nwnrs.language": {
           "type": "string",
           "default": "english",
@@ -213,8 +307,8 @@
   },
   "scripts": {
     "build-native": "node scripts/build-native.js",
-    "vscode:prepublish": "npm run build-native && npm run check",
-    "check": "node --check src/compiler.js && node --check src/compiler-worker.js && node --check src/language-worker-client.js && node --check src/extension.js",
+    "vscode:prepublish": "npm run build-native && npm run check && npm test",
+    "check": "node --check src/compiler.js && node --check src/compiler-worker.js && node --check src/worker-client.js && node --check src/language-worker-client.js && node --check src/resource-editor-worker.js && node --check src/resource-editor-worker-client.js && node --check src/viewer-worker.js && node --check src/viewer-worker-client.js && node --check src/resource-editor-view.js && node --check src/resource-custom-editor.js && node --check media/resource-editor.js && node --check src/extension.js",
     "test": "node --test test/*.test.js"
   }
 }

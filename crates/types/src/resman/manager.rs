@@ -211,6 +211,9 @@ impl ResMan {
     /// This means the most recently added container has the highest precedence.
     #[instrument(level = "debug", skip_all)]
     pub fn add(&mut self, container: Arc<dyn ResContainer>) {
+        if let Some(cache) = &mut self.cache {
+            cache.clear();
+        }
         self.containers.insert(0, container);
     }
 
@@ -229,6 +232,9 @@ impl ResMan {
             .position(|candidate| Arc::ptr_eq(candidate, container))
         {
             self.containers.remove(index);
+            if let Some(cache) = &mut self.cache {
+                cache.clear();
+            }
             true
         } else {
             false
@@ -238,7 +244,14 @@ impl ResMan {
     /// Removes the container at `index`.
     #[instrument(level = "debug", fields(index))]
     pub fn remove_at(&mut self, index: usize) -> Option<Arc<dyn ResContainer>> {
-        (index < self.containers.len()).then(|| self.containers.remove(index))
+        if index >= self.containers.len() {
+            return None;
+        }
+        let removed = self.containers.remove(index);
+        if let Some(cache) = &mut self.cache {
+            cache.clear();
+        }
+        Some(removed)
     }
 
     /// Returns the manager-level cache when caching is enabled.
@@ -363,5 +376,42 @@ mod tests {
             panic!("resolved rr: {error}");
         });
         assert!(manager.get_resolved(&resolved).is_some());
+    }
+
+    #[test]
+    fn adding_higher_precedence_container_invalidates_cached_resolution() {
+        let rr = ResRef::new("shared", ResType(2027)).unwrap_or_else(|error| {
+            panic!("shared rr: {error}");
+        });
+        let older = TestContainer {
+            label:   "older",
+            entries: HashMap::from([(rr.clone(), make_res("shared", 2027, b"older", "older"))]),
+        };
+        let newer = TestContainer {
+            label:   "newer",
+            entries: HashMap::from([(rr.clone(), make_res("shared", 2027, b"newer", "newer"))]),
+        };
+        let mut manager = ResMan::new(1);
+        manager.add(Arc::new(older));
+        let cached = manager
+            .demand(&rr, CachePolicy::Use)
+            .unwrap_or_else(|error| panic!("cache older resource: {error}"));
+        assert_eq!(
+            cached
+                .read_all(CachePolicy::Use)
+                .unwrap_or_else(|error| panic!("read older resource: {error}")),
+            b"older"
+        );
+
+        manager.add(Arc::new(newer));
+        let overridden = manager
+            .demand(&rr, CachePolicy::Use)
+            .unwrap_or_else(|error| panic!("resolve newer resource: {error}"));
+        assert_eq!(
+            overridden
+                .read_all(CachePolicy::Use)
+                .unwrap_or_else(|error| panic!("read newer resource: {error}")),
+            b"newer"
+        );
     }
 }

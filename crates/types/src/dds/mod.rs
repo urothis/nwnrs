@@ -280,12 +280,12 @@ impl DdsTexture {
 
         let mip_rgba = generate_mip_chain_rgba8(width, height, rgba)?;
         let mut mip_levels = Vec::with_capacity(mip_rgba.len());
-        for (level, (mip_width, mip_height, mip_bytes)) in mip_rgba.into_iter().enumerate() {
+        for (level, (mip_width, mip_height, mut mip_bytes)) in mip_rgba.into_iter().enumerate() {
             mip_levels.push(DdsMipLevel {
                 level,
                 width: mip_width,
                 height: mip_height,
-                data: encode_mip_to_blocks(mip_width, mip_height, format, &mip_bytes)?,
+                data: encode_mip_to_blocks(mip_width, mip_height, format, &mut mip_bytes)?,
             });
         }
 
@@ -625,7 +625,7 @@ fn encode_mip_to_blocks(
     width: u32,
     height: u32,
     format: DdsFormat,
-    rgba: &[u8],
+    rgba: &mut [u8],
 ) -> DdsResult<Vec<u8>> {
     let expected_len = rgba_len(width, height)?;
     if rgba.len() != expected_len {
@@ -634,6 +634,12 @@ fn encode_mip_to_blocks(
             rgba.len()
         )));
     }
+
+    // NWN's compact DDS payload stores its first row at the texture's bottom,
+    // matching the unchanged UVs consumed by the game's OpenGL renderer.  The
+    // public codec contract is top-left-origin RGBA8, so convert at the format
+    // boundary before handing pixels to the block compressor.
+    flip_rgba8_rows_in_place(rgba, width, height)?;
 
     let blocks_len = packed_level_size(width, height, format)?;
     let mut packed = vec![0_u8; blocks_len];
@@ -843,7 +849,51 @@ fn decode_mip_rgba8(mip: &DdsMipLevel, format: DdsFormat) -> DdsResult<Vec<u8>> 
         }
     }
 
+    // Packed NWN DDS rows are bottom-first.  Normalize them to the documented
+    // top-left-origin RGBA8 contract shared by all decoded texture formats.
+    flip_rgba8_rows_in_place(&mut rgba, mip.width, mip.height)?;
+
     Ok(rgba)
+}
+
+fn flip_rgba8_rows_in_place(rgba: &mut [u8], width: u32, height: u32) -> DdsResult<()> {
+    let expected_len = rgba_len(width, height)?;
+    if rgba.len() != expected_len {
+        return Err(DdsError::msg(format!(
+            "DDS RGBA row flip expected {expected_len} bytes, got {}",
+            rgba.len()
+        )));
+    }
+
+    let row_bytes = usize::try_from(width)
+        .ok()
+        .and_then(|value| value.checked_mul(4))
+        .ok_or_else(|| DdsError::msg("DDS RGBA row byte count overflow"))?;
+    let height = usize::try_from(height)
+        .map_err(|error| DdsError::msg(format!("DDS height out of range: {error}")))?;
+
+    for top_y in 0..height / 2 {
+        let bottom_y = height - top_y - 1;
+        let top_start = top_y
+            .checked_mul(row_bytes)
+            .ok_or_else(|| DdsError::msg("DDS top row offset overflow"))?;
+        let bottom_start = bottom_y
+            .checked_mul(row_bytes)
+            .ok_or_else(|| DdsError::msg("DDS bottom row offset overflow"))?;
+        let top_end = top_start
+            .checked_add(row_bytes)
+            .ok_or_else(|| DdsError::msg("DDS top row end overflow"))?;
+        let (before_bottom, bottom_and_after) = rgba.split_at_mut(bottom_start);
+        let top = before_bottom
+            .get_mut(top_start..top_end)
+            .ok_or_else(|| DdsError::msg("DDS top row extends past pixel data"))?;
+        let bottom = bottom_and_after
+            .get_mut(..row_bytes)
+            .ok_or_else(|| DdsError::msg("DDS bottom row extends past pixel data"))?;
+        top.swap_with_slice(bottom);
+    }
+
+    Ok(())
 }
 
 fn decode_dxt1_block_into(
@@ -1175,6 +1225,27 @@ mod tests {
     }
 
     #[test]
+    fn decodes_nwn_dxt1_bottom_first_storage_to_top_left_rows() {
+        let mip = DdsMipLevel {
+            level:  0,
+            width:  4,
+            height: 4,
+            data:   vec![
+                0x00, 0xf8, 0xe0, 0x07, // red, green
+                0x00, 0x00, // native bottom two rows: red
+                0x55, 0x55, // native top two rows: green
+            ],
+        };
+
+        let rgba = mip.decode_rgba8(DdsFormat::Dxt1).unwrap_or_else(|error| {
+            panic!("decode vertically asymmetric dxt1 mip: {error}");
+        });
+
+        assert_eq!(rgba.get(0..4), Some([0, 255, 0, 255].as_slice()));
+        assert_eq!(rgba.get(60..64), Some([255, 0, 0, 255].as_slice()));
+    }
+
+    #[test]
     fn decodes_dxt5_block_to_rgba8() {
         let mip = DdsMipLevel {
             level:  0,
@@ -1277,6 +1348,30 @@ mod tests {
         assert_eq!(dds.height, 4);
         assert_eq!(dds.mip_count(), 3);
         assert_eq!(decoded.get(0..4), Some([255, 0, 0, 255].as_slice()));
+    }
+
+    #[test]
+    fn encode_rgba8_preserves_top_left_row_orientation() {
+        let mut rgba = Vec::with_capacity(4 * 8 * 4);
+        for y in 0..8 {
+            let color = if y < 4 {
+                [255, 0, 0, 255]
+            } else {
+                [0, 255, 0, 255]
+            };
+            for _x in 0..4 {
+                rgba.extend_from_slice(&color);
+            }
+        }
+
+        let dds = DdsTexture::encode_rgba8(4, 8, DdsFormat::Dxt1, &rgba)
+            .unwrap_or_else(|error| panic!("encode asymmetric dxt1 rgba8: {error}"));
+        let decoded = dds
+            .decode_rgba8()
+            .unwrap_or_else(|error| panic!("decode asymmetric dxt1: {error}"));
+
+        assert_eq!(decoded.get(0..4), Some([255, 0, 0, 255].as_slice()));
+        assert_eq!(decoded.get(124..128), Some([0, 255, 0, 255].as_slice()));
     }
 
     #[test]

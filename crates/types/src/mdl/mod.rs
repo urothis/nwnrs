@@ -13,6 +13,7 @@ pub mod export;
 mod layout;
 /// Raw model payload and format-neutral I/O.
 pub mod raw;
+mod resource;
 /// Asset resolution, appearance, and composed-model workflows.
 pub mod runtime;
 /// Renderer-neutral scenes, animation sampling, and pose baking.
@@ -25,6 +26,7 @@ pub use binary::*;
 pub use compiler::*;
 pub use export::*;
 pub use raw::*;
+pub use resource::*;
 pub use runtime::*;
 pub use scene::*;
 pub use semantic::*;
@@ -37,41 +39,46 @@ pub mod prelude {
         BinaryAnimation, BinaryArrayDefinition, BinaryController, BinaryDangly, BinaryEmitter,
         BinaryEmitterFlags, BinaryEvent, BinaryFace, BinaryHeader, BinaryLight, BinaryMesh,
         BinaryModel, BinaryNode, BinaryNodeContent, BinaryReference, BinarySkin,
-        BinaryToAsciiOptions, BinaryUvSet, MODEL_RES_TYPE, Model, ModelClassification,
-        ModelDiagnostic, ModelDiagnosticKind, ModelEncoding, ModelError, ModelResult, NodeKind,
-        NwnAnimMeshTrack, NwnAnimation, NwnAppearanceOverrides, NwnAppearanceSlot,
+        BinaryToAsciiOptions, BinaryUvSet, CREATURE_BLUEPRINT_RES_TYPE, DOOR_BLUEPRINT_RES_TYPE,
+        DOOR_WALKMESH_RES_TYPE, ITEM_BLUEPRINT_RES_TYPE, MODEL_RES_TYPE, Model,
+        ModelClassification, ModelDiagnostic, ModelDiagnosticKind, ModelEncoding, ModelError,
+        ModelResourceKind, ModelResult, NodeKind, NwnAnimMeshTrack, NwnAnimation,
+        NwnAppearanceOverrides, NwnAppearanceSlot, NwnBlueprintKind, NwnBlueprintVisual,
         NwnComposedScene, NwnCoordinateSystem, NwnDangly, NwnEffectTrack, NwnEmitter,
         NwnEmitterController, NwnEmitterControllerTrack, NwnEmitterKey, NwnEmitterProperty,
         NwnFace, NwnLight, NwnMaterial, NwnMaterialTextureRole, NwnMaterialTextureSource,
         NwnMaterialTrack, NwnMesh, NwnNodeAnimationTrack, NwnPrimitive, NwnPropertyValue,
         NwnReference, NwnScene, NwnSceneAttachment, NwnSceneNode, NwnSkinWeight, NwnTextureRef,
         NwnTextureSlot, NwnTransform, NwnTransformTrack, NwnUvSet, NwnVec2Sample, NwnVec3Sample,
-        ParsedModel, ResolvedMaterialSlot, ResolvedMaterialTextures, ResolvedMtrMaterial,
-        ResolvedSceneMaterial, ResolvedTexture, ScalarKey, SceneTextureResolution,
-        SemanticAnimation, SemanticAnimationNode, SemanticController, SemanticControllerKey,
-        SemanticDangly, SemanticEmitter, SemanticEmitterController, SemanticEmitterKey,
-        SemanticEmitterProperty, SemanticFace, SemanticHeader, SemanticLight, SemanticMaterial,
-        SemanticMesh, SemanticModel, SemanticNode, SemanticPropertyValue, SemanticReference,
-        SemanticSkinWeight, SemanticTextureBinding, SemanticUvLayer, TextureResolverOptions,
-        TextureResourceKind, UnknownBinaryBlock, UnresolvedTexture, Vec3Key, Vec4Key,
+        PLACEABLE_BLUEPRINT_RES_TYPE, PLACEABLE_WALKMESH_RES_TYPE, ParsedModel,
+        ResolvedMaterialSlot, ResolvedMaterialTextures, ResolvedMtrMaterial, ResolvedSceneMaterial,
+        ResolvedTexture, ScalarKey, SceneTextureResolution, SemanticAnimation,
+        SemanticAnimationNode, SemanticController, SemanticControllerKey, SemanticDangly,
+        SemanticEmitter, SemanticEmitterController, SemanticEmitterKey, SemanticEmitterProperty,
+        SemanticFace, SemanticHeader, SemanticLight, SemanticMaterial, SemanticMesh, SemanticModel,
+        SemanticNode, SemanticPropertyValue, SemanticReference, SemanticSkinWeight,
+        SemanticTextureBinding, SemanticUvLayer, TextureResolverOptions, TextureResourceKind,
+        UnknownBinaryBlock, UnresolvedTexture, Vec3Key, Vec4Key, WALKMESH_RES_TYPE,
         apply_appearance_overrides, bake_composed_scene_pose, bake_scene_pose,
         collect_appearance_slots, compile_ascii_model, compile_semantic_model,
-        compile_semantic_model_bytes, compose_player_creature_from_resman,
+        compile_semantic_model_bytes, compose_blueprint_visual_from_resman,
+        compose_blueprint_visual_from_root, compose_player_creature_from_resman,
         compose_player_creature_from_utc, composed_scene_animation_names, default_scene_animation,
         detect_model_encoding, find_scene_animation, inherit_supermodel_animations,
         load_composed_scene_from_resman, lower_ascii_model, lower_binary_model,
         lower_binary_model_to_ascii, lower_binary_model_to_ascii_with_options,
         lower_semantic_model_to_scene, parse_ascii_model, parse_binary_model_bytes,
-        parse_model_bytes, parse_scene_model, parse_scene_model_auto, parse_semantic_model,
-        parse_semantic_model_auto, read_ascii_model, read_binary_model, read_model,
-        read_parsed_model, read_scene_model, read_scene_model_auto, read_semantic_model,
-        read_semantic_model_auto, resolve_material_textures, resolve_scene_material,
-        resolve_scene_materials, resolve_scene_texture_ref, resolve_scene_texture_ref_with_policy,
-        resolve_scene_textures, resolve_texture_ref, restore_compiled_model,
-        sample_composed_scene_animation, sample_composed_scene_default_animation,
-        sample_scene_animation, sample_scene_default_animation, scene_animation_names,
-        scene_texture_resolution_names, validate_semantic_model, write_ascii_model,
-        write_composed_scene_obj, write_model, write_original_binary_model, write_parsed_model,
-        write_scene_model, write_scene_obj, write_semantic_model,
+        parse_model_bytes, parse_scene_model, parse_scene_model_auto, parse_scene_resource_auto,
+        parse_semantic_model, parse_semantic_model_auto, read_ascii_model, read_binary_model,
+        read_model, read_parsed_model, read_scene_model, read_scene_model_auto,
+        read_semantic_model, read_semantic_model_auto, resolve_material_textures,
+        resolve_scene_material, resolve_scene_materials, resolve_scene_texture_ref,
+        resolve_scene_texture_ref_with_policy, resolve_scene_textures, resolve_texture_ref,
+        restore_compiled_model, sample_composed_scene_animation,
+        sample_composed_scene_default_animation, sample_scene_animation,
+        sample_scene_default_animation, scene_animation_names, scene_texture_resolution_names,
+        validate_semantic_model, write_ascii_model, write_composed_scene_obj, write_model,
+        write_original_binary_model, write_parsed_model, write_scene_model, write_scene_obj,
+        write_semantic_model,
     };
 }

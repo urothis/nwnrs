@@ -249,6 +249,15 @@ impl GffField {
     pub fn value(&self) -> &GffValue {
         &self.value
     }
+
+    /// Returns mutable access to the stored value.
+    ///
+    /// Mutating a parsed field retains its on-disk provenance, allowing the
+    /// writer to preserve every unaffected field while encoding the changed
+    /// value canonically.
+    pub fn value_mut(&mut self) -> &mut GffValue {
+        &mut self.value
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -353,6 +362,13 @@ impl GffStruct {
     pub fn get_field(&self, label: &str) -> Option<&GffField> {
         self.fields
             .iter()
+            .find_map(|(name, field)| (name == label).then_some(field))
+    }
+
+    /// Returns mutable access to a field by label.
+    pub fn get_field_mut(&mut self, label: &str) -> Option<&mut GffField> {
+        self.fields
+            .iter_mut()
             .find_map(|(name, field)| (name == label).then_some(field))
     }
 

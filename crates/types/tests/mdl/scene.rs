@@ -11,6 +11,40 @@ use nwnrs_types::{
 use super::support::{demand_resource, require_game_resource, skip_if_game_resources_unavailable};
 
 #[test]
+fn texture_matching_model_and_root_node_name_is_preserved() -> Result<(), Box<dyn Error>> {
+    let scene = parse_scene_model(
+        "newmodel c_cat\nsetsupermodel c_cat null\nbeginmodelgeom c_cat\nnode dummy c_cat\n  \
+         parent null\nendnode\nnode trimesh body\n  parent c_cat\n  bitmap c_cat\n  verts 3\n    \
+         0 0 0\n    1 0 0\n    0 1 0\n  faces 1\n    0 1 2 0 0 1 2 0\n  tverts 3\n    0 0 0\n    \
+         1 0 0\n    0 1 0\nendnode\nendmodelgeom c_cat\ndonemodel c_cat\n",
+    )?;
+    let texture = scene
+        .materials
+        .first()
+        .and_then(|material| material.textures.first())
+        .unwrap_or_else(|| panic!("c_cat bitmap must not be discarded as a node name"));
+    assert_eq!(texture.name, "c_cat");
+    assert!(matches!(texture.slot, NwnTextureSlot::Bitmap));
+    Ok(())
+}
+
+#[test]
+fn shipped_c_cat_scene_preserves_its_diffuse_texture() -> Result<(), Box<dyn Error>> {
+    let res = match require_game_resource(demand_resource("c_cat", MODEL_RES_TYPE)) {
+        Ok(res) => res,
+        Err(error) => return skip_if_game_resources_unavailable(error),
+    };
+    let scene = NwnScene::from_auto_res(&res, CachePolicy::Use)?;
+    assert!(scene.materials.iter().all(|material| {
+        material.textures.iter().any(|texture| {
+            matches!(texture.slot, NwnTextureSlot::Bitmap)
+                && texture.name.eq_ignore_ascii_case("c_cat")
+        })
+    }));
+    Ok(())
+}
+
+#[test]
 fn fixture_lowers_to_scene_mesh_and_material() -> Result<(), Box<dyn Error>> {
     let scene = match shipped_ascii_scene_fixture() {
         Ok(scene) => scene,

@@ -1715,11 +1715,6 @@ pub fn lower_semantic_model_to_scene(model: &SemanticModel) -> ModelResult<NwnSc
         .enumerate()
         .map(|(index, node)| (node.name.to_ascii_lowercase(), index))
         .collect::<BTreeMap<_, _>>();
-    let node_names = node_name_to_index
-        .keys()
-        .cloned()
-        .collect::<std::collections::BTreeSet<_>>();
-
     let mut nodes = Vec::with_capacity(model.nodes.len());
     let mut meshes = Vec::new();
     let mut materials = Vec::new();
@@ -1765,12 +1760,7 @@ pub fn lower_semantic_model_to_scene(model: &SemanticModel) -> ModelResult<NwnSc
 
         let mesh_index = node.mesh.as_ref().map(|mesh| {
             let material_index = materials.len();
-            materials.push(lower_material(
-                &node.material,
-                node_index,
-                &node.kind,
-                &node_names,
-            ));
+            materials.push(lower_material(&node.material, node_index, &node.kind));
             let lowered_mesh = lower_mesh(
                 mesh,
                 node.sample_period,
@@ -1849,17 +1839,13 @@ fn lower_material(
     material: &SemanticMaterial,
     source_node: usize,
     node_kind: &NodeKind,
-    node_names: &std::collections::BTreeSet<String>,
 ) -> NwnMaterial {
     let mut textures = Vec::new();
     let helper_bitmap = if matches!(node_kind, NodeKind::Aabb) {
-        material
-            .bitmap
-            .as_deref()
-            .and_then(|bitmap| normalize_texture_name(bitmap, node_names))
+        material.bitmap.as_deref().and_then(normalize_texture_name)
     } else {
         if let Some(bitmap) = &material.bitmap
-            && let Some(name) = normalize_texture_name(bitmap, node_names)
+            && let Some(name) = normalize_texture_name(bitmap)
         {
             textures.push(NwnTextureRef {
                 slot: NwnTextureSlot::Bitmap,
@@ -1869,7 +1855,7 @@ fn lower_material(
         None
     };
     for texture in &material.textures {
-        if let Some(texture) = lower_texture_ref(texture, node_names) {
+        if let Some(texture) = lower_texture_ref(texture) {
             textures.push(texture);
         }
     }
@@ -1897,27 +1883,17 @@ fn lower_material(
     }
 }
 
-fn lower_texture_ref(
-    binding: &SemanticTextureBinding,
-    node_names: &std::collections::BTreeSet<String>,
-) -> Option<NwnTextureRef> {
-    let name = normalize_texture_name(&binding.name, node_names)?;
+fn lower_texture_ref(binding: &SemanticTextureBinding) -> Option<NwnTextureRef> {
+    let name = normalize_texture_name(&binding.name)?;
     Some(NwnTextureRef {
         slot: NwnTextureSlot::Texture(binding.index),
         name,
     })
 }
 
-fn normalize_texture_name(
-    name: &str,
-    node_names: &std::collections::BTreeSet<String>,
-) -> Option<String> {
+fn normalize_texture_name(name: &str) -> Option<String> {
     let trimmed = name.trim();
     if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("null") {
-        return None;
-    }
-
-    if node_names.contains(&trimmed.to_ascii_lowercase()) {
         return None;
     }
 

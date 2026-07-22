@@ -2,7 +2,7 @@ use std::{collections::BTreeSet, io::Cursor};
 
 use nwnrs_types::{
     gff::prelude::{GffRoot, GffStruct, GffValue, read_gff_root},
-    resman::prelude::{CachePolicy, Res, ResMan, ResRef, ResolvedResRef},
+    resman::{CachePolicy, Res, ResMan, ResRef, ResType, ResolvedResRef},
     twoda::prelude::{TwoDa, as_2da},
 };
 
@@ -23,6 +23,15 @@ const INVENTORY_SLOT_MASK_RIGHT_RING: i32 = 256;
 const INVENTORY_SLOT_MASK_NECK: i32 = 512;
 const INVENTORY_SLOT_MASK_BELT: i32 = 1024;
 
+/// NWN resource type id for item blueprints (`UTI`).
+pub const ITEM_BLUEPRINT_RES_TYPE: ResType = ResType(2025);
+/// NWN resource type id for creature blueprints (`UTC`).
+pub const CREATURE_BLUEPRINT_RES_TYPE: ResType = ResType(2027);
+/// NWN resource type id for door blueprints (`UTD`).
+pub const DOOR_BLUEPRINT_RES_TYPE: ResType = ResType(2042);
+/// NWN resource type id for placeable blueprints (`UTP`).
+pub const PLACEABLE_BLUEPRINT_RES_TYPE: ResType = ResType(2044);
+
 /// A composed NWN scene tree with explicit attachment points and suppressed
 /// base-geometry nodes.
 #[derive(Debug, Clone, PartialEq)]
@@ -35,6 +44,9 @@ pub struct NwnComposedScene {
     pub hidden_geometry_nodes: Vec<String>,
     /// Child scenes attached to specific node names.
     pub attachments:           Vec<NwnSceneAttachment>,
+    /// Appearance selections used for this specific model tree, including PLT
+    /// palette rows needed by faithful texture decoding.
+    pub appearance_overrides:  NwnAppearanceOverrides,
 }
 
 /// One child model attached to a scene node.
@@ -46,6 +58,69 @@ pub struct NwnSceneAttachment {
     pub model_name:       String,
     /// Loaded child scene tree.
     pub scene:            Box<NwnComposedScene>,
+}
+
+/// Blueprint categories that have a renderable visual representation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NwnBlueprintKind {
+    /// Creature blueprint (`UTC`).
+    Creature,
+    /// Door blueprint (`UTD`).
+    Door,
+    /// Placeable blueprint (`UTP`).
+    Placeable,
+    /// Item blueprint (`UTI`).
+    Item,
+}
+
+impl NwnBlueprintKind {
+    /// Resolves a blueprint category from its NWN resource type.
+    #[must_use]
+    pub const fn from_res_type(res_type: ResType) -> Option<Self> {
+        match res_type {
+            CREATURE_BLUEPRINT_RES_TYPE => Some(Self::Creature),
+            DOOR_BLUEPRINT_RES_TYPE => Some(Self::Door),
+            PLACEABLE_BLUEPRINT_RES_TYPE => Some(Self::Placeable),
+            ITEM_BLUEPRINT_RES_TYPE => Some(Self::Item),
+            _ => None,
+        }
+    }
+
+    /// Returns the NWN resource type for this blueprint category.
+    #[must_use]
+    pub const fn res_type(self) -> ResType {
+        match self {
+            Self::Creature => CREATURE_BLUEPRINT_RES_TYPE,
+            Self::Door => DOOR_BLUEPRINT_RES_TYPE,
+            Self::Placeable => PLACEABLE_BLUEPRINT_RES_TYPE,
+            Self::Item => ITEM_BLUEPRINT_RES_TYPE,
+        }
+    }
+
+    /// Returns the canonical lowercase resource extension.
+    #[must_use]
+    pub const fn extension(self) -> &'static str {
+        match self {
+            Self::Creature => "utc",
+            Self::Door => "utd",
+            Self::Placeable => "utp",
+            Self::Item => "uti",
+        }
+    }
+}
+
+/// Fully resolved visual models for one NWN blueprint.
+///
+/// A vector is used because composite item blueprints can author independent
+/// bottom, middle, and top models rather than one attachment hierarchy.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NwnBlueprintVisual {
+    /// Blueprint category.
+    pub kind:          NwnBlueprintKind,
+    /// Resource name when loaded through a resource manager.
+    pub resource_name: Option<String>,
+    /// All model trees required to display the blueprint.
+    pub models:        Vec<NwnComposedScene>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -107,8 +182,9 @@ struct EquippedArmorVisual {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct BaseItemInfo {
-    model_type: Option<u32>,
-    item_class: Option<String>,
+    model_type:    Option<u32>,
+    item_class:    Option<String>,
+    default_model: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -124,6 +200,21 @@ pub fn load_composed_scene_from_resman(
     model_name: &str,
     overrides: &NwnAppearanceOverrides,
 ) -> ModelResult<NwnComposedScene> {
+    load_composed_scene_with_stack(resman, model_name, overrides, &mut BTreeSet::new())
+}
+
+fn load_composed_scene_with_stack(
+    resman: &mut ResMan,
+    model_name: &str,
+    overrides: &NwnAppearanceOverrides,
+    loading: &mut BTreeSet<String>,
+) -> ModelResult<NwnComposedScene> {
+    let normalized_name = model_name.trim().to_ascii_lowercase();
+    if !loading.insert(normalized_name.clone()) {
+        return Err(ModelError::msg(format!(
+            "reference-model cycle detected while loading {model_name}.mdl"
+        )));
+    }
     let scene = load_scene_from_resman_with_overrides(resman, model_name, overrides)?;
     let mut attachments = Vec::new();
     for node in &scene.nodes {
@@ -137,19 +228,22 @@ pub fn load_composed_scene_from_resman(
         attachments.push(NwnSceneAttachment {
             target_node_name: node.name.clone(),
             model_name:       reference_model.to_string(),
-            scene:            Box::new(load_composed_scene_from_resman(
+            scene:            Box::new(load_composed_scene_with_stack(
                 resman,
                 reference_model,
                 overrides,
+                loading,
             )?),
         });
     }
 
+    loading.remove(&normalized_name);
     Ok(NwnComposedScene {
         model_name: model_name.to_string(),
         scene,
         hidden_geometry_nodes: Vec::new(),
         attachments,
+        appearance_overrides: overrides.clone(),
     })
 }
 
@@ -198,18 +292,23 @@ pub fn compose_player_creature_from_utc(
     let creature_overrides = creature_paperdoll_appearance_overrides(root);
     let equipped = resolve_equipped_paperdoll(resman, root, &family)?;
 
+    assemble_player_creature(resman, root, &family, &creature_overrides, &equipped)
+}
+
+fn assemble_player_creature(
+    resman: &mut ResMan,
+    root: &GffRoot,
+    family: &PlayerCreatureFamily,
+    creature_overrides: &NwnAppearanceOverrides,
+    equipped: &EquippedPaperdoll,
+) -> ModelResult<NwnComposedScene> {
     let mut model = load_composed_scene_from_resman(
         resman,
         family.base_model_name.as_str(),
-        &creature_overrides,
+        creature_overrides,
     )?;
-    let attachments = build_player_creature_part_attachments(
-        resman,
-        root,
-        &family,
-        &creature_overrides,
-        &equipped,
-    )?;
+    let attachments =
+        build_player_creature_part_attachments(resman, root, family, creature_overrides, equipped)?;
     model.hidden_geometry_nodes = hidden_geometry_nodes_for_attachments(&attachments);
     for attachment in attachments {
         model.attachments.push(NwnSceneAttachment {
@@ -239,6 +338,253 @@ pub fn compose_player_creature_from_resman(
     let root = load_gff_root_from_resman(resman, blueprint_name, "utc")?
         .ok_or_else(|| ModelError::msg(format!("utc not found in ResMan: {blueprint_name}.utc")))?;
     compose_player_creature_from_utc(resman, &root)
+}
+
+/// Resolves every model needed to preview a parsed creature, door, placeable,
+/// or item blueprint.
+///
+/// Resolution follows the same layered [`ResMan`] view used by the game. UTC
+/// player appearances use the complete paperdoll composer; non-player UTCs,
+/// UTDs, and UTPs use their corresponding 2DA appearance row; UTI composite
+/// parts are returned as independent model trees.
+///
+/// # Errors
+///
+/// Returns [`ModelError`] when the blueprint type is wrong, its appearance row
+/// is invalid, or any required model cannot be loaded.
+pub fn compose_blueprint_visual_from_root(
+    resman: &mut ResMan,
+    kind: NwnBlueprintKind,
+    root: &GffRoot,
+) -> ModelResult<NwnBlueprintVisual> {
+    let expected_type = match kind {
+        NwnBlueprintKind::Creature => "UTC",
+        NwnBlueprintKind::Door => "UTD",
+        NwnBlueprintKind::Placeable => "UTP",
+        NwnBlueprintKind::Item => "UTI",
+    };
+    if !root.file_type.trim().eq_ignore_ascii_case(expected_type) {
+        return Err(ModelError::msg(format!(
+            "expected {expected_type} blueprint, got {:?}",
+            root.file_type
+        )));
+    }
+
+    let models = match kind {
+        NwnBlueprintKind::Creature => vec![compose_creature_visual_from_utc(resman, root)?],
+        NwnBlueprintKind::Door => {
+            let appearance = gff_u32_any(&root.root, &["Appearance"])
+                .ok_or_else(|| ModelError::msg("UTD is missing Appearance"))?;
+            vec![load_appearance_model(
+                resman,
+                "doortypes",
+                appearance as usize,
+                "Model",
+                &NwnAppearanceOverrides::default(),
+            )?]
+        }
+        NwnBlueprintKind::Placeable => {
+            let appearance = gff_u32_any(&root.root, &["Appearance"])
+                .ok_or_else(|| ModelError::msg("UTP is missing Appearance"))?;
+            vec![load_appearance_model(
+                resman,
+                "placeables",
+                appearance as usize,
+                "ModelName",
+                &item_plt_appearance_overrides(&root.root),
+            )?]
+        }
+        NwnBlueprintKind::Item => compose_item_visual_from_uti(resman, root)?,
+    };
+
+    Ok(NwnBlueprintVisual {
+        kind,
+        resource_name: None,
+        models,
+    })
+}
+
+/// Loads and resolves every model needed to preview one blueprint resource.
+///
+/// # Errors
+///
+/// Returns [`ModelError`] when the blueprint is missing, malformed, or has an
+/// unresolved visual dependency.
+pub fn compose_blueprint_visual_from_resman(
+    resman: &mut ResMan,
+    kind: NwnBlueprintKind,
+    blueprint_name: &str,
+) -> ModelResult<NwnBlueprintVisual> {
+    let root =
+        load_gff_root_from_resman(resman, blueprint_name, kind.extension())?.ok_or_else(|| {
+            ModelError::msg(format!(
+                "blueprint not found in ResMan: {blueprint_name}.{}",
+                kind.extension()
+            ))
+        })?;
+    let mut visual = compose_blueprint_visual_from_root(resman, kind, &root)?;
+    visual.resource_name = Some(blueprint_name.to_string());
+    Ok(visual)
+}
+
+fn compose_creature_visual_from_utc(
+    resman: &mut ResMan,
+    root: &GffRoot,
+) -> ModelResult<NwnComposedScene> {
+    let appearance = creature_appearance_row_from_blueprint(resman, root)?
+        .ok_or_else(|| ModelError::msg("UTC has no resolvable appearance"))?;
+    let table = load_twoda(resman, "appearance")?;
+    let row = twoda_row_index_for_appearance(&table, appearance)
+        .ok_or_else(|| ModelError::msg(format!("appearance.2da is missing row {appearance}")))?;
+    let race_token = table
+        .cell(row, "RACE")
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty() && value != "****")
+        .ok_or_else(|| ModelError::msg(format!("appearance row {appearance} has no RACE")))?;
+    let model_type = table
+        .cell(row, "MODELTYPE")
+        .map(|value| value.trim().to_ascii_uppercase())
+        .unwrap_or_default();
+
+    if model_type == "P" || is_player_appearance_token(&race_token) {
+        compose_player_creature_from_utc(resman, root)
+    } else {
+        load_composed_scene_from_resman(
+            resman,
+            &race_token,
+            &creature_paperdoll_appearance_overrides(root),
+        )
+    }
+}
+
+fn load_appearance_model(
+    resman: &mut ResMan,
+    table_name: &str,
+    appearance: usize,
+    column: &str,
+    overrides: &NwnAppearanceOverrides,
+) -> ModelResult<NwnComposedScene> {
+    let table = load_twoda(resman, table_name)?;
+    let row = twoda_row_index_for_appearance(&table, appearance)
+        .ok_or_else(|| ModelError::msg(format!("{table_name}.2da is missing row {appearance}")))?;
+    let model_name = table
+        .cell(row, column)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty() && value != "****")
+        .ok_or_else(|| {
+            ModelError::msg(format!(
+                "{table_name}.2da row {appearance} has no {column} model"
+            ))
+        })?;
+    load_composed_scene_from_resman(resman, &model_name, overrides)
+}
+
+fn compose_item_visual_from_uti(
+    resman: &mut ResMan,
+    root: &GffRoot,
+) -> ModelResult<Vec<NwnComposedScene>> {
+    let base_item = gff_u32_any(&root.root, &["BaseItem"])
+        .ok_or_else(|| ModelError::msg("UTI is missing BaseItem"))?;
+    let info = base_item_info(resman, base_item as usize)?
+        .ok_or_else(|| ModelError::msg(format!("baseitems.2da is missing row {base_item}")))?;
+    if info.model_type == Some(3) {
+        return Ok(vec![compose_armor_item_preview(resman, root)?]);
+    }
+    let item_class = info.item_class.as_deref().ok_or_else(|| {
+        ModelError::msg(format!("baseitems.2da row {base_item} has no ItemClass"))
+    })?;
+    let default_model = info.default_model.filter(|value| *value > 0);
+    let parts = match info.model_type {
+        Some(2) => [
+            ("b", item_model_part(root, "ModelPart1").or(default_model)),
+            ("m", item_model_part(root, "ModelPart2").or(default_model)),
+            ("t", item_model_part(root, "ModelPart3").or(default_model)),
+        ]
+        .into_iter()
+        .filter_map(|(part, number)| {
+            number.map(|number| format!("{item_class}_{part}_{number:03}"))
+        })
+        .collect::<Vec<_>>(),
+        Some(1) => item_model_part(root, "ModelPart1")
+            .or(default_model)
+            .map(|number| vec![format!("helm_{number:03}")])
+            .unwrap_or_default(),
+        _ => item_model_part(root, "ModelPart1")
+            .or(default_model)
+            .map(|number| vec![format!("{item_class}_{number:03}")])
+            .unwrap_or_default(),
+    };
+    if parts.is_empty() {
+        return Err(ModelError::msg(format!(
+            "UTI base item {base_item} has no renderable model parts"
+        )));
+    }
+    let overrides = item_plt_appearance_overrides(&root.root);
+    parts
+        .into_iter()
+        .map(|model_name| load_composed_scene_from_resman(resman, &model_name, &overrides))
+        .collect()
+}
+
+fn compose_armor_item_preview(
+    resman: &mut ResMan,
+    armor_root: &GffRoot,
+) -> ModelResult<NwnComposedScene> {
+    let appearance_table = load_twoda(resman, "appearance")?;
+    let phenotype_table = load_twoda(resman, "phenotype")?;
+    let phenotype_digit = default_player_phenotype_digit(&phenotype_table, 0);
+    let mut candidates = (0..appearance_table.len())
+        .filter_map(|row| {
+            let model_type_value = appearance_table.cell(row, "MODELTYPE")?;
+            let race_value = appearance_table.cell(row, "RACE")?;
+            let model_type = model_type_value.trim();
+            let race = race_value.trim();
+            if !model_type.eq_ignore_ascii_case("P") && !is_player_appearance_token(race) {
+                return None;
+            }
+            let race_letter = race.chars().next()?.to_ascii_lowercase();
+            let model_name = player_creature_model_prefix('m', race_letter, phenotype_digit);
+            let appearance = appearance_table
+                .row_label(row)
+                .and_then(|label| label.trim().parse::<u32>().ok())
+                .unwrap_or_else(|| u32::try_from(row).unwrap_or_default());
+            Some((race_letter != 'h', appearance, model_name))
+        })
+        .collect::<Vec<_>>();
+    candidates.sort_by_key(|candidate| candidate.0);
+    let (appearance, model_name) = candidates
+        .into_iter()
+        .find_map(|(_fallback, appearance, model_name)| {
+            first_existing_model_candidate(resman, std::slice::from_ref(&model_name))
+                .map(|_| (appearance, model_name))
+        })
+        .ok_or_else(|| {
+            ModelError::msg("no installed player creature model is available for armor preview")
+        })?;
+
+    let mut preview = GffRoot::new("UTC ");
+    preview
+        .put_value("Appearance_Type", GffValue::Dword(appearance))
+        .map_err(|error| ModelError::msg(format!("build armor preview appearance: {error}")))?;
+    preview
+        .put_value("Gender", GffValue::Byte(0))
+        .map_err(|error| ModelError::msg(format!("build armor preview gender: {error}")))?;
+    preview
+        .put_value("Phenotype", GffValue::Dword(0))
+        .map_err(|error| ModelError::msg(format!("build armor preview phenotype: {error}")))?;
+    let family = PlayerCreatureFamily {
+        base_model_name: model_name.clone(),
+        model_prefix:    model_name,
+    };
+    let armor = equipped_armor_visual_from_item(resman, armor_root)?.ok_or_else(|| {
+        ModelError::msg("armor UTI did not contain any representable armor visual data")
+    })?;
+    let equipped = EquippedPaperdoll {
+        armor: Some(armor),
+        ..Default::default()
+    };
+    let overrides = creature_paperdoll_appearance_overrides(&preview);
+    assemble_player_creature(resman, &preview, &family, &overrides, &equipped)
 }
 
 fn load_scene_from_resman_with_overrides(
@@ -921,13 +1267,16 @@ fn base_item_info(resman: &mut ResMan, base_item: usize) -> ModelResult<Option<B
         return Ok(None);
     };
     Ok(Some(BaseItemInfo {
-        model_type: table
+        model_type:    table
             .cell(row, "ModelType")
             .and_then(|value| value.trim().parse::<u32>().ok()),
-        item_class: table
+        item_class:    table
             .cell(row, "ItemClass")
             .map(|value| value.trim().to_ascii_lowercase())
             .filter(|value| !value.is_empty() && value != "****"),
+        default_model: table
+            .cell(row, "DefaultModel")
+            .and_then(|value| value.trim().parse::<u32>().ok()),
     }))
 }
 
@@ -1490,5 +1839,36 @@ donemodel child
         )
         .unwrap_or_else(|error| panic!("load composed child: {error}"));
         assert!(composed.scene.animation("walk").is_some());
+    }
+
+    #[test]
+    fn resman_loader_rejects_reference_model_cycles() {
+        let mut manager = ResMan::new(1);
+        for (label, filename, model_name, reference) in [
+            ("first", "first.mdl", "first", "second"),
+            ("second", "second.mdl", "second", "first"),
+        ] {
+            let contents = format!(
+                "newmodel {model_name}\nsetsupermodel {model_name} null\nbeginmodelgeom \
+                 {model_name}\nnode dummy {model_name}\n  parent null\nendnode\nnode reference \
+                 child\n  parent {model_name}\n  refmodel {reference}\nendnode\nendmodelgeom \
+                 {model_name}\ndonemodel {model_name}\n"
+            );
+            let resref = ResolvedResRef::from_filename(filename)
+                .unwrap_or_else(|error| panic!("resolve {filename}: {error}"));
+            let container = read_resmemfile(label, resref.into(), contents.into_bytes())
+                .unwrap_or_else(|error| panic!("build {filename}: {error}"));
+            manager.add(Arc::new(container) as Arc<dyn ResContainer>);
+        }
+
+        let result = load_composed_scene_from_resman(
+            &mut manager,
+            "first",
+            &NwnAppearanceOverrides::default(),
+        );
+        let error = result
+            .err()
+            .unwrap_or_else(|| panic!("reference cycle must fail"));
+        assert!(error.to_string().contains("reference-model cycle"));
     }
 }

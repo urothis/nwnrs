@@ -7,6 +7,8 @@ const path = require('node:path');
 const test = require('node:test');
 const { Worker } = require('node:worker_threads');
 const { LanguageWorkerClient } = require('../src/language-worker-client');
+const { ResourceEditorWorkerClient } = require('../src/resource-editor-worker-client');
+const { ViewerWorkerClient } = require('../src/viewer-worker-client');
 
 const bindingPath = path.resolve(
   __dirname,
@@ -14,6 +16,239 @@ const bindingPath = path.resolve(
   'native',
   'nwnrs-vscode.darwin-arm64.node',
 );
+
+async function resourceRequest(service, method, request) {
+  return JSON.parse(await service.execute(method, JSON.stringify(request)));
+}
+
+function decodeViewerPacket(packet) {
+  assert.equal(packet.subarray(0, 8).toString('binary'), 'NWNRS3D\0');
+  const manifestLength = packet.readUInt32LE(8);
+  const binaryStart = 12 + manifestLength;
+  assert.ok(binaryStart <= packet.length, 'viewer packet manifest is truncated');
+  return {
+    manifest: JSON.parse(packet.subarray(12, binaryStart).toString('utf8')),
+    binaryStart,
+  };
+}
+
+function assertViewerPacketTypedViewsAreConstructible(packet, manifest, binaryStart) {
+  const visit = (value) => {
+    if (!value || typeof value !== 'object') return;
+    if (typeof value.byteOffset === 'number' && typeof value.byteLength === 'number'
+        && typeof value.component === 'string') {
+      const absoluteOffset = packet.byteOffset + binaryStart + value.byteOffset;
+      assert.ok(binaryStart + value.byteOffset + value.byteLength <= packet.length);
+      if (value.component === 'u8') {
+        assert.doesNotThrow(() => new Uint8Array(packet.buffer, absoluteOffset, value.byteLength));
+      } else {
+        assert.equal(absoluteOffset % 4, 0, `${value.component} view starts at ${absoluteOffset}`);
+        assert.equal(value.byteLength % 4, 0, `${value.component} view has partial scalar bytes`);
+        const View = value.component === 'f32' ? Float32Array
+          : value.component === 'u32' ? Uint32Array : Int32Array;
+        assert.doesNotThrow(() => new View(packet.buffer, absoluteOffset, value.byteLength / 4));
+      }
+      return;
+    }
+    for (const child of Array.isArray(value) ? value : Object.values(value)) visit(child);
+  };
+  visit(manifest);
+}
+
+test('persistent resource worker opens the complete valid GFF corpus', {
+  skip: !fs.existsSync(bindingPath) && 'run npm run build-native first',
+}, async (context) => {
+  const repositoryRoot = path.resolve(__dirname, '..', '..', '..');
+  const corpusDirectory = path.join(
+    repositoryRoot,
+    'sources',
+    'neverwinter.nim',
+    'tests',
+    'fuzzing',
+    'gff-testing-corpus',
+  );
+  if (!fs.existsSync(corpusDirectory)) {
+    context.skip('GFF compatibility corpus is not available');
+    return;
+  }
+  const fixtures = fs.readdirSync(corpusDirectory)
+    .map((name) => path.join(corpusDirectory, name))
+    .filter((fixture) => fs.statSync(fixture).isFile())
+    .sort();
+  assert.ok(fixtures.length > 0, 'GFF compatibility corpus must not be empty');
+
+  const client = new ResourceEditorWorkerClient(
+    path.resolve(__dirname, '..', 'src', 'resource-editor-worker.js'),
+    bindingPath,
+    { appendLine() {} },
+  );
+  try {
+    for (const [index, fixture] of fixtures.entries()) {
+      const documentId = `gff-corpus-${index}`;
+      const snapshot = await client.request('openDocument', {
+        documentId,
+        path: fixture,
+      });
+      assert.equal(snapshot.kind, 'gff', path.basename(fixture));
+      assert.equal(snapshot.data.fileType.length, 4, path.basename(fixture));
+      assert.ok(Array.isArray(snapshot.data.root.fields), path.basename(fixture));
+      await client.request('closeDocument', { documentId });
+    }
+  } finally {
+    client.dispose();
+  }
+});
+
+test('native resource editor exposes an editable 2DA custom-document lifecycle', {
+  skip: !fs.existsSync(bindingPath) && 'run npm run build-native first',
+}, async () => {
+  const binding = require(bindingPath);
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nwnrs-resource-2da-'));
+  const sourcePath = path.join(root, 'demo.2da');
+  const backupPath = path.join(root, 'demo.backup');
+  fs.writeFileSync(sourcePath, '2DA V2.0\n\nName Value\n0 alpha 1\n1 beta ****\n');
+  const service = new binding.ResourceEditorService();
+  const documentId = '2da-document';
+  try {
+    const opened = await resourceRequest(service, 'openDocument', {
+      documentId,
+      path: sourcePath,
+    });
+    assert.equal(opened.kind, '2da');
+    assert.deepEqual(opened.data.columns, ['Name', 'Value']);
+    assert.equal(opened.data.rows[1].cells[1], null);
+
+    const changed = await resourceRequest(service, 'applyEdit', {
+      documentId,
+      edit: { action: 'set2daCell', row: 1, column: 'Value', value: '7' },
+    });
+    assert.equal(changed.snapshot.data.rows[1].cells[1], '7');
+    assert.deepEqual(changed.inverse, {
+      action: 'set2daCell', row: 1, column: 'Value', value: null,
+    });
+
+    await resourceRequest(service, 'backupDocument', { documentId, path: backupPath });
+    assert.ok(fs.statSync(backupPath).size > 0);
+    await resourceRequest(service, 'saveDocument', { documentId });
+    assert.match(fs.readFileSync(sourcePath, 'utf8'), /beta\s+7/u);
+
+    await resourceRequest(service, 'applyEdit', {
+      documentId,
+      edit: changed.inverse,
+    });
+    const reverted = await resourceRequest(service, 'snapshot', { documentId });
+    assert.equal(reverted.data.rows[1].cells[1], null);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('native resource editor detects external changes before overwriting a file', {
+  skip: !fs.existsSync(bindingPath) && 'run npm run build-native first',
+}, async () => {
+  const binding = require(bindingPath);
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nwnrs-resource-conflict-'));
+  const sourcePath = path.join(root, 'conflict.2da');
+  fs.writeFileSync(sourcePath, '2DA V2.0\n\nValue\n0 original\n');
+  const service = new binding.ResourceEditorService();
+  try {
+    await resourceRequest(service, 'openDocument', { documentId: 'conflict', path: sourcePath });
+    await resourceRequest(service, 'applyEdit', {
+      documentId: 'conflict',
+      edit: { action: 'set2daCell', row: 0, column: 'Value', value: 'editor' },
+    });
+    fs.writeFileSync(sourcePath, '2DA V2.0\n\nValue\n0 external\n');
+    await assert.rejects(
+      resourceRequest(service, 'saveDocument', { documentId: 'conflict' }),
+      /EXTERNAL_CHANGE/u,
+    );
+    assert.match(fs.readFileSync(sourcePath, 'utf8'), /external/u);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('native resource editor decodes, replaces, and exports TGA pixels', {
+  skip: !fs.existsSync(bindingPath) && 'run npm run build-native first',
+}, async () => {
+  const binding = require(bindingPath);
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nwnrs-resource-tga-'));
+  const sourcePath = path.join(root, 'pixel.tga');
+  const header = Buffer.alloc(18);
+  header[2] = 2;
+  header.writeUInt16LE(1, 12);
+  header.writeUInt16LE(1, 14);
+  header[16] = 32;
+  header[17] = 0x28;
+  fs.writeFileSync(sourcePath, Buffer.concat([header, Buffer.from([0, 0, 255, 255])]));
+  const service = new binding.ResourceEditorService();
+  try {
+    const opened = await resourceRequest(service, 'openDocument', {
+      documentId: 'texture', path: sourcePath,
+    });
+    assert.equal(opened.kind, 'tga');
+    assert.deepEqual(Buffer.from(opened.data.rgba, 'base64'), Buffer.from([255, 0, 0, 255]));
+    const changed = await resourceRequest(service, 'applyEdit', {
+      documentId: 'texture',
+      edit: {
+        action: 'replaceTexture', width: 1, height: 1,
+        rgba: Buffer.from([0, 255, 0, 255]).toString('base64'),
+      },
+    });
+    assert.equal(changed.inverse.action, 'restoreTextureBytes');
+    assert.deepEqual(
+      Buffer.from(changed.inverse.contents, 'base64'),
+      Buffer.concat([header, Buffer.from([0, 0, 255, 255])]),
+    );
+    const exported = await resourceRequest(service, 'exportDocument', { documentId: 'texture' });
+    const bytes = Buffer.from(exported.contents, 'base64');
+    assert.deepEqual(bytes.subarray(18, 22), Buffer.from([0, 255, 0, 255]));
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('native TLK edits page lazily and undo back to the original bytes', {
+  skip: !fs.existsSync(bindingPath) && 'run npm run build-native first',
+}, async () => {
+  const binding = require(bindingPath);
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nwnrs-resource-tlk-'));
+  const sourcePath = path.join(root, 'dialog.tlk');
+  const header = Buffer.alloc(20);
+  header.write('TLK ', 0, 'ascii');
+  header.write('V3.0', 4, 'ascii');
+  header.writeInt32LE(0, 8);
+  header.writeInt32LE(1, 12);
+  header.writeInt32LE(60, 16);
+  const descriptor = Buffer.alloc(40);
+  descriptor.writeInt32LE(1, 0);
+  descriptor.writeInt32LE(0, 28);
+  descriptor.writeInt32LE(5, 32);
+  const original = Buffer.concat([header, descriptor, Buffer.from('Hello')]);
+  fs.writeFileSync(sourcePath, original);
+  const service = new binding.ResourceEditorService();
+  try {
+    const opened = await resourceRequest(service, 'openDocument', {
+      documentId: 'tlk', path: sourcePath,
+    });
+    assert.equal(opened.data.entries[0].text, 'Hello');
+    const changed = await resourceRequest(service, 'applyEdit', {
+      documentId: 'tlk',
+      edit: {
+        action: 'setTlkEntry', strRef: 0,
+        entry: { ...opened.data.entries[0], text: 'Changed' },
+      },
+    });
+    assert.equal(changed.inverse.action, 'clearTlkOverride');
+    await resourceRequest(service, 'applyEdit', {
+      documentId: 'tlk', edit: changed.inverse,
+    });
+    const exported = await resourceRequest(service, 'exportDocument', { documentId: 'tlk' });
+    assert.deepEqual(Buffer.from(exported.contents, 'base64'), original);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test('native binding reports a real NSS source diagnostic', {
   skip: !fs.existsSync(bindingPath) && 'run npm run build-native first',
@@ -534,6 +769,272 @@ test('language worker restarts cleanly and accepts requests afterward', {
     await client.restart();
     const after = await client.request('deduplicateProjectRoots', { roots: [] });
     assert.deepEqual(after, []);
+  } finally {
+    client.dispose();
+  }
+});
+
+test('persistent viewer uses authoritative resources and assembles the repository module', {
+  skip: !fs.existsSync(bindingPath) && 'run npm run build-native first',
+}, async (context) => {
+  const binding = require(bindingPath);
+  const repositoryRoot = path.resolve(__dirname, '..', '..', '..');
+  const modulePath = path.join(repositoryRoot, 'nwnrs.mod');
+  if (!fs.existsSync(modulePath)) {
+    context.skip('repository module fixture is unavailable');
+    return;
+  }
+  const service = new binding.ViewerService();
+  const request = {
+    session_key: `${repositoryRoot}/nwpkg.toml`,
+    path: path.join(repositoryRoot, 'module.ifo'),
+    project_root: repositoryRoot,
+    area: null,
+    root: null,
+    user: null,
+    language: 'english',
+    load_ovr: false,
+    archives: [modulePath],
+  };
+  let packet;
+  try {
+    packet = Buffer.from(await service.loadScene(JSON.stringify(request)));
+  } catch (error) {
+    if (/installation|root|language directory/iu.test(String(error))) {
+      context.skip('Neverwinter Nights installation was not discovered');
+      return;
+    }
+    throw error;
+  }
+  assert.equal(packet.subarray(0, 8).toString('binary'), 'NWNRS3D\0');
+  const manifestLength = packet.readUInt32LE(8);
+  const manifest = JSON.parse(packet.subarray(12, 12 + manifestLength).toString('utf8'));
+  assert.equal(manifest.module.entryArea, 'start');
+  assert.ok(manifest.instances.some((entry) => entry.kind === 'tile'));
+  assert.ok(manifest.instances.some((entry) => entry.kind === 'collision'));
+  assert.equal(
+    manifest.diagnostics.some((entry) => entry.code === 'area.tile.walkmeshMissing'),
+    false,
+  );
+  assert.deepEqual(manifest.diagnostics.filter((entry) => entry.severity === 'error'), []);
+
+  const modelPacket = Buffer.from(await service.loadScene(JSON.stringify({
+    ...request,
+    path: path.join(repositoryRoot, 'c_cat.mdl'),
+  })));
+  const modelManifestLength = modelPacket.readUInt32LE(8);
+  const modelManifest = JSON.parse(
+    modelPacket.subarray(12, 12 + modelManifestLength).toString('utf8'),
+  );
+  assert.equal(modelManifest.source, 'model');
+  assert.equal(modelManifest.environment, 'studio');
+  assert.ok(modelManifest.models.length > 0);
+  assert.ok(modelManifest.textures.some((entry) => /^c_cat\.(?:dds|tga|plt)$/u.test(entry.resource)));
+  assert.ok(modelManifest.models[0].resolvedMaterials.every(
+    (material) => material.textures.some(
+      (texture) => texture.role === 'diffuse' && texture.texture != null,
+    ),
+  ));
+  assert.ok(modelManifest.instances.some((entry) => entry.kind === 'model'));
+  assert.ok(modelManifest.assetKey);
+  assert.ok(modelManifest.models[0].animations.every(
+    (animation) => animation.tracksLoaded === false && animation.nodeTracks.length === 0,
+  ));
+  const animationPacket = Buffer.from(await service.loadAnimation(JSON.stringify({
+    sessionKey: request.session_key,
+    assetKey: modelManifest.assetKey,
+    modelIndex: 0,
+    animationIndex: 0,
+  })));
+  const animationManifestLength = animationPacket.readUInt32LE(8);
+  assert.equal((12 + animationManifestLength) % 4, 0);
+  const animationManifest = JSON.parse(
+    animationPacket.subarray(12, 12 + animationManifestLength).toString('utf8'),
+  );
+  assert.equal(animationManifest.schema, 'nwnrs.scene.animation');
+  assert.equal(animationManifest.assetKey, modelManifest.assetKey);
+  assert.equal(animationManifest.animation.tracksLoaded, true);
+  assert.ok(animationManifest.animation.nodeTracks.length > 0);
+  const texturePacket = Buffer.from(await service.loadTexture(JSON.stringify({
+    sessionKey: request.session_key,
+    assetKey: modelManifest.assetKey,
+    textureIndex: 0,
+    preferCompressed: true,
+  })));
+  const textureManifestLength = texturePacket.readUInt32LE(8);
+  assert.equal((12 + textureManifestLength) % 4, 0);
+  const textureManifest = JSON.parse(
+    texturePacket.subarray(12, 12 + textureManifestLength).toString('utf8'),
+  );
+  assert.equal(textureManifest.schema, 'nwnrs.scene.texture');
+  assert.equal(textureManifest.assetKey, modelManifest.assetKey);
+  assert.equal(textureManifest.textureIndex, 0);
+  if (textureManifest.compression) {
+    assert.match(textureManifest.compression, /^dxt[15]$/u);
+    assert.ok(textureManifest.mipLevels.length > 0);
+    assert.ok(textureManifest.mipLevels.every((mip) => mip.data.byteLength > 0));
+    assert.equal(textureManifest.rgba8, null);
+  } else {
+    assert.ok(textureManifest.rgba8.byteLength > 0);
+  }
+  const rgbaPacket = Buffer.from(await service.loadTexture(JSON.stringify({
+    sessionKey: request.session_key,
+    assetKey: modelManifest.assetKey,
+    textureIndex: 0,
+    preferCompressed: false,
+  })));
+  const rgbaManifestLength = rgbaPacket.readUInt32LE(8);
+  const rgbaManifest = JSON.parse(
+    rgbaPacket.subarray(12, 12 + rgbaManifestLength).toString('utf8'),
+  );
+  assert.equal(rgbaManifest.compression, null);
+  assert.ok(rgbaManifest.rgba8.byteLength > 0);
+
+  const walkmeshResource = manifest.dependencies.nodes.find(
+    (entry) => entry.state === 'resolved' && entry.resource.endsWith('.wok'),
+  )?.resource;
+  assert.ok(walkmeshResource, 'assembled module did not expose a resolved tile walkmesh');
+  const walkmeshPacket = Buffer.from(await service.loadScene(JSON.stringify({
+    ...request,
+    path: path.join(repositoryRoot, walkmeshResource),
+  })));
+  const walkmeshManifestLength = walkmeshPacket.readUInt32LE(8);
+  const walkmeshManifest = JSON.parse(
+    walkmeshPacket.subarray(12, 12 + walkmeshManifestLength).toString('utf8'),
+  );
+  assert.equal(walkmeshManifest.source, 'walkmesh');
+  assert.ok(walkmeshManifest.instances.some((entry) => entry.kind === 'collision'));
+
+  const resolved = JSON.parse(await service.resolveResource(JSON.stringify({
+    ...request,
+    path: path.join(repositoryRoot, 'skyboxes.2da'),
+    archives: [],
+  })));
+  assert.equal(resolved.resource, 'skyboxes.2da');
+  assert.equal(resolved.file_path, null);
+  assert.match(resolved.origin, /KeyTable/u);
+
+  const overrideRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nwnrs-viewer-origin-'));
+  const overridePath = path.join(overrideRoot, 'c_rat.mdl');
+  fs.writeFileSync(overridePath, 'newmodel c_rat\nsetsupermodel c_rat null\nbeginmodelgeom c_rat\nnode dummy c_rat\n parent null\nendnode\nendmodelgeom c_rat\ndonemodel c_rat\n');
+  try {
+    const override = JSON.parse(await service.resolveResource(JSON.stringify({
+      ...request,
+      session_key: overrideRoot,
+      path: overridePath,
+      project_root: overrideRoot,
+      archives: [],
+    })));
+    assert.equal(path.resolve(override.file_path), path.resolve(overridePath));
+  } finally {
+    fs.rmSync(overrideRoot, { recursive: true, force: true });
+  }
+});
+
+test('every c_bodak animation packet exposes aligned typed tracks', {
+  skip: !fs.existsSync(bindingPath) && 'run npm run build-native first',
+}, async (context) => {
+  const binding = require(bindingPath);
+  const repositoryRoot = path.resolve(__dirname, '..', '..', '..');
+  const service = new binding.ViewerService();
+  const request = {
+    session_key: `${repositoryRoot}/nwpkg.toml`,
+    path: path.join(repositoryRoot, 'c_bodak.mdl'),
+    project_root: repositoryRoot,
+    root: null,
+    user: null,
+    language: 'english',
+    load_ovr: false,
+    archives: [],
+  };
+  let scenePacket;
+  try {
+    scenePacket = Buffer.from(await service.loadScene(JSON.stringify(request)));
+  } catch (error) {
+    if (/installation|root|language directory/iu.test(String(error))) {
+      context.skip('Neverwinter Nights installation was not discovered');
+      return;
+    }
+    throw error;
+  }
+  const scene = decodeViewerPacket(scenePacket);
+  const animations = scene.manifest.models[0].animations;
+  const walkIndex = animations.findIndex(
+    (animation) => animation.name.toLowerCase() === 'walk',
+  );
+  assert.notEqual(walkIndex, -1, 'c_bodak does not expose its walk animation');
+
+  for (const [animationIndex, catalogAnimation] of animations.entries()) {
+    const packet = Buffer.from(await service.loadAnimation(JSON.stringify({
+      sessionKey: request.session_key,
+      assetKey: scene.manifest.assetKey,
+      modelIndex: 0,
+      animationIndex,
+    })));
+    const animation = decodeViewerPacket(packet);
+    assert.equal(
+      animation.binaryStart % 4,
+      0,
+      `c_bodak animation ${animationIndex} (${catalogAnimation.name}) has an unaligned payload`,
+    );
+    assert.equal(animation.manifest.animation.name, catalogAnimation.name);
+    assertViewerPacketTypedViewsAreConstructible(
+      packet,
+      animation.manifest,
+      animation.binaryStart,
+    );
+  }
+  assert.equal(animations[walkIndex].name.toLowerCase(), 'walk');
+});
+
+test('viewer worker opens c_bodak KEY dependencies through transferable owned memory', {
+  skip: !fs.existsSync(bindingPath) && 'run npm run build-native first',
+}, async (context) => {
+  const repositoryRoot = path.resolve(__dirname, '..', '..', '..');
+  const client = new ViewerWorkerClient(
+    path.resolve(__dirname, '..', 'src', 'viewer-worker.js'),
+    bindingPath,
+    { appendLine() {} },
+  );
+  const request = {
+    session_key: `${repositoryRoot}/nwpkg.toml`,
+    path: path.join(repositoryRoot, 'c_bodak.mdl'),
+    project_root: repositoryRoot,
+    root: null,
+    user: null,
+    language: 'english',
+    load_ovr: false,
+    archives: [],
+  };
+  try {
+    let parentPacket;
+    try {
+      parentPacket = Buffer.from(await client.loadScene(request));
+    } catch (error) {
+      if (/installation|root|language directory/iu.test(String(error))) {
+        context.skip('Neverwinter Nights installation was not discovered');
+        return;
+      }
+      throw error;
+    }
+    assert.equal(decodeViewerPacket(parentPacket).manifest.name, 'c_bodak');
+
+    const dependencyRequest = {
+      ...request,
+      path: path.join(repositoryRoot, 'a_ba.mdl'),
+    };
+    const resolved = await client.resolveResource(dependencyRequest);
+    assert.equal(resolved.resource, 'a_ba.mdl');
+    assert.equal(resolved.file_path, null);
+    assert.match(resolved.origin, /KeyTable:.*\.key\(.*\.bif\)/u);
+
+    const contents = await client.readResource(dependencyRequest);
+    assert.ok(contents.byteLength > 1024 * 1024, 'a_ba.mdl must exercise a large native buffer');
+    const childPacket = Buffer.from(await client.loadScene(dependencyRequest, contents));
+    const child = decodeViewerPacket(childPacket);
+    assert.equal(child.manifest.name, 'a_ba');
+    assert.equal(child.manifest.source, 'model');
+    assert.ok(child.manifest.models.length > 0);
   } finally {
     client.dispose();
   }

@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vscode = require('vscode');
 const { LanguageWorkerClient } = require('./language-worker-client');
+const { ResourceCustomEditorProvider } = require('./resource-custom-editor');
 const {
   buildCheckRequest,
   buildDefinitionRequest,
@@ -2109,8 +2110,19 @@ function documentSymbolKind(kind) {
 }
 
 function activate(context) {
+  const placeholderProvider = {
+    getChildren: () => [],
+    getTreeItem: (item) => item,
+  };
+  context.subscriptions.push(
+    vscode.window.registerTreeDataProvider('nwnrs.project', placeholderProvider),
+    vscode.window.registerTreeDataProvider('nwnrs.resources', placeholderProvider),
+    vscode.window.registerTreeDataProvider('nwnrs.tools', placeholderProvider),
+  );
   const controller = new CompilerController(context);
   controller.register();
+  const resourceEditors = new ResourceCustomEditorProvider(context, controller.output);
+  resourceEditors.register();
 }
 
 function deactivate() {}

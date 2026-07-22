@@ -2,13 +2,17 @@
 #![doc = include_str!("README.md")]
 
 use std::{
+    collections::BTreeMap,
     fmt,
     fs::File,
     io::{self, Read, Write},
     path::Path,
 };
 
-use nwnrs_types::resman::{CachePolicy, Res, ResManError, ResType};
+use nwnrs_types::{
+    resman::{CachePolicy, Res, ResMan, ResManError, ResType, ResolvedResRef},
+    tga::TgaTexture,
+};
 use tracing::instrument;
 
 /// NWN resource type id for `plt`.
@@ -145,6 +149,23 @@ impl PltLayer {
         self as u8
     }
 
+    /// Returns the shipped NWN palette texture used by this layer.
+    ///
+    /// Paired material layers intentionally share a palette image; each layer
+    /// still selects its own blueprint-authored row.
+    #[must_use]
+    pub const fn palette_resource(self) -> &'static str {
+        match self {
+            Self::Skin => "pal_skin01",
+            Self::Hair => "pal_hair01",
+            Self::Metal1 => "pal_armor01",
+            Self::Metal2 => "pal_armor02",
+            Self::Cloth1 | Self::Cloth2 => "pal_cloth01",
+            Self::Leather1 | Self::Leather2 => "pal_leath01",
+            Self::Tattoo1 | Self::Tattoo2 => "pal_tattoo01",
+        }
+    }
+
     /// Returns a stable display label for the layer.
     ///
     /// # Examples
@@ -274,6 +295,9 @@ pub struct PltTexture {
     pub height:        u32,
     /// One typed entry per pixel.
     ///
+    /// NWN stores rows bottom-to-top. The raw entries retain that disk order;
+    /// rendering methods normalize their RGBA8 output to top-left origin.
+    ///
     /// `value` corresponds to the VB source's luminance/value byte.
     /// `layer_id` selects the material layer for that pixel.
     pub pixels:        Vec<PltPixel>,
@@ -304,7 +328,8 @@ impl PltTexture {
             .ok_or_else(|| PltError::msg("PLT pixel count overflow"))
     }
 
-    /// Returns the pixel entry at `(x, y)`.
+    /// Returns the raw pixel entry at `(x, y)`, where `y = 0` is the bottom
+    /// row used by NWN's on-disk and OpenGL representation.
     ///
     /// # Errors
     ///
@@ -352,7 +377,8 @@ impl PltTexture {
         parse_plt_bytes(bytes)
     }
 
-    /// Renders the PLT into RGBA8 pixels using the provided render spec.
+    /// Renders the PLT into top-left-origin RGBA8 pixels using the provided
+    /// render spec.
     ///
     /// # Errors
     ///
@@ -377,15 +403,125 @@ impl PltTexture {
         }
 
         let mut rgba = Vec::with_capacity(expected_pixels.saturating_mul(4));
-        for pixel in &self.pixels {
-            let [r, g, b, a] = spec.color_for_layer_id(pixel.layer_id);
-            let value = u16::from(pixel.value);
-            rgba.push(scale_channel(r, value));
-            rgba.push(scale_channel(g, value));
-            rgba.push(scale_channel(b, value));
-            rgba.push(scale_channel(a, value));
+        for row in self.raw_rows_top_to_bottom()? {
+            for pixel in row {
+                let [r, g, b, a] = spec.color_for_layer_id(pixel.layer_id);
+                let value = u16::from(pixel.value);
+                rgba.push(scale_channel(r, value));
+                rgba.push(scale_channel(g, value));
+                rgba.push(scale_channel(b, value));
+                rgba.push(scale_channel(a, value));
+            }
         }
         Ok(rgba)
+    }
+
+    /// Renders this PLT into top-left-origin RGBA8 using the authoritative
+    /// palette TGA resources in the active layered resource view.
+    ///
+    /// `palette_rows` maps PLT layer ids to blueprint-selected rows. Missing
+    /// selections use row zero, matching NWN's zero-initialized appearance
+    /// fields. The PLT pixel value selects palette X and the appearance row
+    /// selects palette Y.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PltError`] when a layer is unknown, a required palette is
+    /// missing or malformed, a selected row is out of range, or dimensions are
+    /// inconsistent.
+    pub fn render_nwn_rgba8(
+        &self,
+        resman: &mut ResMan,
+        palette_rows: &BTreeMap<u8, u8>,
+        cache_policy: CachePolicy,
+    ) -> PltResult<Vec<u8>> {
+        let expected_pixels = self.pixel_count()?;
+        if self.pixels.len() != expected_pixels {
+            return Err(PltError::msg(format!(
+                "PLT pixel buffer has {} entries but dimensions {}x{} require {}",
+                self.pixels.len(),
+                self.width,
+                self.height,
+                expected_pixels
+            )));
+        }
+
+        let mut palettes = BTreeMap::<&'static str, (u16, u16, Vec<u8>)>::new();
+        for pixel in &self.pixels {
+            let layer = pixel.layer().ok_or_else(|| {
+                PltError::msg(format!(
+                    "PLT pixel references unknown layer {}",
+                    pixel.layer_id
+                ))
+            })?;
+            let palette_name = layer.palette_resource();
+            if palettes.contains_key(palette_name) {
+                continue;
+            }
+            let resolved = ResolvedResRef::from_filename(&format!("{palette_name}.tga"))
+                .map_err(|error| PltError::msg(format!("invalid palette resource: {error}")))?;
+            let resource = resman.get_resolved(&resolved).ok_or_else(|| {
+                PltError::msg(format!("required NWN palette not found: {resolved}"))
+            })?;
+            let palette = TgaTexture::from_res(&resource, cache_policy).map_err(|error| {
+                PltError::msg(format!("failed to parse palette {resolved}: {error}"))
+            })?;
+            let rgba = palette.decode_rgba8().map_err(|error| {
+                PltError::msg(format!("failed to decode palette {resolved}: {error}"))
+            })?;
+            palettes.insert(palette_name, (palette.width, palette.height, rgba));
+        }
+
+        let mut rgba = Vec::with_capacity(expected_pixels.saturating_mul(4));
+        for pixel_row in self.raw_rows_top_to_bottom()? {
+            for pixel in pixel_row {
+                let layer = pixel.layer().ok_or_else(|| {
+                    PltError::msg(format!(
+                        "PLT pixel references unknown layer {}",
+                        pixel.layer_id
+                    ))
+                })?;
+                let palette_name = layer.palette_resource();
+                let (width, height, palette) = palettes.get(palette_name).ok_or_else(|| {
+                    PltError::msg(format!("palette cache lost {palette_name}.tga"))
+                })?;
+                let row = u16::from(palette_rows.get(&pixel.layer_id).copied().unwrap_or(0));
+                if row >= *height {
+                    return Err(PltError::msg(format!(
+                        "PLT layer {} selects palette row {row}, but {palette_name}.tga has \
+                         {height} rows",
+                        pixel.layer_id
+                    )));
+                }
+                let x = u16::from(pixel.value);
+                if x >= *width {
+                    return Err(PltError::msg(format!(
+                        "PLT value {x} is outside {palette_name}.tga width {width}"
+                    )));
+                }
+                let offset = usize::from(row)
+                    .checked_mul(usize::from(*width))
+                    .and_then(|value| value.checked_add(usize::from(x)))
+                    .and_then(|value| value.checked_mul(4))
+                    .ok_or_else(|| PltError::msg("palette pixel offset overflow"))?;
+                let color = palette
+                    .get(offset..offset + 4)
+                    .ok_or_else(|| PltError::msg("palette pixel extends past decoded data"))?;
+                rgba.extend_from_slice(color);
+            }
+        }
+        Ok(rgba)
+    }
+
+    fn raw_rows_top_to_bottom(
+        &self,
+    ) -> PltResult<std::iter::Rev<std::slice::ChunksExact<'_, PltPixel>>> {
+        let width = usize::try_from(self.width)
+            .map_err(|error| PltError::msg(format!("PLT width out of range: {error}")))?;
+        // A zero-width texture has no pixels or rows. Using a unit chunk avoids
+        // `chunks_exact(0)` while preserving that empty iterator without an
+        // allocation.
+        Ok(self.pixels.chunks_exact(width.max(1)).rev())
     }
 
     /// Reads a typed PLT texture from disk.
@@ -703,5 +839,35 @@ mod tests {
 
         assert_eq!(rendered.get(0..4), Some(&[171, 47, 39, 255][..]));
         assert_eq!(rendered.get(4..8), Some(&[128, 0, 128, 128][..]));
+    }
+
+    #[test]
+    fn render_rgba8_normalizes_bottom_first_rows_to_top_left_origin() {
+        let plt = PltTexture {
+            file_type:     *b"PLT ",
+            file_version:  *b"V1  ",
+            unused1:       [10, 0, 0, 0],
+            unused2:       [0, 0, 0, 0],
+            width:         1,
+            height:        2,
+            pixels:        vec![
+                PltPixel {
+                    value:    255,
+                    layer_id: PltLayer::Cloth1.id(),
+                },
+                PltPixel {
+                    value:    255,
+                    layer_id: PltLayer::Cloth2.id(),
+                },
+            ],
+            trailing_data: Vec::new(),
+        };
+
+        let rendered = plt
+            .render_rgba8(&PltRenderSpec::default())
+            .unwrap_or_else(|error| panic!("render asymmetric plt: {error}"));
+
+        assert_eq!(rendered.get(0..4), Some(&[42, 86, 173, 255][..]));
+        assert_eq!(rendered.get(4..8), Some(&[171, 47, 39, 255][..]));
     }
 }
