@@ -20,7 +20,7 @@ cover, and how they fit together with `nwnrs-types`, `nwnrs-nwscript`, and
 - compile NWScript or inspect its fully macro-expanded source
 - convert between authored and compiled representations such as `MDL`, `OBJ`,
   and image formats
-- scaffold `nwproject` workspaces for include libraries and resource, ERF, or
+- scaffold nwpkg projects for include libraries and resource, ERF, or
   KEY/BIF packaging
 - pack source trees back into distributable resources and archives
 - unpack existing resources and archives into editable source trees
@@ -96,12 +96,12 @@ is rejected.
 
 These commands scaffold project directories with:
 
-- `nwproject.toml`
+- `nwpkg.toml`
 - `nwpkg.lock`
 - starter source content appropriate for the requested kind
 
 Use `new` when you want a fresh directory. Use `init` when you want to turn an
-existing directory into an `nwproject`.
+existing directory into an nwpkg project.
 
 ### `inspect`
 
@@ -168,6 +168,12 @@ preserving directory hierarchy for recursive builds. SVG is the default;
 `--keep-graphviz-dot` retains DOT source alongside rendered images. SVG, PNG,
 and PDF rendering require the Graphviz `dot` executable. Recompiling without
 debug output removes a stale sibling NDB.
+
+Editor and automation integrations can pass `--diagnostic-format json`. The
+command then writes newline-delimited JSON diagnostic records followed by one
+summary record. Source lines and columns are one-based. Combine it with
+`--simulate --continue-on-error` for a non-mutating whole-project check; the
+command still exits unsuccessfully when any input fails.
 
 ### `expand`
 
@@ -353,7 +359,7 @@ deletion. No HTTP or metrics service is started.
 
 `nwnrs` relies on the `nwnrs-nwpkg` crate for project control files:
 
-- `nwproject.toml` describes project identity, kind, and source root
+- `nwpkg.toml` describes project identity, kind, and source root
 - `[dependencies]` maps include-library names to local package paths; `pack`
   and `compile` add their source roots to NWScript include resolution
 - `nwpkg.lock` stores repack metadata that helps preserve archive structure
@@ -370,7 +376,7 @@ copying its source into the module:
 nwnrs = { path = "../include/nwnrs" }
 ```
 
-Dependency paths are resolved relative to the declaring `nwproject.toml`.
+Dependency paths are resolved relative to the declaring `nwpkg.toml`.
 Only local `include` packages are supported currently.
 
 ## Relationship To The Other Crates
@@ -382,7 +388,7 @@ Only local `include` packages are supported currently.
   provides the NWScript frontend, compiler, debugger-oriented VM, and
   associated language machinery.
 - [`nwnrs-nwpkg`](https://docs.rs/nwnrs-nwpkg/latest/nwnrs_nwpkg/) provides the
-  typed `nwproject` manifest and lockfile model used by the packaging flows.
+  typed nwpkg manifest and lockfile model used by the packaging flows.
 - [`nwnrs-runtime`](https://docs.rs/nwnrs-runtime/latest/nwnrs_runtime/)
   provides executable identification and exact target-pack validation.
 

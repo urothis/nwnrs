@@ -10,7 +10,10 @@ mod manifest;
 
 pub use dependency::{ResolvedIncludeDependency, resolve_include_dependencies};
 pub use fs::is_project_control_file;
-pub use generation::{GeneratedEventDispatcher, generate_event_dispatcher};
+pub use generation::{
+    GeneratedEventDispatcher, find_project_root, generate_event_dispatcher,
+    generate_event_dispatcher_with_diagnostics, generate_event_dispatcher_with_overlays,
+};
 pub use kind::{ProjectKind, ProjectLayout};
 pub use lock::{
     ErfPackMetadata, KeyPackMetadata, ResourcePackMetadata, copy_original_key_set,
@@ -24,8 +27,8 @@ pub use manifest::{
     DependencySpec, PathDependency, ProjectManifest, read_project_manifest, write_project_manifest,
 };
 
-/// Canonical `nwproject.toml` filename.
-pub const PROJECT_MANIFEST_FILENAME: &str = "nwproject.toml";
+/// Canonical `nwpkg.toml` filename.
+pub const PROJECT_MANIFEST_FILENAME: &str = "nwpkg.toml";
 
 /// Canonical `nwpkg.lock` filename.
 pub const PACKAGE_LOCK_FILENAME: &str = "nwpkg.lock";

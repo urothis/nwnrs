@@ -325,7 +325,7 @@ fn project_name_for_path(path: &Path) -> Result<String, String> {
     {
         return Ok(sanitize_project_name(name));
     }
-    Ok("nwproject".to_string())
+    Ok("nwpkg".to_string())
 }
 
 fn sanitize_project_name(name: &str) -> String {
@@ -340,7 +340,7 @@ fn sanitize_project_name(name: &str) -> String {
         })
         .collect::<String>();
     if sanitized.is_empty() {
-        "nwproject".to_string()
+        "nwpkg".to_string()
     } else {
         sanitized
     }
@@ -389,7 +389,7 @@ mod tests {
         })
         .expect("scaffold utc project");
 
-        assert!(target.join("nwproject.toml").is_file());
+        assert!(target.join("nwpkg.toml").is_file());
         assert!(target.join("nwpkg.lock").is_file());
         assert!(target.join(format!("{expected_name}.utc")).is_file());
 
@@ -451,7 +451,7 @@ mod tests {
         })
         .expect("scaffold include project");
 
-        assert!(target.join("nwproject.toml").is_file());
+        assert!(target.join("nwpkg.toml").is_file());
         assert!(target.join(format!("{expected_name}.nss")).is_file());
         assert!(!target.join("nwpkg.lock").exists());
 

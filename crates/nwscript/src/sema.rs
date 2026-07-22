@@ -7,9 +7,9 @@ use std::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    AssignmentOp, BinaryOp, BlockStmt, BuiltinType, BuiltinValue, CompilerErrorCode, Expr,
-    ExprKind, FunctionDecl, LangSpec, Literal, MagicLiteral, Script, Stmt, TopLevelItem, TypeKind,
-    TypeSpec, UnaryOp,
+    AssignmentOp, BinaryOp, BlockStmt, BuiltinType, BuiltinValue, CompilerErrorCode,
+    EnumBackingType, Expr, ExprKind, FunctionDecl, LangSpec, Literal, MagicLiteral, Script, Stmt,
+    TopLevelItem, TypeKind, TypeSpec, UnaryOp,
 };
 
 /// Maximum number of parameters accepted by the native compiler.
@@ -76,6 +76,48 @@ pub enum SemanticType {
     Struct(String),
     /// One engine-defined structure such as `effect` or `json`.
     EngineStructure(String),
+    /// One strongly typed enum lowered to its native storage representation.
+    Enum {
+        /// Source enum name.
+        name:    String,
+        /// Native storage representation.
+        backing: EnumBackingType,
+    },
+}
+
+/// One resolved enum variant value.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub enum SemanticEnumValue {
+    /// Integer discriminant.
+    Int(i32),
+    /// Exact string discriminant.
+    String(crate::ScriptString),
+}
+
+/// One resolved strongly typed enum variant.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SemanticEnumVariant {
+    /// Variant name.
+    pub name:       String,
+    /// Resolved value.
+    pub value:      SemanticEnumValue,
+    /// Whether this is the enum's selected default.
+    pub is_default: bool,
+    /// Global compatibility aliases.
+    pub aliases:    Vec<String>,
+}
+
+/// One resolved strongly typed enum.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SemanticEnum {
+    /// Enum type name.
+    pub name:            String,
+    /// Native storage representation.
+    pub backing:         EnumBackingType,
+    /// Variants in declaration order.
+    pub variants:        Vec<SemanticEnumVariant>,
+    /// Index of the selected default variant.
+    pub default_variant: usize,
 }
 
 /// One resolved function parameter.
@@ -138,6 +180,10 @@ pub struct SemanticStruct {
 /// Semantic facts collected from one script.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SemanticModel {
+    /// Resolved enums indexed by name.
+    pub enums:     BTreeMap<String, SemanticEnum>,
+    /// Fully resolved transparent aliases indexed by name.
+    pub aliases:   BTreeMap<String, SemanticType>,
     /// Resolved structures indexed by name.
     pub structs:   BTreeMap<String, SemanticStruct>,
     /// Resolved global variables indexed by name.
@@ -182,6 +228,10 @@ enum ConstantValue {
     LocationInvalid,
     Json(String),
     Vector([f32; 3]),
+    Enum {
+        name:  String,
+        value: SemanticEnumValue,
+    },
 }
 
 impl ConstantValue {
@@ -194,6 +244,16 @@ impl ConstantValue {
             Self::LocationInvalid => SemanticType::EngineStructure("location".to_string()),
             Self::Json(_) => SemanticType::EngineStructure("json".to_string()),
             Self::Vector(_) => SemanticType::Vector,
+            Self::Enum {
+                name,
+                value,
+            } => SemanticType::Enum {
+                name:    name.clone(),
+                backing: match value {
+                    SemanticEnumValue::Int(_) => EnumBackingType::Int,
+                    SemanticEnumValue::String(_) => EnumBackingType::String,
+                },
+            },
         }
     }
 }
@@ -245,11 +305,12 @@ struct AnalysisContext {
     loop_depth:   usize,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct SwitchContext {
     case_values:       BTreeSet<i32>,
     has_default:       bool,
     scope_decl_counts: Vec<usize>,
+    condition_type:    SemanticType,
 }
 
 impl AnalysisContext {
@@ -295,6 +356,8 @@ struct Analyzer<'a> {
     functions:         BTreeMap<String, FunctionInfo>,
     structs:           BTreeMap<String, SemanticStruct>,
     globals:           BTreeMap<String, SemanticGlobal>,
+    enums:             BTreeMap<String, SemanticEnum>,
+    aliases:           BTreeMap<String, SemanticType>,
 }
 
 impl<'a> Analyzer<'a> {
@@ -348,18 +411,26 @@ impl<'a> Analyzer<'a> {
             functions,
             structs: BTreeMap::new(),
             globals: BTreeMap::new(),
+            enums: BTreeMap::new(),
+            aliases: BTreeMap::new(),
         }
     }
 
     fn analyze(mut self) -> Result<SemanticModel, SemanticError> {
+        self.collect_plain_constants_for_enum_discriminants();
+        self.collect_enums()?;
+        self.collect_type_aliases()?;
         self.collect_structs()?;
         self.collect_const_globals_for_function_defaults()?;
         self.collect_functions()?;
         self.collect_globals()?;
+        self.validate_top_level_static_assertions()?;
         self.analyze_function_bodies()?;
         self.validate_entrypoint()?;
 
         Ok(SemanticModel {
+            enums:     self.enums,
+            aliases:   self.aliases,
             structs:   self.structs,
             globals:   self.globals,
             functions: self
@@ -368,6 +439,443 @@ impl<'a> Analyzer<'a> {
                 .map(|(name, info)| (name, info.signature))
                 .collect(),
         })
+    }
+
+    fn collect_plain_constants_for_enum_discriminants(&mut self) {
+        let mut pending = self
+            .script
+            .items
+            .iter()
+            .filter_map(|item| {
+                let TopLevelItem::Global(declaration) = item else {
+                    return None;
+                };
+                if !declaration.ty.is_const
+                    || !matches!(declaration.ty.kind, TypeKind::Int | TypeKind::String)
+                {
+                    return None;
+                }
+                Some((declaration, declaration.declarators.as_slice()))
+            })
+            .flat_map(|(declaration, declarators)| {
+                declarators
+                    .iter()
+                    .map(move |declarator| (declaration, declarator))
+            })
+            .collect::<Vec<_>>();
+
+        loop {
+            let mut progress = false;
+            pending.retain(|(declaration, declarator)| {
+                let value = declarator.initializer.as_ref().map_or_else(
+                    || match declaration.ty.kind {
+                        TypeKind::Int => Some(ConstantValue::Int(0)),
+                        TypeKind::String => {
+                            Some(ConstantValue::String(crate::ScriptString::default()))
+                        }
+                        _ => None,
+                    },
+                    |initializer| self.evaluate_constant_expr(initializer),
+                );
+                let expected = match declaration.ty.kind {
+                    TypeKind::Int => SemanticType::Int,
+                    TypeKind::String => SemanticType::String,
+                    _ => return false,
+                };
+                if let Some(value) = value
+                    && value.ty() == expected
+                {
+                    self.global_constants.insert(declarator.name.clone(), value);
+                    progress = true;
+                    false
+                } else {
+                    true
+                }
+            });
+            if !progress || pending.is_empty() {
+                break;
+            }
+        }
+    }
+
+    fn collect_enums(&mut self) -> Result<(), SemanticError> {
+        for item in &self.script.items {
+            let TopLevelItem::Enum(declaration) = item else {
+                continue;
+            };
+            if self.enums.contains_key(&declaration.name) {
+                return Err(SemanticError::new(
+                    CompilerErrorCode::DuplicateEnumDefinition,
+                    declaration.span,
+                    format!("enum {:?} was defined more than once", declaration.name),
+                ));
+            }
+            if self.functions.contains_key(&declaration.name) {
+                return Err(SemanticError::new(
+                    CompilerErrorCode::InvalidEnumDeclaration,
+                    declaration.span,
+                    format!(
+                        "enum {:?} conflicts with an existing function name",
+                        declaration.name
+                    ),
+                ));
+            }
+            if declaration.variants.is_empty() {
+                return Err(SemanticError::new(
+                    CompilerErrorCode::InvalidEnumDeclaration,
+                    declaration.span,
+                    format!(
+                        "enum {:?} must declare at least one variant",
+                        declaration.name
+                    ),
+                ));
+            }
+
+            let mut variants = Vec::new();
+            let mut names = BTreeSet::new();
+            let mut values = BTreeSet::new();
+            let mut explicit_default = None;
+            for variant in &declaration.variants {
+                if !names.insert(variant.name.clone()) {
+                    return Err(SemanticError::new(
+                        CompilerErrorCode::DuplicateEnumDefinition,
+                        variant.span,
+                        format!(
+                            "enum variant {}::{} was defined more than once",
+                            declaration.name, variant.name
+                        ),
+                    ));
+                }
+                if variant.is_default && explicit_default.replace(variants.len()).is_some() {
+                    return Err(SemanticError::new(
+                        CompilerErrorCode::MultipleEnumDefaults,
+                        variant.span,
+                        format!(
+                            "enum {:?} has more than one #[default] variant",
+                            declaration.name
+                        ),
+                    ));
+                }
+
+                let value = match declaration.backing {
+                    EnumBackingType::Int => {
+                        let value = if let Some(expression) = &variant.value {
+                            self.evaluate_enum_int_discriminant(
+                                expression,
+                                &declaration.name,
+                                &variants,
+                            )
+                            .ok_or_else(|| {
+                                SemanticError::new(
+                                    CompilerErrorCode::InvalidEnumDiscriminant,
+                                    expression.span,
+                                    format!(
+                                        "{}::{} requires a constant int discriminant",
+                                        declaration.name, variant.name
+                                    ),
+                                )
+                            })?
+                        } else if let Some(previous) = variants.last() {
+                            let SemanticEnumValue::Int(previous) = previous.value else {
+                                unreachable!("integer enum contained a string variant")
+                            };
+                            previous.checked_add(1).ok_or_else(|| {
+                                SemanticError::new(
+                                    CompilerErrorCode::InvalidEnumDiscriminant,
+                                    variant.span,
+                                    format!(
+                                        "automatic discriminant for {}::{} overflows int",
+                                        declaration.name, variant.name
+                                    ),
+                                )
+                            })?
+                        } else {
+                            0
+                        };
+                        SemanticEnumValue::Int(value)
+                    }
+                    EnumBackingType::String => {
+                        let expression = variant.value.as_ref().ok_or_else(|| {
+                            SemanticError::new(
+                                CompilerErrorCode::InvalidEnumDiscriminant,
+                                variant.span,
+                                format!(
+                                    "string enum variant {}::{} requires an explicit value",
+                                    declaration.name, variant.name
+                                ),
+                            )
+                        })?;
+                        SemanticEnumValue::String(
+                            self.evaluate_enum_string_discriminant(
+                                expression,
+                                &declaration.name,
+                                &variants,
+                            )
+                            .ok_or_else(|| {
+                                SemanticError::new(
+                                    CompilerErrorCode::InvalidEnumDiscriminant,
+                                    expression.span,
+                                    format!(
+                                        "{}::{} requires a constant string discriminant",
+                                        declaration.name, variant.name
+                                    ),
+                                )
+                            })?,
+                        )
+                    }
+                };
+                if !values.insert(value.clone()) {
+                    return Err(SemanticError::new(
+                        CompilerErrorCode::DuplicateEnumDefinition,
+                        variant.span,
+                        format!(
+                            "enum {} assigns the same value to more than one variant",
+                            declaration.name
+                        ),
+                    ));
+                }
+
+                let aliases = variant
+                    .aliases
+                    .iter()
+                    .map(|alias| alias.name.clone())
+                    .collect::<Vec<_>>();
+                for alias in &variant.aliases {
+                    if self.global_constants.contains_key(&alias.name)
+                        || self.builtin_constants.contains_key(&alias.name)
+                    {
+                        return Err(SemanticError::new(
+                            CompilerErrorCode::DuplicateEnumDefinition,
+                            alias.span,
+                            format!("enum alias {:?} was defined more than once", alias.name),
+                        ));
+                    }
+                    self.global_constants.insert(
+                        alias.name.clone(),
+                        ConstantValue::Enum {
+                            name:  declaration.name.clone(),
+                            value: value.clone(),
+                        },
+                    );
+                    self.globals.insert(
+                        alias.name.clone(),
+                        SemanticGlobal {
+                            name:     alias.name.clone(),
+                            ty:       SemanticType::Enum {
+                                name:    declaration.name.clone(),
+                                backing: declaration.backing,
+                            },
+                            is_const: true,
+                        },
+                    );
+                }
+                variants.push(SemanticEnumVariant {
+                    name: variant.name.clone(),
+                    value,
+                    is_default: variant.is_default,
+                    aliases,
+                });
+            }
+
+            self.enums.insert(
+                declaration.name.clone(),
+                SemanticEnum {
+                    name: declaration.name.clone(),
+                    backing: declaration.backing,
+                    variants,
+                    default_variant: explicit_default.unwrap_or(0),
+                },
+            );
+        }
+        Ok(())
+    }
+
+    fn collect_type_aliases(&mut self) -> Result<(), SemanticError> {
+        let mut pending = BTreeMap::new();
+        for item in &self.script.items {
+            let TopLevelItem::TypeAlias(alias) = item else {
+                continue;
+            };
+            if pending.insert(alias.name.clone(), alias).is_some()
+                || self.enums.contains_key(&alias.name)
+                || self.functions.contains_key(&alias.name)
+            {
+                return Err(SemanticError::new(
+                    CompilerErrorCode::InvalidTypeAlias,
+                    alias.span,
+                    format!("type name {:?} was defined more than once", alias.name),
+                ));
+            }
+        }
+
+        while !pending.is_empty() {
+            let mut resolved_name = None;
+            for (name, alias) in &pending {
+                if let Some(target) = self.try_resolve_alias_target(&alias.target) {
+                    self.aliases.insert(name.clone(), target);
+                    resolved_name = Some(name.clone());
+                    break;
+                }
+            }
+            let Some(name) = resolved_name else {
+                let Some((_name, alias)) = pending.first_key_value() else {
+                    break;
+                };
+                return Err(SemanticError::new(
+                    CompilerErrorCode::InvalidTypeAlias,
+                    alias.span,
+                    format!(
+                        "type alias {:?} is recursive or references an undefined type",
+                        alias.name
+                    ),
+                ));
+            };
+            pending.remove(&name);
+        }
+        Ok(())
+    }
+
+    fn try_resolve_alias_target(&self, target: &TypeSpec) -> Option<SemanticType> {
+        match &target.kind {
+            TypeKind::Void => Some(SemanticType::Void),
+            TypeKind::Int => Some(SemanticType::Int),
+            TypeKind::Float => Some(SemanticType::Float),
+            TypeKind::String => Some(SemanticType::String),
+            TypeKind::Object => Some(SemanticType::Object),
+            TypeKind::Vector => Some(SemanticType::Vector),
+            TypeKind::Struct(name) => self
+                .script
+                .items
+                .iter()
+                .any(|item| matches!(item, TopLevelItem::Struct(item) if item.name == *name))
+                .then(|| SemanticType::Struct(name.clone())),
+            TypeKind::EngineStructure(name) => Some(SemanticType::EngineStructure(name.clone())),
+            TypeKind::Named(name) => self.aliases.get(name).cloned().or_else(|| {
+                self.enums.get(name).map(|declaration| SemanticType::Enum {
+                    name:    name.clone(),
+                    backing: declaration.backing,
+                })
+            }),
+        }
+    }
+
+    fn evaluate_enum_int_discriminant(
+        &self,
+        expression: &Expr,
+        enum_name: &str,
+        variants: &[SemanticEnumVariant],
+    ) -> Option<i32> {
+        match &expression.kind {
+            ExprKind::Literal(Literal::Integer(value)) => Some(*value),
+            ExprKind::Identifier(name) => variants
+                .iter()
+                .find_map(|variant| {
+                    (variant.name == *name).then_some(match variant.value {
+                        SemanticEnumValue::Int(value) => Some(value),
+                        SemanticEnumValue::String(_) => None,
+                    })?
+                })
+                .or_else(|| match self.lookup_constant(name)? {
+                    ConstantValue::Int(value) => Some(value),
+                    _ => None,
+                }),
+            ExprKind::ScopedIdentifier {
+                scope,
+                name,
+            } if scope == enum_name => variants.iter().find_map(|variant| {
+                (variant.name == *name).then_some(match variant.value {
+                    SemanticEnumValue::Int(value) => Some(value),
+                    SemanticEnumValue::String(_) => None,
+                })?
+            }),
+            ExprKind::Unary {
+                op: UnaryOp::Negate,
+                expr,
+            } => self
+                .evaluate_enum_int_discriminant(expr, enum_name, variants)
+                .map(i32::wrapping_neg),
+            ExprKind::Unary {
+                op: UnaryOp::OnesComplement,
+                expr,
+            } => self
+                .evaluate_enum_int_discriminant(expr, enum_name, variants)
+                .map(|value| !value),
+            ExprKind::Unary {
+                op: UnaryOp::BooleanNot,
+                expr,
+            } => self
+                .evaluate_enum_int_discriminant(expr, enum_name, variants)
+                .map(|value| i32::from(value == 0)),
+            ExprKind::Binary {
+                op,
+                left,
+                right,
+            } => evaluate_int_constant_binary(
+                *op,
+                self.evaluate_enum_int_discriminant(left, enum_name, variants)?,
+                self.evaluate_enum_int_discriminant(right, enum_name, variants)?,
+            ),
+            ExprKind::Conditional {
+                condition,
+                when_true,
+                when_false,
+            } => {
+                let condition =
+                    self.evaluate_enum_int_discriminant(condition, enum_name, variants)?;
+                self.evaluate_enum_int_discriminant(
+                    if condition == 0 {
+                        when_false
+                    } else {
+                        when_true
+                    },
+                    enum_name,
+                    variants,
+                )
+            }
+            _ => None,
+        }
+    }
+
+    fn evaluate_enum_string_discriminant(
+        &self,
+        expression: &Expr,
+        enum_name: &str,
+        variants: &[SemanticEnumVariant],
+    ) -> Option<crate::ScriptString> {
+        match &expression.kind {
+            ExprKind::Literal(Literal::String(value)) => Some(value.clone()),
+            ExprKind::Identifier(name) => variants
+                .iter()
+                .find_map(|variant| {
+                    (variant.name == *name).then_some(match &variant.value {
+                        SemanticEnumValue::String(value) => Some(value.clone()),
+                        SemanticEnumValue::Int(_) => None,
+                    })?
+                })
+                .or_else(|| match self.lookup_constant(name)? {
+                    ConstantValue::String(value) => Some(value),
+                    _ => None,
+                }),
+            ExprKind::ScopedIdentifier {
+                scope,
+                name,
+            } if scope == enum_name => variants.iter().find_map(|variant| {
+                (variant.name == *name).then(|| match &variant.value {
+                    SemanticEnumValue::String(value) => Some(value.clone()),
+                    SemanticEnumValue::Int(_) => None,
+                })?
+            }),
+            ExprKind::Binary {
+                op: BinaryOp::Add,
+                left,
+                right,
+            } => {
+                let left = self.evaluate_enum_string_discriminant(left, enum_name, variants)?;
+                let right = self.evaluate_enum_string_discriminant(right, enum_name, variants)?;
+                (left.len().saturating_add(right.len()) < 0x8000).then(|| left.concat(&right))
+            }
+            _ => None,
+        }
     }
 
     fn collect_const_globals_for_function_defaults(&mut self) -> Result<(), SemanticError> {
@@ -393,7 +901,7 @@ impl<'a> Analyzer<'a> {
                         )
                     })?
                 } else {
-                    default_constant_value(&ty).ok_or_else(|| {
+                    default_constant_value(&ty, &self.enums).ok_or_else(|| {
                         SemanticError::new(
                             CompilerErrorCode::InvalidValueAssignedToConstant,
                             declarator.span,
@@ -419,11 +927,68 @@ impl<'a> Analyzer<'a> {
                     ));
                 }
 
-                self.global_constants.insert(declarator.name.clone(), value);
+                let was_precollected =
+                    matches!(declaration.ty.kind, TypeKind::Int | TypeKind::String)
+                        && self
+                            .global_constants
+                            .get(&declarator.name)
+                            .is_some_and(|existing| existing == &value);
+                if was_precollected {
+                    self.global_constants.insert(declarator.name.clone(), value);
+                } else if self
+                    .global_constants
+                    .insert(declarator.name.clone(), value)
+                    .is_some()
+                {
+                    return Err(SemanticError::new(
+                        CompilerErrorCode::VariableAlreadyUsedWithinScope,
+                        declarator.span,
+                        format!(
+                            "constant {:?} conflicts with an enum compatibility alias",
+                            declarator.name
+                        ),
+                    ));
+                }
             }
         }
 
         Ok(())
+    }
+
+    fn validate_top_level_static_assertions(&self) -> Result<(), SemanticError> {
+        for item in &self.script.items {
+            if let TopLevelItem::StaticAssert(assertion) = item {
+                self.validate_static_assert(assertion)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_static_assert(
+        &self,
+        assertion: &crate::StaticAssertDecl,
+    ) -> Result<(), SemanticError> {
+        let value = self
+            .evaluate_constant_expr(&assertion.condition)
+            .ok_or_else(|| {
+                SemanticError::new(
+                    CompilerErrorCode::StaticAssertionFailed,
+                    assertion.condition.span,
+                    "static_assert condition must be a constant int expression",
+                )
+            })?;
+        if matches!(value, ConstantValue::Int(value) if value != 0) {
+            return Ok(());
+        }
+        let message = assertion.message.as_ref().map_or_else(
+            || "static assertion failed".to_string(),
+            |message| message.to_string_lossy().into_owned(),
+        );
+        Err(SemanticError::new(
+            CompilerErrorCode::StaticAssertionFailed,
+            assertion.condition.span,
+            message,
+        ))
     }
 
     fn collect_structs(&mut self) -> Result<(), SemanticError> {
@@ -432,7 +997,10 @@ impl<'a> Analyzer<'a> {
                 continue;
             };
 
-            if self.structs.contains_key(&definition.name) {
+            if self.structs.contains_key(&definition.name)
+                || self.enums.contains_key(&definition.name)
+                || self.aliases.contains_key(&definition.name)
+            {
                 return Err(SemanticError::new(
                     CompilerErrorCode::StructureRedefined,
                     definition.span,
@@ -480,6 +1048,18 @@ impl<'a> Analyzer<'a> {
             let TopLevelItem::Function(function) = item else {
                 continue;
             };
+
+            if self.enums.contains_key(&function.name) || self.aliases.contains_key(&function.name)
+            {
+                return Err(SemanticError::new(
+                    CompilerErrorCode::InvalidEnumDeclaration,
+                    function.span,
+                    format!(
+                        "function {:?} conflicts with a source type constructor",
+                        function.name
+                    ),
+                ));
+            }
 
             let signature = self.resolve_function_signature(function)?;
             if let Some(existing) = self.functions.get_mut(&function.name) {
@@ -579,7 +1159,7 @@ impl<'a> Analyzer<'a> {
                             )
                         })?
                     } else {
-                        default_constant_value(&ty).ok_or_else(|| {
+                        default_constant_value(&ty, &self.enums).ok_or_else(|| {
                             SemanticError::new(
                                 CompilerErrorCode::InvalidValueAssignedToConstant,
                                 declarator.span,
@@ -613,7 +1193,7 @@ impl<'a> Analyzer<'a> {
                         .map(|resolved| resolved.ty)?;
                     if !types_compatible(&ty, &initializer_type) {
                         return Err(SemanticError::new(
-                            CompilerErrorCode::MismatchedTypes,
+                            type_mismatch_code(&ty, &initializer_type),
                             initializer.span,
                             format!(
                                 "initializer for global {:?} has type {:?}, expected {:?}",
@@ -767,10 +1347,12 @@ impl<'a> Analyzer<'a> {
                     );
 
                     if let Some(initializer) = &declarator.initializer {
-                        let initializer_type = self.analyze_expr(initializer, scopes)?.ty;
+                        let initializer_type = self
+                            .analyze_expr_with_context(initializer, scopes, return_type, context)?
+                            .ty;
                         if !types_compatible(&ty, &initializer_type) {
                             return Err(SemanticError::new(
-                                CompilerErrorCode::MismatchedTypes,
+                                type_mismatch_code(&ty, &initializer_type),
                                 initializer.span,
                                 format!(
                                     "initializer for {:?} has type {:?}, expected {:?}",
@@ -784,11 +1366,16 @@ impl<'a> Analyzer<'a> {
                 Ok(())
             }
             Stmt::Expression(statement) => {
-                self.analyze_expr(&statement.expr, scopes)?;
+                self.analyze_expr_with_context(&statement.expr, scopes, return_type, context)?;
                 Ok(())
             }
             Stmt::If(statement) => {
-                let condition = self.analyze_expr(&statement.condition, scopes)?;
+                let condition = self.analyze_expr_with_context(
+                    &statement.condition,
+                    scopes,
+                    return_type,
+                    context,
+                )?;
                 if condition.ty != SemanticType::Int {
                     return Err(SemanticError::new(
                         CompilerErrorCode::NonIntegerExpressionWhereIntegerRequired,
@@ -803,18 +1390,26 @@ impl<'a> Analyzer<'a> {
                 Ok(())
             }
             Stmt::Switch(statement) => {
-                let condition = self.analyze_expr(&statement.condition, scopes)?;
-                if condition.ty != SemanticType::Int {
+                let condition = self.analyze_expr_with_context(
+                    &statement.condition,
+                    scopes,
+                    return_type,
+                    context,
+                )?;
+                if condition.ty != SemanticType::Int
+                    && !matches!(condition.ty, SemanticType::Enum { .. })
+                {
                     return Err(SemanticError::new(
                         CompilerErrorCode::SwitchMustEvaluateToAnInteger,
                         statement.condition.span,
-                        "switch condition must evaluate to int",
+                        "switch condition must evaluate to int or a strong enum",
                     ));
                 }
                 context.switch_stack.push(SwitchContext {
                     case_values:       BTreeSet::new(),
                     has_default:       false,
                     scope_decl_counts: vec![0],
+                    condition_type:    condition.ty,
                 });
                 let result = self.analyze_stmt(&statement.body, scopes, return_type, context);
                 context.switch_stack.pop();
@@ -833,7 +1428,9 @@ impl<'a> Analyzer<'a> {
                     "non-void functions must return a value",
                 )),
                 (Some(value), expected) => {
-                    let actual = self.analyze_expr(value, scopes)?.ty;
+                    let actual = self
+                        .analyze_expr_with_context(value, scopes, return_type, context)?
+                        .ty;
                     if !types_compatible(expected, &actual) {
                         return Err(SemanticError::new(
                             CompilerErrorCode::ReturnTypeAndFunctionTypeMismatched,
@@ -845,7 +1442,12 @@ impl<'a> Analyzer<'a> {
                 }
             },
             Stmt::While(statement) => {
-                let condition = self.analyze_expr(&statement.condition, scopes)?;
+                let condition = self.analyze_expr_with_context(
+                    &statement.condition,
+                    scopes,
+                    return_type,
+                    context,
+                )?;
                 if condition.ty != SemanticType::Int {
                     return Err(SemanticError::new(
                         CompilerErrorCode::NonIntegerExpressionWhereIntegerRequired,
@@ -863,7 +1465,12 @@ impl<'a> Analyzer<'a> {
                 let body_result = self.analyze_stmt(&statement.body, scopes, return_type, context);
                 context.loop_depth = context.loop_depth.saturating_sub(1);
                 body_result?;
-                let condition = self.analyze_expr(&statement.condition, scopes)?;
+                let condition = self.analyze_expr_with_context(
+                    &statement.condition,
+                    scopes,
+                    return_type,
+                    context,
+                )?;
                 if condition.ty != SemanticType::Int {
                     return Err(SemanticError::new(
                         CompilerErrorCode::NonIntegerExpressionWhereIntegerRequired,
@@ -875,10 +1482,11 @@ impl<'a> Analyzer<'a> {
             }
             Stmt::For(statement) => {
                 if let Some(initializer) = &statement.initializer {
-                    self.analyze_expr(initializer, scopes)?;
+                    self.analyze_expr_with_context(initializer, scopes, return_type, context)?;
                 }
                 if let Some(condition) = &statement.condition {
-                    let resolved = self.analyze_expr(condition, scopes)?;
+                    let resolved =
+                        self.analyze_expr_with_context(condition, scopes, return_type, context)?;
                     if resolved.ty != SemanticType::Int {
                         return Err(SemanticError::new(
                             CompilerErrorCode::NonIntegerExpressionWhereIntegerRequired,
@@ -888,7 +1496,7 @@ impl<'a> Analyzer<'a> {
                     }
                 }
                 if let Some(update) = &statement.update {
-                    self.analyze_expr(update, scopes)?;
+                    self.analyze_expr_with_context(update, scopes, return_type, context)?;
                 }
                 context.loop_depth += 1;
                 let result = self.analyze_stmt(&statement.body, scopes, return_type, context);
@@ -896,6 +1504,9 @@ impl<'a> Analyzer<'a> {
                 result
             }
             Stmt::Case(statement) => {
+                let case_type = self
+                    .analyze_expr_with_context(&statement.value, scopes, return_type, context)?
+                    .ty;
                 let value = self
                     .evaluate_switch_case_value(&statement.value)
                     .ok_or_else(|| {
@@ -912,6 +1523,19 @@ impl<'a> Analyzer<'a> {
                         "case labels must appear within a switch statement",
                     ));
                 };
+                if (matches!(current_switch.condition_type, SemanticType::Enum { .. })
+                    || matches!(case_type, SemanticType::Enum { .. }))
+                    && current_switch.condition_type != case_type
+                {
+                    return Err(SemanticError::new(
+                        CompilerErrorCode::InvalidEnumOperation,
+                        statement.value.span,
+                        format!(
+                            "switch condition has type {:?}, but case has type {case_type:?}",
+                            current_switch.condition_type
+                        ),
+                    ));
+                }
                 if current_switch.has_live_declarations() {
                     return Err(SemanticError::new(
                         CompilerErrorCode::JumpingOverDeclarationStatementsCaseDisallowed,
@@ -974,6 +1598,7 @@ impl<'a> Analyzer<'a> {
                 Ok(())
             }
             Stmt::Empty(_) => Ok(()),
+            Stmt::StaticAssert(assertion) => self.validate_static_assert(assertion),
         }
     }
 
@@ -982,6 +1607,18 @@ impl<'a> Analyzer<'a> {
         &self,
         expr: &Expr,
         scopes: &mut Vec<BTreeMap<String, ScopeBinding>>,
+    ) -> Result<ResolvedExpr, SemanticError> {
+        let mut context = AnalysisContext::default();
+        self.analyze_expr_with_context(expr, scopes, &SemanticType::Void, &mut context)
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn analyze_expr_with_context(
+        &self,
+        expr: &Expr,
+        scopes: &mut Vec<BTreeMap<String, ScopeBinding>>,
+        return_type: &SemanticType,
+        context: &mut AnalysisContext,
     ) -> Result<ResolvedExpr, SemanticError> {
         match &expr.kind {
             ExprKind::Literal(literal) => Ok(ResolvedExpr {
@@ -1003,6 +1640,246 @@ impl<'a> Analyzer<'a> {
                     is_const:  binding.is_const(),
                 })
             }
+            ExprKind::ScopedIdentifier {
+                scope,
+                name,
+            } => {
+                let enum_name = self.canonical_enum_name(scope).ok_or_else(|| {
+                    SemanticError::new(
+                        CompilerErrorCode::InvalidEnumOperation,
+                        expr.span,
+                        format!("undefined enum type {scope:?}"),
+                    )
+                })?;
+                let declaration = self.enums.get(enum_name).ok_or_else(|| {
+                    SemanticError::new(
+                        CompilerErrorCode::InvalidEnumOperation,
+                        expr.span,
+                        format!("undefined enum type {scope:?}"),
+                    )
+                })?;
+                declaration
+                    .variants
+                    .iter()
+                    .find(|variant| variant.name == *name)
+                    .ok_or_else(|| {
+                        SemanticError::new(
+                            CompilerErrorCode::InvalidEnumOperation,
+                            expr.span,
+                            format!("enum {scope:?} has no variant {name:?}"),
+                        )
+                    })?;
+                Ok(ResolvedExpr {
+                    ty:        SemanticType::Enum {
+                        name:    enum_name.to_string(),
+                        backing: declaration.backing,
+                    },
+                    is_lvalue: false,
+                    is_const:  true,
+                })
+            }
+            ExprKind::Match(expression) => {
+                let matched = self.analyze_expr_with_context(
+                    &expression.value,
+                    scopes,
+                    return_type,
+                    context,
+                )?;
+                let SemanticType::Enum {
+                    name: enum_name, ..
+                } = &matched.ty
+                else {
+                    return Err(SemanticError::new(
+                        CompilerErrorCode::InvalidMatch,
+                        expression.value.span,
+                        "match value must have a strong enum type",
+                    ));
+                };
+                let declaration = self.enums.get(enum_name).ok_or_else(|| {
+                    SemanticError::new(
+                        CompilerErrorCode::InvalidMatch,
+                        expression.value.span,
+                        format!("missing enum declaration {enum_name:?}"),
+                    )
+                })?;
+                if expression.arms.is_empty() {
+                    return Err(SemanticError::new(
+                        CompilerErrorCode::NonExhaustiveMatch,
+                        expr.span,
+                        "match must contain at least one arm",
+                    ));
+                }
+
+                let mut covered = BTreeSet::new();
+                let mut wildcard_covered = false;
+                let mut result_type = None;
+                for arm in &expression.arms {
+                    if wildcard_covered || covered.len() == declaration.variants.len() {
+                        return Err(SemanticError::new(
+                            CompilerErrorCode::UnreachableMatchArm,
+                            arm.span,
+                            "match arm is unreachable after an unguarded wildcard",
+                        ));
+                    }
+                    let mut arm_names = BTreeSet::new();
+                    let has_wildcard = arm
+                        .patterns
+                        .iter()
+                        .any(|pattern| matches!(pattern, crate::MatchPattern::Wildcard { .. }));
+                    if has_wildcard && arm.patterns.len() != 1 {
+                        return Err(SemanticError::new(
+                            CompilerErrorCode::UnreachableMatchArm,
+                            arm.span,
+                            "wildcard must be the only pattern in its match arm",
+                        ));
+                    }
+                    for pattern in &arm.patterns {
+                        let crate::MatchPattern::Variant {
+                            span,
+                            scope,
+                            name,
+                        } = pattern
+                        else {
+                            continue;
+                        };
+                        if self.canonical_enum_name(scope) != Some(enum_name.as_str()) {
+                            return Err(SemanticError::new(
+                                CompilerErrorCode::InvalidMatch,
+                                *span,
+                                format!(
+                                    "match for {enum_name:?} cannot use variant from {scope:?}"
+                                ),
+                            ));
+                        }
+                        if !declaration
+                            .variants
+                            .iter()
+                            .any(|variant| variant.name == *name)
+                        {
+                            return Err(SemanticError::new(
+                                CompilerErrorCode::InvalidMatch,
+                                *span,
+                                format!("enum {enum_name:?} has no variant {name:?}"),
+                            ));
+                        }
+                        if !arm_names.insert(name.clone()) || covered.contains(name) {
+                            return Err(SemanticError::new(
+                                CompilerErrorCode::UnreachableMatchArm,
+                                *span,
+                                format!("match pattern {enum_name}::{name} is unreachable"),
+                            ));
+                        }
+                    }
+
+                    let guard_is_always_true = if let Some(guard) = &arm.guard {
+                        let guard_type = self
+                            .analyze_expr_with_context(guard, scopes, return_type, context)?
+                            .ty;
+                        if guard_type != SemanticType::Int {
+                            return Err(SemanticError::new(
+                                CompilerErrorCode::InvalidMatch,
+                                guard.span,
+                                "match guard must evaluate to int",
+                            ));
+                        }
+                        match self.evaluate_constant_expr(guard) {
+                            Some(ConstantValue::Int(0)) => {
+                                return Err(SemanticError::new(
+                                    CompilerErrorCode::UnreachableMatchArm,
+                                    arm.span,
+                                    "match arm has a guard that is always false",
+                                ));
+                            }
+                            Some(ConstantValue::Int(_)) => true,
+                            _ => false,
+                        }
+                    } else {
+                        true
+                    };
+
+                    let arm_type = match &arm.body {
+                        crate::MatchArmBody::Expr(body) => Some(
+                            self.analyze_expr_with_context(body, scopes, return_type, context)?
+                                .ty,
+                        ),
+                        crate::MatchArmBody::Block(block) => {
+                            scopes.push(BTreeMap::new());
+                            context.enter_scope();
+                            let block_result = block
+                                .statements
+                                .iter()
+                                .try_for_each(|statement| {
+                                    self.analyze_stmt(statement, scopes, return_type, context)
+                                })
+                                .and_then(|()| {
+                                    block.tail.as_ref().map_or_else(
+                                        || {
+                                            Ok((!match_block_guarantees_exit(block))
+                                                .then_some(SemanticType::Void))
+                                        },
+                                        |tail| {
+                                            self.analyze_expr_with_context(
+                                                tail,
+                                                scopes,
+                                                return_type,
+                                                context,
+                                            )
+                                            .map(|resolved| Some(resolved.ty))
+                                        },
+                                    )
+                                });
+                            context.exit_scope();
+                            scopes.pop();
+                            block_result?
+                        }
+                    };
+                    if let Some(arm_type) = arm_type {
+                        if let Some(expected) = &result_type {
+                            if !types_compatible(expected, &arm_type) {
+                                return Err(SemanticError::new(
+                                    CompilerErrorCode::InvalidMatch,
+                                    arm.span,
+                                    format!(
+                                        "match arm has type {arm_type:?}, expected {expected:?}"
+                                    ),
+                                ));
+                            }
+                        } else {
+                            result_type = Some(arm_type);
+                        }
+                    }
+
+                    if guard_is_always_true {
+                        if has_wildcard {
+                            wildcard_covered = true;
+                        } else {
+                            covered.extend(arm_names);
+                        }
+                    }
+                }
+
+                if !wildcard_covered {
+                    let missing = declaration
+                        .variants
+                        .iter()
+                        .filter(|variant| !covered.contains(&variant.name))
+                        .map(|variant| format!("{enum_name}::{}", variant.name))
+                        .collect::<Vec<_>>();
+                    if !missing.is_empty() {
+                        return Err(SemanticError::new(
+                            CompilerErrorCode::NonExhaustiveMatch,
+                            expr.span,
+                            format!("non-exhaustive match; missing {}", missing.join(", ")),
+                        ));
+                    }
+                }
+
+                Ok(ResolvedExpr {
+                    ty:        result_type.unwrap_or(SemanticType::Void),
+                    is_lvalue: false,
+                    is_const:  false,
+                })
+            }
             ExprKind::Call {
                 callee,
                 arguments,
@@ -1014,6 +1891,172 @@ impl<'a> Analyzer<'a> {
                         "only direct identifier calls are supported",
                     ));
                 };
+
+                let conversion_target = match name.as_str() {
+                    "int" => Some(SemanticType::Int),
+                    "string" => Some(SemanticType::String),
+                    _ => self.aliases.get(name).cloned().or_else(|| {
+                        self.enums.get(name).map(|declaration| SemanticType::Enum {
+                            name:    name.clone(),
+                            backing: declaration.backing,
+                        })
+                    }),
+                };
+                if let Some(target) = conversion_target {
+                    let Some(argument) = arguments.first() else {
+                        return Err(SemanticError::new(
+                            CompilerErrorCode::InvalidEnumOperation,
+                            expr.span,
+                            format!("explicit conversion {name}(...) requires an argument"),
+                        ));
+                    };
+                    let resolved =
+                        self.analyze_expr_with_context(argument, scopes, return_type, context)?;
+                    match &target {
+                        SemanticType::Enum {
+                            name: enum_name,
+                            backing,
+                        } => {
+                            let expected_backing = match backing {
+                                EnumBackingType::Int => SemanticType::Int,
+                                EnumBackingType::String => SemanticType::String,
+                            };
+                            if resolved.ty != expected_backing {
+                                return Err(SemanticError::new(
+                                    CompilerErrorCode::InvalidEnumOperation,
+                                    argument.span,
+                                    format!(
+                                        "cannot explicitly convert {:?} to {target:?}",
+                                        resolved.ty
+                                    ),
+                                ));
+                            }
+                            if arguments.len() == 1 {
+                                let value =
+                                    self.evaluate_constant_expr(argument).ok_or_else(|| {
+                                        SemanticError::new(
+                                            CompilerErrorCode::InvalidEnumOperation,
+                                            argument.span,
+                                            format!(
+                                                "dynamic conversion to {enum_name} requires an \
+                                                 explicit fallback: {name}(value, \
+                                                 {enum_name}::Variant)"
+                                            ),
+                                        )
+                                    })?;
+                                let declaration = self.enums.get(enum_name).ok_or_else(|| {
+                                    SemanticError::new(
+                                        CompilerErrorCode::InvalidEnumOperation,
+                                        expr.span,
+                                        format!("missing enum declaration {enum_name:?}"),
+                                    )
+                                })?;
+                                let valid = declaration.variants.iter().any(|variant| {
+                                    matches!(
+                                        (&value, &variant.value),
+                                        (ConstantValue::Int(left), SemanticEnumValue::Int(right)) if left == right
+                                    ) || matches!(
+                                        (&value, &variant.value),
+                                        (ConstantValue::String(left), SemanticEnumValue::String(right)) if left == right
+                                    )
+                                });
+                                if !valid {
+                                    return Err(SemanticError::new(
+                                        CompilerErrorCode::InvalidEnumOperation,
+                                        argument.span,
+                                        format!(
+                                            "constant conversion to {enum_name} does not name a \
+                                             declared variant"
+                                        ),
+                                    ));
+                                }
+                                return Ok(ResolvedExpr {
+                                    ty:        target,
+                                    is_lvalue: false,
+                                    is_const:  true,
+                                });
+                            }
+                            if arguments.len() != 2 {
+                                return Err(SemanticError::new(
+                                    CompilerErrorCode::InvalidEnumOperation,
+                                    expr.span,
+                                    format!(
+                                        "checked conversion {name}(...) requires a value and one \
+                                         fallback variant"
+                                    ),
+                                ));
+                            }
+                            let Some(fallback) = arguments.get(1) else {
+                                unreachable!("checked enum conversion length was validated")
+                            };
+                            let fallback = self.analyze_expr_with_context(
+                                fallback,
+                                scopes,
+                                return_type,
+                                context,
+                            )?;
+                            if fallback.ty != target {
+                                return Err(SemanticError::new(
+                                    CompilerErrorCode::InvalidEnumOperation,
+                                    arguments.get(1).map_or(expr.span, |fallback| fallback.span),
+                                    format!(
+                                        "checked conversion fallback has type {:?}, expected \
+                                         {target:?}",
+                                        fallback.ty
+                                    ),
+                                ));
+                            }
+                            return Ok(ResolvedExpr {
+                                ty:        target,
+                                is_lvalue: false,
+                                is_const:  resolved.is_const && fallback.is_const,
+                            });
+                        }
+                        SemanticType::Int | SemanticType::String => {
+                            if arguments.len() != 1 {
+                                return Err(SemanticError::new(
+                                    CompilerErrorCode::InvalidEnumOperation,
+                                    expr.span,
+                                    format!(
+                                        "explicit conversion {name}(...) requires one argument"
+                                    ),
+                                ));
+                            }
+                            let valid = matches!(
+                                (&target, &resolved.ty),
+                                (
+                                    SemanticType::Int,
+                                    SemanticType::Enum {
+                                        backing: EnumBackingType::Int,
+                                        ..
+                                    },
+                                ) | (
+                                    SemanticType::String,
+                                    SemanticType::Enum {
+                                        backing: EnumBackingType::String,
+                                        ..
+                                    },
+                                )
+                            );
+                            if !valid {
+                                return Err(SemanticError::new(
+                                    CompilerErrorCode::InvalidEnumOperation,
+                                    argument.span,
+                                    format!(
+                                        "cannot explicitly convert {:?} to {target:?}",
+                                        resolved.ty
+                                    ),
+                                ));
+                            }
+                            return Ok(ResolvedExpr {
+                                ty:        target,
+                                is_lvalue: false,
+                                is_const:  resolved.is_const,
+                            });
+                        }
+                        _ => {}
+                    }
+                }
 
                 let function = self.functions.get(name).ok_or_else(|| {
                     SemanticError::new(
@@ -1056,7 +2099,8 @@ impl<'a> Analyzer<'a> {
                 }
 
                 for (argument, parameter) in arguments.iter().zip(&function.signature.parameters) {
-                    let resolved = self.analyze_expr(argument, scopes)?;
+                    let resolved =
+                        self.analyze_expr_with_context(argument, scopes, return_type, context)?;
                     let is_action_argument = matches!(
                         (&parameter.ty, &argument.kind),
                         (
@@ -1068,8 +2112,15 @@ impl<'a> Analyzer<'a> {
                         )
                     ) && resolved.ty == SemanticType::Void;
                     if !is_action_argument && !types_compatible(&parameter.ty, &resolved.ty) {
+                        let code = if matches!(parameter.ty, SemanticType::Enum { .. })
+                            || matches!(resolved.ty, SemanticType::Enum { .. })
+                        {
+                            CompilerErrorCode::InvalidEnumOperation
+                        } else {
+                            CompilerErrorCode::DeclarationDoesNotMatchParameters
+                        };
                         return Err(SemanticError::new(
-                            CompilerErrorCode::DeclarationDoesNotMatchParameters,
+                            code,
                             argument.span,
                             format!(
                                 "parameter {:?} expects {:?}, got {:?}",
@@ -1089,7 +2140,8 @@ impl<'a> Analyzer<'a> {
                 base,
                 field,
             } => {
-                let resolved_base = self.analyze_expr(base, scopes)?;
+                let resolved_base =
+                    self.analyze_expr_with_context(base, scopes, return_type, context)?;
                 let field_type = match &resolved_base.ty {
                     SemanticType::Vector => match field.as_str() {
                         "x" | "y" | "z" => Ok(SemanticType::Float),
@@ -1133,7 +2185,19 @@ impl<'a> Analyzer<'a> {
                 op,
                 expr: inner,
             } => {
-                let resolved = self.analyze_expr(inner, scopes)?;
+                let resolved =
+                    self.analyze_expr_with_context(inner, scopes, return_type, context)?;
+                if matches!(resolved.ty, SemanticType::Enum { .. }) {
+                    return Err(SemanticError::new(
+                        CompilerErrorCode::InvalidEnumOperation,
+                        expr.span,
+                        format!(
+                            "unary operation {op:?} is invalid for strong enum type {:?}; convert \
+                             explicitly to the backing type first",
+                            resolved.ty
+                        ),
+                    ));
+                }
                 match op {
                     UnaryOp::Negate => match resolved.ty {
                         SemanticType::Int | SemanticType::Float => Ok(ResolvedExpr {
@@ -1199,8 +2263,8 @@ impl<'a> Analyzer<'a> {
                 left,
                 right,
             } => {
-                let left = self.analyze_expr(left, scopes)?;
-                let right = self.analyze_expr(right, scopes)?;
+                let left = self.analyze_expr_with_context(left, scopes, return_type, context)?;
+                let right = self.analyze_expr_with_context(right, scopes, return_type, context)?;
                 let ty = Self::binary_result_type(*op, &left.ty, &right.ty, expr.span)?;
                 Ok(ResolvedExpr {
                     ty,
@@ -1209,12 +2273,23 @@ impl<'a> Analyzer<'a> {
                 })
             }
             ExprKind::Conditional {
-                condition: _,
+                condition,
                 when_true,
                 when_false,
             } => {
-                let when_true = self.analyze_expr(when_true, scopes)?;
-                let when_false = self.analyze_expr(when_false, scopes)?;
+                let condition =
+                    self.analyze_expr_with_context(condition, scopes, return_type, context)?;
+                if condition.ty != SemanticType::Int {
+                    return Err(SemanticError::new(
+                        CompilerErrorCode::NonIntegerExpressionWhereIntegerRequired,
+                        expr.span,
+                        "conditional expression condition must evaluate to int",
+                    ));
+                }
+                let when_true =
+                    self.analyze_expr_with_context(when_true, scopes, return_type, context)?;
+                let when_false =
+                    self.analyze_expr_with_context(when_false, scopes, return_type, context)?;
                 if !types_compatible(&when_true.ty, &when_false.ty) {
                     return Err(SemanticError::new(
                         CompilerErrorCode::ConditionalMustHaveMatchingReturnTypes,
@@ -1236,7 +2311,8 @@ impl<'a> Analyzer<'a> {
                 left,
                 right,
             } => {
-                let left_resolved = self.analyze_expr(left, scopes)?;
+                let left_resolved =
+                    self.analyze_expr_with_context(left, scopes, return_type, context)?;
                 if !left_resolved.is_lvalue {
                     return Err(SemanticError::new(
                         CompilerErrorCode::BadLValue,
@@ -1244,7 +2320,8 @@ impl<'a> Analyzer<'a> {
                         "left side of assignment must be an lvalue",
                     ));
                 }
-                let right_resolved = self.analyze_expr(right, scopes)?;
+                let right_resolved =
+                    self.analyze_expr_with_context(right, scopes, return_type, context)?;
                 let result_type = match op {
                     AssignmentOp::Assign => right_resolved.ty.clone(),
                     AssignmentOp::AssignMinus => Self::binary_result_type(
@@ -1317,7 +2394,7 @@ impl<'a> Analyzer<'a> {
 
                 if !types_compatible(&left_resolved.ty, &result_type) {
                     return Err(SemanticError::new(
-                        CompilerErrorCode::MismatchedTypes,
+                        type_mismatch_code(&left_resolved.ty, &result_type),
                         expr.span,
                         format!(
                             "assignment target has type {:?}, expression has type {:?}",
@@ -1341,6 +2418,21 @@ impl<'a> Analyzer<'a> {
         right: &SemanticType,
         span: crate::Span,
     ) -> Result<SemanticType, SemanticError> {
+        let uses_enum =
+            matches!(left, SemanticType::Enum { .. }) || matches!(right, SemanticType::Enum { .. });
+        let valid_enum_equality = matches!(op, BinaryOp::EqualEqual | BinaryOp::NotEqual)
+            && left == right
+            && matches!(left, SemanticType::Enum { .. });
+        if uses_enum && !valid_enum_equality {
+            return Err(SemanticError::new(
+                CompilerErrorCode::InvalidEnumOperation,
+                span,
+                format!(
+                    "operation {op:?} is invalid for strong enum operands {left:?} and {right:?}; \
+                     convert explicitly to the backing type first"
+                ),
+            ));
+        }
         match op {
             BinaryOp::LogicalAnd
             | BinaryOp::LogicalOr
@@ -1370,6 +2462,7 @@ impl<'a> Analyzer<'a> {
                             | SemanticType::Vector
                             | SemanticType::Struct(_)
                             | SemanticType::EngineStructure(_)
+                            | SemanticType::Enum { .. }
                     )
                 {
                     Ok(SemanticType::Int)
@@ -1565,6 +2658,23 @@ impl<'a> Analyzer<'a> {
                 }
             }
             TypeKind::EngineStructure(name) => Ok(SemanticType::EngineStructure(name.clone())),
+            TypeKind::Named(name) => self
+                .aliases
+                .get(name)
+                .cloned()
+                .or_else(|| {
+                    self.enums.get(name).map(|declaration| SemanticType::Enum {
+                        name:    name.clone(),
+                        backing: declaration.backing,
+                    })
+                })
+                .ok_or_else(|| {
+                    SemanticError::new(
+                        CompilerErrorCode::InvalidDeclarationType,
+                        ty.span,
+                        format!("undefined source type {name:?}"),
+                    )
+                }),
         }
     }
 
@@ -1572,6 +2682,21 @@ impl<'a> Analyzer<'a> {
         match &expr.kind {
             ExprKind::Literal(literal) => constant_from_literal(literal),
             ExprKind::Identifier(name) => self.lookup_constant(name),
+            ExprKind::ScopedIdentifier {
+                scope,
+                name,
+            } => {
+                let enum_name = self.canonical_enum_name(scope)?;
+                let declaration = self.enums.get(enum_name)?;
+                let variant = declaration
+                    .variants
+                    .iter()
+                    .find(|variant| variant.name == *name)?;
+                Some(ConstantValue::Enum {
+                    name:  enum_name.to_string(),
+                    value: variant.value.clone(),
+                })
+            }
             ExprKind::Unary {
                 op: UnaryOp::Negate,
                 expr,
@@ -1618,12 +2743,130 @@ impl<'a> Analyzer<'a> {
                     self.evaluate_constant_expr(when_false)
                 }
             }
+            ExprKind::Match(expression) => {
+                let ConstantValue::Enum {
+                    name: enum_name,
+                    value,
+                } = self.evaluate_constant_expr(&expression.value)?
+                else {
+                    return None;
+                };
+                let declaration = self.enums.get(&enum_name)?;
+                for arm in &expression.arms {
+                    let pattern_matches = arm.patterns.iter().any(|pattern| match pattern {
+                        crate::MatchPattern::Wildcard {
+                            ..
+                        } => true,
+                        crate::MatchPattern::Variant {
+                            scope,
+                            name,
+                            ..
+                        } if scope == &enum_name => declaration
+                            .variants
+                            .iter()
+                            .find(|variant| variant.name == *name)
+                            .is_some_and(|variant| variant.value == value),
+                        crate::MatchPattern::Variant {
+                            ..
+                        } => false,
+                    });
+                    if !pattern_matches {
+                        continue;
+                    }
+                    if let Some(guard) = &arm.guard
+                        && !matches!(
+                            self.evaluate_constant_expr(guard),
+                            Some(ConstantValue::Int(value)) if value != 0
+                        )
+                    {
+                        continue;
+                    }
+                    return match &arm.body {
+                        crate::MatchArmBody::Expr(body) => self.evaluate_constant_expr(body),
+                        crate::MatchArmBody::Block(block) if block.statements.is_empty() => block
+                            .tail
+                            .as_ref()
+                            .and_then(|tail| self.evaluate_constant_expr(tail)),
+                        crate::MatchArmBody::Block(_) => None,
+                    };
+                }
+                None
+            }
+            ExprKind::Call {
+                callee,
+                arguments,
+            } if arguments.len() == 1 => {
+                let ExprKind::Identifier(name) = &callee.kind else {
+                    return None;
+                };
+                let value = self.evaluate_constant_expr(arguments.first()?)?;
+                match (name.as_str(), value) {
+                    (
+                        "int",
+                        ConstantValue::Enum {
+                            value: SemanticEnumValue::Int(value),
+                            ..
+                        },
+                    ) => Some(ConstantValue::Int(value)),
+                    (
+                        "string",
+                        ConstantValue::Enum {
+                            value: SemanticEnumValue::String(value),
+                            ..
+                        },
+                    ) => Some(ConstantValue::String(value)),
+                    (type_name, ConstantValue::Int(value)) => self
+                        .enum_constructor_target(type_name, EnumBackingType::Int)
+                        .map(|enum_name| ConstantValue::Enum {
+                            name:  enum_name,
+                            value: SemanticEnumValue::Int(value),
+                        }),
+                    (type_name, ConstantValue::String(value)) => self
+                        .enum_constructor_target(type_name, EnumBackingType::String)
+                        .map(|enum_name| ConstantValue::Enum {
+                            name:  enum_name,
+                            value: SemanticEnumValue::String(value),
+                        }),
+                    _ => None,
+                }
+            }
             _ => None,
         }
     }
 
     fn evaluate_function_default_expr(&self, expr: &Expr) -> Option<ConstantValue> {
         self.evaluate_constant_expr(expr)
+    }
+
+    fn enum_constructor_target(&self, type_name: &str, backing: EnumBackingType) -> Option<String> {
+        if self
+            .enums
+            .get(type_name)
+            .is_some_and(|declaration| declaration.backing == backing)
+        {
+            return Some(type_name.to_string());
+        }
+        let SemanticType::Enum {
+            name,
+            backing: alias_backing,
+        } = self.aliases.get(type_name)?
+        else {
+            return None;
+        };
+        (*alias_backing == backing).then(|| name.clone())
+    }
+
+    fn canonical_enum_name<'b>(&'b self, type_name: &'b str) -> Option<&'b str> {
+        if self.enums.contains_key(type_name) {
+            return Some(type_name);
+        }
+        let SemanticType::Enum {
+            name, ..
+        } = self.aliases.get(type_name)?
+        else {
+            return None;
+        };
+        Some(name)
     }
 
     fn evaluate_constant_binary(
@@ -1656,6 +2899,20 @@ impl<'a> Analyzer<'a> {
             (ConstantValue::String(left), ConstantValue::String(right)) => {
                 evaluate_string_constant_binary(op, &left, &right)
             }
+            (
+                ConstantValue::Enum {
+                    name: left_name,
+                    value: left,
+                },
+                ConstantValue::Enum {
+                    name: right_name,
+                    value: right,
+                },
+            ) if left_name == right_name => match op {
+                BinaryOp::EqualEqual => Some(ConstantValue::Int(i32::from(left == right))),
+                BinaryOp::NotEqual => Some(ConstantValue::Int(i32::from(left != right))),
+                _ => None,
+            },
             _ => None,
         }
     }
@@ -1666,6 +2923,14 @@ impl<'a> Analyzer<'a> {
             ConstantValue::String(value) => {
                 Some(crate::nwscript_string_hash_bytes(value.as_bytes()))
             }
+            ConstantValue::Enum {
+                value: SemanticEnumValue::Int(value),
+                ..
+            } => Some(value),
+            ConstantValue::Enum {
+                value: SemanticEnumValue::String(value),
+                ..
+            } => Some(crate::nwscript_string_hash_bytes(value.as_bytes())),
             _ => None,
         }
     }
@@ -1827,6 +3092,14 @@ fn literal_from_constant_value(value: &ConstantValue) -> Literal {
         ConstantValue::LocationInvalid => Literal::LocationInvalid,
         ConstantValue::Json(value) => Literal::Json(value.clone()),
         ConstantValue::Vector(value) => Literal::Vector(*value),
+        ConstantValue::Enum {
+            value: SemanticEnumValue::Int(value),
+            ..
+        } => Literal::Integer(*value),
+        ConstantValue::Enum {
+            value: SemanticEnumValue::String(value),
+            ..
+        } => Literal::String(value.clone()),
     }
 }
 
@@ -1845,11 +3118,24 @@ fn semantic_type_from_literal(literal: &Literal) -> SemanticType {
     }
 }
 
-fn default_constant_value(ty: &SemanticType) -> Option<ConstantValue> {
+fn default_constant_value(
+    ty: &SemanticType,
+    enums: &BTreeMap<String, SemanticEnum>,
+) -> Option<ConstantValue> {
     match ty {
         SemanticType::Int => Some(ConstantValue::Int(0)),
         SemanticType::Float => Some(ConstantValue::Float(0.0)),
         SemanticType::String => Some(ConstantValue::String(crate::ScriptString::default())),
+        SemanticType::Enum {
+            name, ..
+        } => {
+            let declaration = enums.get(name)?;
+            let variant = declaration.variants.get(declaration.default_variant)?;
+            Some(ConstantValue::Enum {
+                name:  name.clone(),
+                value: variant.value.clone(),
+            })
+        }
         _ => None,
     }
 }
@@ -1922,7 +3208,10 @@ fn type_supports_optional_parameter(ty: &SemanticType) -> bool {
         | SemanticType::Float
         | SemanticType::String
         | SemanticType::Object
-        | SemanticType::Vector => true,
+        | SemanticType::Vector
+        | SemanticType::Enum {
+            ..
+        } => true,
         SemanticType::EngineStructure(name) => name == "location" || name == "json",
         _ => false,
     }
@@ -1930,6 +3219,15 @@ fn type_supports_optional_parameter(ty: &SemanticType) -> bool {
 
 fn types_compatible(expected: &SemanticType, actual: &SemanticType) -> bool {
     expected == actual
+}
+
+fn type_mismatch_code(expected: &SemanticType, actual: &SemanticType) -> CompilerErrorCode {
+    if matches!(expected, SemanticType::Enum { .. }) || matches!(actual, SemanticType::Enum { .. })
+    {
+        CompilerErrorCode::InvalidEnumOperation
+    } else {
+        CompilerErrorCode::MismatchedTypes
+    }
 }
 
 fn parameters_match(left: &[SemanticParameter], right: &[SemanticParameter]) -> bool {
@@ -1979,6 +3277,15 @@ fn current_scope_contains(scopes: &[BTreeMap<String, ScopeBinding>], name: &str)
 fn statement_guarantees_return(statement: &Stmt) -> bool {
     match statement {
         Stmt::Return(_) => true,
+        Stmt::Expression(statement) => match &statement.expr.kind {
+            ExprKind::Match(expression) => expression.arms.iter().all(|arm| match &arm.body {
+                crate::MatchArmBody::Block(block) => {
+                    block.statements.iter().any(statement_guarantees_return)
+                }
+                crate::MatchArmBody::Expr(_) => false,
+            }),
+            _ => false,
+        },
         Stmt::Block(block) => {
             for statement in &block.statements {
                 if statement_guarantees_return(statement) {
@@ -1994,6 +3301,22 @@ fn statement_guarantees_return(statement: &Stmt) -> bool {
             }
             None => false,
         },
+        _ => false,
+    }
+}
+
+fn match_block_guarantees_exit(block: &crate::MatchBlock) -> bool {
+    block.statements.iter().any(statement_guarantees_exit)
+}
+
+fn statement_guarantees_exit(statement: &Stmt) -> bool {
+    match statement {
+        Stmt::Return(_) | Stmt::Break(_) | Stmt::Continue(_) => true,
+        Stmt::Block(block) => block.statements.iter().any(statement_guarantees_exit),
+        Stmt::If(statement) => statement.else_branch.as_ref().is_some_and(|else_branch| {
+            statement_guarantees_exit(&statement.then_branch)
+                && statement_guarantees_exit(else_branch)
+        }),
         _ => false,
     }
 }
@@ -2080,6 +3403,271 @@ mod tests {
             SemanticType::EngineStructure("effect".to_string())
         );
         Ok(())
+    }
+
+    #[test]
+    fn resolves_strong_int_and_string_enums_aliases_and_static_assertions()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let script = parse_text(
+            SourceId::new(140),
+            r#"
+                enum LogLevel {
+                    Trace,
+                    #[default] Debug = Trace + 2,
+                    #[alias(LOG_INFO)] Info,
+                }
+                enum EventPhase : string {
+                    Before = "before",
+                    #[alias(EVENT_AFTER)] After = "after",
+                }
+                type Level = LogLevel;
+                static_assert(LogLevel::Trace != LogLevel::Debug, "levels must differ");
+                static_assert(Level::Trace == LogLevel::Trace, "aliases qualify variants");
+                void take_level(Level level);
+                void take_phase(EventPhase phase);
+                void main() {
+                    Level level = Level::Debug;
+                    EventPhase phase = EventPhase::Before;
+                    take_level(LOG_INFO);
+                    take_phase(EVENT_AFTER);
+                    static_assert(LogLevel::Info == LOG_INFO);
+                }
+            "#,
+            Some(&test_langspec()),
+        )?;
+
+        let model = analyze_script(&script, Some(&test_langspec()))?;
+        let log_level = model.enums.get("LogLevel").ok_or("missing LogLevel")?;
+        assert_eq!(log_level.default_variant, 1);
+        assert_eq!(log_level.variants.len(), 3);
+        assert_eq!(
+            model.aliases.get("Level"),
+            Some(&SemanticType::Enum {
+                name:    "LogLevel".to_string(),
+                backing: crate::EnumBackingType::Int,
+            })
+        );
+        assert_eq!(
+            model.globals.get("LOG_INFO").map(|global| &global.ty),
+            Some(&SemanticType::Enum {
+                name:    "LogLevel".to_string(),
+                backing: crate::EnumBackingType::Int,
+            })
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_implicit_integer_to_enum_conversion() {
+        let script = parse_text(
+            SourceId::new(141),
+            "enum LogLevel { Trace } void take(LogLevel level); void main() { take(0); }",
+            Some(&test_langspec()),
+        )
+        .expect("enum script should parse");
+        let error = analyze_script(&script, Some(&test_langspec()))
+            .expect_err("raw integer should not satisfy a strong enum parameter");
+        assert_eq!(error.code, crate::CompilerErrorCode::InvalidEnumOperation);
+    }
+
+    #[test]
+    fn validates_safe_backing_to_enum_conversions() -> Result<(), Box<dyn std::error::Error>> {
+        let script = parse_text(
+            SourceId::new(146),
+            r#"
+                enum State { Off = 1, On = 2 }
+                enum Phase : string { Before = "before", After = "after" }
+                void main() {
+                    int raw_state = 2;
+                    string raw_phase = "after";
+                    State known = State(1);
+                    State state = State(raw_state, State::Off);
+                    Phase phase = Phase(raw_phase, Phase::Before);
+                }
+            "#,
+            Some(&test_langspec()),
+        )?;
+        analyze_script(&script, Some(&test_langspec()))?;
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_unsafe_backing_to_enum_conversions() {
+        let cases = [
+            "enum State { Off, On } void main() { int raw = 1; State value = State(raw); }",
+            "enum State { Off, On } void main() { State value = State(42); }",
+            "enum State { Off, On } enum Other { None } void main() { int raw = 1; State value = \
+             State(raw, Other::None); }",
+            "enum Phase : string { Before = \"before\" } void main() { string raw = \"after\"; \
+             Phase value = Phase(raw); }",
+        ];
+
+        for (index, source) in cases.into_iter().enumerate() {
+            let script = parse_text(
+                SourceId::new(147 + u32::try_from(index).expect("test index fits u32")),
+                source,
+                Some(&test_langspec()),
+            )
+            .expect("enum conversion case should parse");
+            let error = analyze_script(&script, Some(&test_langspec()))
+                .expect_err("unsafe enum conversion should fail");
+            assert_eq!(error.code, crate::CompilerErrorCode::InvalidEnumOperation);
+        }
+    }
+
+    #[test]
+    fn enum_discriminants_can_use_plain_const_globals() -> Result<(), Box<dyn std::error::Error>> {
+        let script = parse_text(
+            SourceId::new(145),
+            "const int BASE = 4; const string PREFIX = \"event.\"; enum Number { Value = BASE + 1 \
+             } enum Name : string { Value = PREFIX + \"before\" } void main() {}",
+            Some(&test_langspec()),
+        )?;
+        let model = analyze_script(&script, Some(&test_langspec()))?;
+        assert_eq!(
+            model
+                .enums
+                .get("Number")
+                .and_then(|declaration| declaration.variants.first())
+                .map(|variant| &variant.value),
+            Some(&crate::SemanticEnumValue::Int(5))
+        );
+        assert_eq!(
+            model
+                .enums
+                .get("Name")
+                .and_then(|declaration| declaration.variants.first())
+                .map(|variant| &variant.value),
+            Some(&crate::SemanticEnumValue::String(
+                crate::ScriptString::from("event.before")
+            ))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn validates_exhaustive_enum_matches_with_alternatives_guards_and_blocks()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let script = parse_text(
+            SourceId::new(142),
+            r#"
+                enum LogLevel { Trace, Debug, Info }
+                int should_group();
+                int describe(LogLevel level) {
+                    return match level {
+                        LogLevel::Trace => 1,
+                        LogLevel::Debug | LogLevel::Info if should_group() => {
+                            int result = 2;
+                            result
+                        },
+                        _ => 3,
+                    };
+                }
+                void main() { int result = describe(LogLevel::Info); }
+            "#,
+            Some(&test_langspec()),
+        )?;
+        let model = analyze_script(&script, Some(&test_langspec()))?;
+        assert_eq!(
+            model
+                .functions
+                .get("describe")
+                .map(|function| &function.return_type),
+            Some(&SemanticType::Int)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_non_exhaustive_enum_matches() {
+        let script = parse_text(
+            SourceId::new(143),
+            "enum State { Off, On } int value(State state) { return match state { State::Off => \
+             0, }; } void main() {}",
+            Some(&test_langspec()),
+        )
+        .expect("match script should parse");
+        let error = analyze_script(&script, Some(&test_langspec()))
+            .expect_err("missing enum variant should fail exhaustiveness checking");
+        assert_eq!(error.code, crate::CompilerErrorCode::NonExhaustiveMatch);
+        assert!(error.message.contains("State::On"));
+    }
+
+    #[test]
+    fn rejects_invalid_extended_enum_programs_with_specific_diagnostics() {
+        let cases = [
+            (
+                "enum Word : string { Missing } void main() {}",
+                crate::CompilerErrorCode::InvalidEnumDiscriminant,
+            ),
+            (
+                "enum State { Off = 0, On = 0 } void main() {}",
+                crate::CompilerErrorCode::DuplicateEnumDefinition,
+            ),
+            (
+                "enum State { #[default] Off, #[default] On } void main() {}",
+                crate::CompilerErrorCode::MultipleEnumDefaults,
+            ),
+            (
+                "type Left = Right; type Right = Left; void main() {}",
+                crate::CompilerErrorCode::InvalidTypeAlias,
+            ),
+            (
+                "static_assert(0, \"contract broke\"); void main() {}",
+                crate::CompilerErrorCode::StaticAssertionFailed,
+            ),
+            (
+                "enum State { Off, On } void main() { State state; int value = state + 1; }",
+                crate::CompilerErrorCode::InvalidEnumOperation,
+            ),
+            (
+                "enum State { Off, On } int f(State state) { return match state { State::Off => \
+                 0, State::Off => 1, State::On => 2, }; } void main() {}",
+                crate::CompilerErrorCode::UnreachableMatchArm,
+            ),
+            (
+                "enum State { Off, On } int f(State state) { return match state { State::Off => \
+                 0, State::On => \"wrong\", }; } void main() {}",
+                crate::CompilerErrorCode::InvalidMatch,
+            ),
+            (
+                "enum State { Off, On } int f(State state) { return match state { State::Off if 0 \
+                 => 0, _ => 1, }; } void main() {}",
+                crate::CompilerErrorCode::UnreachableMatchArm,
+            ),
+            (
+                "enum State { Off, On } int f(State state) { return match state { _ => 0, \
+                 State::On => 1, }; } void main() {}",
+                crate::CompilerErrorCode::UnreachableMatchArm,
+            ),
+        ];
+
+        for (index, (source, expected)) in cases.into_iter().enumerate() {
+            let script = parse_text(
+                SourceId::new(200 + u32::try_from(index).expect("test index fits u32")),
+                source,
+                Some(&test_langspec()),
+            )
+            .unwrap_or_else(|error| panic!("case {index} should parse: {error}"));
+            let error = match analyze_script(&script, Some(&test_langspec())) {
+                Ok(_) => panic!("case {index} should fail semantic analysis"),
+                Err(error) => error,
+            };
+            assert_eq!(error.code, expected, "case {index}: {}", error.message);
+        }
+    }
+
+    #[test]
+    fn static_assert_reports_the_user_message() {
+        let script = parse_text(
+            SourceId::new(220),
+            "static_assert(0, \"contract broke\"); void main() {}",
+            Some(&test_langspec()),
+        )
+        .expect("static assertion should parse");
+        let error = analyze_script(&script, Some(&test_langspec()))
+            .expect_err("false assertion should fail");
+        assert_eq!(error.message, "contract broke");
     }
 
     #[test]

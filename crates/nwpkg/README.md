@@ -1,11 +1,11 @@
 # nwnrs-nwpkg
 
-`nwnrs-nwpkg` defines the typed `nwproject.toml` and `nwpkg.lock` behavior
+`nwnrs-nwpkg` defines the typed `nwpkg.toml` and `nwpkg.lock` behavior
 used by the workspace packaging tools.
 
 It owns:
 
-- the supported `nwproject` kind taxonomy
+- the supported nwpkg project-kind taxonomy
 - serde-backed TOML manifest read/write behavior
 - local, transitive `include` package dependencies resolved relative to the
   manifest that declares them
@@ -17,7 +17,7 @@ The crate depends on `nwnrs-types` for NWN-specific archive/resource vocabulary
 such as `ResRef`, ERF versions, KEY/BIF versions, checksum helpers, and
 compression algorithms.
 
-An include library is an `nwproject` with `kind = "include"`. A consuming
+An include library is an nwpkg project with `kind = "include"`. A consuming
 project declares it by local path:
 
 ```toml

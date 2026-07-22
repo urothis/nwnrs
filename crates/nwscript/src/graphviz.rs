@@ -75,6 +75,31 @@ impl<'a> GraphvizRenderer<'a> {
                     let child = self.render_struct(struct_decl);
                     self.edge(root, child, None);
                 }
+                crate::TopLevelItem::Enum(declaration) => {
+                    let child = self.node_with_span(
+                        format!("Enum {} : {:?}", declaration.name, declaration.backing),
+                        declaration.span,
+                    );
+                    self.edge(root, child, None);
+                    for variant in &declaration.variants {
+                        let variant_node =
+                            self.node_with_span(format!("Variant {}", variant.name), variant.span);
+                        self.edge(child, variant_node, None);
+                    }
+                }
+                crate::TopLevelItem::TypeAlias(alias) => {
+                    let child =
+                        self.node_with_span(format!("TypeAlias {}", alias.name), alias.span);
+                    self.edge(root, child, None);
+                    let target = self.render_type(&alias.target);
+                    self.edge(child, target, Some("target"));
+                }
+                crate::TopLevelItem::StaticAssert(assertion) => {
+                    let child = self.node_with_span("StaticAssert", assertion.span);
+                    self.edge(root, child, None);
+                    let condition = self.render_expr(&assertion.condition);
+                    self.edge(child, condition, Some("condition"));
+                }
             }
         }
     }
@@ -169,6 +194,12 @@ impl<'a> GraphvizRenderer<'a> {
             Stmt::Break(stmt) => self.render_simple("Break", stmt),
             Stmt::Continue(stmt) => self.render_simple("Continue", stmt),
             Stmt::Empty(stmt) => self.render_simple("Empty", stmt),
+            Stmt::StaticAssert(assertion) => {
+                let root = self.node_with_span("StaticAssert", assertion.span);
+                let condition = self.render_expr(&assertion.condition);
+                self.edge(root, condition, Some("condition"));
+                root
+            }
         }
     }
 
@@ -269,6 +300,40 @@ impl<'a> GraphvizRenderer<'a> {
             }
             ExprKind::Identifier(name) => {
                 self.node_with_span(format!("Identifier {}", name), expr.span)
+            }
+            ExprKind::ScopedIdentifier {
+                scope,
+                name,
+            } => self.node_with_span(format!("ScopedIdentifier {scope}::{name}"), expr.span),
+            ExprKind::Match(expression) => {
+                let root = self.node_with_span("Match", expr.span);
+                let value = self.render_expr(&expression.value);
+                self.edge(root, value, Some("value"));
+                for arm in &expression.arms {
+                    let arm_node = self.node_with_span("MatchArm", arm.span);
+                    self.edge(root, arm_node, Some("arm"));
+                    if let Some(guard) = &arm.guard {
+                        let guard = self.render_expr(guard);
+                        self.edge(arm_node, guard, Some("guard"));
+                    }
+                    match &arm.body {
+                        crate::MatchArmBody::Expr(body) => {
+                            let body = self.render_expr(body);
+                            self.edge(arm_node, body, Some("body"));
+                        }
+                        crate::MatchArmBody::Block(block) => {
+                            for statement in &block.statements {
+                                let statement = self.render_stmt(statement);
+                                self.edge(arm_node, statement, Some("statement"));
+                            }
+                            if let Some(tail) = &block.tail {
+                                let tail = self.render_expr(tail);
+                                self.edge(arm_node, tail, Some("tail"));
+                            }
+                        }
+                    }
+                }
+                root
             }
             ExprKind::Call {
                 callee,
@@ -445,6 +510,7 @@ fn type_label(kind: &TypeKind, is_const: bool) -> String {
         TypeKind::Vector => format!("{prefix}vector"),
         TypeKind::Struct(name) => format!("{prefix}struct {name}"),
         TypeKind::EngineStructure(name) => format!("{prefix}{name}"),
+        TypeKind::Named(name) => format!("{prefix}{name}"),
     }
 }
 

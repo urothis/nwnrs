@@ -1,0 +1,6 @@
+[project]
+name = "invalid-event-fixture"
+kind = "mod"
+
+[source]
+path = "."

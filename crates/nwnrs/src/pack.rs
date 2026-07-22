@@ -1486,13 +1486,13 @@ string JsonGetString(json jValue);
         fs::create_dir_all(&input).expect("create module dir");
         fs::create_dir_all(&include).expect("create include dir");
         fs::write(
-            input.join("nwproject.toml"),
+            input.join("nwpkg.toml"),
             "[project]\nname = \"fixture\"\nkind = \"mod\"\n\n[source]\npath = \
              \".\"\n\n[dependencies]\nfixture = { path = \"../include\" }\n",
         )
         .expect("write module manifest");
         fs::write(
-            include.join("nwproject.toml"),
+            include.join("nwpkg.toml"),
             "[project]\nname = \"fixture\"\nkind = \"include\"\n\n[source]\npath = \".\"\n",
         )
         .expect("write include manifest");
@@ -1538,7 +1538,7 @@ string JsonGetString(json jValue);
         let output = temp_dir.join("test.mod");
         fs::create_dir_all(&input).expect("create module dir");
         fs::write(
-            input.join("nwproject.toml"),
+            input.join("nwpkg.toml"),
             "[project]\nname = \"fixture\"\nkind = \"mod\"\n\n[source]\npath = \".\"\n",
         )
         .expect("write module manifest");

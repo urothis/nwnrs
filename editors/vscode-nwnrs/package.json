@@ -1,0 +1,220 @@
+{
+  "name": "nwnrs",
+  "displayName": "nwnrs",
+  "description": "NWScript diagnostics and language support powered by the nwnrs compiler.",
+  "version": "0.0.1",
+  "publisher": "nwnrs",
+  "license": "GPL-3.0-only",
+  "icon": "images/icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/urothis/nwnrs.git",
+    "directory": "editors/vscode-nwnrs"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Linters"
+  ],
+  "keywords": [
+    "neverwinter nights",
+    "nwscript",
+    "nss",
+    "nwn"
+  ],
+  "extensionKind": [
+    "workspace"
+  ],
+  "main": "./src/extension.js",
+  "activationEvents": [
+    "onLanguage:nwscript",
+    "onLanguage:nwpkg",
+    "onCommand:nwnrs.checkCurrentFile",
+    "onCommand:nwnrs.checkWorkspace",
+    "onCommand:nwnrs.showStatusMenu",
+    "onCommand:nwnrs.showCompilerOutput",
+    "workspaceContains:**/*.nss"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "nwscript",
+        "aliases": [
+          "NWScript",
+          "nwscript"
+        ],
+        "extensions": [
+          ".nss"
+        ],
+        "configuration": "./language-configuration.json"
+      },
+      {
+        "id": "nwpkg",
+        "aliases": [
+          "nwpkg Manifest",
+          "nwpkg"
+        ],
+        "filenames": [
+          "nwpkg.toml"
+        ],
+        "configuration": "./nwpkg-language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "nwscript",
+        "scopeName": "source.nwscript",
+        "path": "./syntaxes/nwscript.tmLanguage.json"
+      },
+      {
+        "language": "nwpkg",
+        "scopeName": "source.nwpkg",
+        "path": "./syntaxes/nwpkg.tmLanguage.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "nwnrs.checkCurrentFile",
+        "title": "nwnrs: Check Current NWScript File"
+      },
+      {
+        "command": "nwnrs.checkWorkspace",
+        "title": "nwnrs: Check NWScript Workspace"
+      },
+      {
+        "command": "nwnrs.showStatusMenu",
+        "title": "nwnrs: Show Status Menu"
+      },
+      {
+        "command": "nwnrs.showCompilerOutput",
+        "title": "nwnrs: Show Compiler Output"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "nwnrs.checkCurrentFile",
+          "when": "editorLangId == nwscript",
+          "group": "navigation"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "nwnrs",
+      "properties": {
+        "nwnrs.checkOnSave": {
+          "type": "boolean",
+          "default": true,
+          "description": "Run the bundled in-process NWScript compiler whenever an NSS document is saved."
+        },
+        "nwnrs.checkOnChange": {
+          "type": "boolean",
+          "default": true,
+          "description": "Run an in-memory compiler check while an NSS document is edited."
+        },
+        "nwnrs.checkOnOpen": {
+          "type": "boolean",
+          "default": true,
+          "description": "Run the bundled in-process NWScript compiler when an NSS document is opened."
+        },
+        "nwnrs.debounceMilliseconds": {
+          "type": "number",
+          "default": 250,
+          "minimum": 0,
+          "maximum": 5000,
+          "description": "Delay before an automatic compiler check. Newer checks cancel older checks for the same file."
+        },
+        "nwnrs.noEntrypointCheck": {
+          "type": "boolean",
+          "default": true,
+          "description": "Allow include-style NSS files without main() or StartingConditional()."
+        },
+        "nwnrs.includeDirectories": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "description": "Additional NWScript include directories. Relative paths resolve from the owning project. Supports ${workspaceFolder} and ${projectRoot}."
+        },
+        "nwnrs.langspecPath": {
+          "type": "string",
+          "default": "",
+          "description": "Optional explicit nwscript.nss path. The game resource is used when empty. Supports ${workspaceFolder} and ${projectRoot}."
+        },
+        "nwnrs.rootPath": {
+          "type": "string",
+          "default": "",
+          "description": "Optional Neverwinter Nights installation root. Empty uses nwnrs auto-discovery."
+        },
+        "nwnrs.userPath": {
+          "type": "string",
+          "default": "",
+          "description": "Optional Neverwinter Nights user directory. Empty uses nwnrs auto-discovery."
+        },
+        "nwnrs.language": {
+          "type": "string",
+          "default": "english",
+          "description": "Installation language used to resolve nwscript.nss and other resources."
+        },
+        "nwnrs.loadOvr": {
+          "type": "boolean",
+          "default": false,
+          "description": "Include the Neverwinter Nights override directory in compiler resource lookup."
+        },
+        "nwnrs.maxIncludeDepth": {
+          "type": "number",
+          "default": 16,
+          "minimum": 1,
+          "maximum": 200,
+          "description": "Maximum recursive include depth passed to the compiler."
+        },
+        "nwnrs.maxDiagnosticsPerFile": {
+          "type": "number",
+          "default": 50,
+          "minimum": 1,
+          "maximum": 200,
+          "description": "Maximum number of independent compiler diagnostics recovered for one NSS input."
+        },
+        "nwnrs.inlayHints.enumValues": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show compiler-resolved automatic integer enum values beside variants that omit an explicit value."
+        },
+        "nwnrs.inlayHints.parameterNames": {
+          "type": "string",
+          "enum": [
+            "off",
+            "literals",
+            "all"
+          ],
+          "default": "literals",
+          "description": "Show parameter-name hints at call sites: never, only for literal arguments, or for every argument."
+        }
+      }
+    },
+    "semanticTokenScopes": [
+      {
+        "language": "nwscript",
+        "scopes": {
+          "function": ["entity.name.function.nwscript"],
+          "parameter": ["variable.parameter.nwscript"],
+          "variable": ["variable.other.readwrite.nwscript"],
+          "property": ["variable.other.property.nwscript"],
+          "type": ["storage.type.nwscript"],
+          "enum": ["entity.name.type.enum.nwscript"],
+          "enumMember": ["constant.other.enum.nwscript"],
+          "macro": ["entity.name.function.preprocessor.nwscript"]
+        }
+      }
+    ]
+  },
+  "scripts": {
+    "build-native": "node scripts/build-native.js",
+    "vscode:prepublish": "npm run build-native && npm run check",
+    "check": "node --check src/compiler.js && node --check src/compiler-worker.js && node --check src/language-worker-client.js && node --check src/extension.js",
+    "test": "node --test test/*.test.js"
+  }
+}

@@ -4,7 +4,7 @@ use std::{fmt, str::FromStr};
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 
-/// Supported `nwproject` kinds.
+/// Supported nwpkg project kinds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ProjectKind {
     Include,

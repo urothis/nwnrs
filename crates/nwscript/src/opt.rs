@@ -214,6 +214,7 @@ fn eliminate_dead_functions(hir: &HirModule) -> HirModule {
     HirModule {
         includes: hir.includes.clone(),
         structs: hir.structs.clone(),
+        enum_defaults: hir.enum_defaults.clone(),
         globals: hir.globals.clone(),
         functions,
     }
@@ -316,6 +317,42 @@ fn collect_user_calls_expr(
 ) {
     match &expr.kind {
         HirExprKind::Literal(_) | HirExprKind::Value(_) => {}
+        HirExprKind::Match {
+            value,
+            arms,
+        } => {
+            collect_user_calls_expr(value, ordered, visited, function_map);
+            for arm in arms {
+                if let Some(guard) = &arm.guard {
+                    collect_user_calls_expr(guard, ordered, visited, function_map);
+                }
+                match &arm.body {
+                    crate::HirMatchArmBody::Expr(body) => {
+                        collect_user_calls_expr(body, ordered, visited, function_map);
+                    }
+                    crate::HirMatchArmBody::Block {
+                        block,
+                        tail,
+                        ..
+                    } => {
+                        for statement in &block.statements {
+                            collect_user_calls_stmt(statement, ordered, visited, function_map);
+                        }
+                        if let Some(tail) = tail {
+                            collect_user_calls_expr(tail, ordered, visited, function_map);
+                        }
+                    }
+                }
+            }
+        }
+        HirExprKind::CheckedEnumConversion {
+            value,
+            fallback,
+            ..
+        } => {
+            collect_user_calls_expr(value, ordered, visited, function_map);
+            collect_user_calls_expr(fallback, ordered, visited, function_map);
+        }
         HirExprKind::Call {
             target,
             arguments,
@@ -453,6 +490,56 @@ pub(crate) fn evaluate_const_expr(
             ConstValue::Int(_) => evaluate_const_expr(when_false, constants),
             _ => None,
         },
+        HirExprKind::Match {
+            value,
+            arms,
+        } => {
+            let value = evaluate_const_expr(value, constants)?;
+            for arm in arms {
+                let pattern_matches = arm.patterns.is_empty()
+                    || arm.patterns.iter().any(|pattern| {
+                        const_from_literal(pattern).is_some_and(|pattern| pattern == value)
+                    });
+                if !pattern_matches {
+                    continue;
+                }
+                if let Some(guard) = &arm.guard
+                    && !matches!(evaluate_const_expr(guard, constants), Some(ConstValue::Int(value)) if value != 0)
+                {
+                    continue;
+                }
+                return match &arm.body {
+                    crate::HirMatchArmBody::Expr(body) => evaluate_const_expr(body, constants),
+                    crate::HirMatchArmBody::Block {
+                        block,
+                        tail,
+                        ..
+                    } if block.statements.is_empty() => tail
+                        .as_ref()
+                        .and_then(|tail| evaluate_const_expr(tail, constants)),
+                    crate::HirMatchArmBody::Block {
+                        ..
+                    } => None,
+                };
+            }
+            None
+        }
+        HirExprKind::CheckedEnumConversion {
+            value,
+            fallback,
+            valid_values,
+        } => {
+            let value = evaluate_const_expr(value, constants)?;
+            if valid_values
+                .iter()
+                .filter_map(const_from_literal)
+                .any(|valid| valid == value)
+            {
+                Some(value)
+            } else {
+                evaluate_const_expr(fallback, constants)
+            }
+        }
         HirExprKind::Value(_)
         | HirExprKind::Call {
             ..

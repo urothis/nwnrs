@@ -30,6 +30,7 @@ const MACRO_TOKENSTREAM_INDEX: u8 = 0;
 const MACRO_TOKENSTREAM_LIST_INDEX: u8 = 1;
 const MACRO_QUOTE_BINDINGS_INDEX: u8 = 2;
 const MACRO_TOKEN_CURSOR_INDEX: u8 = 3;
+const GENERATED_MACRO_SOURCE_ID: SourceId = SourceId::new(u32::MAX - 1);
 const MACRO_LANGSPEC: &str = r#"
 #define ENGINE_NUM_STRUCTURES 4
 #define ENGINE_STRUCTURE_0 tokenstream
@@ -609,6 +610,74 @@ pub fn expand_bang_macros(
     Ok(flattened)
 }
 
+/// Expands one already-balanced invocation through a registered macro while
+/// preserving every input token's original source span.
+///
+/// This is used by project-wide compiler passes whose input is assembled from
+/// multiple source files and therefore must not be rendered and re-lexed.
+///
+/// # Errors
+///
+/// Returns an error when the path is invalid or unregistered, the macro fails,
+/// a nested expansion fails, or an expansion resource limit is exceeded.
+pub fn expand_registered_macro(
+    registry: &MacroRegistry,
+    path: &str,
+    input: NwTokenStream,
+    invocation_span: Span,
+    options: MacroExpansionOptions,
+) -> Result<NwTokenStream, MacroExpansionError> {
+    let path = MacroPath::parse(path)?;
+    if options.max_depth == 0 {
+        return Err(MacroExpansionError::new(
+            invocation_span,
+            "macro expansion maximum depth must be greater than zero",
+        ));
+    }
+    let Some(implementation) = registry.macros.get(&path) else {
+        return Err(MacroExpansionError::new(
+            invocation_span,
+            format!("unknown macro `{path}`"),
+        ));
+    };
+    let stack = vec![path.clone()];
+    let output = implementation
+        .expand(
+            &MacroInvocation {
+                path: path.clone(),
+                delimiter: NwDelimiter::Brace,
+                input,
+                span: invocation_span,
+            },
+            MacroContext {
+                expansion_stack: &stack,
+            },
+        )
+        .map_err(|error| error.with_stack(&stack))?;
+    let output = if output.recursively_expand {
+        MacroExpander {
+            registry,
+            options,
+            stack,
+            trace: false,
+            traces: Vec::new(),
+        }
+        .expand_stream(output.tokens)?
+    } else {
+        output.tokens
+    };
+    if output.flattened_len() > options.token_limit {
+        return Err(MacroExpansionError::new(
+            invocation_span,
+            format!(
+                "macro expansion exceeded token limit of {}",
+                options.token_limit
+            ),
+        ));
+    }
+    Ok(output)
+}
+
 /// Collects top-level `macro_rules!` definitions, removes them from `stream`,
 /// and registers their bang macros.
 ///
@@ -948,7 +1017,7 @@ impl BangMacro for NwScriptMacro {
         let arena = Rc::new(RefCell::new(TokenStreamArena::with_input(
             invocation.input.clone(),
         )));
-        let vm = macro_vm(Rc::clone(&arena), invocation.span.source_id);
+        let vm = macro_vm(Rc::clone(&arena), GENERATED_MACRO_SOURCE_ID);
         let runtime = vm
             .run_function_bytes_with_options(
                 &self.ncs,
@@ -965,11 +1034,22 @@ impl BangMacro for NwScriptMacro {
                     max_stack_cells:     Some(DEFAULT_PROCEDURAL_MACRO_STACK_LIMIT),
                 },
             )
-            .map_err(|error| {
-                MacroExpansionError::new(
+            .map_err(|error| match error {
+                crate::VmError::MacroDiagnostic {
+                    span,
+                    message,
+                } => MacroExpansionError::new(
+                    if span.source_id == GENERATED_MACRO_SOURCE_ID {
+                        invocation.span
+                    } else {
+                        span
+                    },
+                    message,
+                ),
+                error => MacroExpansionError::new(
                     invocation.span,
                     format!("procedural macro `{}` failed: {error}", invocation.path),
-                )
+                ),
             })?;
         let output = runtime
             .function_return_value(&self.ndb, &self.entry)
@@ -995,7 +1075,7 @@ impl BangMacro for NwScriptMacro {
                 ),
             ));
         };
-        let stream = arena.borrow().balanced(handle).map_err(|error| {
+        let mut stream = arena.borrow().balanced(handle).map_err(|error| {
             MacroExpansionError::new(
                 invocation.span,
                 format!(
@@ -1004,6 +1084,7 @@ impl BangMacro for NwScriptMacro {
                 ),
             )
         })?;
+        rebase_source_id(&mut stream, GENERATED_MACRO_SOURCE_ID, invocation.span);
         Ok(MacroOutput::expanded(stream))
     }
 }
@@ -2006,25 +2087,22 @@ fn define_token_cursor_commands(
         vm.define_simple_command(38, move |script| {
             let input = pop_macro_tokenstream_handle(script)?;
             let message = script.pop_string()?.to_string_lossy().into_owned();
-            let location = arena
+            let span = arena
                 .borrow()
                 .balanced(input)
                 .ok()
-                .and_then(|stream| stream.trees().first().map(NwTokenTree::span))
-                .map_or_else(
-                    || format!("tokenstream {input}"),
-                    |span| {
-                        format!(
-                            "source#{}:{}..{}",
-                            span.source_id.get(),
-                            span.start,
-                            span.end
-                        )
-                    },
-                );
-            Err(crate::VmError::Setup {
-                message: format!("procedural macro reported at {location}: {message}"),
-            })
+                .and_then(|stream| stream.trees().first().map(NwTokenTree::span));
+            match span {
+                Some(span) => Err(crate::VmError::MacroDiagnostic {
+                    span,
+                    message,
+                }),
+                None => Err(crate::VmError::Setup {
+                    message: format!(
+                        "procedural macro reported for tokenstream {input}: {message}"
+                    ),
+                }),
+            }
         });
     }
 }
@@ -2913,13 +2991,46 @@ impl BangMacro for DeclarativeMacro {
                 match_matchers(&rule.matcher, invocation.input.trees(), 0, 0, &mut bindings)
                 && consumed == invocation.input.len()
             {
-                return quote_nwscript(&rule.template, &matched_bindings).map(MacroOutput::expanded);
+                let mut template = rule.template.clone();
+                rebase_all_spans(&mut template, invocation.span);
+                return quote_nwscript(&template, &matched_bindings).map(MacroOutput::expanded);
             }
         }
         Err(MacroExpansionError::new(
             invocation.span,
             format!("no rules matched invocation of `{}`", self.path),
         ))
+    }
+}
+
+fn rebase_all_spans(stream: &mut NwTokenStream, span: Span) {
+    for tree in &mut stream.trees {
+        match tree {
+            NwTokenTree::Token(token) => token.span = span,
+            NwTokenTree::Group(group) => {
+                group.open_span = span;
+                group.close_span = span;
+                rebase_all_spans(&mut group.stream, span);
+            }
+        }
+    }
+}
+
+fn rebase_source_id(stream: &mut NwTokenStream, source_id: SourceId, span: Span) {
+    for tree in &mut stream.trees {
+        match tree {
+            NwTokenTree::Token(token) if token.span.source_id == source_id => token.span = span,
+            NwTokenTree::Token(_) => {}
+            NwTokenTree::Group(group) => {
+                if group.open_span.source_id == source_id {
+                    group.open_span = span;
+                }
+                if group.close_span.source_id == source_id {
+                    group.close_span = span;
+                }
+                rebase_source_id(&mut group.stream, source_id, span);
+            }
+        }
     }
 }
 
@@ -3879,7 +3990,7 @@ mod tests {
         expand_bang_macros, expand_source_macros, expand_source_macros_traced, quote_nwscript,
         register_compiler_macros, register_nwscript_macro, render_nwscript_tokens,
     };
-    use crate::{SourceId, TokenKind, lex_text, parse_tokens};
+    use crate::{SourceFile, SourceId, TokenKind, lex_text, parse_tokens};
 
     fn lex(input: &str) -> Vec<crate::Token> {
         match lex_text(SourceId::new(1), input) {
@@ -4052,6 +4163,47 @@ mod tests {
             Err(error) => unreachable!("expanded fixture should parse: {error}"),
         };
         assert_eq!(script.items.len(), 1);
+    }
+
+    #[test]
+    fn declarative_macro_static_tokens_use_the_invocation_span() {
+        let source =
+            "macro_rules! make { ($name:ident) => { void $name() {} }; }\nmake!(Generated)";
+        let original = lex(source);
+        let invocation = original
+            .iter()
+            .rev()
+            .find(|token| token.text == "make")
+            .expect("invocation token")
+            .span;
+        let captured = original
+            .iter()
+            .find(|token| token.text == "Generated")
+            .expect("captured token")
+            .span;
+        let expanded = expand_source_macros(
+            original,
+            &mut MacroRegistry::new(),
+            MacroExpansionOptions::default(),
+        )
+        .expect("expand declarative macro");
+
+        let static_span = expanded
+            .iter()
+            .find(|token| token.text == "void")
+            .expect("static output token")
+            .span;
+        assert_eq!(static_span.source_id, invocation.source_id);
+        assert_eq!(static_span.start, invocation.start);
+        assert!(static_span.end > invocation.end);
+        assert_eq!(
+            expanded
+                .iter()
+                .find(|token| token.text == "Generated")
+                .expect("captured output token")
+                .span,
+            captured
+        );
     }
 
     #[test]
@@ -4519,7 +4671,15 @@ mod tests {
         )
         .expect_err("macro should report a located error");
         assert!(error.to_string().contains("deliberate failure"));
-        assert!(error.to_string().contains("source#"));
+        let file = SourceFile::new(SourceId::new(1), "macro-input.nss", source);
+        assert_eq!(
+            file.span_text(
+                error
+                    .span
+                    .expect("macro error should retain its input span")
+            ),
+            Some("Problem")
+        );
     }
 
     #[test]
@@ -4584,6 +4744,53 @@ mod tests {
             Err(error) => unreachable!("procedural output should parse: {error}"),
         };
         assert_eq!(script.items.len(), 2);
+    }
+
+    #[test]
+    fn procedural_macro_static_tokens_use_the_invocation_span() {
+        let source = r#"
+            proc_macro! make_constant {
+                tokenstream make_constant(tokenstream input) {
+                    return quote! { const int GENERATED = $input; };
+                }
+            }
+            make_constant!(19)
+        "#;
+        let original = lex(source);
+        let invocation = original
+            .iter()
+            .rev()
+            .find(|token| token.text == "make_constant")
+            .expect("invocation token")
+            .span;
+        let captured = original
+            .iter()
+            .find(|token| token.text == "19")
+            .expect("captured token")
+            .span;
+        let expanded = expand_source_macros(
+            original,
+            &mut MacroRegistry::new(),
+            MacroExpansionOptions::default(),
+        )
+        .expect("expand procedural macro");
+
+        let static_span = expanded
+            .iter()
+            .find(|token| token.text == "const")
+            .expect("static output token")
+            .span;
+        assert_eq!(static_span.source_id, invocation.source_id);
+        assert_eq!(static_span.start, invocation.start);
+        assert!(static_span.end > invocation.end);
+        assert_eq!(
+            expanded
+                .iter()
+                .find(|token| token.text == "19")
+                .expect("captured output token")
+                .span,
+            captured
+        );
     }
 
     #[test]

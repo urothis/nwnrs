@@ -20,6 +20,71 @@ pub enum TopLevelItem {
     Function(FunctionDecl),
     /// One user-defined `struct`.
     Struct(StructDecl),
+    /// One strongly typed integer- or string-backed enum.
+    Enum(EnumDecl),
+    /// One transparent source-level type alias.
+    TypeAlias(TypeAliasDecl),
+    /// One compile-time assertion.
+    StaticAssert(StaticAssertDecl),
+}
+
+/// One strongly typed enum declaration.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EnumDecl {
+    /// Source span covering the complete declaration.
+    pub span:     Span,
+    /// Enum type name.
+    pub name:     String,
+    /// Native value type used after lowering.
+    pub backing:  EnumBackingType,
+    /// Variants in declaration order.
+    pub variants: Vec<EnumVariantDecl>,
+}
+
+/// One supported native enum representation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub enum EnumBackingType {
+    /// Integer-backed enum with optional automatic discriminants.
+    Int,
+    /// String-backed enum whose variants require explicit values.
+    String,
+}
+
+/// One enum variant and its compiler attributes.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EnumVariantDecl {
+    /// Source span covering attributes, name, and optional value.
+    pub span:       Span,
+    /// Variant name used by scoped references.
+    pub name:       String,
+    /// Explicit discriminant, or `None` for an automatically assigned integer.
+    pub value:      Option<Expr>,
+    /// Whether this variant overrides the enum's first-variant default.
+    pub is_default: bool,
+    /// Global compatibility names emitted for this variant.
+    pub aliases:    Vec<NamedItem>,
+}
+
+/// One transparent type alias declaration.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TypeAliasDecl {
+    /// Source span covering the declaration.
+    pub span:   Span,
+    /// Alias name.
+    pub name:   String,
+    /// Aliased type.
+    pub target: TypeSpec,
+}
+
+/// One compile-time assertion declaration or statement.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StaticAssertDecl {
+    /// Source span covering the complete assertion.
+    pub span:      Span,
+    /// Constant expression required to evaluate to nonzero.
+    pub condition: Expr,
+    /// Optional diagnostic message.
+    pub message:   Option<ScriptString>,
 }
 
 /// One `#include "..."` directive.
@@ -120,6 +185,8 @@ pub enum TypeKind {
     Struct(String),
     /// One builtin engine structure such as `effect` or `json`.
     EngineStructure(String),
+    /// One source-defined enum or transparent type alias.
+    Named(String),
 }
 
 /// One variable declaration statement.
@@ -184,6 +251,8 @@ pub enum Stmt {
     Continue(SimpleStmt),
     /// `;`
     Empty(SimpleStmt),
+    /// One block-local compile-time assertion.
+    StaticAssert(StaticAssertDecl),
 }
 
 /// One statement carrying only a span.
@@ -304,6 +373,15 @@ pub enum ExprKind {
     Literal(Literal),
     /// One variable or named constant reference.
     Identifier(String),
+    /// One scoped enum variant such as `LogLevel::Info`.
+    ScopedIdentifier {
+        /// Enum type name on the left of `::`.
+        scope: String,
+        /// Variant name on the right of `::`.
+        name:  String,
+    },
+    /// One exhaustive enum match expression.
+    Match(MatchExpr),
     /// One function call or action invocation.
     Call {
         /// Called expression.
@@ -352,6 +430,67 @@ pub enum ExprKind {
         /// Right-hand expression.
         right: Box<Expr>,
     },
+}
+
+/// One enum match expression.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MatchExpr {
+    /// Matched enum value.
+    pub value: Box<Expr>,
+    /// Arms in source order.
+    pub arms:  Vec<MatchArm>,
+}
+
+/// One match arm.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MatchArm {
+    /// Source span covering patterns, guard, arrow, and body.
+    pub span:     Span,
+    /// Alternative patterns separated by `|`.
+    pub patterns: Vec<MatchPattern>,
+    /// Optional guard condition.
+    pub guard:    Option<Expr>,
+    /// Selected expression or block.
+    pub body:     MatchArmBody,
+}
+
+/// One match pattern.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MatchPattern {
+    /// One scoped enum variant.
+    Variant {
+        /// Pattern source span.
+        span:  Span,
+        /// Enum type name.
+        scope: String,
+        /// Variant name.
+        name:  String,
+    },
+    /// Catch-all `_` pattern.
+    Wildcard {
+        /// Pattern source span.
+        span: Span,
+    },
+}
+
+/// One match-arm result.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum MatchArmBody {
+    /// One expression result.
+    Expr(Expr),
+    /// One statement block with an optional trailing result expression.
+    Block(MatchBlock),
+}
+
+/// One match block body.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MatchBlock {
+    /// Source span covering braces and contents.
+    pub span:       Span,
+    /// Ordinary statements before the optional tail expression.
+    pub statements: Vec<Stmt>,
+    /// Final expression without a semicolon, when present.
+    pub tail:       Option<Box<Expr>>,
 }
 
 /// One unary operator.

@@ -2,7 +2,7 @@ use std::{collections::HashMap, error::Error, fmt};
 
 use crate::{
     CompilerErrorCode, NCS_BINARY_HEADER_SIZE, NcsAuxCode, NcsInstruction, NcsOpcode, NcsReadError,
-    Ndb, NdbFunction, NdbType, ScriptString, decode_ncs_instructions,
+    Ndb, NdbFunction, NdbType, ScriptString, Span, decode_ncs_instructions,
 };
 
 /// One opaque object id visible to the VM runtime.
@@ -136,6 +136,13 @@ pub enum VmError {
         /// Human-readable explanation.
         message: String,
     },
+    /// A compiler-hosted VM command reported a diagnostic for source tokens.
+    MacroDiagnostic {
+        /// Original macro-input source span.
+        span:    Span,
+        /// Human-readable diagnostic.
+        message: String,
+    },
     /// One VM run exceeded the configured instruction budget.
     InstructionLimitExceeded {
         /// Byte offset of the instruction that would execute next.
@@ -197,6 +204,9 @@ impl VmError {
                 ..
             } => Some(CompilerErrorCode::VmInvalidCommand),
             Self::Setup {
+                ..
+            }
+            | Self::MacroDiagnostic {
                 ..
             } => None,
             Self::InstructionLimitExceeded {
@@ -273,6 +283,9 @@ impl fmt::Display for VmError {
             }
             Self::Setup {
                 message,
+            } => f.write_str(message),
+            Self::MacroDiagnostic {
+                message, ..
             } => f.write_str(message),
             Self::InstructionLimitExceeded {
                 offset,
@@ -3366,6 +3379,159 @@ int Twice(int x) {
         runtime.run(&vm)?;
 
         assert_eq!(&*seen.borrow(), &[1]);
+        Ok(())
+    }
+
+    #[test]
+    fn executes_nested_int_and_string_enum_matches_with_block_arms()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let langspec = parse_langspec(
+            "nwscript",
+            "void PrintInteger(int n);\nvoid PrintString(string s);",
+        )?;
+        let source = r#"
+            enum Mode { Off, On, #[default] Unknown = 5 }
+            enum Word : string { Hello = "hello", Goodbye = "goodbye" }
+            struct Holder { Mode mode; };
+            int should_use_first() { return 0; }
+
+            int choose(Mode mode) {
+                return 10 + match mode {
+                    Mode::Off => 1,
+                    Mode::On if should_use_first() => 2,
+                    Mode::On => { int adjustment = 3; adjustment + 1 },
+                    Mode::Unknown => 5,
+                };
+            }
+
+            int early(Mode mode) {
+                return match mode {
+                    Mode::Off => 0,
+                    Mode::On => { return 9; }
+                    Mode::Unknown => 5,
+                };
+            }
+
+            int string_switch(Word word) {
+                switch (word) {
+                    case Word::Hello: return 1;
+                    case Word::Goodbye: return 2;
+                }
+                return 0;
+            }
+
+            int statement_return(Mode mode) {
+                match mode {
+                    Mode::Off => { return 3; }
+                    Mode::On => { return 4; }
+                    Mode::Unknown => { return 5; }
+                }
+            }
+
+            int break_from_match() {
+                int result = 0;
+                while (1) {
+                    match Mode::On {
+                        Mode::Off => {}
+                        Mode::On => { result = 8; break; }
+                        Mode::Unknown => {}
+                    }
+                    result = 1;
+                }
+                return result;
+            }
+
+            void main() {
+                struct Holder holder;
+                PrintInteger(choose(Mode::On));
+                PrintInteger(int(holder.mode));
+                PrintInteger(early(Mode::On));
+                PrintInteger(string_switch(Word::Goodbye));
+                PrintInteger(statement_return(Mode::On));
+                PrintInteger(break_from_match());
+                PrintString(match Word::Goodbye {
+                    Word::Hello => "wrong",
+                    Word::Goodbye => "right",
+                });
+            }
+        "#;
+        let script = parse_text(SourceId::new(0), source, Some(&langspec))?;
+        let artifacts = compile_script(&script, Some(&langspec), CompileOptions::default())?;
+
+        let integers = Rc::new(RefCell::new(Vec::new()));
+        let strings = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new();
+        {
+            let integers = Rc::clone(&integers);
+            vm.define_simple_command(0, move |script| {
+                integers.borrow_mut().push(script.pop_int()?);
+                Ok(())
+            });
+        }
+        {
+            let strings = Rc::clone(&strings);
+            vm.define_simple_command(1, move |script| {
+                strings.borrow_mut().push(script.pop_string()?.into_bytes());
+                Ok(())
+            });
+        }
+
+        let mut runtime = VmScript::from_bytes(&artifacts.ncs, "enum-match-main")?;
+        runtime.run(&vm)?;
+
+        assert_eq!(&*integers.borrow(), &[14, 5, 9, 2, 4, 8]);
+        assert_eq!(&*strings.borrow(), &[b"right".to_vec()]);
+        Ok(())
+    }
+
+    #[test]
+    fn checked_enum_conversions_accept_declared_values_and_apply_fallbacks()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let langspec = parse_langspec(
+            "nwscript",
+            "void PrintInteger(int n);\nvoid PrintString(string s);",
+        )?;
+        let source = r#"
+            enum State { Off = 1, On = 2 }
+            enum Phase : string { Before = "before", After = "after" }
+
+            void main() {
+                int valid = 2;
+                int invalid = 99;
+                string valid_text = "after";
+                string invalid_text = "unknown";
+                PrintInteger(int(State(valid, State::Off)));
+                PrintInteger(int(State(invalid, State::Off)));
+                PrintString(string(Phase(valid_text, Phase::Before)));
+                PrintString(string(Phase(invalid_text, Phase::Before)));
+            }
+        "#;
+        let script = parse_text(SourceId::new(0), source, Some(&langspec))?;
+        let artifacts = compile_script(&script, Some(&langspec), CompileOptions::default())?;
+
+        let integers = Rc::new(RefCell::new(Vec::new()));
+        let strings = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new();
+        {
+            let integers = Rc::clone(&integers);
+            vm.define_simple_command(0, move |script| {
+                integers.borrow_mut().push(script.pop_int()?);
+                Ok(())
+            });
+        }
+        {
+            let strings = Rc::clone(&strings);
+            vm.define_simple_command(1, move |script| {
+                strings.borrow_mut().push(script.pop_string()?.into_bytes());
+                Ok(())
+            });
+        }
+
+        let mut runtime = VmScript::from_bytes(&artifacts.ncs, "checked-enum-conversion")?;
+        runtime.run(&vm)?;
+
+        assert_eq!(&*integers.borrow(), &[2, 1]);
+        assert_eq!(&*strings.borrow(), &[b"after".to_vec(), b"before".to_vec()]);
         Ok(())
     }
 

@@ -1,10 +1,14 @@
 use std::{error::Error, fmt};
 
 use crate::{
-    CompileArtifacts, CompileError, CompileOptions, DEFAULT_LANGSPEC_SCRIPT_NAME, LangSpec,
-    LangSpecError, OptimizationFlags, OptimizationLevel, PreprocessError, Script, ScriptResolver,
-    SourceBundle, SourceError, SourceLoadOptions, compile_script, compile_script_with_source_map,
-    graphviz::render_script_graphviz, load_langspec, load_source_bundle, parse_source_bundle,
+    CancellationToken, Cancelled, CompileArtifacts, CompileError, CompileOptions,
+    DEFAULT_LANGSPEC_SCRIPT_NAME, HirModule, LangSpec, LangSpecError, OptimizationFlags,
+    OptimizationLevel, PreprocessError, Script, ScriptResolver, SemanticIndex, SemanticModel,
+    SourceBundle, SourceError, SourceLoadOptions, analyze_script_with_options,
+    build_semantic_index, compile_script, compile_script_with_source_map,
+    graphviz::render_script_graphviz, load_langspec, load_source_bundle,
+    load_source_bundle_with_cancellation, lower_to_hir, parse_source_bundle,
+    parse_source_bundle_with_cancellation,
 };
 
 /// Configuration for one reusable NWScript compiler session.
@@ -34,6 +38,8 @@ impl Default for CompilerSessionOptions {
 /// Errors returned while using one reusable compiler session.
 #[derive(Debug)]
 pub enum CompilerSessionError {
+    /// The caller cancelled the compiler request.
+    Cancelled(Cancelled),
     /// Loading or parsing the builtin language specification failed.
     LangSpec(LangSpecError),
     /// Loading and preprocessing the requested source bundle failed.
@@ -47,6 +53,7 @@ pub enum CompilerSessionError {
 impl fmt::Display for CompilerSessionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Cancelled(error) => error.fmt(f),
             Self::LangSpec(error) => error.fmt(f),
             Self::Preprocess(error) => error.fmt(f),
             Self::Source(error) => error.fmt(f),
@@ -81,11 +88,35 @@ impl From<CompileError> for CompilerSessionError {
     }
 }
 
+impl From<Cancelled> for CompilerSessionError {
+    fn from(value: Cancelled) -> Self {
+        Self::Cancelled(value)
+    }
+}
+
 /// One reusable pure-Rust compiler session backed by a script resolver.
 pub struct CompilerSession<'a> {
     resolver:        &'a dyn ScriptResolver,
     options:         CompilerSessionOptions,
     cached_langspec: Option<LangSpec>,
+}
+
+/// Immutable compiler-front-end artifacts shared by compilation and language
+/// tooling.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CompilerAnalysis {
+    /// Active builtin language specification.
+    pub langspec: LangSpec,
+    /// Root source and its complete include graph.
+    pub bundle:   SourceBundle,
+    /// Parsed, macro-expanded syntax tree.
+    pub script:   Script,
+    /// Resolved declarations and types.
+    pub semantic: SemanticModel,
+    /// Typed representation consumed by code generation.
+    pub hir:      HirModule,
+    /// Source-addressable declarations and references derived from typed HIR.
+    pub index:    SemanticIndex,
 }
 
 #[derive(Debug, Clone)]
@@ -200,6 +231,92 @@ impl<'a> CompilerSession<'a> {
             .map_err(CompilerSessionError::from)
     }
 
+    /// Runs the complete compiler front end and returns reusable,
+    /// source-addressable analysis.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CompilerSessionError`] when source resolution, parsing,
+    /// semantic analysis, or HIR lowering fails.
+    pub fn analyze_script_name(
+        &mut self,
+        script_name: &str,
+    ) -> Result<CompilerAnalysis, CompilerSessionError> {
+        let prepared = self.prepare_script_name(script_name)?;
+        let semantic = analyze_script_with_options(
+            &prepared.script,
+            Some(&prepared.langspec),
+            self.options.compile.semantic,
+        )
+        .map_err(CompileError::from)?;
+        let hir = lower_to_hir(&prepared.script, &semantic, Some(&prepared.langspec))
+            .map_err(CompileError::from)?;
+        let index = build_semantic_index(
+            &prepared.script,
+            &semantic,
+            &hir,
+            Some(&prepared.langspec),
+            &prepared.bundle.source_map,
+        );
+        Ok(CompilerAnalysis {
+            langspec: prepared.langspec,
+            bundle: prepared.bundle,
+            script: prepared.script,
+            semantic,
+            hir,
+            index,
+        })
+    }
+
+    /// Runs the compiler front end with cooperative cancellation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CompilerSessionError`] for ordinary compiler failures or
+    /// cancellation.
+    pub fn analyze_script_name_with_cancellation(
+        &mut self,
+        script_name: &str,
+        cancellation: &CancellationToken,
+    ) -> Result<CompilerAnalysis, CompilerSessionError> {
+        cancellation.check()?;
+        let langspec = self.ensure_langspec_loaded()?.clone();
+        cancellation.check()?;
+        let bundle = load_source_bundle_with_cancellation(
+            self.resolver,
+            script_name,
+            self.options.source_load,
+            cancellation,
+        )?;
+        cancellation.check()?;
+        let script = parse_source_bundle_with_cancellation(&bundle, Some(&langspec), cancellation)
+            .map_err(CompileError::from)
+            .map_err(CompilerSessionError::Compile)?;
+        cancellation.check()?;
+        let semantic =
+            analyze_script_with_options(&script, Some(&langspec), self.options.compile.semantic)
+                .map_err(CompileError::from)?;
+        cancellation.check()?;
+        let hir = lower_to_hir(&script, &semantic, Some(&langspec)).map_err(CompileError::from)?;
+        cancellation.check()?;
+        let index = build_semantic_index(
+            &script,
+            &semantic,
+            &hir,
+            Some(&langspec),
+            &bundle.source_map,
+        );
+        cancellation.check()?;
+        Ok(CompilerAnalysis {
+            langspec,
+            bundle,
+            script,
+            semantic,
+            hir,
+            index,
+        })
+    }
+
     /// Renders one logical script name to Graphviz DOT using the cached
     /// langspec and loaded source bundle.
     ///
@@ -242,6 +359,32 @@ impl<'a> CompilerSession<'a> {
         let script = parse_source_bundle(&bundle, Some(&langspec))
             .map_err(CompileError::from)
             .map_err(CompilerSessionError::Compile)?;
+        Ok(PreparedScript {
+            langspec,
+            bundle,
+            script,
+        })
+    }
+
+    pub(crate) fn prepare_script_name_with_cancellation(
+        &mut self,
+        script_name: &str,
+        cancellation: &CancellationToken,
+    ) -> Result<PreparedScript, CompilerSessionError> {
+        cancellation.check()?;
+        let langspec = self.ensure_langspec_loaded()?.clone();
+        cancellation.check()?;
+        let bundle = load_source_bundle_with_cancellation(
+            self.resolver,
+            script_name,
+            self.options.source_load,
+            cancellation,
+        )?;
+        cancellation.check()?;
+        let script = parse_source_bundle_with_cancellation(&bundle, Some(&langspec), cancellation)
+            .map_err(CompileError::from)
+            .map_err(CompilerSessionError::Compile)?;
+        cancellation.check()?;
         Ok(PreparedScript {
             langspec,
             bundle,

@@ -190,6 +190,10 @@ pub(crate) struct CompileCmd {
     /// compile and report outcomes without writing artifacts
     pub(crate) simulate: bool,
 
+    #[argh(option, default = "String::from(\"text\")")]
+    /// diagnostic output format: text or json
+    pub(crate) diagnostic_format: String,
+
     #[argh(switch, short = 'y')]
     /// continue compiling remaining inputs after an error
     pub(crate) continue_on_error: bool,
@@ -752,6 +756,8 @@ mod tests {
                 "32",
                 "--graphviz",
                 "graphs",
+                "--diagnostic-format",
+                "json",
                 "-d",
                 "build",
                 "scripts",
@@ -774,6 +780,7 @@ mod tests {
         assert_eq!(cmd.directory, Some(PathBuf::from("build")));
         assert_eq!(cmd.graphviz, Some(PathBuf::from("graphs")));
         assert_eq!(cmd.graphviz_format, "svg");
+        assert_eq!(cmd.diagnostic_format, "json");
         assert_eq!(cmd.paths, vec![PathBuf::from("scripts")]);
     }
 

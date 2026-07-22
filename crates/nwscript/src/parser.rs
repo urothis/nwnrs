@@ -2,10 +2,12 @@ use std::{collections::HashSet, error::Error, fmt};
 
 use crate::{
     AssignmentOp, BinaryOp, BlockStmt, CaseStmt, CompilerErrorCode, Declaration, DefaultStmt,
-    DoWhileStmt, Expr, ExprKind, ExpressionStmt, ForStmt, FunctionDecl, IfStmt, IncludeDirective,
-    Keyword, LangSpec, Literal, MagicLiteral, NamedItem, Parameter, ReturnStmt, Script, SimpleStmt,
-    Span, Stmt, StructDecl, StructFieldDecl, SwitchStmt, Token, TokenKind, TopLevelItem, TypeKind,
-    TypeSpec, UnaryOp, VarDeclarator, WhileStmt,
+    DoWhileStmt, EnumBackingType, EnumDecl, EnumVariantDecl, Expr, ExprKind, ExpressionStmt,
+    ForStmt, FunctionDecl, IfStmt, IncludeDirective, Keyword, LangSpec, Literal, MagicLiteral,
+    MatchArm, MatchArmBody, MatchBlock, MatchExpr, MatchPattern, NamedItem, Parameter, ReturnStmt,
+    Script, SimpleStmt, Span, StaticAssertDecl, Stmt, StructDecl, StructFieldDecl, SwitchStmt,
+    Token, TokenKind, TopLevelItem, TypeAliasDecl, TypeKind, TypeSpec, UnaryOp, VarDeclarator,
+    WhileStmt,
     int_literal::{parse_wrapping_decimal_i32, parse_wrapping_prefixed_i32},
     lexer::{LexerError, lex_source},
     preprocess::{PreprocessError, preprocess_source_bundle},
@@ -171,6 +173,30 @@ pub fn parse_source_bundle(
     parse_tokens(preprocessed.tokens, langspec).map_err(ResolvedParseError::from)
 }
 
+/// Parses one source bundle with cooperative preprocessing and phase
+/// cancellation.
+///
+/// # Errors
+///
+/// Returns [`ResolvedParseError`] for ordinary parser failures or cancellation.
+pub fn parse_source_bundle_with_cancellation(
+    bundle: &crate::SourceBundle,
+    langspec: Option<&LangSpec>,
+    cancellation: &crate::CancellationToken,
+) -> Result<Script, ResolvedParseError> {
+    let preprocessed = crate::preprocess_source_bundle_with_cancellation(bundle, cancellation)?;
+    cancellation
+        .check()
+        .map_err(crate::PreprocessError::from)
+        .map_err(ResolvedParseError::from)?;
+    let script = parse_tokens(preprocessed.tokens, langspec).map_err(ResolvedParseError::from)?;
+    cancellation
+        .check()
+        .map_err(crate::PreprocessError::from)
+        .map_err(ResolvedParseError::from)?;
+    Ok(script)
+}
+
 /// Parses one source bundle with caller-provided built-in macros and expansion
 /// limits.
 ///
@@ -190,6 +216,36 @@ pub fn parse_source_bundle_with_macros(
 ) -> Result<Script, ResolvedParseError> {
     let preprocessed = crate::preprocess_source_bundle_with_macros(bundle, registry, options)?;
     parse_tokens(preprocessed.tokens, langspec).map_err(ResolvedParseError::from)
+}
+
+/// Parses one source bundle with compiler macros and cooperative cancellation.
+///
+/// # Errors
+///
+/// Returns [`ResolvedParseError`] for ordinary parser failures or cancellation.
+pub fn parse_source_bundle_with_macros_and_cancellation(
+    bundle: &crate::SourceBundle,
+    langspec: Option<&LangSpec>,
+    registry: &mut crate::MacroRegistry,
+    options: crate::MacroExpansionOptions,
+    cancellation: &crate::CancellationToken,
+) -> Result<Script, ResolvedParseError> {
+    let preprocessed = crate::preprocess_source_bundle_with_macros_and_cancellation(
+        bundle,
+        registry,
+        options,
+        cancellation,
+    )?;
+    cancellation
+        .check()
+        .map_err(crate::PreprocessError::from)
+        .map_err(ResolvedParseError::from)?;
+    let script = parse_tokens(preprocessed.tokens, langspec).map_err(ResolvedParseError::from)?;
+    cancellation
+        .check()
+        .map_err(crate::PreprocessError::from)
+        .map_err(ResolvedParseError::from)?;
+    Ok(script)
 }
 
 /// Resolves, preprocesses, and parses one named root script.
@@ -238,10 +294,274 @@ impl<'a> Parser<'a> {
                 items.push(TopLevelItem::Include(self.parse_include_directive()?));
                 continue;
             }
+            if self.matches_identifier_text("enum") {
+                items.push(TopLevelItem::Enum(self.parse_enum_declaration()?));
+                continue;
+            }
+            if self.matches_identifier_text("type") {
+                items.push(TopLevelItem::TypeAlias(self.parse_type_alias()?));
+                continue;
+            }
+            if self.matches_identifier_text("static_assert") {
+                items.push(TopLevelItem::StaticAssert(self.parse_static_assert()?));
+                continue;
+            }
             items.push(self.parse_top_level_item()?);
         }
         Ok(Script {
             items,
+        })
+    }
+
+    fn parse_enum_declaration(&mut self) -> Result<EnumDecl, ParserError> {
+        let enum_token =
+            self.consume_identifier(CompilerErrorCode::InvalidEnumDeclaration, "expected enum")?;
+        let name = self.consume_identifier(
+            CompilerErrorCode::InvalidEnumDeclaration,
+            "expected enum name",
+        )?;
+        let backing = if self.matches_kind(&TokenKind::Colon) {
+            self.advance();
+            let backing = self.advance_required(
+                CompilerErrorCode::InvalidEnumBackingType,
+                "expected int or string after :",
+            )?;
+            match backing.kind {
+                TokenKind::Keyword(Keyword::Int) => EnumBackingType::Int,
+                TokenKind::Keyword(Keyword::String) => EnumBackingType::String,
+                _ => {
+                    return Err(ParserError::new(
+                        CompilerErrorCode::InvalidEnumBackingType,
+                        backing.span,
+                        "enum backing type must be int or string",
+                    ));
+                }
+            }
+        } else {
+            EnumBackingType::Int
+        };
+        self.consume_kind(
+            TokenKind::LeftBrace,
+            CompilerErrorCode::InvalidEnumDeclaration,
+            "expected { after enum name",
+        )?;
+
+        let mut variants = Vec::new();
+        while !self.matches_kind(&TokenKind::RightBrace) && !self.at_eof() {
+            let attribute_start = self.peek().map(|token| token.span);
+            let mut is_default = false;
+            let mut aliases = Vec::new();
+            while self.matches_kind(&TokenKind::Hash) {
+                let (attribute, argument, span) = self.parse_enum_attribute()?;
+                match attribute.as_str() {
+                    "default" => {
+                        if argument.is_some() {
+                            return Err(ParserError::new(
+                                CompilerErrorCode::InvalidEnumDeclaration,
+                                span,
+                                "#[default] does not accept an argument",
+                            ));
+                        }
+                        if is_default {
+                            return Err(ParserError::new(
+                                CompilerErrorCode::MultipleEnumDefaults,
+                                span,
+                                "enum variant repeats #[default]",
+                            ));
+                        }
+                        is_default = true;
+                    }
+                    "alias" => {
+                        let alias = argument.ok_or_else(|| {
+                            ParserError::new(
+                                CompilerErrorCode::InvalidEnumDeclaration,
+                                span,
+                                "#[alias(...)] requires a global identifier",
+                            )
+                        })?;
+                        aliases.push(alias);
+                    }
+                    _ => {
+                        return Err(ParserError::new(
+                            CompilerErrorCode::InvalidEnumDeclaration,
+                            span,
+                            format!("unsupported enum variant attribute #[{attribute}]"),
+                        ));
+                    }
+                }
+            }
+
+            let variant = self.consume_identifier(
+                CompilerErrorCode::InvalidEnumDeclaration,
+                "expected enum variant name",
+            )?;
+            let value = if self.matches_kind(&TokenKind::Assign) {
+                self.advance();
+                Some(self.parse_expression()?)
+            } else {
+                None
+            };
+            let end_span = value.as_ref().map_or(variant.span, |value| value.span);
+            variants.push(EnumVariantDecl {
+                span: attribute_start.map_or_else(
+                    || join_spans(variant.span, end_span),
+                    |start| join_spans(start, end_span),
+                ),
+                name: variant.text,
+                value,
+                is_default,
+                aliases,
+            });
+
+            if self.matches_kind(&TokenKind::Comma) {
+                self.advance();
+            } else if !self.matches_kind(&TokenKind::RightBrace) {
+                return Err(self.error_here(
+                    CompilerErrorCode::InvalidEnumDeclaration,
+                    "expected , or } after enum variant",
+                ));
+            }
+        }
+        let right = self.consume_kind(
+            TokenKind::RightBrace,
+            CompilerErrorCode::InvalidEnumDeclaration,
+            "expected } after enum variants",
+        )?;
+        let end = if self.matches_kind(&TokenKind::Semicolon) {
+            self.advance_required(
+                CompilerErrorCode::InvalidEnumDeclaration,
+                "expected optional enum semicolon",
+            )?
+        } else {
+            right
+        };
+        Ok(EnumDecl {
+            span: join_spans(enum_token.span, end.span),
+            name: name.text,
+            backing,
+            variants,
+        })
+    }
+
+    fn parse_enum_attribute(&mut self) -> Result<(String, Option<NamedItem>, Span), ParserError> {
+        let hash = self.consume_kind(
+            TokenKind::Hash,
+            CompilerErrorCode::InvalidEnumDeclaration,
+            "expected #",
+        )?;
+        self.consume_kind(
+            TokenKind::LeftSquareBracket,
+            CompilerErrorCode::InvalidEnumDeclaration,
+            "expected [ after #",
+        )?;
+        let attribute = match self.peek() {
+            Some(Token {
+                kind: TokenKind::Identifier | TokenKind::Keyword(Keyword::Default),
+                ..
+            }) => self.advance_required(
+                CompilerErrorCode::InvalidEnumDeclaration,
+                "expected enum attribute name",
+            )?,
+            _ => {
+                return Err(self.error_here(
+                    CompilerErrorCode::InvalidEnumDeclaration,
+                    "expected enum attribute name",
+                ));
+            }
+        };
+        let argument = if self.matches_kind(&TokenKind::LeftParen) {
+            self.advance();
+            let argument = self.consume_identifier(
+                CompilerErrorCode::InvalidEnumDeclaration,
+                "expected identifier in enum attribute",
+            )?;
+            self.consume_kind(
+                TokenKind::RightParen,
+                CompilerErrorCode::InvalidEnumDeclaration,
+                "expected ) after enum attribute argument",
+            )?;
+            Some(NamedItem {
+                span: argument.span,
+                name: argument.text,
+            })
+        } else {
+            None
+        };
+        let right = self.consume_kind(
+            TokenKind::RightSquareBracket,
+            CompilerErrorCode::InvalidEnumDeclaration,
+            "expected ] after enum attribute",
+        )?;
+        Ok((attribute.text, argument, join_spans(hash.span, right.span)))
+    }
+
+    fn parse_type_alias(&mut self) -> Result<TypeAliasDecl, ParserError> {
+        let type_token =
+            self.consume_identifier(CompilerErrorCode::InvalidTypeAlias, "expected type")?;
+        let name = self.consume_identifier(
+            CompilerErrorCode::InvalidTypeAlias,
+            "expected type alias name",
+        )?;
+        self.consume_kind(
+            TokenKind::Assign,
+            CompilerErrorCode::InvalidTypeAlias,
+            "expected = after type alias name",
+        )?;
+        let target = self.parse_non_void_type_specifier()?;
+        if target.is_const {
+            return Err(ParserError::new(
+                CompilerErrorCode::InvalidTypeAlias,
+                target.span,
+                "type aliases cannot contain the const declaration modifier",
+            ));
+        }
+        let semicolon = self.consume_kind(
+            TokenKind::Semicolon,
+            CompilerErrorCode::InvalidTypeAlias,
+            "expected ; after type alias",
+        )?;
+        Ok(TypeAliasDecl {
+            span: join_spans(type_token.span, semicolon.span),
+            name: name.text,
+            target,
+        })
+    }
+
+    fn parse_static_assert(&mut self) -> Result<StaticAssertDecl, ParserError> {
+        let assertion = self.consume_identifier(
+            CompilerErrorCode::StaticAssertionFailed,
+            "expected static_assert",
+        )?;
+        self.consume_kind(
+            TokenKind::LeftParen,
+            CompilerErrorCode::StaticAssertionFailed,
+            "expected ( after static_assert",
+        )?;
+        let condition = self.parse_expression()?;
+        let message = if self.matches_kind(&TokenKind::Comma) {
+            self.advance();
+            let message = self.consume_string(
+                CompilerErrorCode::StaticAssertionFailed,
+                "static_assert message must be a string literal",
+            )?;
+            Some(crate::ScriptString::from_lexed_text(&message.text))
+        } else {
+            None
+        };
+        self.consume_kind(
+            TokenKind::RightParen,
+            CompilerErrorCode::StaticAssertionFailed,
+            "expected ) after static_assert",
+        )?;
+        let semicolon = self.consume_kind(
+            TokenKind::Semicolon,
+            CompilerErrorCode::StaticAssertionFailed,
+            "expected ; after static_assert",
+        )?;
+        Ok(StaticAssertDecl {
+            span: join_spans(assertion.span, semicolon.span),
+            condition,
+            message,
         })
     }
 
@@ -539,14 +859,17 @@ impl<'a> Parser<'a> {
                 self.advance();
                 TypeKind::EngineStructure(token.text)
             }
+            TokenKind::Identifier => {
+                self.advance();
+                TypeKind::Named(token.text)
+            }
             _ => {
-                return Err(ParserError::new(
+                return Err(self.error_here(
                     if is_const {
                         CompilerErrorCode::InvalidTypeForConstKeyword
                     } else {
                         CompilerErrorCode::InvalidDeclarationType
                     },
-                    token.span,
                     "expected a non-void type specifier",
                 ));
             }
@@ -684,6 +1007,9 @@ impl<'a> Parser<'a> {
                 span: join_spans(keyword.span, semicolon.span),
             }));
         }
+        if self.matches_identifier_text("static_assert") {
+            return self.parse_static_assert().map(Stmt::StaticAssert);
+        }
         if self.matches_kind(&TokenKind::Semicolon) {
             let semicolon =
                 self.advance_required(CompilerErrorCode::NoSemicolonAfterStatement, "expected ;")?;
@@ -691,16 +1017,32 @@ impl<'a> Parser<'a> {
                 span: semicolon.span,
             }));
         }
-        if self.starts_non_void_type_specifier() {
+        if !self.matches_identifier_text("match") && self.starts_non_void_type_specifier() {
             return self.parse_statement_declaration().map(Stmt::Declaration);
         }
 
         let expr = self.parse_expression()?;
-        let semicolon = self.consume_kind(
-            TokenKind::Semicolon,
-            CompilerErrorCode::NoSemicolonAfterExpression,
-            "expected ; after expression",
-        )?;
+        if matches!(expr.kind, ExprKind::Match(_)) && !self.matches_kind(&TokenKind::Semicolon) {
+            return Ok(Stmt::Expression(ExpressionStmt {
+                span: expr.span,
+                expr,
+            }));
+        }
+        let semicolon = self
+            .consume_kind(
+                TokenKind::Semicolon,
+                CompilerErrorCode::NoSemicolonAfterExpression,
+                "expected ; after expression",
+            )
+            .map_err(|mut error| {
+                if matches!(
+                    self.peek().map(|token| &token.kind),
+                    Some(TokenKind::RightBrace | TokenKind::Eof) | None
+                ) {
+                    error.span = expr.span;
+                }
+                error
+            })?;
         Ok(Stmt::Expression(ExpressionStmt {
             span: join_spans(expr.span, semicolon.span),
             expr,
@@ -1214,6 +1556,10 @@ impl<'a> Parser<'a> {
             )
         })?;
 
+        if token.kind == TokenKind::Identifier && token.text == "match" {
+            return self.parse_match_expression();
+        }
+
         match token.kind {
             TokenKind::Integer
             | TokenKind::HexInteger
@@ -1255,6 +1601,26 @@ impl<'a> Parser<'a> {
             TokenKind::Identifier => {
                 let identifier = self
                     .advance_required(CompilerErrorCode::BadVariableName, "expected identifier")?;
+                if self.matches_kind(&TokenKind::Colon)
+                    && self
+                        .tokens
+                        .get(self.position + 1)
+                        .is_some_and(|token| token.kind == TokenKind::Colon)
+                {
+                    self.advance();
+                    self.advance();
+                    let variant = self.consume_identifier(
+                        CompilerErrorCode::InvalidEnumOperation,
+                        "expected enum variant after ::",
+                    )?;
+                    return Ok(Expr {
+                        span: join_spans(identifier.span, variant.span),
+                        kind: ExprKind::ScopedIdentifier {
+                            scope: identifier.text,
+                            name:  variant.text,
+                        },
+                    });
+                }
                 let mut expr = Expr {
                     span: identifier.span,
                     kind: ExprKind::Identifier(identifier.text),
@@ -1271,12 +1637,204 @@ impl<'a> Parser<'a> {
                 }
                 Ok(expr)
             }
-            _ => Err(ParserError::new(
+            TokenKind::Keyword(Keyword::Int | Keyword::String) => {
+                let conversion = self.advance_required(
+                    CompilerErrorCode::InvalidEnumOperation,
+                    "expected enum conversion type",
+                )?;
+                if !self.matches_kind(&TokenKind::LeftParen) {
+                    return Err(ParserError::new(
+                        CompilerErrorCode::InvalidEnumOperation,
+                        conversion.span,
+                        "int and string are expressions only when used as enum conversions",
+                    ));
+                }
+                let (arguments, end_span) = self.parse_argument_list()?;
+                Ok(Expr {
+                    span: join_spans(conversion.span, end_span),
+                    kind: ExprKind::Call {
+                        callee: Box::new(Expr {
+                            span: conversion.span,
+                            kind: ExprKind::Identifier(conversion.text),
+                        }),
+                        arguments,
+                    },
+                })
+            }
+            _ => Err(self.error_here(
                 CompilerErrorCode::UnknownStateInCompiler,
-                token.span,
                 "unexpected token in expression",
             )),
         }
+    }
+
+    fn parse_match_expression(&mut self) -> Result<Expr, ParserError> {
+        let match_token =
+            self.consume_identifier(CompilerErrorCode::InvalidMatch, "expected match")?;
+        let value = self.parse_expression()?;
+        self.consume_kind(
+            TokenKind::LeftBrace,
+            CompilerErrorCode::InvalidMatch,
+            "expected { after match value",
+        )?;
+        let mut arms = Vec::new();
+        while !self.matches_kind(&TokenKind::RightBrace) && !self.at_eof() {
+            let arm_start = self.peek().map_or(match_token.span, |token| token.span);
+            let mut patterns = vec![self.parse_match_pattern()?];
+            while self.matches_kind(&TokenKind::InclusiveOr) {
+                self.advance();
+                patterns.push(self.parse_match_pattern()?);
+            }
+            let guard = if self.matches_keyword(Keyword::If) {
+                self.advance();
+                // `=>` begins with `=`, so parsing an assignment expression here
+                // would incorrectly consume the match-arm delimiter as an
+                // assignment operator. Guards deliberately stop at the
+                // conditional-expression precedence level.
+                Some(self.parse_conditional_expression()?)
+            } else {
+                None
+            };
+            self.consume_kind(
+                TokenKind::Assign,
+                CompilerErrorCode::InvalidMatch,
+                "expected => after match pattern",
+            )?;
+            self.consume_kind(
+                TokenKind::GreaterThan,
+                CompilerErrorCode::InvalidMatch,
+                "expected => after match pattern",
+            )?;
+            let body = if self.matches_kind(&TokenKind::LeftBrace) {
+                MatchArmBody::Block(self.parse_match_block()?)
+            } else {
+                MatchArmBody::Expr(self.parse_expression()?)
+            };
+            let arm_end = match &body {
+                MatchArmBody::Expr(expression) => expression.span,
+                MatchArmBody::Block(block) => block.span,
+            };
+            let block_body = matches!(body, MatchArmBody::Block(_));
+            arms.push(MatchArm {
+                span: join_spans(arm_start, arm_end),
+                patterns,
+                guard,
+                body,
+            });
+            if self.matches_kind(&TokenKind::Comma) {
+                self.advance();
+            } else if !block_body && !self.matches_kind(&TokenKind::RightBrace) {
+                return Err(self.error_here(
+                    CompilerErrorCode::InvalidMatch,
+                    "expected , after match expression arm",
+                ));
+            }
+        }
+        let right = self.consume_kind(
+            TokenKind::RightBrace,
+            CompilerErrorCode::InvalidMatch,
+            "expected } after match arms",
+        )?;
+        Ok(Expr {
+            span: join_spans(match_token.span, right.span),
+            kind: ExprKind::Match(MatchExpr {
+                value: Box::new(value),
+                arms,
+            }),
+        })
+    }
+
+    fn parse_match_pattern(&mut self) -> Result<MatchPattern, ParserError> {
+        let scope = self.consume_identifier(
+            CompilerErrorCode::InvalidMatch,
+            "expected enum variant or _ match pattern",
+        )?;
+        if scope.text == "_" {
+            return Ok(MatchPattern::Wildcard {
+                span: scope.span
+            });
+        }
+        self.consume_kind(
+            TokenKind::Colon,
+            CompilerErrorCode::InvalidMatch,
+            "enum match patterns must use Enum::Variant",
+        )?;
+        self.consume_kind(
+            TokenKind::Colon,
+            CompilerErrorCode::InvalidMatch,
+            "enum match patterns must use Enum::Variant",
+        )?;
+        let variant = self.consume_identifier(
+            CompilerErrorCode::InvalidMatch,
+            "expected enum variant after ::",
+        )?;
+        Ok(MatchPattern::Variant {
+            span:  join_spans(scope.span, variant.span),
+            scope: scope.text,
+            name:  variant.text,
+        })
+    }
+
+    fn parse_match_block(&mut self) -> Result<MatchBlock, ParserError> {
+        let left = self.consume_kind(
+            TokenKind::LeftBrace,
+            CompilerErrorCode::InvalidMatch,
+            "expected { to start match arm block",
+        )?;
+        let mut statements = Vec::new();
+        let mut tail = None;
+        while !self.matches_kind(&TokenKind::RightBrace) && !self.at_eof() {
+            if self.starts_definite_statement() {
+                statements.push(self.parse_statement()?);
+                continue;
+            }
+            let expression = self.parse_expression()?;
+            if self.matches_kind(&TokenKind::Semicolon) {
+                let semicolon = self.advance_required(
+                    CompilerErrorCode::InvalidMatch,
+                    "expected ; after match block expression",
+                )?;
+                statements.push(Stmt::Expression(ExpressionStmt {
+                    span: join_spans(expression.span, semicolon.span),
+                    expr: expression,
+                }));
+            } else if self.matches_kind(&TokenKind::RightBrace) {
+                tail = Some(Box::new(expression));
+                break;
+            } else {
+                return Err(self.error_here(
+                    CompilerErrorCode::InvalidMatch,
+                    "match block tail expression must be last or end with ;",
+                ));
+            }
+        }
+        let right = self.consume_kind(
+            TokenKind::RightBrace,
+            CompilerErrorCode::InvalidMatch,
+            "expected } after match arm block",
+        )?;
+        Ok(MatchBlock {
+            span: join_spans(left.span, right.span),
+            statements,
+            tail,
+        })
+    }
+
+    fn starts_definite_statement(&self) -> bool {
+        self.matches_kind(&TokenKind::LeftBrace)
+            || self.matches_kind(&TokenKind::Semicolon)
+            || self.matches_keyword(Keyword::If)
+            || self.matches_keyword(Keyword::Switch)
+            || self.matches_keyword(Keyword::Return)
+            || self.matches_keyword(Keyword::While)
+            || self.matches_keyword(Keyword::Do)
+            || self.matches_keyword(Keyword::For)
+            || self.matches_keyword(Keyword::Case)
+            || self.matches_keyword(Keyword::Default)
+            || self.matches_keyword(Keyword::Break)
+            || self.matches_keyword(Keyword::Continue)
+            || self.matches_identifier_text("static_assert")
+            || (!self.matches_identifier_text("match") && self.starts_non_void_type_specifier())
     }
 
     fn parse_argument_list(&mut self) -> Result<(Vec<Expr>, Span), ParserError> {
@@ -1411,9 +1969,8 @@ impl<'a> Parser<'a> {
                 (token.span, Literal::Magic(MagicLiteral::Time))
             }
             _ => {
-                return Err(ParserError::new(
+                return Err(self.error_here(
                     CompilerErrorCode::BadConstantType,
-                    token.span,
                     "unexpected token in literal expression",
                 ));
             }
@@ -1536,7 +2093,13 @@ impl<'a> Parser<'a> {
                 | Keyword::Struct
                 | Keyword::Vector,
             ) => true,
-            TokenKind::Identifier => self.is_engine_structure_name(token),
+            TokenKind::Identifier => {
+                self.is_engine_structure_name(token)
+                    || self
+                        .tokens
+                        .get(self.position + 1)
+                        .is_some_and(|next| next.kind == TokenKind::Identifier)
+            }
             _ => false,
         }
     }
@@ -1558,6 +2121,11 @@ impl<'a> Parser<'a> {
 
     fn matches_kind(&self, kind: &TokenKind) -> bool {
         self.peek().is_some_and(|token| token.kind == *kind)
+    }
+
+    fn matches_identifier_text(&self, text: &str) -> bool {
+        self.peek()
+            .is_some_and(|token| token.kind == TokenKind::Identifier && token.text == text)
     }
 
     fn consume_keyword(
@@ -1616,15 +2184,29 @@ impl<'a> Parser<'a> {
     }
 
     fn error_here(&self, code: CompilerErrorCode, message: impl Into<String>) -> ParserError {
-        let span = self
-            .peek()
-            .map_or_else(|| self.eof_span(), |token| token.span);
+        let span = match self.peek() {
+            Some(Token {
+                kind: TokenKind::Eof,
+                ..
+            })
+            | None => self.previous_non_eof_span(),
+            Some(token) => token.span,
+        };
         ParserError::new(code, span, message)
     }
 
-    fn eof_span(&self) -> Span {
+    fn previous_non_eof_span(&self) -> Span {
         self.tokens
-            .last()
+            .get(..self.position.min(self.tokens.len()))
+            .unwrap_or_default()
+            .iter()
+            .rev()
+            .find(|token| token.kind != TokenKind::Eof)
+            .or_else(|| {
+                self.tokens
+                    .iter()
+                    .find(|token| token.kind != TokenKind::Eof)
+            })
             .map_or_else(|| Span::new(SourceId::new(0), 0, 0), |token| token.span)
     }
 
@@ -1653,7 +2235,11 @@ impl<'a> Parser<'a> {
         code: CompilerErrorCode,
         message: &str,
     ) -> Result<Token, ParserError> {
-        self.advance().ok_or_else(|| self.error_here(code, message))
+        if self.at_eof() {
+            Err(self.error_here(code, message))
+        } else {
+            self.advance().ok_or_else(|| self.error_here(code, message))
+        }
     }
 }
 
@@ -1675,6 +2261,7 @@ impl Stmt {
             Self::Break(stmt) => stmt.span,
             Self::Continue(stmt) => stmt.span,
             Self::Empty(stmt) => stmt.span,
+            Self::StaticAssert(stmt) => stmt.span,
         }
     }
 }
@@ -1714,7 +2301,9 @@ mod tests {
     use super::{
         ExprKind, Literal, ParseError, Stmt, TopLevelItem, parse_resolved_script, parse_text,
     };
-    use crate::{InMemoryScriptResolver, LangSpec, SourceId, SourceLoadOptions, TypeKind};
+    use crate::{
+        InMemoryScriptResolver, LangSpec, SourceFile, SourceId, SourceLoadOptions, TypeKind,
+    };
 
     fn test_langspec() -> LangSpec {
         LangSpec {
@@ -1727,6 +2316,62 @@ mod tests {
             constants:             Vec::new(),
             functions:             Vec::new(),
         }
+    }
+
+    #[test]
+    fn parses_extended_enums_aliases_and_static_assertions() {
+        let script = parse_text(
+            SourceId::new(0),
+            "enum LogLevel { Trace, #[default] #[alias(LOG_INFO)] Info = Trace + 2, }\nenum \
+             EventPhase : string { Before = \"before\", After = \"after\" }\ntype Level = \
+             LogLevel;\nstatic_assert(LogLevel::Info == LogLevel::Info, \"enum mismatch\");\nvoid \
+             main() { Level level = LogLevel::Info; static_assert(1); }",
+            Some(&test_langspec()),
+        )
+        .expect("parse extended enum syntax");
+
+        let Some(TopLevelItem::Enum(level)) = script.items.first() else {
+            panic!("expected integer enum");
+        };
+        assert_eq!(level.name, "LogLevel");
+        assert_eq!(level.variants.len(), 2);
+        assert!(
+            level
+                .variants
+                .get(1)
+                .is_some_and(|variant| variant.is_default)
+        );
+        assert_eq!(
+            level
+                .variants
+                .get(1)
+                .and_then(|variant| variant.aliases.first())
+                .map(|alias| alias.name.as_str()),
+            Some("LOG_INFO")
+        );
+        assert!(matches!(script.items.get(1), Some(TopLevelItem::Enum(_))));
+        assert!(matches!(
+            script.items.get(2),
+            Some(TopLevelItem::TypeAlias(_))
+        ));
+        assert!(matches!(
+            script.items.get(3),
+            Some(TopLevelItem::StaticAssert(_))
+        ));
+    }
+
+    #[test]
+    fn rejects_const_declaration_modifiers_in_type_aliases() {
+        let source_id = SourceId::new(32);
+        let source = "type ImmutableInt = const int;\nvoid main() {}";
+        let error = parse_text(source_id, source, Some(&test_langspec()))
+            .expect_err("const type alias should fail");
+        let ParseError::Parse(error) = error else {
+            panic!("expected parser error");
+        };
+        assert_eq!(error.code, crate::CompilerErrorCode::InvalidTypeAlias);
+        let source_file = SourceFile::new(source_id, "const-alias.nss", source);
+        assert_eq!(source_file.span_text(error.span), Some("const int"));
     }
 
     #[test]
@@ -1872,6 +2517,69 @@ mod tests {
             function.body.as_ref().map(|body| body.statements.len()),
             Some(2)
         );
+        Ok(())
+    }
+
+    #[test]
+    fn missing_expression_semicolon_points_to_the_expression_at_a_block_boundary()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let source_id = SourceId::new(31);
+        let source = "void main() {\n    asd\n}\n";
+        let error = parse_text(source_id, source, Some(&test_langspec()))
+            .expect_err("missing expression semicolon should fail");
+        let ParseError::Parse(error) = error else {
+            return Err(std::io::Error::other("expected parser error").into());
+        };
+        assert_eq!(
+            error.code,
+            crate::CompilerErrorCode::NoSemicolonAfterExpression
+        );
+        let source_file = SourceFile::new(source_id, "missing-semicolon.nss", source);
+        assert_eq!(source_file.span_text(error.span), Some("asd"));
+        Ok(())
+    }
+
+    #[test]
+    fn eof_parser_errors_always_point_to_visible_source_text()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let malformed_sources = [
+            ("function parameter list", "void main("),
+            ("function block", "void main() {\n    int value = 1;\n"),
+            (
+                "declaration semicolon",
+                "void main() {\n    int value = 1\n",
+            ),
+            ("return semicolon", "int main() {\n    return 1\n"),
+            ("call argument list", "void main() {\n    Call(1"),
+            ("if condition", "void main() {\n    if (1"),
+            ("enum body", "enum State { Ready"),
+            ("type alias", "type State = int"),
+            ("static assertion", "static_assert(1"),
+            (
+                "match body",
+                "void main() {\n    int value = match (1) { 1 => 2",
+            ),
+        ];
+
+        for (name, source) in malformed_sources {
+            let source_id = SourceId::new(32);
+            let error = parse_text(source_id, source, Some(&test_langspec()))
+                .expect_err("malformed source should fail");
+            let ParseError::Parse(error) = error else {
+                return Err(
+                    std::io::Error::other(format!("{name} produced a non-parser error")).into(),
+                );
+            };
+            let source_file = SourceFile::new(source_id, format!("{name}.nss"), source);
+            let selected = source_file
+                .span_bytes(error.span)
+                .ok_or_else(|| std::io::Error::other(format!("invalid span for {name}")))?;
+            assert!(
+                !selected.is_empty() && selected.iter().any(|byte| !byte.is_ascii_whitespace()),
+                "{name} pointed at empty or whitespace source: {:?}",
+                error.span
+            );
+        }
         Ok(())
     }
 

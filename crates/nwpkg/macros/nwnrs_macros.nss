@@ -1,7 +1,19 @@
 /// @file nwnrs_macros.nss
 /// @brief Compiler-only project macros shipped by the nwnrs include package.
 
+/// Builds the generated project event dispatcher from every annotated source.
+/// Validates event identities and handler signatures, emits source includes,
+/// registers supported subscriptions during module.load, and dispatches the
+/// current JSON event to its matching handlers.
+/// @param input Compiler-provided project token stream containing
+/// __nwnrs_source records.
+/// @return Generated NWScript main() dispatcher token stream.
+/// @private
 proc_macro! nwnrs::__build_event_dispatcher {
+    /// Executes the event-dispatcher compiler macro for one project token stream.
+    /// @param input Compiler-provided project token stream.
+    /// @return Generated NWScript main() dispatcher token stream.
+    /// @private
     tokenstream __build_event_dispatcher(tokenstream input)
     {
         tokenstream_list includes = __NWNRS_TokenStreamListNew();

@@ -10,6 +10,7 @@ use std::{
 };
 
 use nwnrs_types::resman::prelude::{ResType, get_res_ext};
+use serde::{Deserialize, Serialize};
 
 use crate::{
     CompileArtifacts, CompilerSession, CompilerSessionError, CompilerSessionOptions,
@@ -223,12 +224,43 @@ pub fn compile_file_with_host<H: CompilerHost>(
     script_name: &str,
     options: &CompilerDriverOptions,
 ) -> Result<CompileFileOutcome, CompilerDriverError> {
+    compile_file_with_host_impl(host, script_name, options, None)
+}
+
+/// Compiles one logical script with cooperative cancellation.
+///
+/// # Errors
+///
+/// Returns [`CompilerDriverError`] for compiler, host, or cancellation
+/// failures.
+pub fn compile_file_with_host_with_cancellation<H: CompilerHost>(
+    host: &mut H,
+    script_name: &str,
+    options: &CompilerDriverOptions,
+    cancellation: &crate::CancellationToken,
+) -> Result<CompileFileOutcome, CompilerDriverError> {
+    compile_file_with_host_impl(host, script_name, options, Some(cancellation))
+}
+
+fn compile_file_with_host_impl<H: CompilerHost>(
+    host: &mut H,
+    script_name: &str,
+    options: &CompilerDriverOptions,
+    cancellation: Option<&crate::CancellationToken>,
+) -> Result<CompileFileOutcome, CompilerDriverError> {
+    if let Some(cancellation) = cancellation {
+        cancellation.check().map_err(CompilerSessionError::from)?;
+    }
     let (prepared, artifacts, graphviz) = {
         let resolver = HostResolver {
             host: &*host
         };
         let mut session = CompilerSession::with_options(&resolver, options.session.clone());
-        let prepared = session.prepare_script_name(script_name)?;
+        let prepared = if let Some(cancellation) = cancellation {
+            session.prepare_script_name_with_cancellation(script_name, cancellation)?
+        } else {
+            session.prepare_script_name(script_name)?
+        };
         if options.skip_missing_entrypoint && !prepared_has_entrypoint(&prepared) {
             return Ok(CompileFileOutcome::SkippedNoEntrypoint);
         }
@@ -240,12 +272,19 @@ pub fn compile_file_with_host<H: CompilerHost>(
         } else {
             None
         };
+        if let Some(cancellation) = cancellation {
+            cancellation.check().map_err(CompilerSessionError::from)?;
+        }
         let artifacts = session
             .compile_prepared(&prepared)
             .map_err(CompilerSessionError::from)
             .map_err(CompilerDriverError::from)?;
         (prepared, artifacts, graphviz)
     };
+
+    if let Some(cancellation) = cancellation {
+        cancellation.check().map_err(CompilerSessionError::from)?;
+    }
 
     host.write_file(
         &options.output_alias,
@@ -281,7 +320,8 @@ fn prepared_has_entrypoint(prepared: &PreparedScript) -> bool {
 /// directories.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct FileSystemScriptResolver {
-    roots: Vec<PathBuf>,
+    roots:    Vec<PathBuf>,
+    overlays: BTreeMap<PathBuf, Vec<u8>>,
 }
 
 impl FileSystemScriptResolver {
@@ -302,6 +342,42 @@ impl FileSystemScriptResolver {
     /// Adds one search root used for relative script names.
     pub fn add_root(&mut self, root: impl Into<PathBuf>) {
         self.roots.push(root.into());
+    }
+
+    /// Adds or replaces an in-memory source file overlay.
+    ///
+    /// Overlay paths participate in the same ordered, case-insensitive
+    /// candidate resolution as files on disk.
+    pub fn add_overlay(&mut self, path: impl Into<PathBuf>, contents: impl Into<Vec<u8>>) {
+        self.overlays.insert(path.into(), contents.into());
+    }
+
+    fn overlay(&self, candidate: &Path) -> Option<&[u8]> {
+        self.overlays.iter().find_map(|(path, contents)| {
+            paths_match_case_insensitively(path, candidate).then_some(contents.as_slice())
+        })
+    }
+
+    fn overlay_path(&self, candidate: &Path) -> Option<&Path> {
+        self.overlays
+            .keys()
+            .find(|path| paths_match_case_insensitively(path, candidate))
+            .map(PathBuf::as_path)
+    }
+
+    /// Resolves a logical source name to the filesystem or overlay path that
+    /// would supply it.
+    #[must_use]
+    pub fn resolve_script_path(&self, script_name: &str) -> Option<PathBuf> {
+        for candidate in self.candidate_paths(script_name) {
+            if let Some(path) = self.overlay_path(&candidate) {
+                return Some(path.to_path_buf());
+            }
+            if let Some(path) = resolve_case_insensitive_file(&candidate) {
+                return Some(path);
+            }
+        }
+        None
     }
 
     fn candidate_paths(&self, script_name: &str) -> Vec<PathBuf> {
@@ -339,7 +415,13 @@ impl ScriptResolver for FileSystemScriptResolver {
             return Ok(None);
         }
         for candidate in self.candidate_paths(script_name) {
+            if let Some(contents) = self.overlay(&candidate) {
+                return Ok(Some(contents.to_vec()));
+            }
             if let Some(resolved) = resolve_case_insensitive_file(&candidate) {
+                if let Some(contents) = self.overlay(&resolved) {
+                    return Ok(Some(contents.to_vec()));
+                }
                 return fs::read(&resolved)
                     .map(Some)
                     .map_err(|error| SourceError::resolver(error.to_string()));
@@ -347,6 +429,18 @@ impl ScriptResolver for FileSystemScriptResolver {
         }
         Ok(None)
     }
+}
+
+fn paths_match_case_insensitively(left: &Path, right: &Path) -> bool {
+    let normalize = |path: &Path| {
+        path.components()
+            .filter_map(|component| match component {
+                Component::CurDir => None,
+                other => Some(other.as_os_str().to_string_lossy().to_ascii_lowercase()),
+            })
+            .collect::<Vec<_>>()
+    };
+    normalize(left) == normalize(right)
 }
 
 fn resolve_case_insensitive_file(path: &Path) -> Option<PathBuf> {
@@ -638,6 +732,8 @@ pub struct BatchCompileOptions {
     pub search_roots:       Vec<PathBuf>,
     /// Resolver consulted after the input directory and search roots miss.
     pub fallback_resolver:  Option<SharedScriptResolver>,
+    /// Unsaved source contents keyed by their filesystem paths.
+    pub source_overlays:    BTreeMap<PathBuf, Vec<u8>>,
     /// Whether directory traversal should recurse.
     pub recurse:            bool,
     /// Whether directory traversal should follow symlinks.
@@ -652,6 +748,8 @@ pub struct BatchCompileOptions {
     pub remove_stale_debug: bool,
     /// Optional worker count used when continuing after individual failures.
     pub jobs:               Option<usize>,
+    /// Cooperative cancellation shared by input discovery and compiler workers.
+    pub cancellation:       Option<crate::CancellationToken>,
     /// Optional exact NCS output path, valid only for one input file.
     pub output_file:        Option<PathBuf>,
     /// Optional output directory overriding each source file's parent.
@@ -673,6 +771,7 @@ impl Default for BatchCompileOptions {
             },
             search_roots:       Vec::new(),
             fallback_resolver:  None,
+            source_overlays:    BTreeMap::new(),
             recurse:            false,
             follow_symlinks:    false,
             continue_on_error:  false,
@@ -680,6 +779,7 @@ impl Default for BatchCompileOptions {
             overwrite_existing: true,
             remove_stale_debug: false,
             jobs:               None,
+            cancellation:       None,
             output_file:        None,
             output_directory:   None,
             graphviz_directory: None,
@@ -695,6 +795,7 @@ impl fmt::Debug for BatchCompileOptions {
             .field("driver", &self.driver)
             .field("search_roots", &self.search_roots)
             .field("has_fallback_resolver", &self.fallback_resolver.is_some())
+            .field("source_overlay_count", &self.source_overlays.len())
             .field("recurse", &self.recurse)
             .field("follow_symlinks", &self.follow_symlinks)
             .field("continue_on_error", &self.continue_on_error)
@@ -702,6 +803,7 @@ impl fmt::Debug for BatchCompileOptions {
             .field("overwrite_existing", &self.overwrite_existing)
             .field("remove_stale_debug", &self.remove_stale_debug)
             .field("jobs", &self.jobs)
+            .field("cancellable", &self.cancellation.is_some())
             .field("output_file", &self.output_file)
             .field("output_directory", &self.output_directory)
             .field("graphviz_directory", &self.graphviz_directory)
@@ -715,13 +817,38 @@ impl fmt::Debug for BatchCompileOptions {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BatchCompileEntry {
     /// Input file path.
-    pub input:   PathBuf,
+    pub input:                  PathBuf,
     /// Final status for this input.
-    pub status:  BatchCompileStatus,
+    pub status:                 BatchCompileStatus,
     /// Output paths written or scheduled by the host.
-    pub outputs: Vec<PathBuf>,
+    pub outputs:                Vec<PathBuf>,
     /// Human-readable error text when compilation failed.
-    pub error:   Option<String>,
+    pub error:                  Option<String>,
+    /// Structured compiler diagnostic when the failure originated in the
+    /// NWScript frontend or code generator.
+    pub diagnostic:             Option<CompilerDiagnostic>,
+    /// Additional independent diagnostics recovered for this input by an
+    /// editor-facing caller. The batch compiler itself leaves this empty.
+    pub additional_diagnostics: Vec<CompilerDiagnostic>,
+}
+
+/// One source-aware compiler diagnostic suitable for editor integrations.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CompilerDiagnostic {
+    /// Stable upstream-aligned compiler error code, when available.
+    pub code:         Option<i32>,
+    /// Human-readable diagnostic message.
+    pub message:      String,
+    /// Logical or filesystem source name, when the error has a source span.
+    pub file:         Option<String>,
+    /// One-based start line.
+    pub start_line:   Option<usize>,
+    /// One-based start column.
+    pub start_column: Option<usize>,
+    /// One-based end line.
+    pub end_line:     Option<usize>,
+    /// One-based end column.
+    pub end_column:   Option<usize>,
 }
 
 /// One status emitted for a batch compile input.
@@ -751,6 +878,8 @@ pub struct BatchCompileReport {
 /// Errors returned before or outside individual compile attempts in batch mode.
 #[derive(Debug)]
 pub enum BatchCompileError {
+    /// The caller cancelled the batch.
+    Cancelled(crate::Cancelled),
     /// The requested batch configuration is internally inconsistent.
     Configuration(String),
     /// One input failed compilation while continue-on-error was disabled.
@@ -762,6 +891,7 @@ pub enum BatchCompileError {
 impl fmt::Display for BatchCompileError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Cancelled(error) => error.fmt(f),
             Self::Configuration(message) => f.write_str(message),
             Self::Compilation(message) => f.write_str(message),
             Self::Io(error) => error.fmt(f),
@@ -777,6 +907,12 @@ impl From<io::Error> for BatchCompileError {
     }
 }
 
+impl From<crate::Cancelled> for BatchCompileError {
+    fn from(value: crate::Cancelled) -> Self {
+        Self::Cancelled(value)
+    }
+}
+
 /// Collects and compiles a set of script files and directories.
 ///
 /// # Errors
@@ -787,6 +923,7 @@ pub fn compile_paths(
     paths: &[PathBuf],
     options: &BatchCompileOptions,
 ) -> Result<BatchCompileReport, BatchCompileError> {
+    check_batch_cancellation(options)?;
     if paths.is_empty() {
         return Err(BatchCompileError::Configuration(
             "compile requires at least one source file or directory".to_string(),
@@ -803,6 +940,7 @@ pub fn compile_paths(
         ));
     }
     let queue = collect_compile_inputs(paths, options)?;
+    check_batch_cancellation(options)?;
     if queue.is_empty() {
         return Err(BatchCompileError::Configuration(
             "compile inputs did not contain any .nss source files".to_string(),
@@ -828,6 +966,7 @@ pub fn compile_paths(
     } else {
         let mut entries = Vec::with_capacity(queue.len());
         for input in &queue {
+            check_batch_cancellation(options)?;
             let entry = compile_batch_input(input, options);
             if entry.status == BatchCompileStatus::Error && !options.continue_on_error {
                 return Err(BatchCompileError::Compilation(entry.error.unwrap_or_else(
@@ -838,6 +977,7 @@ pub fn compile_paths(
         }
         entries
     };
+    check_batch_cancellation(options)?;
 
     let mut report = BatchCompileReport::default();
     for entry in entries {
@@ -852,6 +992,14 @@ pub fn compile_paths(
         .entries
         .sort_by(|left, right| left.input.cmp(&right.input));
     Ok(report)
+}
+
+fn check_batch_cancellation(options: &BatchCompileOptions) -> Result<(), BatchCompileError> {
+    options
+        .cancellation
+        .as_ref()
+        .map_or(Ok(()), crate::CancellationToken::check)
+        .map_err(BatchCompileError::from)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1066,10 +1214,14 @@ fn compile_queue_parallel(
             match handle.join() {
                 Ok(worker_entries) => entries.extend(worker_entries),
                 Err(_) => entries.push(BatchCompileEntry {
-                    input:   PathBuf::from("<compile worker>"),
-                    status:  BatchCompileStatus::Error,
-                    outputs: Vec::new(),
-                    error:   Some("parallel NWScript compile worker panicked".to_string()),
+                    input:                  PathBuf::from("<compile worker>"),
+                    status:                 BatchCompileStatus::Error,
+                    outputs:                Vec::new(),
+                    error:                  Some(
+                        "parallel NWScript compile worker panicked".to_string(),
+                    ),
+                    diagnostic:             None,
+                    additional_diagnostics: Vec::new(),
                 }),
             }
         }
@@ -1081,6 +1233,20 @@ fn compile_batch_input(
     input: &CollectedCompileInput,
     options: &BatchCompileOptions,
 ) -> BatchCompileEntry {
+    if options
+        .cancellation
+        .as_ref()
+        .is_some_and(crate::CancellationToken::is_cancelled)
+    {
+        return BatchCompileEntry {
+            input:                  input.input.clone(),
+            status:                 BatchCompileStatus::Error,
+            outputs:                Vec::new(),
+            error:                  Some("operation cancelled".to_string()),
+            diagnostic:             None,
+            additional_diagnostics: Vec::new(),
+        };
+    }
     let parent = input
         .input
         .parent()
@@ -1090,6 +1256,9 @@ fn compile_batch_input(
     resolver.add_root(&input.source_root);
     for root in &options.search_roots {
         resolver.add_root(root);
+    }
+    for (path, contents) in &options.source_overlays {
+        resolver.add_overlay(path.clone(), contents.clone());
     }
     let (output_directory, output_alias, graphviz_alias) = output_context(input, options);
     let mut host = DirectoryCompilerHost::new(resolver, output_directory.clone());
@@ -1110,7 +1279,16 @@ fn compile_batch_input(
     driver.output_alias = output_alias.to_string_lossy().into_owned();
     driver.graphviz_alias = Some(graphviz_alias.to_string_lossy().into_owned());
 
-    match compile_file_with_host(&mut host, &input.input.to_string_lossy(), &driver) {
+    let compiled = match options.cancellation.as_ref() {
+        Some(cancellation) => compile_file_with_host_with_cancellation(
+            &mut host,
+            &input.input.to_string_lossy(),
+            &driver,
+            cancellation,
+        ),
+        None => compile_file_with_host(&mut host, &input.input.to_string_lossy(), &driver),
+    };
+    match compiled {
         Ok(CompileFileOutcome::Compiled(_)) => {
             if options.remove_stale_debug && !driver.session.emit_debug && !options.simulate {
                 let stale = options.output_file.as_ref().map_or_else(
@@ -1121,40 +1299,51 @@ fn compile_batch_input(
                     && let Err(error) = fs::remove_file(&stale)
                 {
                     return BatchCompileEntry {
-                        input:   input.input.clone(),
-                        status:  BatchCompileStatus::Error,
-                        outputs: host.written_paths().to_vec(),
-                        error:   Some(format!(
+                        input:                  input.input.clone(),
+                        status:                 BatchCompileStatus::Error,
+                        outputs:                host.written_paths().to_vec(),
+                        error:                  Some(format!(
                             "failed to remove stale debugger output {}: {error}",
                             stale.display()
                         )),
+                        diagnostic:             None,
+                        additional_diagnostics: Vec::new(),
                     };
                 }
             }
             BatchCompileEntry {
-                input:   input.input.clone(),
-                status:  BatchCompileStatus::Success,
-                outputs: host.written_paths().to_vec(),
-                error:   None,
+                input:                  input.input.clone(),
+                status:                 BatchCompileStatus::Success,
+                outputs:                host.written_paths().to_vec(),
+                error:                  None,
+                diagnostic:             None,
+                additional_diagnostics: Vec::new(),
             }
         }
         Ok(CompileFileOutcome::SkippedNoEntrypoint) => BatchCompileEntry {
-            input:   input.input.clone(),
-            status:  BatchCompileStatus::Skipped,
-            outputs: host.written_paths().to_vec(),
-            error:   None,
+            input:                  input.input.clone(),
+            status:                 BatchCompileStatus::Skipped,
+            outputs:                host.written_paths().to_vec(),
+            error:                  None,
+            diagnostic:             None,
+            additional_diagnostics: Vec::new(),
         },
-        Err(error) => BatchCompileEntry {
-            input:   input.input.clone(),
-            status:  BatchCompileStatus::Error,
-            outputs: host.written_paths().to_vec(),
-            error:   Some(format_source_aware_driver_error(
+        Err(error) => {
+            let diagnostic = source_aware_driver_diagnostic(
                 &error,
                 &host,
                 &input.input,
                 driver.session.source_load,
-            )),
-        },
+            );
+            BatchCompileEntry {
+                input:                  input.input.clone(),
+                status:                 BatchCompileStatus::Error,
+                outputs:                host.written_paths().to_vec(),
+                error:                  Some(format_compiler_diagnostic(&diagnostic, &input.input)),
+                diagnostic:             Some(diagnostic),
+                additional_diagnostics: Vec::new(),
+            }
+        }
     }
 }
 
@@ -1177,12 +1366,186 @@ fn compiler_driver_error_span(error: &CompilerDriverError) -> Option<crate::Span
             crate::CompileError::Hir(error) => Some(error.span),
             crate::CompileError::Codegen(error) => error.span,
             crate::CompileError::Parse(crate::ResolvedParseError::Preprocess(
-                crate::PreprocessError::Source(_),
+                crate::PreprocessError::Cancelled(_) | crate::PreprocessError::Source(_),
             )) => None,
         },
-        CompilerSessionError::LangSpec(_)
+        CompilerSessionError::Cancelled(_)
+        | CompilerSessionError::LangSpec(_)
+        | CompilerSessionError::Preprocess(crate::PreprocessError::Cancelled(_))
         | CompilerSessionError::Preprocess(crate::PreprocessError::Source(_))
         | CompilerSessionError::Source(_) => None,
+    }
+}
+
+fn compiler_driver_error_code(error: &CompilerDriverError) -> Option<i32> {
+    let CompilerDriverError::Session(session_error) = error else {
+        return None;
+    };
+    let code = match session_error {
+        CompilerSessionError::Preprocess(crate::PreprocessError::Lex(error)) => Some(error.code),
+        CompilerSessionError::Compile(compile_error) => match compile_error {
+            crate::CompileError::Parse(crate::ResolvedParseError::Parse(error)) => Some(error.code),
+            crate::CompileError::Parse(crate::ResolvedParseError::Preprocess(
+                crate::PreprocessError::Lex(error),
+            )) => Some(error.code),
+            crate::CompileError::Semantic(error) => Some(error.code),
+            crate::CompileError::Codegen(error) => error.code,
+            crate::CompileError::Parse(crate::ResolvedParseError::Preprocess(
+                crate::PreprocessError::Cancelled(_)
+                | crate::PreprocessError::Macro(_)
+                | crate::PreprocessError::Source(_),
+            ))
+            | crate::CompileError::Hir(_) => None,
+        },
+        CompilerSessionError::Cancelled(_)
+        | CompilerSessionError::LangSpec(_)
+        | CompilerSessionError::Preprocess(
+            crate::PreprocessError::Cancelled(_)
+            | crate::PreprocessError::Macro(_)
+            | crate::PreprocessError::Source(_),
+        )
+        | CompilerSessionError::Source(_) => None,
+    }?;
+    Some(code.code())
+}
+
+/// Converts a compiler-driver failure into structured, source-aware editor
+/// diagnostic data.
+pub fn source_aware_driver_diagnostic<R: ScriptResolver + ?Sized>(
+    error: &CompilerDriverError,
+    resolver: &R,
+    input: &Path,
+    source_load: crate::SourceLoadOptions,
+) -> CompilerDiagnostic {
+    let mut diagnostic = CompilerDiagnostic {
+        code:         compiler_driver_error_code(error),
+        message:      error.to_string(),
+        file:         None,
+        start_line:   None,
+        start_column: None,
+        end_line:     None,
+        end_column:   None,
+    };
+    let Some(span) = compiler_driver_error_span(error) else {
+        return diagnostic;
+    };
+    let Ok(bundle) = crate::load_source_bundle(resolver, &input.to_string_lossy(), source_load)
+    else {
+        return diagnostic;
+    };
+    let Some(file) = bundle.source_map.get(span.source_id) else {
+        return diagnostic;
+    };
+    let span = visible_diagnostic_span(file, span);
+    let Some(start) = file.location(span.start) else {
+        return diagnostic;
+    };
+    let end_offset = if span.is_empty() {
+        span.end.saturating_add(1).min(file.len())
+    } else {
+        span.end.min(file.len())
+    };
+    let end = file.location(end_offset).unwrap_or(start);
+    diagnostic.file = Some(file.name.clone());
+    diagnostic.start_line = Some(start.line);
+    diagnostic.start_column = Some(start.column);
+    diagnostic.end_line = Some(end.line);
+    diagnostic.end_column = Some(end.column);
+    diagnostic
+}
+
+/// Ensures editor diagnostics cover source text instead of a zero-width EOF
+/// token or whitespace on the following line. Frontend phases should still
+/// report the most precise span they have; this is the shared safety net for
+/// every diagnostic producer.
+fn visible_diagnostic_span(file: &crate::SourceFile, span: crate::Span) -> crate::Span {
+    let bytes = file.bytes();
+    if span.source_id != file.id || span.start > span.end || span.end > bytes.len() {
+        return span;
+    }
+    if bytes
+        .get(span.start..span.end)
+        .unwrap_or_default()
+        .iter()
+        .any(|byte| !byte.is_ascii_whitespace())
+    {
+        return span;
+    }
+
+    let mut end = span.start.min(bytes.len());
+    while end > 0 && bytes.get(end - 1).is_some_and(u8::is_ascii_whitespace) {
+        end -= 1;
+    }
+    if end > 0 {
+        let start = diagnostic_unit_start(bytes, end);
+        return crate::Span::new(span.source_id, start, end);
+    }
+
+    let mut start = span.end.min(bytes.len());
+    while bytes.get(start).is_some_and(u8::is_ascii_whitespace) {
+        start += 1;
+    }
+    if start < bytes.len() {
+        let end = diagnostic_unit_end(bytes, start);
+        return crate::Span::new(span.source_id, start, end);
+    }
+
+    span
+}
+
+fn diagnostic_unit_start(bytes: &[u8], end: usize) -> usize {
+    let last = bytes
+        .get(end.saturating_sub(1))
+        .copied()
+        .unwrap_or_default();
+    if !is_diagnostic_word_byte(last) {
+        return end - 1;
+    }
+    let mut start = end - 1;
+    while start > 0
+        && bytes
+            .get(start - 1)
+            .copied()
+            .is_some_and(is_diagnostic_word_byte)
+    {
+        start -= 1;
+    }
+    start
+}
+
+fn diagnostic_unit_end(bytes: &[u8], start: usize) -> usize {
+    if !bytes
+        .get(start)
+        .copied()
+        .is_some_and(is_diagnostic_word_byte)
+    {
+        return start + 1;
+    }
+    let mut end = start + 1;
+    while bytes.get(end).copied().is_some_and(is_diagnostic_word_byte) {
+        end += 1;
+    }
+    end
+}
+
+const fn is_diagnostic_word_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'_'
+}
+
+fn format_compiler_diagnostic(diagnostic: &CompilerDiagnostic, input: &Path) -> String {
+    match (
+        diagnostic.file.as_deref(),
+        diagnostic.start_line,
+        diagnostic.start_column,
+    ) {
+        (Some(file), Some(line), Some(column)) => {
+            format!("{file}:{line}:{column}: {}", diagnostic.message)
+        }
+        _ => format!(
+            "failed to compile {}: {}",
+            input.display(),
+            diagnostic.message
+        ),
     }
 }
 
@@ -1194,24 +1557,8 @@ pub fn format_source_aware_driver_error<R: ScriptResolver + ?Sized>(
     input: &Path,
     source_load: crate::SourceLoadOptions,
 ) -> String {
-    let rendered = error.to_string();
-    let Some(span) = compiler_driver_error_span(error) else {
-        return format!("failed to compile {}: {rendered}", input.display());
-    };
-    let Ok(bundle) = crate::load_source_bundle(resolver, &input.to_string_lossy(), source_load)
-    else {
-        return format!("failed to compile {}: {rendered}", input.display());
-    };
-    let Some(file) = bundle.source_map.get(span.source_id) else {
-        return format!("failed to compile {}: {rendered}", input.display());
-    };
-    let Some(location) = file.location(span.start) else {
-        return format!("failed to compile {}: {rendered}", input.display());
-    };
-    format!(
-        "{}:{}:{}: {rendered}",
-        file.name, location.line, location.column
-    )
+    let diagnostic = source_aware_driver_diagnostic(error, resolver, input, source_load);
+    format_compiler_diagnostic(&diagnostic, input)
 }
 
 #[cfg(test)]
@@ -1228,9 +1575,11 @@ mod tests {
     use super::{
         BatchCompileOptions, BatchCompileStatus, CompileFileOutcome, CompilerDriverOptions,
         CompilerHost, CompilerHostError, FileSystemScriptResolver, GraphvizOutputFormat,
-        compile_file_with_host, compile_paths,
+        compile_file_with_host, compile_paths, visible_diagnostic_span,
     };
-    use crate::{NW_SCRIPT_SOURCE_RES_TYPE, ScriptResolver};
+    use crate::{
+        CancellationToken, NW_SCRIPT_SOURCE_RES_TYPE, ScriptResolver, SourceFile, SourceId, Span,
+    };
 
     #[derive(Default)]
     struct MemoryHost {
@@ -1284,6 +1633,35 @@ mod tests {
             .unwrap_or_default()
             .as_nanos();
         std::env::temp_dir().join(format!("nwnrs-types-{prefix}-{nanos}"))
+    }
+
+    #[test]
+    fn source_diagnostics_never_select_eof_or_whitespace() {
+        let source_id = SourceId::new(0);
+        let source = "  void main() {\n    Broken();\n}\n\n";
+        let file = SourceFile::new(source_id, "broken.nss", source);
+        let cases = [
+            (Span::new(source_id, source.len(), source.len()), "}"),
+            (Span::new(source_id, source.len() - 2, source.len()), "}"),
+            (Span::new(source_id, 0, 0), "void"),
+            (Span::new(source_id, 0, 2), "void"),
+        ];
+
+        for (span, expected) in cases {
+            let corrected = visible_diagnostic_span(&file, span);
+            assert_eq!(file.span_text(corrected), Some(expected));
+        }
+    }
+
+    #[test]
+    fn source_diagnostics_preserve_precise_non_whitespace_spans() {
+        let source_id = SourceId::new(0);
+        let source = "void main() { Broken(); }";
+        let file = SourceFile::new(source_id, "broken.nss", source);
+        let start = source.find("Broken").expect("fixture contains symbol");
+        let span = Span::new(source_id, start, start + "Broken".len());
+
+        assert_eq!(visible_diagnostic_span(&file, span), span);
     }
 
     #[test]
@@ -1360,6 +1738,21 @@ mod tests {
                 .iter()
                 .any(|entry| entry.status == BatchCompileStatus::Error)
         );
+        let diagnostic = report
+            .entries
+            .iter()
+            .find_map(|entry| entry.diagnostic.as_ref())
+            .ok_or("missing structured compiler diagnostic")?;
+        assert!(
+            diagnostic
+                .file
+                .as_deref()
+                .is_some_and(|file| file.ends_with("broken.nss"))
+        );
+        assert_eq!(diagnostic.start_line, Some(1));
+        assert!(diagnostic.start_column.is_some());
+        assert!(diagnostic.end_line.is_some());
+        assert!(diagnostic.end_column.is_some());
         let success_outputs = report
             .entries
             .iter()
@@ -1444,6 +1837,26 @@ mod tests {
         let resolved = resolver.resolve_script_bytes("mixedcase.nss", NW_SCRIPT_SOURCE_RES_TYPE)?;
         assert!(resolved.is_some());
         fs::remove_dir_all(&root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn batch_compilation_stops_before_work_when_cancelled() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let root = unique_temp_dir("cancelled-batch");
+        fs::create_dir_all(&root)?;
+        let source = root.join("main.nss");
+        fs::write(&source, "void main() {}")?;
+        let cancellation = CancellationToken::new();
+        cancellation.cancel();
+        let options = BatchCompileOptions {
+            cancellation: Some(cancellation),
+            simulate: true,
+            ..BatchCompileOptions::default()
+        };
+        let error = compile_paths(&[source], &options).expect_err("cancelled batch must fail");
+        assert_eq!(error.to_string(), "operation cancelled");
+        fs::remove_dir_all(root)?;
         Ok(())
     }
 }

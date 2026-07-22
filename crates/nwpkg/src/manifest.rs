@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{PROJECT_MANIFEST_FILENAME, ProjectKind, fs::ensure_output_file_ready};
 
-/// Typed `nwproject.toml` contents.
+/// Typed `nwpkg.toml` contents.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProjectManifest {
     pub project:      ProjectSection,
@@ -27,7 +27,7 @@ pub enum DependencySpec {
     Path(PathDependency),
 }
 
-/// A dependency resolved relative to the declaring `nwproject.toml`.
+/// A dependency resolved relative to the declaring `nwpkg.toml`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PathDependency {

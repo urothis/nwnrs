@@ -14,6 +14,7 @@ Rust tools and libraries for Neverwinter Nights: Enhanced Edition.
 ## Start Here
 
 - [Visual guide: zero to a packaged, running module](./docs/src/README.md)
+- [NWScript extensions for vanilla NWN:EE authors](./NWSCRIPT_EXTENSIONS.md)
 - [`nwnrs` rustdoc](https://docs.rs/nwnrs/latest/nwnrs/)
 
 ## Quick Start
@@ -83,6 +84,8 @@ table.set_columns(vec!["Label".to_string()])?;
   packing, and unpacking workflows
 - [`nwnrs-nwscript`](./crates/nwscript/README.md): NWScript frontend
   and compiler
+- [`nwnrs for Visual Studio Code`](./editors/vscode-nwnrs/README.md): NSS
+  syntax support and external-compiler diagnostics in the editor
 - [`nwnrs` include library](./include/nwnrs/nwnrs.nss): the NWScript bridge API,
   consumed by modules as a local `nwpkg` dependency
 - [`nwnrs-runtime`](./crates/runtime/README.md): safe executable identity and

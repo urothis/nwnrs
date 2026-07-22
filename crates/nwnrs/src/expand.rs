@@ -198,13 +198,13 @@ mod tests {
         fs::create_dir_all(&project).expect("create project dir");
         fs::create_dir_all(&include).expect("create include dir");
         fs::write(
-            project.join("nwproject.toml"),
+            project.join("nwpkg.toml"),
             "[project]\nname = \"fixture\"\nkind = \"mod\"\n\n[source]\npath = \
              \".\"\n\n[dependencies]\nfixture = { path = \"../include\" }\n",
         )
         .expect("write project manifest");
         fs::write(
-            include.join("nwproject.toml"),
+            include.join("nwpkg.toml"),
             "[project]\nname = \"fixture\"\nkind = \"include\"\n\n[source]\npath = \".\"\n",
         )
         .expect("write include manifest");

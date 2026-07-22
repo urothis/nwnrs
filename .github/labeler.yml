@@ -17,7 +17,7 @@ nwpkg:
               - any-glob-to-any-file:
                       - "crates/nwpkg/**/*"
                       - "include/**/*"
-                      - "module/nwproject.toml"
+                      - "module/nwpkg.toml"
 
 nwscript:
       - changed-files:

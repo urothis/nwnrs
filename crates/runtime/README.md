@@ -34,11 +34,11 @@ can emit trace, debug, info, warning, and error records through the runtime's
 structured tracing pipeline. None of this requires a plugin loader, HTTP API,
 or metrics service.
 
-The core NWScript contract is integer-versioned and statically registered.
-Scripts can query the core, server-state, and administration capability
-versions before using optional functions. Events are intentionally
-unversioned and are queried by identity. Dispatch failures retain a stable
-error code and a diagnostic message on the current bridge thread.
+The core NWScript API has one integer API version and is statically registered.
+Scripts query optional core, server-state, and administration capabilities by
+presence. Events are also unversioned and are queried by identity. Dispatch
+failures retain a stable error code and a diagnostic message on the current
+bridge thread.
 
 Native ABI provenance and regeneration rules are documented in
 [`ABI.md`](ABI.md).

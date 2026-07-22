@@ -7,6 +7,24 @@ compile_error!("nwnrs requires the supervisor feature, the tooling feature, or b
 mod args;
 #[cfg(feature = "tooling")]
 mod compile;
+#[cfg(feature = "tooling")]
+pub use compile::{
+    NwScriptCheckOptions, check_nwscript, check_nwscript_with_cancellation,
+    deduplicate_nwscript_project_roots, nwscript_watch_roots,
+};
+#[cfg(feature = "tooling")]
+mod symbols;
+#[cfg(feature = "tooling")]
+pub use symbols::{
+    NwScriptDefinitionQuery, NwScriptDocumentSymbol, NwScriptDocumentSymbolKind,
+    NwScriptIncludeCandidate, NwScriptInlayHint, NwScriptOutgoingCall, NwScriptProjectDocuments,
+    NwScriptProjectIndex, NwScriptReference, NwScriptResolvedSource, NwScriptSemanticToken,
+    NwScriptSemanticTokenKind, NwScriptSourceRange, NwScriptSymbolDefinition, NwScriptSymbolKind,
+    NwScriptVirtualSource, analyze_nwscript_document, find_nwscript_definitions,
+    find_nwscript_include_candidates, find_nwscript_outgoing_calls, find_nwscript_references,
+    list_nwscript_document_symbols, list_nwscript_project_sources, load_nwscript_builtin_source,
+    load_nwscript_virtual_source, resolve_nwscript_source,
+};
 #[cfg(all(feature = "supervisor", target_os = "linux"))]
 mod container;
 #[cfg(feature = "tooling")]

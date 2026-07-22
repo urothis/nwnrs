@@ -208,6 +208,28 @@ pub enum CompilerErrorCode {
     CannotIncludeThisFileTwice = -9155,
     /// `else` cannot be followed by an empty statement.
     ElseCannotBeFollowedByANullStatement = -40104,
+    /// An extended enum declaration was malformed.
+    InvalidEnumDeclaration = -50000,
+    /// An enum used an unsupported native representation.
+    InvalidEnumBackingType = -50001,
+    /// An enum or enum variant was defined more than once.
+    DuplicateEnumDefinition = -50002,
+    /// An enum discriminant was invalid for its backing type.
+    InvalidEnumDiscriminant = -50003,
+    /// An enum contained multiple default variants.
+    MultipleEnumDefaults = -50004,
+    /// A strong enum conversion or operation was invalid.
+    InvalidEnumOperation = -50005,
+    /// A transparent type alias was invalid or recursive.
+    InvalidTypeAlias = -50006,
+    /// A compile-time assertion evaluated to false.
+    StaticAssertionFailed = -50007,
+    /// A match expression or pattern was invalid.
+    InvalidMatch = -50008,
+    /// A match expression did not cover every enum variant.
+    NonExhaustiveMatch = -50009,
+    /// A match arm can never be selected.
+    UnreachableMatchArm = -50010,
     /// The VM exceeded its instruction limit.
     VmTooManyInstructions = -632,
     /// The VM exceeded its recursion limit.

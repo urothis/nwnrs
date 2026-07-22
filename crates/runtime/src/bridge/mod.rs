@@ -1622,16 +1622,33 @@ mod tests {
         for name in ["NWSCRIPT_BRIDGE", "SERVER_STATE", "ADMINISTRATION"] {
             assert!(header.contains(&format!("NWNRS_CAPABILITY_{name}")));
         }
-        for (name, code) in [
-            ("NONE", BridgeErrorCode::None),
-            ("UNKNOWN_NAMESPACE", BridgeErrorCode::UnknownNamespace),
-            ("UNKNOWN_FUNCTION", BridgeErrorCode::UnknownFunction),
-            ("INVALID_ARGUMENT", BridgeErrorCode::InvalidArgument),
-            ("MISSING_CAPABILITY", BridgeErrorCode::MissingCapability),
-            ("ENGINE", BridgeErrorCode::Engine),
-            ("REENTRANT", BridgeErrorCode::Reentrant),
+        for (alias, variant, code) in [
+            ("NONE", "None", BridgeErrorCode::None),
+            (
+                "UNKNOWN_NAMESPACE",
+                "UnknownNamespace",
+                BridgeErrorCode::UnknownNamespace,
+            ),
+            (
+                "UNKNOWN_FUNCTION",
+                "UnknownFunction",
+                BridgeErrorCode::UnknownFunction,
+            ),
+            (
+                "INVALID_ARGUMENT",
+                "InvalidArgument",
+                BridgeErrorCode::InvalidArgument,
+            ),
+            (
+                "MISSING_CAPABILITY",
+                "MissingCapability",
+                BridgeErrorCode::MissingCapability,
+            ),
+            ("ENGINE", "Engine", BridgeErrorCode::Engine),
+            ("REENTRANT", "Reentrant", BridgeErrorCode::Reentrant),
         ] {
-            assert!(header.contains(&format!("NWNRS_ERROR_{name} = {};", code.value())));
+            assert!(header.contains(&format!("#[alias(NWNRS_ERROR_{alias})]")));
+            assert!(header.contains(&format!("{variant} = {}", code.value())));
         }
     }
 

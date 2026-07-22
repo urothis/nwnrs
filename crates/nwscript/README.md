@@ -110,6 +110,85 @@ Declarative matchers support the same `*`, `+`, and `?` quantifiers, optional
 single-token separators, nested repetition, and zipped captures. Available
 fragment specifiers are `ident`, `literal`, `tt`, `expr`, and `tokens`.
 
+### Strong enums, aliases, matches, and assertions
+
+The extended frontend also supports strong Rust-like enums backed by native
+NWScript `int` or `string` storage. Omitting the backing type means `int`.
+Integer values auto-increment from zero; string values must be explicit.
+
+```nss
+enum LogLevel {
+    Trace,
+    Debug,
+    #[default]
+    #[alias(NWNRS_LOG_LEVEL_INFO)]
+    Info,
+}
+
+enum EventPhase : string {
+    Before = "before",
+    After = "after",
+}
+```
+
+The first variant is the default unless exactly one variant has `#[default]`.
+Default initialization applies recursively inside structures. `#[alias(NAME)]`
+emits a typed global compatibility constant so existing call sites can keep
+using an established constant name.
+
+Enums do not implicitly convert to or from their backing type. Use the enum
+name to construct a value and `int(...)` or `string(...)` to unwrap it. A
+one-argument construction must be a compile-time constant matching a declared
+variant. Dynamic backing values require an explicit enum fallback:
+
+```nss
+LogLevel level = LogLevel(NWNXPopInt(), LogLevel::Info);
+NWNXPushInt(int(level));
+```
+
+The dynamic expression is evaluated once. Invalid values produce the fallback,
+while invalid constant conversions and missing dynamic fallbacks are compiler
+errors.
+
+Equality, inequality, assignment, parameters, returns, defaults, structure
+fields, and `switch` preserve the strong enum type. Arithmetic and other
+backing-type operations require an explicit unwrap.
+
+`match` accepts qualified variants, `|` alternatives, guards, `_`, expression
+arms, and statement blocks with a final value. It is checked for duplicate and
+unreachable arms and must cover every variant unless it has an unguarded
+wildcard.
+
+```nss
+string Label(EventPhase phase)
+{
+    return match phase {
+        EventPhase::Before => "before",
+        EventPhase::After => {
+            string suffix = " event";
+            "after" + suffix
+        }
+    };
+}
+```
+
+Transparent source aliases use `type Name = ExistingType;`. They introduce no
+runtime representation or conversion:
+
+```nss
+type Severity = LogLevel;
+```
+
+Alias targets cannot contain declaration modifiers. In particular,
+`type Value = const int;` is rejected because `const` applies to a declaration,
+not to the underlying type.
+
+`static_assert(condition);` and `static_assert(condition, "message");` require
+a constant nonzero `int` expression. They are validated and erased before NCS
+generation. Enum declarations, aliases, matches, and explicit conversions are
+likewise lowered to ordinary native storage and control flow; none adds a
+runtime metadata or versioning layer.
+
 Procedural implementations receive an opaque, lossless token-tree stream. The
 compiler-only language specification exposes these operations inside a
 `proc_macro!` body:

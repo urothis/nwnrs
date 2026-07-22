@@ -173,6 +173,7 @@ pub fn load_langspec<R: ScriptResolver + ?Sized>(
         load_source_bundle(resolver, script_name, options).map_err(|error| match error {
             crate::PreprocessError::Source(source) => LangSpecError::Source(source),
             crate::PreprocessError::Lex(lex) => LangSpecError::Lex(lex),
+            crate::PreprocessError::Cancelled(error) => LangSpecError::parse(error.to_string()),
             crate::PreprocessError::Macro(error) => LangSpecError::parse(error.to_string()),
         })?;
     parse_langspec_from_source_map(&bundle.source_map, bundle.root_id)

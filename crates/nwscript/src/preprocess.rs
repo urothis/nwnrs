@@ -5,9 +5,10 @@ use std::{
 };
 
 use crate::{
-    Keyword, LexerError, MacroExpansionError, MacroExpansionOptions, MacroExpansionTrace,
-    MacroRegistry, ScriptResolver, SourceError, SourceFile, SourceId, SourceLoadOptions, SourceMap,
-    Token, TokenKind, expand_source_macros, expand_source_macros_traced, lex_source,
+    CancellationToken, Cancelled, Keyword, LexerError, MacroExpansionError, MacroExpansionOptions,
+    MacroExpansionTrace, MacroRegistry, ScriptResolver, SourceError, SourceFile, SourceId,
+    SourceLoadOptions, SourceMap, Token, TokenKind, expand_source_macros,
+    expand_source_macros_traced, lex_source,
 };
 
 /// One include relationship discovered while traversing source files.
@@ -59,6 +60,8 @@ pub struct PreprocessedSource {
 /// Errors returned while scanning include directives across multiple files.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PreprocessError {
+    /// The caller cancelled preprocessing.
+    Cancelled(Cancelled),
     /// Source resolution or load failure.
     Source(SourceError),
     /// Lexing failure while scanning include directives.
@@ -70,6 +73,7 @@ pub enum PreprocessError {
 impl fmt::Display for PreprocessError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Cancelled(error) => error.fmt(f),
             Self::Source(error) => error.fmt(f),
             Self::Lex(error) => error.fmt(f),
             Self::Macro(error) => error.fmt(f),
@@ -82,6 +86,12 @@ impl Error for PreprocessError {}
 impl From<SourceError> for PreprocessError {
     fn from(value: SourceError) -> Self {
         Self::Source(value)
+    }
+}
+
+impl From<Cancelled> for PreprocessError {
+    fn from(value: Cancelled) -> Self {
+        Self::Cancelled(value)
     }
 }
 
@@ -107,7 +117,29 @@ pub fn load_source_bundle<R: ScriptResolver + ?Sized>(
     root_name: &str,
     options: SourceLoadOptions,
 ) -> Result<SourceBundle, PreprocessError> {
-    let mut loader = SourceBundleLoader::new(resolver, options);
+    let mut loader = SourceBundleLoader::new(resolver, options, None);
+    let root_id = loader.load_script(root_name)?;
+    Ok(SourceBundle {
+        source_map: loader.source_map,
+        root_id,
+        source_order: loader.source_order,
+        include_edges: loader.include_edges,
+    })
+}
+
+/// Loads a root script and its include graph with cooperative cancellation.
+///
+/// # Errors
+///
+/// Returns [`PreprocessError`] for source failures or after cancellation is
+/// requested.
+pub fn load_source_bundle_with_cancellation<R: ScriptResolver + ?Sized>(
+    resolver: &R,
+    root_name: &str,
+    options: SourceLoadOptions,
+    cancellation: &CancellationToken,
+) -> Result<SourceBundle, PreprocessError> {
+    let mut loader = SourceBundleLoader::new(resolver, options, Some(cancellation));
     let root_id = loader.load_script(root_name)?;
     Ok(SourceBundle {
         source_map: loader.source_map,
@@ -132,6 +164,30 @@ pub fn preprocess_source_bundle(
     )
 }
 
+/// Preprocesses a loaded source bundle with cooperative cancellation.
+///
+/// # Errors
+///
+/// Returns [`PreprocessError`] for ordinary preprocessing failures or
+/// cancellation.
+pub fn preprocess_source_bundle_with_cancellation(
+    bundle: &SourceBundle,
+    cancellation: &CancellationToken,
+) -> Result<PreprocessedSource, PreprocessError> {
+    cancellation.check()?;
+    let mut preprocessor = BundlePreprocessor::new(bundle, Some(cancellation));
+    preprocessor.expand_source(bundle.root_id)?;
+    let mut preprocessed = preprocessor.finish(bundle.root_id)?;
+    cancellation.check()?;
+    preprocessed.tokens = expand_source_macros(
+        preprocessed.tokens,
+        &mut MacroRegistry::new(),
+        MacroExpansionOptions::default(),
+    )?;
+    cancellation.check()?;
+    Ok(preprocessed)
+}
+
 /// Preprocesses one source bundle with caller-provided built-in macros.
 ///
 /// Object-like `#define` and include expansion runs first. Top-level
@@ -147,10 +203,33 @@ pub fn preprocess_source_bundle_with_macros(
     registry: &mut MacroRegistry,
     options: MacroExpansionOptions,
 ) -> Result<PreprocessedSource, PreprocessError> {
-    let mut preprocessor = BundlePreprocessor::new(bundle);
+    let mut preprocessor = BundlePreprocessor::new(bundle, None);
     preprocessor.expand_source(bundle.root_id)?;
     let mut preprocessed = preprocessor.finish(bundle.root_id)?;
     preprocessed.tokens = expand_source_macros(preprocessed.tokens, registry, options)?;
+    Ok(preprocessed)
+}
+
+/// Preprocesses a source bundle with compiler macros and cooperative
+/// cancellation.
+///
+/// # Errors
+///
+/// Returns [`PreprocessError`] for ordinary preprocessing failures or
+/// cancellation.
+pub fn preprocess_source_bundle_with_macros_and_cancellation(
+    bundle: &SourceBundle,
+    registry: &mut MacroRegistry,
+    options: MacroExpansionOptions,
+    cancellation: &CancellationToken,
+) -> Result<PreprocessedSource, PreprocessError> {
+    cancellation.check()?;
+    let mut preprocessor = BundlePreprocessor::new(bundle, Some(cancellation));
+    preprocessor.expand_source(bundle.root_id)?;
+    let mut preprocessed = preprocessor.finish(bundle.root_id)?;
+    cancellation.check()?;
+    preprocessed.tokens = expand_source_macros(preprocessed.tokens, registry, options)?;
+    cancellation.check()?;
     Ok(preprocessed)
 }
 
@@ -167,7 +246,7 @@ pub fn preprocess_source_bundle_with_macro_trace(
     registry: &mut MacroRegistry,
     options: MacroExpansionOptions,
 ) -> Result<(PreprocessedSource, Vec<MacroExpansionTrace>), PreprocessError> {
-    let mut preprocessor = BundlePreprocessor::new(bundle);
+    let mut preprocessor = BundlePreprocessor::new(bundle, None);
     preprocessor.expand_source(bundle.root_id)?;
     let mut preprocessed = preprocessor.finish(bundle.root_id)?;
     let (tokens, trace) = expand_source_macros_traced(preprocessed.tokens, registry, options)?;
@@ -182,10 +261,15 @@ struct SourceBundleLoader<'a, R: ScriptResolver + ?Sized> {
     source_order:  Vec<SourceId>,
     include_edges: Vec<IncludeEdge>,
     active_stack:  Vec<String>,
+    cancellation:  Option<&'a CancellationToken>,
 }
 
 impl<'a, R: ScriptResolver + ?Sized> SourceBundleLoader<'a, R> {
-    fn new(resolver: &'a R, options: SourceLoadOptions) -> Self {
+    fn new(
+        resolver: &'a R,
+        options: SourceLoadOptions,
+        cancellation: Option<&'a CancellationToken>,
+    ) -> Self {
         Self {
             resolver,
             options,
@@ -193,10 +277,14 @@ impl<'a, R: ScriptResolver + ?Sized> SourceBundleLoader<'a, R> {
             source_order: Vec::new(),
             include_edges: Vec::new(),
             active_stack: Vec::new(),
+            cancellation,
         }
     }
 
     fn load_script(&mut self, script_name: &str) -> Result<SourceId, PreprocessError> {
+        if let Some(cancellation) = self.cancellation {
+            cancellation.check()?;
+        }
         let normalized = script_name.to_ascii_lowercase();
         if self.active_stack.contains(&normalized) {
             return Err(SourceError::include_recursive(script_name).into());
@@ -229,6 +317,9 @@ impl<'a, R: ScriptResolver + ?Sized> SourceBundleLoader<'a, R> {
         self.active_stack.push(normalized);
 
         for include_name in include_names {
+            if let Some(cancellation) = self.cancellation {
+                cancellation.check()?;
+            }
             let child_id = self.load_script(&include_name)?;
             self.include_edges.push(IncludeEdge {
                 from: source_id,
@@ -268,16 +359,18 @@ struct BundlePreprocessor<'a> {
     define_order:   Vec<MacroDefinition>,
     expanded_files: HashSet<SourceId>,
     tokens:         Vec<Token>,
+    cancellation:   Option<&'a CancellationToken>,
 }
 
 impl<'a> BundlePreprocessor<'a> {
-    fn new(bundle: &'a SourceBundle) -> Self {
+    fn new(bundle: &'a SourceBundle, cancellation: Option<&'a CancellationToken>) -> Self {
         Self {
             bundle,
             defines: HashMap::new(),
             define_order: Vec::new(),
             expanded_files: HashSet::new(),
             tokens: Vec::new(),
+            cancellation,
         }
     }
 
@@ -299,6 +392,7 @@ impl<'a> BundlePreprocessor<'a> {
     }
 
     fn expand_source(&mut self, source_id: SourceId) -> Result<(), PreprocessError> {
+        self.check_cancellation()?;
         if !self.expanded_files.insert(source_id) {
             return Ok(());
         }
@@ -312,6 +406,7 @@ impl<'a> BundlePreprocessor<'a> {
         let mut index = 0;
 
         while index < tokens.len() {
+            self.check_cancellation()?;
             let Some(token) = tokens.get(index) else {
                 break;
             };
@@ -345,7 +440,7 @@ impl<'a> BundlePreprocessor<'a> {
             }
 
             for token in tokens.get(index..line_end).unwrap_or(&[]) {
-                self.expand_token(token, &mut Vec::new());
+                self.expand_token(token, &mut Vec::new())?;
             }
             index = line_end;
         }
@@ -378,7 +473,12 @@ impl<'a> BundlePreprocessor<'a> {
         self.define_order.push(definition);
     }
 
-    fn expand_token(&mut self, token: &Token, active: &mut Vec<String>) {
+    fn expand_token(
+        &mut self,
+        token: &Token,
+        active: &mut Vec<String>,
+    ) -> Result<(), PreprocessError> {
+        self.check_cancellation()?;
         if token.kind == TokenKind::Identifier
             && let Some(definition) = self.defines.get(&token.text).cloned()
             && !active.iter().any(|name| name == &definition.name)
@@ -389,13 +489,20 @@ impl<'a> BundlePreprocessor<'a> {
                 // recognized, the replacement keeps its own typed token kind
                 // but is attributed to the call site for diagnostics.
                 let rewritten = Token::new(replacement.kind, token.span, replacement.text);
-                self.expand_token(&rewritten, active);
+                self.expand_token(&rewritten, active)?;
             }
             active.pop();
-            return;
+            return Ok(());
         }
 
         self.tokens.push(token.clone());
+        Ok(())
+    }
+
+    fn check_cancellation(&self) -> Result<(), PreprocessError> {
+        self.cancellation
+            .map_or(Ok(()), CancellationToken::check)
+            .map_err(PreprocessError::from)
     }
 }
 
@@ -475,7 +582,9 @@ int UTIL = 1;"#,
         let error = load_source_bundle(&resolver, "root", SourceLoadOptions::default()).err();
         let code = error.and_then(|error| match error {
             super::PreprocessError::Source(source) => source.code(),
-            super::PreprocessError::Lex(_) | super::PreprocessError::Macro(_) => None,
+            super::PreprocessError::Cancelled(_)
+            | super::PreprocessError::Lex(_)
+            | super::PreprocessError::Macro(_) => None,
         });
 
         assert_eq!(code, Some(CompilerErrorCode::FileNotFound));
@@ -500,7 +609,9 @@ int UTIL = 1;"#,
         .err();
         let code = error.and_then(|error| match error {
             super::PreprocessError::Source(source) => source.code(),
-            super::PreprocessError::Lex(_) | super::PreprocessError::Macro(_) => None,
+            super::PreprocessError::Cancelled(_)
+            | super::PreprocessError::Lex(_)
+            | super::PreprocessError::Macro(_) => None,
         });
 
         assert_eq!(code, Some(CompilerErrorCode::IncludeTooManyLevels));
@@ -527,7 +638,9 @@ int UTIL = 1;"#,
             .err()
             .and_then(|error| match error {
                 super::PreprocessError::Source(source) => source.code(),
-                super::PreprocessError::Lex(_) | super::PreprocessError::Macro(_) => None,
+                super::PreprocessError::Cancelled(_)
+                | super::PreprocessError::Lex(_)
+                | super::PreprocessError::Macro(_) => None,
             });
 
         assert_eq!(code, Some(CompilerErrorCode::IncludeRecursive));

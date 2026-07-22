@@ -227,7 +227,7 @@ mod tests {
     fn write_manifest(root: &Path, name: &str, kind: &str, dependencies: &str) {
         fs::create_dir_all(root).expect("create package root");
         fs::write(
-            root.join("nwproject.toml"),
+            root.join("nwpkg.toml"),
             format!(
                 "[project]\nname = {name:?}\nkind = {kind:?}\n\n[source]\npath = \
                  \".\"\n{dependencies}"

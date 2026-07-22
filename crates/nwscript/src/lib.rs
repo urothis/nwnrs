@@ -3,7 +3,9 @@
 
 extern crate self as nwnrs_nwscript;
 
+mod analysis;
 mod ast;
+mod cancel;
 mod codegen;
 mod diag;
 mod driver;
@@ -28,7 +30,9 @@ mod source;
 mod token;
 mod vm;
 
+pub use analysis::*;
 pub use ast::*;
+pub use cancel::*;
 pub use codegen::*;
 pub use diag::*;
 pub use driver::*;

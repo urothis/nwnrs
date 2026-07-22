@@ -1,0 +1,13 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "build native compiler",
+      "type": "npm",
+      "script": "build-native",
+      "problemMatcher": [
+        "$rustc"
+      ]
+    }
+  ]
+}

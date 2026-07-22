@@ -256,7 +256,7 @@ fn project_name_from_input(path: &Path) -> &str {
     path.file_stem()
         .and_then(|value| value.to_str())
         .filter(|value| !value.is_empty())
-        .unwrap_or("nwproject")
+        .unwrap_or("nwpkg")
 }
 
 #[instrument(

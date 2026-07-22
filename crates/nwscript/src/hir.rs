@@ -12,13 +12,15 @@ use crate::{
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HirModule {
     /// Top-level includes preserved from the source unit.
-    pub includes:  Vec<IncludeDirective>,
+    pub includes:      Vec<IncludeDirective>,
     /// User-defined structures in source order.
-    pub structs:   Vec<HirStruct>,
+    pub structs:       Vec<HirStruct>,
+    /// Strong-enum default values keyed by the canonical enum name.
+    pub enum_defaults: BTreeMap<String, Literal>,
     /// Globals in source order.
-    pub globals:   Vec<HirGlobal>,
+    pub globals:       Vec<HirGlobal>,
     /// Functions in source order.
-    pub functions: Vec<HirFunction>,
+    pub functions:     Vec<HirFunction>,
 }
 
 /// One lowered structure definition.
@@ -35,6 +37,8 @@ pub struct HirStruct {
 /// One lowered structure field.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HirField {
+    /// Source span covering the field identifier.
+    pub span: crate::Span,
     /// Field name.
     pub name: String,
     /// Field type.
@@ -78,6 +82,8 @@ pub struct HirFunction {
 /// One lowered function parameter.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HirParameter {
+    /// Source span covering the parameter declaration.
+    pub span:        crate::Span,
     /// Local slot for this parameter.
     pub local:       HirLocalId,
     /// Parameter name.
@@ -94,13 +100,15 @@ pub struct HirParameter {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HirLocal {
     /// Stable local id within one function.
-    pub id:   HirLocalId,
+    pub id:               HirLocalId,
+    /// Source span covering the declaration that introduced this slot.
+    pub declaration_span: crate::Span,
     /// Local name.
-    pub name: String,
+    pub name:             String,
     /// Local type.
-    pub ty:   SemanticType,
+    pub ty:               SemanticType,
     /// Whether this slot is a parameter or a body-local.
-    pub kind: HirLocalKind,
+    pub kind:             HirLocalKind,
 }
 
 /// One lowered local kind.
@@ -268,6 +276,23 @@ pub enum HirExprKind {
     Literal(Literal),
     /// One resolved value reference.
     Value(HirValueRef),
+    /// One semantically checked exhaustive enum match.
+    Match {
+        /// Matched value.
+        value: Box<HirExpr>,
+        /// Arms in source order.
+        arms:  Vec<HirMatchArm>,
+    },
+    /// A backing value converted to an enum with an explicit invalid-value
+    /// fallback.
+    CheckedEnumConversion {
+        /// Backing value evaluated exactly once.
+        value:        Box<HirExpr>,
+        /// Enum value produced when the backing value is not declared.
+        fallback:     Box<HirExpr>,
+        /// Declared enum values accepted by the conversion.
+        valid_values: Vec<Literal>,
+    },
     /// One direct function call.
     Call {
         /// Resolved target.
@@ -315,6 +340,35 @@ pub enum HirExprKind {
         left:  Box<HirExpr>,
         /// Right expression.
         right: Box<HirExpr>,
+    },
+}
+
+/// One lowered match arm.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HirMatchArm {
+    /// Source span.
+    pub span:     crate::Span,
+    /// Alternative concrete values; empty means wildcard.
+    pub patterns: Vec<Literal>,
+    /// Optional guard.
+    pub guard:    Option<HirExpr>,
+    /// Arm result.
+    pub body:     HirMatchArmBody,
+}
+
+/// One lowered match-arm result.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum HirMatchArmBody {
+    /// One expression result.
+    Expr(HirExpr),
+    /// One statement block plus optional tail expression.
+    Block {
+        /// Lowered block statements.
+        block:    HirBlock,
+        /// Optional value returned from the block.
+        tail:     Option<Box<HirExpr>>,
+        /// Whether control flow necessarily leaves the surrounding context.
+        diverges: bool,
     },
 }
 
@@ -421,12 +475,50 @@ impl<'a> HirLowerer<'a> {
                 crate::TopLevelItem::Function(function) => {
                     functions.push(self.lower_function(function)?);
                 }
+                crate::TopLevelItem::Enum(declaration) => {
+                    let resolved = self.semantic.enums.get(&declaration.name).ok_or_else(|| {
+                        HirLowerError::new(declaration.span, "missing semantic enum")
+                    })?;
+                    let ty = SemanticType::Enum {
+                        name:    declaration.name.clone(),
+                        backing: declaration.backing,
+                    };
+                    for (source_variant, variant) in
+                        declaration.variants.iter().zip(&resolved.variants)
+                    {
+                        for alias in &source_variant.aliases {
+                            globals.push(HirGlobal {
+                                span:        alias.span,
+                                name:        alias.name.clone(),
+                                ty:          ty.clone(),
+                                is_const:    true,
+                                initializer: Some(HirExpr {
+                                    span: source_variant.span,
+                                    ty:   ty.clone(),
+                                    kind: HirExprKind::Literal(enum_value_literal(&variant.value)),
+                                }),
+                            });
+                        }
+                    }
+                }
+                crate::TopLevelItem::TypeAlias(_) | crate::TopLevelItem::StaticAssert(_) => {}
             }
         }
 
         Ok(HirModule {
             includes,
             structs,
+            enum_defaults: self
+                .semantic
+                .enums
+                .iter()
+                .filter_map(|(name, declaration)| {
+                    declaration
+                        .variants
+                        .get(declaration.default_variant)
+                        .map(|variant| (name.clone(), enum_value_literal(&variant.value)))
+                })
+                .collect(),
             globals,
             functions,
         })
@@ -444,7 +536,9 @@ impl<'a> HirLowerer<'a> {
             fields: resolved
                 .fields
                 .iter()
-                .map(|field| HirField {
+                .zip(definition.fields.iter().flat_map(|field| &field.names))
+                .map(|(field, parsed)| HirField {
+                    span: parsed.span,
                     name: field.name.clone(),
                     ty:   field.ty.clone(),
                 })
@@ -469,7 +563,8 @@ impl<'a> HirLowerer<'a> {
                     let mut ctx = FunctionLoweringContext::default();
                     self.lower_expr(initializer, &mut ctx)
                 })
-                .transpose()?;
+                .transpose()?
+                .or_else(|| enum_default_expr(&resolved.ty, self.semantic, declarator.span));
             globals.push(HirGlobal {
                 span: declarator.span,
                 name: resolved.name.clone(),
@@ -493,7 +588,12 @@ impl<'a> HirLowerer<'a> {
         debug_assert_eq!(resolved.parameters.len(), function.parameters.len());
 
         for (parameter, parsed) in resolved.parameters.iter().zip(&function.parameters) {
-            let local = ctx.push_local(&parsed.name, parameter.ty.clone(), HirLocalKind::Parameter);
+            let local = ctx.push_local(
+                &parsed.name,
+                parameter.ty.clone(),
+                HirLocalKind::Parameter,
+                parsed.span,
+            );
             let default = if let Some(default) = &parsed.default {
                 Some(self.lower_expr(default, &mut ctx)?)
             } else {
@@ -504,6 +604,7 @@ impl<'a> HirLowerer<'a> {
                 })
             };
             parameters.push(HirParameter {
+                span: parsed.span,
                 local,
                 name: parsed.name.clone(),
                 ty: parameter.ty.clone(),
@@ -568,12 +669,18 @@ impl<'a> HirLowerer<'a> {
                 let ty = lower_decl_type(&declaration.ty, self.semantic)?;
                 let mut declarators = Vec::new();
                 for declarator in &declaration.declarators {
-                    let local = ctx.push_local(&declarator.name, ty.clone(), HirLocalKind::Local);
+                    let local = ctx.push_local(
+                        &declarator.name,
+                        ty.clone(),
+                        HirLocalKind::Local,
+                        declarator.span,
+                    );
                     let initializer = declarator
                         .initializer
                         .as_ref()
                         .map(|initializer| self.lower_expr(initializer, ctx))
-                        .transpose()?;
+                        .transpose()?
+                        .or_else(|| enum_default_expr(&ty, self.semantic, declarator.span));
                     declarators.push(HirDeclarator {
                         local,
                         initializer,
@@ -647,6 +754,7 @@ impl<'a> HirLowerer<'a> {
             Stmt::Break(statement) => Ok(HirStmt::Break(statement.span)),
             Stmt::Continue(statement) => Ok(HirStmt::Continue(statement.span)),
             Stmt::Empty(statement) => Ok(HirStmt::Empty(statement.span)),
+            Stmt::StaticAssert(statement) => Ok(HirStmt::Empty(statement.span)),
         }
     }
 
@@ -691,6 +799,126 @@ impl<'a> HirLowerer<'a> {
                     ));
                 }
             }
+            ExprKind::ScopedIdentifier {
+                scope,
+                name,
+            } => {
+                let enum_name = canonical_enum_name(self.semantic, scope).ok_or_else(|| {
+                    HirLowerError::new(expr.span, format!("missing semantic enum {scope:?}"))
+                })?;
+                let declaration = self.semantic.enums.get(enum_name).ok_or_else(|| {
+                    HirLowerError::new(expr.span, format!("missing semantic enum {scope:?}"))
+                })?;
+                let variant = declaration
+                    .variants
+                    .iter()
+                    .find(|variant| variant.name == *name)
+                    .ok_or_else(|| {
+                        HirLowerError::new(
+                            expr.span,
+                            format!("missing semantic enum variant {scope}::{name}"),
+                        )
+                    })?;
+                HirExpr {
+                    span: expr.span,
+                    ty:   SemanticType::Enum {
+                        name:    enum_name.to_string(),
+                        backing: declaration.backing,
+                    },
+                    kind: HirExprKind::Literal(enum_value_literal(&variant.value)),
+                }
+            }
+            ExprKind::Match(expression) => {
+                let value = self.lower_expr(&expression.value, ctx)?;
+                let SemanticType::Enum {
+                    name: enum_name, ..
+                } = &value.ty
+                else {
+                    return Err(HirLowerError::new(
+                        expression.value.span,
+                        "semantically valid match is missing its enum type",
+                    ));
+                };
+                let declaration = self.semantic.enums.get(enum_name).ok_or_else(|| {
+                    HirLowerError::new(expression.value.span, "missing semantic match enum")
+                })?;
+                let mut arms = Vec::new();
+                let mut result_type = None;
+                for arm in &expression.arms {
+                    let mut patterns = Vec::new();
+                    for pattern in &arm.patterns {
+                        if let crate::MatchPattern::Variant {
+                            name, ..
+                        } = pattern
+                        {
+                            let variant = declaration
+                                .variants
+                                .iter()
+                                .find(|variant| variant.name == *name)
+                                .ok_or_else(|| {
+                                    HirLowerError::new(arm.span, "missing semantic match variant")
+                                })?;
+                            patterns.push(enum_value_literal(&variant.value));
+                        }
+                    }
+                    let guard = arm
+                        .guard
+                        .as_ref()
+                        .map(|guard| self.lower_expr(guard, ctx))
+                        .transpose()?;
+                    let body = match &arm.body {
+                        crate::MatchArmBody::Expr(body) => {
+                            let body = self.lower_expr(body, ctx)?;
+                            result_type.get_or_insert_with(|| body.ty.clone());
+                            HirMatchArmBody::Expr(body)
+                        }
+                        crate::MatchArmBody::Block(block) => {
+                            let diverges = match_block_guarantees_exit(block);
+                            ctx.push_scope();
+                            let statements = block
+                                .statements
+                                .iter()
+                                .map(|statement| self.lower_stmt(statement, ctx))
+                                .collect::<Result<Vec<_>, _>>()?;
+                            let tail = block
+                                .tail
+                                .as_ref()
+                                .map(|tail| self.lower_expr(tail, ctx).map(Box::new))
+                                .transpose()?;
+                            let arm_type = tail
+                                .as_ref()
+                                .map(|tail| tail.ty.clone())
+                                .or_else(|| (!diverges).then_some(SemanticType::Void));
+                            if let Some(arm_type) = arm_type {
+                                result_type.get_or_insert(arm_type);
+                            }
+                            ctx.pop_scope();
+                            HirMatchArmBody::Block {
+                                block: HirBlock {
+                                    span: block.span,
+                                    statements,
+                                },
+                                tail,
+                                diverges,
+                            }
+                        }
+                    };
+                    arms.push(HirMatchArm {
+                        span: arm.span,
+                        patterns,
+                        guard,
+                        body,
+                    });
+                }
+                HirExpr {
+                    span: expr.span,
+                    ty:   result_type.unwrap_or(SemanticType::Void),
+                    kind: HirExprKind::Match {
+                        value: Box::new(value),
+                        arms,
+                    },
+                }
+            }
             ExprKind::Call {
                 callee,
                 arguments,
@@ -701,6 +929,62 @@ impl<'a> HirLowerer<'a> {
                         "HIR lowering only supports direct identifier calls",
                     ));
                 };
+                let conversion_target = match name.as_str() {
+                    "int" => Some(SemanticType::Int),
+                    "string" => Some(SemanticType::String),
+                    _ => self.semantic.aliases.get(name).cloned().or_else(|| {
+                        self.semantic
+                            .enums
+                            .get(name)
+                            .map(|declaration| SemanticType::Enum {
+                                name:    name.clone(),
+                                backing: declaration.backing,
+                            })
+                    }),
+                };
+                if let Some(target) = conversion_target {
+                    let Some(argument) = arguments.first() else {
+                        return Err(HirLowerError::new(
+                            expr.span,
+                            "semantically valid enum conversion is missing its argument",
+                        ));
+                    };
+                    if let SemanticType::Enum {
+                        name: enum_name, ..
+                    } = &target
+                        && arguments.len() == 2
+                    {
+                        let fallback = arguments.get(1).ok_or_else(|| {
+                            HirLowerError::new(
+                                expr.span,
+                                "checked enum conversion is missing its fallback",
+                            )
+                        })?;
+                        let declaration = self.semantic.enums.get(enum_name).ok_or_else(|| {
+                            HirLowerError::new(
+                                expr.span,
+                                format!("checked conversion is missing enum {enum_name:?}"),
+                            )
+                        })?;
+                        return Ok(HirExpr {
+                            span: expr.span,
+                            ty:   target,
+                            kind: HirExprKind::CheckedEnumConversion {
+                                value:        Box::new(self.lower_expr(argument, ctx)?),
+                                fallback:     Box::new(self.lower_expr(fallback, ctx)?),
+                                valid_values: declaration
+                                    .variants
+                                    .iter()
+                                    .map(|variant| enum_value_literal(&variant.value))
+                                    .collect(),
+                            },
+                        });
+                    }
+                    let mut lowered = self.lower_expr(argument, ctx)?;
+                    lowered.span = expr.span;
+                    lowered.ty = target;
+                    return Ok(lowered);
+                }
                 let function = self.semantic.functions.get(name).ok_or_else(|| {
                     HirLowerError::new(callee.span, "missing semantic call target")
                 })?;
@@ -830,7 +1114,13 @@ impl FunctionLoweringContext {
         self.scopes.pop();
     }
 
-    fn push_local(&mut self, name: &str, ty: SemanticType, kind: HirLocalKind) -> HirLocalId {
+    fn push_local(
+        &mut self,
+        name: &str,
+        ty: SemanticType,
+        kind: HirLocalKind,
+        declaration_span: crate::Span,
+    ) -> HirLocalId {
         if self.scopes.is_empty() {
             self.push_scope();
         }
@@ -838,6 +1128,7 @@ impl FunctionLoweringContext {
         let id = HirLocalId(u32::try_from(self.locals.len()).ok().unwrap_or(u32::MAX));
         self.locals.push(HirLocal {
             id,
+            declaration_span,
             name: name.to_string(),
             ty: ty.clone(),
             kind,
@@ -873,7 +1164,61 @@ fn lower_decl_type(ty: &TypeSpec, semantic: &SemanticModel) -> Result<SemanticTy
             .then(|| SemanticType::Struct(name.clone()))
             .ok_or_else(|| HirLowerError::new(ty.span, "missing semantic struct type")),
         crate::TypeKind::EngineStructure(name) => Ok(SemanticType::EngineStructure(name.clone())),
+        crate::TypeKind::Named(name) => semantic
+            .aliases
+            .get(name)
+            .cloned()
+            .or_else(|| {
+                semantic
+                    .enums
+                    .get(name)
+                    .map(|declaration| SemanticType::Enum {
+                        name:    name.clone(),
+                        backing: declaration.backing,
+                    })
+            })
+            .ok_or_else(|| HirLowerError::new(ty.span, "missing semantic named type")),
     }
+}
+
+fn canonical_enum_name<'a>(semantic: &'a SemanticModel, type_name: &'a str) -> Option<&'a str> {
+    if semantic.enums.contains_key(type_name) {
+        return Some(type_name);
+    }
+    let SemanticType::Enum {
+        name, ..
+    } = semantic.aliases.get(type_name)?
+    else {
+        return None;
+    };
+    Some(name)
+}
+
+fn enum_value_literal(value: &crate::SemanticEnumValue) -> Literal {
+    match value {
+        crate::SemanticEnumValue::Int(value) => Literal::Integer(*value),
+        crate::SemanticEnumValue::String(value) => Literal::String(value.clone()),
+    }
+}
+
+fn enum_default_expr(
+    ty: &SemanticType,
+    semantic: &SemanticModel,
+    span: crate::Span,
+) -> Option<HirExpr> {
+    let SemanticType::Enum {
+        name, ..
+    } = ty
+    else {
+        return None;
+    };
+    let declaration = semantic.enums.get(name)?;
+    let variant = declaration.variants.get(declaration.default_variant)?;
+    Some(HirExpr {
+        span,
+        ty: ty.clone(),
+        kind: HirExprKind::Literal(enum_value_literal(&variant.value)),
+    })
 }
 
 fn semantic_type_from_literal(literal: &Literal) -> SemanticType {
@@ -908,6 +1253,22 @@ fn semantic_type_from_builtin_value(value: &BuiltinValue) -> Option<SemanticType
         BuiltinValue::Json(_) => Some(SemanticType::EngineStructure("json".to_string())),
         BuiltinValue::Vector(_) => Some(SemanticType::Vector),
         BuiltinValue::Raw(_) => None,
+    }
+}
+
+fn match_block_guarantees_exit(block: &crate::MatchBlock) -> bool {
+    block.statements.iter().any(statement_guarantees_exit)
+}
+
+fn statement_guarantees_exit(statement: &Stmt) -> bool {
+    match statement {
+        Stmt::Return(_) | Stmt::Break(_) | Stmt::Continue(_) => true,
+        Stmt::Block(block) => block.statements.iter().any(statement_guarantees_exit),
+        Stmt::If(statement) => statement.else_branch.as_ref().is_some_and(|else_branch| {
+            statement_guarantees_exit(&statement.then_branch)
+                && statement_guarantees_exit(else_branch)
+        }),
+        _ => false,
     }
 }
 
@@ -964,6 +1325,7 @@ fn binary_result_type(
                         | SemanticType::Vector
                         | SemanticType::Struct(_)
                         | SemanticType::EngineStructure(_)
+                        | SemanticType::Enum { .. }
                 ) =>
         {
             Ok(SemanticType::Int)
