@@ -713,9 +713,14 @@ test('animation scope, transitions, events, Bezier timing, and chunk ordering ar
   assert.deepEqual(Array.from(target.nodes[0]?.translation ?? []), [2.5, 0, 0]);
 
   const drawBody = rendererSource.match(
-    /function draw\(\) \{[\s\S]*?\n\s+function drawModel/u,
+    /function draw\([^)]*\) \{[\s\S]*?\n\s+function drawModel/u,
   )?.[0] || '';
-  assert.ok(drawBody.indexOf('drawModel(instance.model') < drawBody.indexOf('drawChunkBatches(viewProjection'));
+  const directDraw = drawBody.indexOf('drawModel(instance.model');
+  const staticBatches = drawBody.indexOf('drawStaticBatches(viewProjection');
+  const chunkBatches = drawBody.indexOf('drawChunkBatches(viewProjection');
+  assert.ok(directDraw >= 0, 'direct model draw must remain in the frame pass');
+  assert.ok(staticBatches > directDraw, 'static instances must draw after their transforms are collected');
+  assert.ok(chunkBatches > staticBatches, 'animated chunks must draw after emitter simulation');
 });
 
 test('texture upload scopes vertical row flipping to color pixels', () => {

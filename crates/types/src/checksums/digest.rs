@@ -1,3 +1,5 @@
+use std::io::{self, Read};
+
 use sha1::{Digest as _, Sha1};
 use sha2::Sha256;
 use tracing::instrument;
@@ -18,6 +20,32 @@ pub fn sha1_digest(data: impl AsRef<[u8]>) -> Sha1Digest {
     let mut bytes = [0_u8; 20];
     bytes.copy_from_slice(&digest);
     Sha1Digest::new(bytes)
+}
+
+/// Computes a SHA-1 digest by streaming bytes from `reader`.
+///
+/// This avoids materializing large archives solely to fingerprint them.
+///
+/// # Errors
+///
+/// Returns the first I/O error encountered while reading.
+pub fn sha1_digest_reader(mut reader: impl Read) -> io::Result<Sha1Digest> {
+    let mut hasher = Sha1::new();
+    let mut buffer = [0_u8; 128 * 1024];
+    loop {
+        let read = reader.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        let chunk = buffer
+            .get(..read)
+            .ok_or_else(|| io::Error::other("SHA-1 reader returned an invalid byte count"))?;
+        hasher.update(chunk);
+    }
+    let digest = hasher.finalize();
+    let mut bytes = [0_u8; 20];
+    bytes.copy_from_slice(&digest);
+    Ok(Sha1Digest::new(bytes))
 }
 
 /// Parses a lowercase or uppercase hexadecimal SHA-1 digest.

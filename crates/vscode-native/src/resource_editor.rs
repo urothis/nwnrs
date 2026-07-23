@@ -1,7 +1,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     fs::{self, File, OpenOptions},
-    io::{self, Cursor, Write},
+    io::{self, Cursor, Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::{SystemTime, UNIX_EPOCH},
@@ -10,7 +10,7 @@ use std::{
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use napi::{
     Task,
-    bindgen_prelude::{AsyncTask, Buffer},
+    bindgen_prelude::{AbortSignal, AsyncTask, Buffer},
 };
 use napi_derive::napi;
 use nwnrs_nwscript::{
@@ -18,7 +18,7 @@ use nwnrs_nwscript::{
     decode_ncs_header, decode_ncs_instructions, disassemble_ncs, parse_langspec_bytes, read_ndb,
 };
 use nwnrs_types::{
-    checksums::sha1_digest,
+    checksums::{sha1_digest, sha1_digest_reader},
     compressedbuf::Algorithm,
     dds::{DdsFormat, DdsTexture, read_dds, write_dds},
     erf::{Erf, ErfVersion, ErfWriteOptions, read_erf, write_erf_with_options},
@@ -27,7 +27,10 @@ use nwnrs_types::{
         GffCExoLocString, GffField, GffRoot, GffStruct, GffValue, gff_root_from_json_bytes,
         gff_root_to_json_bytes, read_gff_root, write_gff_root,
     },
-    key::{KeyBifEntry, KeyBifVersion, KeyTable, read_key_table_from_file, write_key_and_bif},
+    key::{
+        KeyBifEntry, KeyBifVersion, KeyTable, key_bif_relative_path, read_key_table_from_file,
+        write_key_and_bif,
+    },
     localization::Language,
     plt::{PltPixel, PltRenderSpec, PltTexture, read_plt, write_plt},
     resman::{CachePolicy, Res, ResContainer, ResRef, ResolvedResRef, get_res_ext},
@@ -42,12 +45,16 @@ use crate::resource_capabilities::{is_gff_extension, resource_handler};
 
 const DEFAULT_PAGE_SIZE: usize = 200;
 const MAX_PAGE_SIZE: usize = 2_000;
+const BACKUP_MAGIC: &[u8; 8] = b"NWNRSB02";
+const MAX_BACKUP_HEADER_SIZE: u64 = 64 * 1024 * 1024;
+const MAX_BACKUP_FILE_COUNT: usize = 65_536;
+const MAX_BACKUP_PATH_LENGTH: usize = 4_096;
 
 type EditorResult<T> = Result<T, String>;
 
 #[derive(Default)]
 struct ResourceEditorState {
-    documents: Mutex<HashMap<String, EditorDocument>>,
+    documents: Mutex<HashMap<String, Arc<Mutex<EditorDocument>>>>,
 }
 
 /// Persistent native resource editor used by the VS Code custom editors.
@@ -68,12 +75,29 @@ impl ResourceEditorService {
     /// Executes a typed resource-editor request away from the JavaScript event
     /// loop.
     #[napi]
-    pub fn execute(&self, method: String, request_json: String) -> AsyncTask<ResourceEditorTask> {
-        AsyncTask::new(ResourceEditorTask {
-            state: Arc::clone(&self.state),
-            method,
-            request_json,
-        })
+    pub fn execute(
+        &self,
+        method: String,
+        request_json: String,
+        signal: Option<AbortSignal>,
+    ) -> AsyncTask<ResourceEditorTask> {
+        let signal = (!resource_method_is_mutation(&method))
+            .then_some(signal)
+            .flatten();
+        let cancellation = nwnrs_nwscript::CancellationToken::new();
+        if let Some(signal) = &signal {
+            let cancellation = cancellation.clone();
+            signal.on_abort(move || cancellation.cancel());
+        }
+        AsyncTask::with_optional_signal(
+            ResourceEditorTask {
+                state: Arc::clone(&self.state),
+                method,
+                request_json,
+                cancellation,
+            },
+            signal,
+        )
     }
 
     /// Reads an archive entry as a native byte buffer. Large model and texture
@@ -84,13 +108,38 @@ impl ResourceEditorService {
         &self,
         document_id: String,
         resource: String,
+        signal: Option<AbortSignal>,
     ) -> AsyncTask<ResourceEntryReadTask> {
-        AsyncTask::new(ResourceEntryReadTask {
-            state: Arc::clone(&self.state),
-            document_id,
-            resource,
-        })
+        let cancellation = nwnrs_nwscript::CancellationToken::new();
+        if let Some(signal) = &signal {
+            let cancellation = cancellation.clone();
+            signal.on_abort(move || cancellation.cancel());
+        }
+        AsyncTask::with_optional_signal(
+            ResourceEntryReadTask {
+                state: Arc::clone(&self.state),
+                document_id,
+                resource,
+                cancellation,
+            },
+            signal,
+        )
     }
+}
+
+fn resource_method_is_mutation(method: &str) -> bool {
+    matches!(
+        method,
+        "openDocument"
+            | "openDocumentBytes"
+            | "configureScriptDebug"
+            | "applyEdit"
+            | "saveDocument"
+            | "saveDocumentAs"
+            | "backupDocument"
+            | "revertDocument"
+            | "closeDocument"
+    )
 }
 
 impl Default for ResourceEditorService {
@@ -103,12 +152,14 @@ pub struct ResourceEditorTask {
     state:        Arc<ResourceEditorState>,
     method:       String,
     request_json: String,
+    cancellation: nwnrs_nwscript::CancellationToken,
 }
 
 pub struct ResourceEntryReadTask {
-    state:       Arc<ResourceEditorState>,
-    document_id: String,
-    resource:    String,
+    state:        Arc<ResourceEditorState>,
+    document_id:  String,
+    resource:     String,
+    cancellation: nwnrs_nwscript::CancellationToken,
 }
 
 impl Task for ResourceEntryReadTask {
@@ -116,19 +167,31 @@ impl Task for ResourceEntryReadTask {
     type Output = Vec<u8>;
 
     fn compute(&mut self) -> napi::Result<Self::Output> {
-        let documents = self.state.documents.lock().map_err(|error| {
-            napi::Error::from_reason(format!("resource document map is poisoned: {error}"))
+        self.cancellation
+            .check()
+            .map_err(|error| napi::Error::from_reason(error.to_string()))?;
+        let document = {
+            let documents = self.state.documents.lock().map_err(|error| {
+                napi::Error::from_reason(format!("resource document map is poisoned: {error}"))
+            })?;
+            Arc::clone(documents.get(&self.document_id).ok_or_else(|| {
+                napi::Error::from_reason(format!(
+                    "resource document is not open: {}",
+                    self.document_id
+                ))
+            })?)
+        };
+        let document = document.lock().map_err(|error| {
+            napi::Error::from_reason(format!("resource document is poisoned: {error}"))
         })?;
-        let document = documents.get(&self.document_id).ok_or_else(|| {
-            napi::Error::from_reason(format!(
-                "resource document is not open: {}",
-                self.document_id
-            ))
-        })?;
-        document
+        let output = document
             .content
             .read_entry(&self.resource)
-            .map_err(napi::Error::from_reason)
+            .map_err(napi::Error::from_reason)?;
+        self.cancellation
+            .check()
+            .map_err(|error| napi::Error::from_reason(error.to_string()))?;
+        Ok(output)
     }
 
     fn resolve(&mut self, _env: napi::Env, output: Self::Output) -> napi::Result<Self::JsValue> {
@@ -141,14 +204,21 @@ impl Task for ResourceEditorTask {
     type Output = String;
 
     fn compute(&mut self) -> napi::Result<Self::Output> {
+        self.cancellation
+            .check()
+            .map_err(|error| napi::Error::from_reason(error.to_string()))?;
         let request: Value = serde_json::from_str(&self.request_json).map_err(|error| {
             napi::Error::from_reason(format!("invalid editor request: {error}"))
         })?;
         let response = execute_request(&self.state, &self.method, request)
             .map_err(napi::Error::from_reason)?;
-        serde_json::to_string(&response).map_err(|error| {
+        let encoded = serde_json::to_string(&response).map_err(|error| {
             napi::Error::from_reason(format!("failed to encode response: {error}"))
-        })
+        })?;
+        self.cancellation
+            .check()
+            .map_err(|error| napi::Error::from_reason(error.to_string()))?;
+        Ok(encoded)
     }
 
     fn resolve(&mut self, _env: napi::Env, output: Self::Output) -> napi::Result<Self::JsValue> {
@@ -165,6 +235,7 @@ fn execute_request(
         "openDocument" => open_document(state, request),
         "openDocumentBytes" => open_document_bytes(state, request),
         "snapshot" => with_document_mut(state, &request, |document| document.snapshot(&request)),
+        "gffNode" => with_document(state, &request, |document| document.gff_node(&request)),
         "configureScriptDebug" => with_document_mut(state, &request, |document| {
             document.configure_script_debug(&request)?;
             document.snapshot(&request)
@@ -175,6 +246,9 @@ fn execute_request(
             Ok(json!({ "contents": BASE64.encode(document.content.serialize()?) }))
         }),
         "saveDocument" => with_document_mut(state, &request, |document| document.save(&request)),
+        "planSaveDocumentAs" => {
+            with_document(state, &request, |document| document.plan_save_as(&request))
+        }
         "saveDocumentAs" => {
             with_document_mut(state, &request, |document| document.save_as(&request))
         }
@@ -203,14 +277,21 @@ fn with_document(
     operation: impl FnOnce(&EditorDocument) -> EditorResult<Value>,
 ) -> EditorResult<Value> {
     let id = request_id(request)?;
-    let documents = state
-        .documents
+    let document = {
+        let documents = state
+            .documents
+            .lock()
+            .map_err(|error| format!("resource document map is poisoned: {error}"))?;
+        Arc::clone(
+            documents
+                .get(id)
+                .ok_or_else(|| format!("resource document is not open: {id}"))?,
+        )
+    };
+    let document = document
         .lock()
-        .map_err(|error| format!("resource document map is poisoned: {error}"))?;
-    let document = documents
-        .get(id)
-        .ok_or_else(|| format!("resource document is not open: {id}"))?;
-    operation(document)
+        .map_err(|error| format!("resource document is poisoned: {error}"))?;
+    operation(&document)
 }
 
 fn with_document_mut(
@@ -219,14 +300,21 @@ fn with_document_mut(
     operation: impl FnOnce(&mut EditorDocument) -> EditorResult<Value>,
 ) -> EditorResult<Value> {
     let id = request_id(request)?;
-    let mut documents = state
-        .documents
+    let document = {
+        let documents = state
+            .documents
+            .lock()
+            .map_err(|error| format!("resource document map is poisoned: {error}"))?;
+        Arc::clone(
+            documents
+                .get(id)
+                .ok_or_else(|| format!("resource document is not open: {id}"))?,
+        )
+    };
+    let mut document = document
         .lock()
-        .map_err(|error| format!("resource document map is poisoned: {error}"))?;
-    let document = documents
-        .get_mut(id)
-        .ok_or_else(|| format!("resource document is not open: {id}"))?;
-    operation(document)
+        .map_err(|error| format!("resource document is poisoned: {error}"))?;
+    operation(&mut document)
 }
 
 fn close_document(state: &ResourceEditorState, request: &Value) -> EditorResult<Value> {
@@ -260,7 +348,7 @@ fn open_document(state: &ResourceEditorState, request: Value) -> EditorResult<Va
         .documents
         .lock()
         .map_err(|error| format!("resource document map is poisoned: {error}"))?;
-    documents.insert(id, document);
+    documents.insert(id, Arc::new(Mutex::new(document)));
     Ok(response)
 }
 
@@ -274,7 +362,7 @@ fn open_document_bytes(state: &ResourceEditorState, request: Value) -> EditorRes
     let fingerprint = FileFingerprint {
         size:           u64::try_from(bytes.len()).unwrap_or(u64::MAX),
         modified_nanos: 0,
-        sha1:           sha1_digest(&bytes).to_string(),
+        sha1:           Some(sha1_digest(&bytes).to_string()),
     };
     let mut document = EditorDocument {
         path,
@@ -289,7 +377,7 @@ fn open_document_bytes(state: &ResourceEditorState, request: Value) -> EditorRes
         .documents
         .lock()
         .map_err(|error| format!("resource document map is poisoned: {error}"))?;
-    documents.insert(id, document);
+    documents.insert(id, Arc::new(Mutex::new(document)));
     Ok(response)
 }
 
@@ -298,26 +386,73 @@ fn open_document_bytes(state: &ResourceEditorState, request: Value) -> EditorRes
 struct FileFingerprint {
     size:           u64,
     modified_nanos: u128,
-    sha1:           String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    sha1:           Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SaveAsConflict {
+    path:        PathBuf,
+    fingerprint: FileFingerprint,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SaveAsPlan {
+    targets:            Vec<PathBuf>,
+    conflicts:          Vec<SaveAsConflict>,
+    confirmation_token: Option<String>,
 }
 
 impl FileFingerprint {
     fn read(path: &Path) -> EditorResult<Self> {
-        let bytes = fs::read(path)
-            .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
+        let file = File::open(path)
+            .map_err(|error| format!("failed to open {}: {error}", path.display()))?;
         let metadata = fs::metadata(path)
             .map_err(|error| format!("failed to inspect {}: {error}", path.display()))?;
+        let sha1 = sha1_digest_reader(file)
+            .map_err(|error| format!("failed to fingerprint {}: {error}", path.display()))?
+            .to_string();
+        Ok(Self::from_metadata(metadata, Some(sha1)))
+    }
+
+    fn from_bytes(path: &Path, bytes: &[u8]) -> EditorResult<Self> {
+        let metadata = fs::metadata(path)
+            .map_err(|error| format!("failed to inspect {}: {error}", path.display()))?;
+        Ok(Self::from_metadata(
+            metadata,
+            Some(sha1_digest(bytes).to_string()),
+        ))
+    }
+
+    fn metadata_only(path: &Path) -> EditorResult<Self> {
+        let metadata = fs::metadata(path)
+            .map_err(|error| format!("failed to inspect {}: {error}", path.display()))?;
+        Ok(Self::from_metadata(metadata, None))
+    }
+
+    fn from_metadata(metadata: fs::Metadata, sha1: Option<String>) -> Self {
         let modified_nanos = metadata
             .modified()
             .unwrap_or(UNIX_EPOCH)
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_nanos();
-        Ok(Self {
+        Self {
             size: metadata.len(),
             modified_nanos,
-            sha1: sha1_digest(bytes).to_string(),
-        })
+            sha1,
+        }
+    }
+
+    fn matches_path(&self, path: &Path) -> EditorResult<bool> {
+        let current = if self.sha1.is_some() {
+            Self::read(path)?
+        } else {
+            Self::metadata_only(path)?
+        };
+        Ok(current == *self)
     }
 }
 
@@ -372,7 +507,7 @@ impl EditorDocument {
     fn open(path: PathBuf, read_only_origin: bool) -> EditorResult<Self> {
         let bytes = fs::read(&path)
             .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
-        let fingerprint = FileFingerprint::read(&path)?;
+        let fingerprint = FileFingerprint::from_bytes(&path, &bytes)?;
         let content = EditorContent::parse(&path, &bytes)?;
         let related_fingerprints = content.related_fingerprints(&path)?;
         Ok(Self {
@@ -390,19 +525,50 @@ impl EditorDocument {
         backup_path: PathBuf,
         read_only_origin: bool,
     ) -> EditorResult<Self> {
-        let envelope_bytes = fs::read(&backup_path)
+        let mut backup = File::open(&backup_path)
             .map_err(|error| format!("failed to read backup {}: {error}", backup_path.display()))?;
-        let envelope: BackupEnvelope = serde_json::from_slice(&envelope_bytes)
+        let mut magic = [0_u8; BACKUP_MAGIC.len()];
+        let is_streaming_backup = backup
+            .read_exact(&mut magic)
+            .map(|()| magic == *BACKUP_MAGIC)
+            .unwrap_or(false);
+        if is_streaming_backup {
+            let header = read_backup_header(&mut backup)?;
+            let content = match &header.payload {
+                BackupPayload::Single => EditorContent::parse_streaming_backup(&path, &mut backup)?,
+                BackupPayload::KeyBundle {
+                    files,
+                } => EditorContent::parse_streaming_key_backup(&mut backup, files)?,
+            };
+            ensure_backup_eof(&mut backup)?;
+            return Ok(Self {
+                path,
+                read_only_origin,
+                fingerprint: header.fingerprint,
+                related_fingerprints: header.related_fingerprints,
+                revision: header.revision,
+                content,
+            });
+        }
+
+        // Backups written before the streaming format remain readable.
+        backup
+            .seek(SeekFrom::Start(0))
+            .map_err(|error| format!("failed to rewind legacy backup: {error}"))?;
+        let mut envelope_bytes = Vec::new();
+        backup
+            .read_to_end(&mut envelope_bytes)
+            .map_err(|error| format!("failed to read legacy backup: {error}"))?;
+        let envelope: LegacyBackupEnvelope = serde_json::from_slice(&envelope_bytes)
             .map_err(|error| format!("invalid nwnrs resource backup: {error}"))?;
         let bytes = BASE64
             .decode(envelope.contents)
             .map_err(|error| format!("invalid resource backup payload: {error}"))?;
-        let fingerprint = envelope.fingerprint;
         let content = EditorContent::parse_backup(&path, &bytes)?;
         Ok(Self {
             path,
             read_only_origin,
-            fingerprint,
+            fingerprint: envelope.fingerprint,
             related_fingerprints: envelope.related_fingerprints,
             revision: envelope.revision,
             content,
@@ -428,6 +594,13 @@ impl EditorDocument {
                 "{} is not an NCS/NDB document",
                 self.content.kind()
             )),
+        }
+    }
+
+    fn gff_node(&self, request: &Value) -> EditorResult<Value> {
+        match &self.content {
+            EditorContent::Gff(value) => gff_node_page(&value.root, request),
+            _ => Err(format!("{} is not a GFF document", self.content.kind())),
         }
     }
 
@@ -464,13 +637,13 @@ impl EditorDocument {
             .and_then(Value::as_bool)
             .unwrap_or(false);
         if !force {
-            if self.path.exists() && FileFingerprint::read(&self.path)? != self.fingerprint {
+            if self.path.exists() && !self.fingerprint.matches_path(&self.path)? {
                 return Err(
                     "EXTERNAL_CHANGE: the file changed on disk after it was opened".to_string(),
                 );
             }
             for (path, fingerprint) in &self.related_fingerprints {
-                if !path.exists() || FileFingerprint::read(path)? != *fingerprint {
+                if !path.exists() || !fingerprint.matches_path(path)? {
                     return Err(format!(
                         "EXTERNAL_CHANGE: {} changed on disk after the KEY table was opened",
                         path.display()
@@ -484,16 +657,74 @@ impl EditorDocument {
 
     fn save_as(&mut self, request: &Value) -> EditorResult<Value> {
         let path = required_path(request, "path")?;
+        let plan = self.build_save_as_plan(&path)?;
+        if let Some(expected) = plan.confirmation_token.as_deref() {
+            let supplied = request.get("confirmationToken").and_then(Value::as_str);
+            if supplied != Some(expected) {
+                let encoded = serde_json::to_string(&plan).map_err(display_error)?;
+                return Err(format!("SAVE_AS_CONFIRMATION_REQUIRED:{encoded}"));
+            }
+        }
         self.persist_to(path.clone())?;
         self.path = path;
         self.read_only_origin = false;
         Ok(json!({ "saved": true, "path": self.path, "fingerprint": self.fingerprint }))
     }
 
+    fn plan_save_as(&self, request: &Value) -> EditorResult<Value> {
+        let path = required_path(request, "path")?;
+        serde_json::to_value(self.build_save_as_plan(&path)?).map_err(display_error)
+    }
+
+    fn build_save_as_plan(&self, path: &Path) -> EditorResult<SaveAsPlan> {
+        let (targets, requires_set_confirmation) = match &self.content {
+            EditorContent::Key(key) => (key.output_paths(path)?, true),
+            _ => (vec![path.to_path_buf()], false),
+        };
+        let mut conflicts = Vec::new();
+        for target in targets.iter().filter(|_| requires_set_confirmation) {
+            match fs::symlink_metadata(target) {
+                Ok(metadata) if !metadata.file_type().is_file() => {
+                    return Err(format!(
+                        "refused to replace non-file save destination {}",
+                        target.display()
+                    ));
+                }
+                Ok(_) => conflicts.push(SaveAsConflict {
+                    path:        target.clone(),
+                    fingerprint: FileFingerprint::read(target)?,
+                }),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    return Err(format!(
+                        "failed to inspect save destination {}: {error}",
+                        target.display()
+                    ));
+                }
+            }
+        }
+        let confirmation_token = if conflicts.is_empty() {
+            None
+        } else {
+            Some(
+                sha1_digest(
+                    serde_json::to_vec(&conflicts)
+                        .map_err(|error| format!("failed to encode save conflicts: {error}"))?,
+                )
+                .to_string(),
+            )
+        };
+        Ok(SaveAsPlan {
+            targets,
+            conflicts,
+            confirmation_token,
+        })
+    }
+
     fn persist_to(&mut self, path: PathBuf) -> EditorResult<()> {
         match &mut self.content {
             EditorContent::Key(key) => key.write_atomic(&path)?,
-            _ => atomic_write(&path, &self.content.serialize_for_path(&path)?)?,
+            content => atomic_write_with(&path, |output| content.write_for_path(&path, output))?,
         }
         self.content.update_path_encoding(&path)?;
         self.fingerprint = FileFingerprint::read(&path)?;
@@ -503,16 +734,26 @@ impl EditorDocument {
 
     fn backup(&mut self, request: &Value) -> EditorResult<Value> {
         let path = required_path(request, "path")?;
-        let bytes = self.content.serialize_for_backup()?;
-        let envelope = BackupEnvelope {
-            revision:             self.revision,
-            fingerprint:          self.fingerprint.clone(),
-            related_fingerprints: self.related_fingerprints.clone(),
-            contents:             BASE64.encode(bytes),
-        };
-        let encoded = serde_json::to_vec(&envelope)
-            .map_err(|error| format!("failed to encode resource backup: {error}"))?;
-        atomic_write(&path, &encoded)?;
+        match &mut self.content {
+            EditorContent::Key(key) => key.write_backup(
+                &path,
+                self.revision,
+                &self.fingerprint,
+                &self.related_fingerprints,
+            )?,
+            content => {
+                let header = BackupHeader {
+                    revision:             self.revision,
+                    fingerprint:          self.fingerprint.clone(),
+                    related_fingerprints: self.related_fingerprints.clone(),
+                    payload:              BackupPayload::Single,
+                };
+                atomic_write_with(&path, |output| {
+                    write_backup_header(output, &header)?;
+                    content.write_backup_payload(output)
+                })?;
+            }
+        }
         Ok(json!({ "backedUp": true, "path": path }))
     }
 
@@ -528,12 +769,46 @@ impl EditorDocument {
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct BackupEnvelope {
+struct LegacyBackupEnvelope {
     revision:             u64,
     fingerprint:          FileFingerprint,
     #[serde(default)]
     related_fingerprints: BTreeMap<PathBuf, FileFingerprint>,
     contents:             String,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BackupHeader {
+    revision:             u64,
+    fingerprint:          FileFingerprint,
+    #[serde(default)]
+    related_fingerprints: BTreeMap<PathBuf, FileFingerprint>,
+    payload:              BackupPayload,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+enum BackupPayload {
+    Single,
+    KeyBundle { files: Vec<BackupFile> },
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BackupFile {
+    path: String,
+    size: u64,
+}
+
+struct TemporaryStorage {
+    path: PathBuf,
+}
+
+impl Drop for TemporaryStorage {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.path);
+    }
 }
 
 impl EditorContent {
@@ -638,6 +913,120 @@ impl EditorContent {
         Self::parse(path, bytes)
     }
 
+    fn parse_streaming_backup(path: &Path, backup: &mut File) -> EditorResult<Self> {
+        if path
+            .extension()
+            .and_then(|value| value.to_str())
+            .is_some_and(|extension| {
+                matches!(
+                    extension.to_ascii_lowercase().as_str(),
+                    "erf" | "hak" | "mod" | "nwm"
+                )
+            })
+        {
+            let storage = create_temporary_storage("resource-backup")?;
+            let payload_path = storage.path.join("payload.erf");
+            let mut payload = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&payload_path)
+                .map_err(|error| {
+                    format!(
+                        "failed to create restored archive {}: {error}",
+                        payload_path.display()
+                    )
+                })?;
+            io::copy(backup, &mut payload)
+                .map_err(|error| format!("failed to restore archive backup payload: {error}"))?;
+            payload
+                .sync_all()
+                .map_err(|error| format!("failed to sync restored archive backup: {error}"))?;
+            drop(payload);
+            let source = File::open(&payload_path).map_err(display_error)?;
+            let metadata = read_erf(source, path.display().to_string()).map_err(display_error)?;
+            let mut document = ErfDocument::new(metadata).map_err(display_error)?;
+            document._temporary_storage = Some(storage);
+            return Ok(Self::Erf(document));
+        }
+        if path
+            .extension()
+            .and_then(|value| value.to_str())
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("key"))
+        {
+            return Err("streaming KEY backups require a keyBundle payload".to_string());
+        }
+        let mut bytes = Vec::new();
+        backup
+            .read_to_end(&mut bytes)
+            .map_err(|error| format!("failed to read resource backup payload: {error}"))?;
+        Self::parse(path, &bytes)
+    }
+
+    fn parse_streaming_key_backup(backup: &mut File, files: &[BackupFile]) -> EditorResult<Self> {
+        if files.is_empty() {
+            return Err("KEY/BIF backup contains no files".to_string());
+        }
+        if files.len() > MAX_BACKUP_FILE_COUNT {
+            return Err(format!(
+                "KEY/BIF backup contains {} files, exceeding the {}-file safety limit",
+                files.len(),
+                MAX_BACKUP_FILE_COUNT
+            ));
+        }
+        let storage = create_temporary_storage("key-backup")?;
+        let mut unique = HashSet::with_capacity(files.len());
+        let mut key_path = None;
+        for file in files {
+            let relative = safe_backup_relative_path(&file.path)?;
+            if !unique.insert(relative.clone()) {
+                return Err(format!(
+                    "KEY/BIF backup contains duplicate path {}",
+                    relative.display()
+                ));
+            }
+            let destination = storage.path.join(&relative);
+            if let Some(parent) = destination.parent() {
+                fs::create_dir_all(parent).map_err(|error| {
+                    format!(
+                        "failed to create backup restore directory {}: {error}",
+                        parent.display()
+                    )
+                })?;
+            }
+            let mut output = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&destination)
+                .map_err(|error| {
+                    format!(
+                        "failed to create restored KEY/BIF file {}: {error}",
+                        destination.display()
+                    )
+                })?;
+            let mut limited = Read::by_ref(backup).take(file.size);
+            let copied = io::copy(&mut limited, &mut output)
+                .map_err(|error| format!("failed to restore {}: {error}", file.path))?;
+            if copied != file.size {
+                return Err(format!(
+                    "KEY/BIF backup file {} is truncated: expected {} bytes, found {copied}",
+                    file.path, file.size
+                ));
+            }
+            output
+                .sync_all()
+                .map_err(|error| format!("failed to sync restored {}: {error}", file.path))?;
+            if relative == Path::new("backup.key") {
+                key_path = Some(destination);
+            }
+        }
+        let key_path =
+            key_path.ok_or_else(|| "KEY/BIF backup does not contain backup.key".to_string())?;
+        let table = read_key_table_from_file(&key_path).map_err(display_error)?;
+        let mut document = KeyDocument::new(table).map_err(display_error)?;
+        document._temporary_storage = Some(storage);
+        Ok(Self::Key(document))
+    }
+
     fn kind(&self) -> &'static str {
         match self {
             Self::Gff(_) => "gff",
@@ -666,12 +1055,9 @@ impl EditorContent {
                 .filter(|parent| !parent.as_os_str().is_empty())
                 .unwrap_or_else(|| Path::new("."));
             for bif in &value.bifs {
-                let Some(filename) = bif.recorded_filename.as_deref() else {
-                    continue;
-                };
-                let bif_path = parent.join(filename.replace('\\', "/"));
+                let bif_path = parent.join(key_bif_relative_path(bif).map_err(display_error)?);
                 if bif_path.exists() {
-                    result.insert(bif_path.clone(), FileFingerprint::read(&bif_path)?);
+                    result.insert(bif_path.clone(), FileFingerprint::metadata_only(&bif_path)?);
                 }
             }
         }
@@ -680,7 +1066,7 @@ impl EditorContent {
 
     fn snapshot(&mut self, request: &Value) -> EditorResult<Value> {
         match self {
-            Self::Gff(value) => Ok(gff_root_to_json(&value.root)),
+            Self::Gff(value) => Ok(gff_document_snapshot(&value.root)),
             Self::TwoDa(value) => Ok(twoda_to_json(value)),
             Self::Tlk(value) => Ok(tlk_snapshot(value, request)?),
             Self::Dds(value) => texture_snapshot(
@@ -751,6 +1137,7 @@ impl EditorContent {
                     json!({ "action": "replaceGff", "root": before }),
                 ))
             }
+            Self::Gff(value) => apply_gff_edit_transactional(value, action, edit),
             Self::TwoDa(value) => apply_twoda_edit(value, action, edit),
             Self::Tlk(value) => apply_tlk_edit(value, action, edit),
             Self::Dds(value) if action == "replaceTexture" => {
@@ -826,26 +1213,33 @@ impl EditorContent {
         Ok(cursor.into_inner())
     }
 
-    fn serialize_for_path(&mut self, path: &Path) -> EditorResult<Vec<u8>> {
+    fn write_for_path(&mut self, path: &Path, output: &mut File) -> EditorResult<()> {
         match self {
             Self::Gff(value) => match gff_source_encoding(path)
                 .ok_or_else(|| format!("{} is not a supported GFF destination", path.display()))?
             {
                 GffSourceEncoding::Binary => {
-                    let mut cursor = Cursor::new(Vec::new());
-                    write_gff_root(&mut cursor, &value.root).map_err(display_error)?;
-                    Ok(cursor.into_inner())
+                    write_gff_root(output, &value.root).map_err(display_error)
                 }
-                GffSourceEncoding::Json => {
-                    gff_root_to_json_bytes(&value.root).map_err(display_error)
-                }
+                GffSourceEncoding::Json => output
+                    .write_all(&gff_root_to_json_bytes(&value.root).map_err(display_error)?)
+                    .map_err(display_error),
             },
             _ if gff_source_encoding(path).is_some() => Err(format!(
                 "cannot save {} content as GFF source {}",
                 self.kind(),
                 path.display()
             )),
-            _ => self.serialize(),
+            Self::TwoDa(value) => write_twoda(output, value, false).map_err(display_error),
+            Self::Tlk(value) => write_single_tlk(output, value).map_err(display_error),
+            Self::Dds(value) => write_dds(output, value).map_err(display_error),
+            Self::Tga(value) => write_tga(output, value).map_err(display_error),
+            Self::Plt(value) => write_plt(output, value).map_err(display_error),
+            Self::Erf(value) => value.write(output),
+            Self::ScriptDebug(value) => output.write_all(&value.primary_raw).map_err(display_error),
+            Self::Key(_) => {
+                Err("KEY/BIF sets require transactional path serialization".to_string())
+            }
         }
     }
 
@@ -857,10 +1251,26 @@ impl EditorContent {
         Ok(())
     }
 
-    fn serialize_for_backup(&mut self) -> EditorResult<Vec<u8>> {
+    fn write_backup_payload(&mut self, output: &mut File) -> EditorResult<()> {
         match self {
-            Self::Key(value) => value.backup_bytes(),
-            _ => self.serialize(),
+            Self::Gff(value) => match value.encoding {
+                GffSourceEncoding::Binary => {
+                    write_gff_root(output, &value.root).map_err(display_error)
+                }
+                GffSourceEncoding::Json => output
+                    .write_all(&gff_root_to_json_bytes(&value.root).map_err(display_error)?)
+                    .map_err(display_error),
+            },
+            Self::TwoDa(value) => write_twoda(output, value, false).map_err(display_error),
+            Self::Tlk(value) => write_single_tlk(output, value).map_err(display_error),
+            Self::Dds(value) => write_dds(output, value).map_err(display_error),
+            Self::Tga(value) => write_tga(output, value).map_err(display_error),
+            Self::Plt(value) => write_plt(output, value).map_err(display_error),
+            Self::Erf(value) => value.write(output),
+            Self::ScriptDebug(value) => output
+                .write_all(&value.primary_raw)
+                .map_err(|error| format!("failed to write script backup payload: {error}")),
+            Self::Key(_) => Err("KEY/BIF backups require a keyBundle payload".to_string()),
         }
     }
 }
@@ -1485,7 +1895,10 @@ fn page_limit(request: &Value) -> usize {
         .clamp(1, MAX_PAGE_SIZE)
 }
 
-fn atomic_write(path: &Path, bytes: &[u8]) -> EditorResult<()> {
+fn atomic_write_with(
+    path: &Path,
+    write: impl FnOnce(&mut File) -> EditorResult<()>,
+) -> EditorResult<()> {
     let parent = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
@@ -1519,14 +1932,14 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> EditorResult<()> {
             }
         }
     };
-    let result = (|| -> io::Result<()> {
-        temporary.write_all(bytes)?;
-        temporary.sync_all()?;
+    let result = (|| -> EditorResult<()> {
+        write(&mut temporary)?;
+        temporary.sync_all().map_err(display_error)?;
         if let Ok(metadata) = fs::metadata(path) {
-            fs::set_permissions(&temporary_path, metadata.permissions())?;
+            fs::set_permissions(&temporary_path, metadata.permissions()).map_err(display_error)?;
         }
         drop(temporary);
-        fs::rename(&temporary_path, path)?;
+        fs::rename(&temporary_path, path).map_err(display_error)?;
         if let Ok(directory) = File::open(parent) {
             let _ = directory.sync_all();
         }
@@ -1540,6 +1953,128 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> EditorResult<()> {
         ));
     }
     Ok(())
+}
+
+fn write_backup_header(output: &mut File, header: &BackupHeader) -> EditorResult<()> {
+    let encoded = serde_json::to_vec(header)
+        .map_err(|error| format!("failed to encode resource backup header: {error}"))?;
+    let length = u64::try_from(encoded.len())
+        .map_err(|error| format!("resource backup header is too large: {error}"))?;
+    if length > MAX_BACKUP_HEADER_SIZE {
+        return Err(format!(
+            "resource backup header exceeds the {} byte safety limit",
+            MAX_BACKUP_HEADER_SIZE
+        ));
+    }
+    output
+        .write_all(BACKUP_MAGIC)
+        .and_then(|()| output.write_all(&length.to_le_bytes()))
+        .and_then(|()| output.write_all(&encoded))
+        .map_err(|error| format!("failed to write resource backup header: {error}"))
+}
+
+fn read_backup_header(input: &mut File) -> EditorResult<BackupHeader> {
+    let mut length = [0_u8; 8];
+    input
+        .read_exact(&mut length)
+        .map_err(|error| format!("resource backup header length is missing: {error}"))?;
+    let length = u64::from_le_bytes(length);
+    if length > MAX_BACKUP_HEADER_SIZE {
+        return Err(format!(
+            "resource backup header exceeds the {} byte safety limit",
+            MAX_BACKUP_HEADER_SIZE
+        ));
+    }
+    let length = usize::try_from(length)
+        .map_err(|error| format!("resource backup header cannot fit in memory: {error}"))?;
+    let mut encoded = vec![0_u8; length];
+    input
+        .read_exact(&mut encoded)
+        .map_err(|error| format!("resource backup header is truncated: {error}"))?;
+    serde_json::from_slice(&encoded)
+        .map_err(|error| format!("invalid resource backup header: {error}"))
+}
+
+fn ensure_backup_eof(input: &mut File) -> EditorResult<()> {
+    let mut trailing = [0_u8; 1];
+    match input.read(&mut trailing) {
+        Ok(0) => Ok(()),
+        Ok(_) => Err("resource backup contains trailing data".to_string()),
+        Err(error) => Err(format!(
+            "failed to validate resource backup length: {error}"
+        )),
+    }
+}
+
+fn create_temporary_storage(label: &str) -> EditorResult<TemporaryStorage> {
+    let root = std::env::temp_dir();
+    for attempt in 0..100_u32 {
+        let path = root.join(format!(
+            "nwnrs-{label}-{}-{}-{attempt}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        match fs::create_dir(&path) {
+            Ok(()) => {
+                return Ok(TemporaryStorage {
+                    path,
+                })
+            }
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+            Err(error) => {
+                return Err(format!(
+                    "failed to create temporary storage {}: {error}",
+                    path.display()
+                ));
+            }
+        }
+    }
+    Err(format!(
+        "failed to allocate temporary storage for {label} after 100 attempts"
+    ))
+}
+
+fn safe_backup_relative_path(value: &str) -> EditorResult<PathBuf> {
+    if value.is_empty() || value.contains(['\\', ':']) {
+        return Err("backup paths must be non-empty and use forward slashes".to_string());
+    }
+    if value.len() > MAX_BACKUP_PATH_LENGTH {
+        return Err(format!(
+            "backup path exceeds the {MAX_BACKUP_PATH_LENGTH}-byte safety limit"
+        ));
+    }
+    let path = PathBuf::from(value);
+    if path
+        .components()
+        .all(|component| matches!(component, std::path::Component::Normal(_)))
+    {
+        Ok(path)
+    } else {
+        Err(format!("backup contains unsafe path: {value}"))
+    }
+}
+
+fn portable_relative_path(path: &Path) -> EditorResult<String> {
+    let mut parts = Vec::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::Normal(value) => {
+                parts.push(
+                    value
+                        .to_str()
+                        .ok_or_else(|| "backup paths must be valid UTF-8".to_string())?,
+                );
+            }
+            _ => return Err(format!("backup contains unsafe path: {}", path.display())),
+        }
+    }
+    if parts.is_empty() {
+        return Err("backup paths cannot be empty".to_string());
+    }
+    Ok(parts.join("/"))
 }
 
 fn texture_snapshot(width: u32, height: u32, rgba: &[u8], metadata: Value) -> EditorResult<Value> {
@@ -1985,6 +2520,169 @@ fn gff_root_to_json(value: &GffRoot) -> Value {
     })
 }
 
+fn gff_document_snapshot(value: &GffRoot) -> Value {
+    json!({
+        "fileType": value.file_type,
+        "fileVersion": value.file_version,
+        "root": gff_struct_page(&value.root, &[], 0, DEFAULT_PAGE_SIZE),
+    })
+}
+
+enum GffNodeRef<'a> {
+    Struct(&'a GffStruct),
+    List(&'a [GffStruct]),
+}
+
+fn gff_node_page(value: &GffRoot, request: &Value) -> EditorResult<Value> {
+    let path = gff_path(request)?;
+    let offset = request
+        .get("offset")
+        .and_then(Value::as_u64)
+        .and_then(|value| usize::try_from(value).ok())
+        .unwrap_or(0);
+    let limit = page_limit(request);
+    match resolve_gff_node(&value.root, &path)? {
+        GffNodeRef::Struct(structure) => Ok(gff_struct_page(structure, &path, offset, limit)),
+        GffNodeRef::List(entries) => Ok(gff_list_page(entries, &path, offset, limit)),
+    }
+}
+
+fn gff_path(request: &Value) -> EditorResult<Vec<Value>> {
+    let path = request
+        .get("path")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    if path.iter().all(|segment| {
+        segment.as_str().is_some_and(|label| !label.is_empty())
+            || segment
+                .as_u64()
+                .and_then(|index| usize::try_from(index).ok())
+                .is_some()
+    }) {
+        Ok(path)
+    } else {
+        Err("GFF path segments must be field labels or non-negative list indices".to_string())
+    }
+}
+
+fn resolve_gff_node<'a>(root: &'a GffStruct, path: &[Value]) -> EditorResult<GffNodeRef<'a>> {
+    let Some((label_segment, tail)) = path.split_first() else {
+        return Ok(GffNodeRef::Struct(root));
+    };
+    let label = label_segment
+        .as_str()
+        .ok_or_else(|| "GFF structure path expected a field label".to_string())?;
+    let value = root
+        .get_field(label)
+        .ok_or_else(|| format!("GFF field not found: {label}"))?
+        .value();
+    match value {
+        GffValue::Struct(structure) => {
+            if tail.is_empty() {
+                Ok(GffNodeRef::Struct(structure))
+            } else {
+                resolve_gff_node(structure, tail)
+            }
+        }
+        GffValue::List(entries) => {
+            let Some((index_segment, remainder)) = tail.split_first() else {
+                return Ok(GffNodeRef::List(entries));
+            };
+            let index = index_segment
+                .as_u64()
+                .and_then(|value| usize::try_from(value).ok())
+                .ok_or_else(|| format!("GFF list {label} expected an item index"))?;
+            let entry = entries
+                .get(index)
+                .ok_or_else(|| format!("GFF list {label} index {index} is out of range"))?;
+            if remainder.is_empty() {
+                Ok(GffNodeRef::Struct(entry))
+            } else {
+                resolve_gff_node(entry, remainder)
+            }
+        }
+        _ => Err(format!("GFF path field {label} is not a struct or list")),
+    }
+}
+
+fn gff_struct_page(structure: &GffStruct, path: &[Value], offset: usize, limit: usize) -> Value {
+    let total = structure.fields().len();
+    let fields = structure
+        .fields()
+        .iter()
+        .skip(offset)
+        .take(limit)
+        .map(|(label, field)| {
+            let mut child_path = path.to_vec();
+            child_path.push(json!(label));
+            let (value, child) = match field.value() {
+                GffValue::Struct(value) => (
+                    Value::Null,
+                    Some(json!({
+                        "kind": "struct",
+                        "path": child_path,
+                        "id": value.id,
+                        "total": value.fields().len(),
+                    })),
+                ),
+                GffValue::List(value) => (
+                    Value::Null,
+                    Some(json!({
+                        "kind": "list",
+                        "path": child_path,
+                        "total": value.len(),
+                    })),
+                ),
+                value => (gff_value_to_json(value), None),
+            };
+            json!({
+                "label": label,
+                "kind": gff_kind_name(field.value()),
+                "value": value,
+                "child": child,
+            })
+        })
+        .collect::<Vec<_>>();
+    json!({
+        "kind": "struct",
+        "path": path,
+        "id": structure.id,
+        "total": total,
+        "offset": offset.min(total),
+        "limit": limit,
+        "fields": fields,
+    })
+}
+
+fn gff_list_page(entries: &[GffStruct], path: &[Value], offset: usize, limit: usize) -> Value {
+    let total = entries.len();
+    let items = entries
+        .iter()
+        .enumerate()
+        .skip(offset)
+        .take(limit)
+        .map(|(index, structure)| {
+            let mut item_path = path.to_vec();
+            item_path.push(json!(index));
+            json!({
+                "index": index,
+                "path": item_path,
+                "id": structure.id,
+                "total": structure.fields().len(),
+            })
+        })
+        .collect::<Vec<_>>();
+    json!({
+        "kind": "list",
+        "path": path,
+        "total": total,
+        "offset": offset.min(total),
+        "limit": limit,
+        "items": items,
+    })
+}
+
 fn gff_struct_to_json(value: &GffStruct) -> Value {
     json!({
         "id": value.id,
@@ -2039,6 +2737,245 @@ fn gff_value_to_json(value: &GffValue) -> Value {
     }
 }
 
+fn apply_gff_edit_transactional(
+    document: &mut GffDocument,
+    action: &str,
+    edit: &Value,
+) -> EditorResult<(String, Value)> {
+    let mut candidate = document.root.clone();
+    let result = apply_gff_edit(&mut candidate, action, edit)?;
+    document.root = candidate;
+    Ok(result)
+}
+
+fn apply_gff_edit(root: &mut GffRoot, action: &str, edit: &Value) -> EditorResult<(String, Value)> {
+    let path = gff_path(edit)?;
+    match action {
+        "setGffValue" => {
+            let label = required_string(edit, "label")?;
+            let structure = resolve_gff_struct_mut(&mut root.root, &path)?;
+            let field = structure
+                .get_field_mut(label)
+                .ok_or_else(|| format!("GFF field not found: {label}"))?;
+            let kind = gff_kind_name(field.value());
+            if matches!(field.value(), GffValue::Struct(_) | GffValue::List(_)) {
+                return Err(format!(
+                    "GFF {kind} values require structural edit operations"
+                ));
+            }
+            let before = gff_value_to_json(field.value());
+            let replacement = edit
+                .get("value")
+                .ok_or_else(|| "GFF value is required".to_string())?;
+            *field.value_mut() = gff_value_from_json(kind, replacement)?;
+            Ok((
+                "Edit GFF value".to_string(),
+                json!({ "action": action, "path": path, "label": label, "value": before }),
+            ))
+        }
+        "renameGffField" => {
+            let label = required_string(edit, "label")?;
+            let new_label = required_string(edit, "newLabel")?;
+            let structure = resolve_gff_struct_mut(&mut root.root, &path)?;
+            structure
+                .rename_field(label, new_label)
+                .map_err(display_error)?;
+            Ok((
+                "Rename GFF field".to_string(),
+                json!({
+                    "action": action,
+                    "path": path,
+                    "label": new_label,
+                    "newLabel": label,
+                }),
+            ))
+        }
+        "setGffKind" => {
+            let label = required_string(edit, "label")?;
+            let kind = required_string(edit, "kind")?;
+            let structure = resolve_gff_struct_mut(&mut root.root, &path)?;
+            let field = structure
+                .get_field_mut(label)
+                .ok_or_else(|| format!("GFF field not found: {label}"))?;
+            let before_kind = gff_kind_name(field.value());
+            let before_value = gff_value_to_json(field.value());
+            let replacement = edit
+                .get("value")
+                .cloned()
+                .map_or_else(|| default_gff_json_value(kind), Ok)?;
+            *field.value_mut() = gff_value_from_json(kind, &replacement)?;
+            Ok((
+                "Change GFF field type".to_string(),
+                json!({
+                    "action": action,
+                    "path": path,
+                    "label": label,
+                    "kind": before_kind,
+                    "value": before_value,
+                }),
+            ))
+        }
+        "addGffField" => {
+            let label = required_string(edit, "label")?;
+            let kind = required_string(edit, "kind")?;
+            let structure = resolve_gff_struct_mut(&mut root.root, &path)?;
+            let index = edit
+                .get("index")
+                .and_then(Value::as_u64)
+                .and_then(|value| usize::try_from(value).ok())
+                .unwrap_or(structure.fields().len())
+                .min(structure.fields().len());
+            let value = edit
+                .get("value")
+                .cloned()
+                .map_or_else(|| default_gff_json_value(kind), Ok)?;
+            structure
+                .insert_field(
+                    index,
+                    label,
+                    GffField::new(gff_value_from_json(kind, &value)?),
+                )
+                .map_err(display_error)?;
+            Ok((
+                "Add GFF field".to_string(),
+                json!({ "action": "removeGffField", "path": path, "label": label }),
+            ))
+        }
+        "removeGffField" => {
+            let label = required_string(edit, "label")?;
+            let structure = resolve_gff_struct_mut(&mut root.root, &path)?;
+            let index = structure
+                .fields()
+                .iter()
+                .position(|(candidate, _)| candidate == label)
+                .ok_or_else(|| format!("GFF field not found: {label}"))?;
+            let field = structure
+                .remove(label)
+                .ok_or_else(|| format!("GFF field not found: {label}"))?;
+            Ok((
+                "Remove GFF field".to_string(),
+                json!({
+                    "action": "addGffField",
+                    "path": path,
+                    "label": label,
+                    "kind": gff_kind_name(field.value()),
+                    "value": gff_value_to_json(field.value()),
+                    "index": index,
+                }),
+            ))
+        }
+        "addGffListStruct" => {
+            let entries = resolve_gff_list_mut(&mut root.root, &path)?;
+            let index = edit
+                .get("index")
+                .and_then(Value::as_u64)
+                .and_then(|value| usize::try_from(value).ok())
+                .unwrap_or(entries.len())
+                .min(entries.len());
+            let structure = match edit.get("value") {
+                Some(value) => gff_struct_from_json(value)?,
+                None => GffStruct::new(
+                    edit.get("id")
+                        .and_then(Value::as_i64)
+                        .and_then(|value| i32::try_from(value).ok())
+                        .unwrap_or_default(),
+                ),
+            };
+            entries.insert(index, structure);
+            Ok((
+                "Add GFF list struct".to_string(),
+                json!({ "action": "removeGffListStruct", "path": path, "index": index }),
+            ))
+        }
+        "removeGffListStruct" => {
+            let index = json_usize(edit, "index")?;
+            let entries = resolve_gff_list_mut(&mut root.root, &path)?;
+            if index >= entries.len() {
+                return Err(format!("GFF list index {index} is out of range"));
+            }
+            let structure = entries.remove(index);
+            Ok((
+                "Remove GFF list struct".to_string(),
+                json!({
+                    "action": "addGffListStruct",
+                    "path": path,
+                    "index": index,
+                    "value": gff_struct_to_json(&structure),
+                }),
+            ))
+        }
+        _ => Err(format!("unknown GFF edit: {action}")),
+    }
+}
+
+fn resolve_gff_struct_mut<'a>(
+    root: &'a mut GffStruct,
+    path: &[Value],
+) -> EditorResult<&'a mut GffStruct> {
+    let Some((label_segment, tail)) = path.split_first() else {
+        return Ok(root);
+    };
+    let label = label_segment
+        .as_str()
+        .ok_or_else(|| "GFF structure path expected a field label".to_string())?;
+    let value = root
+        .get_field_mut(label)
+        .ok_or_else(|| format!("GFF field not found: {label}"))?
+        .value_mut();
+    match value {
+        GffValue::Struct(structure) => resolve_gff_struct_mut(structure, tail),
+        GffValue::List(entries) => {
+            let (index_segment, remainder) = tail
+                .split_first()
+                .ok_or_else(|| format!("GFF list {label} expected an item index"))?;
+            let index = index_segment
+                .as_u64()
+                .and_then(|value| usize::try_from(value).ok())
+                .ok_or_else(|| format!("GFF list {label} expected an item index"))?;
+            let entry = entries
+                .get_mut(index)
+                .ok_or_else(|| format!("GFF list {label} index {index} is out of range"))?;
+            resolve_gff_struct_mut(entry, remainder)
+        }
+        _ => Err(format!("GFF path field {label} is not a struct or list")),
+    }
+}
+
+fn resolve_gff_list_mut<'a>(
+    root: &'a mut GffStruct,
+    path: &[Value],
+) -> EditorResult<&'a mut Vec<GffStruct>> {
+    let (label, parent_path) = path
+        .split_last()
+        .ok_or_else(|| "GFF list path cannot be empty".to_string())?;
+    let label = label
+        .as_str()
+        .ok_or_else(|| "GFF list path must end with a field label".to_string())?;
+    let parent = resolve_gff_struct_mut(root, parent_path)?;
+    match parent
+        .get_field_mut(label)
+        .ok_or_else(|| format!("GFF field not found: {label}"))?
+        .value_mut()
+    {
+        GffValue::List(entries) => Ok(entries),
+        _ => Err(format!("GFF field {label} is not a list")),
+    }
+}
+
+fn default_gff_json_value(kind: &str) -> EditorResult<Value> {
+    Ok(match kind {
+        "byte" | "char" | "word" | "short" | "dword" | "int" | "float" | "double" => {
+            json!(0)
+        }
+        "dword64" | "int64" => json!("0"),
+        "string" | "resref" | "void" => json!(""),
+        "locstring" => json!({ "strRef": u32::MAX, "entries": [] }),
+        "struct" => json!({ "id": 0, "fields": [] }),
+        "list" => json!([]),
+        _ => return Err(format!("unsupported GFF field kind: {kind}")),
+    })
+}
+
 fn merge_gff_root(target: &mut GffRoot, value: &Value) -> EditorResult<()> {
     let file_type = required_string(value, "fileType")?;
     let file_version = required_string(value, "fileVersion")?;
@@ -2069,6 +3006,20 @@ fn merge_gff_struct(target: &mut GffStruct, value: &Value) -> EditorResult<()> {
         .iter()
         .map(|field| required_string(field, "label").map(str::to_string))
         .collect::<EditorResult<Vec<_>>>()?;
+    let mut unique_labels = HashSet::with_capacity(labels.len());
+    for label in &labels {
+        let byte_length = label.len();
+        if byte_length == 0 || byte_length > 16 {
+            return Err(format!(
+                "GFF field label {label:?} must contain between 1 and 16 bytes"
+            ));
+        }
+        if !unique_labels.insert(label.as_str()) {
+            return Err(format!(
+                "GFF structure contains duplicate field label {label}"
+            ));
+        }
+    }
     let existing = target
         .fields()
         .iter()
@@ -2269,6 +3220,7 @@ fn checked_f32(value: f64, label: &str) -> EditorResult<f32> {
     Ok(converted)
 }
 
+#[derive(Clone)]
 struct ArchiveEntry {
     resref:      ResRef,
     original:    Option<Res>,
@@ -2290,8 +3242,9 @@ impl ArchiveEntry {
 }
 
 struct ErfDocument {
-    metadata: Erf,
-    entries:  Vec<ArchiveEntry>,
+    metadata:           Erf,
+    entries:            Vec<ArchiveEntry>,
+    _temporary_storage: Option<TemporaryStorage>,
 }
 
 impl ErfDocument {
@@ -2309,6 +3262,7 @@ impl ErfDocument {
         Ok(Self {
             metadata,
             entries,
+            _temporary_storage: None,
         })
     }
 
@@ -2339,20 +3293,23 @@ impl ErfDocument {
     }
 
     fn apply_edit(&mut self, action: &str, edit: &Value) -> EditorResult<(String, Value)> {
-        apply_archive_edit(&mut self.entries, action, edit)
+        apply_archive_edit_transactional(&mut self.entries, action, edit)
     }
 
-    fn write(&self, cursor: &mut Cursor<Vec<u8>>) -> EditorResult<()> {
+    fn write<W: Write + Seek>(&self, cursor: &mut W) -> EditorResult<()> {
         let entries = self
             .entries
             .iter()
             .map(|entry| entry.resref.clone())
             .collect::<Vec<_>>();
-        let mut payloads = BTreeMap::new();
+        let entry_by_resref = self
+            .entries
+            .iter()
+            .map(|entry| (entry.resref.clone(), entry))
+            .collect::<HashMap<_, _>>();
         let mut algorithms = BTreeMap::new();
         let mut exocomp = ExoResFileCompressionType::None;
         for entry in &self.entries {
-            payloads.insert(entry.resref.clone(), entry.bytes()?);
             algorithms.insert(entry.resref.clone(), entry.algorithm);
             if entry.algorithm != Algorithm::None {
                 exocomp = ExoResFileCompressionType::CompressedBuf;
@@ -2376,11 +3333,12 @@ impl ErfDocument {
                 resource_list_padding: self.metadata.resource_list_padding(),
             },
             |resref, output| {
-                let bytes = payloads
+                let entry = entry_by_resref
                     .get(resref)
                     .ok_or_else(|| io::Error::other(format!("missing payload for {resref}")))?;
-                output.write_all(bytes)?;
-                Ok((bytes.len(), sha1_digest(bytes)))
+                let bytes = entry.bytes().map_err(io::Error::other)?;
+                output.write_all(&bytes)?;
+                Ok((bytes.len(), sha1_digest(&bytes)))
             },
             |resref| algorithms.get(resref).copied().unwrap_or(Algorithm::None),
         )
@@ -2389,11 +3347,12 @@ impl ErfDocument {
 }
 
 struct KeyDocument {
-    metadata:          KeyTable,
-    bifs:              Vec<KeyBifEntry>,
-    entries:           Vec<ArchiveEntry>,
-    entry_by_resource: HashMap<String, usize>,
-    bif_by_resref:     HashMap<ResRef, usize>,
+    metadata:           KeyTable,
+    bifs:               Vec<KeyBifEntry>,
+    entries:            Vec<ArchiveEntry>,
+    entry_by_resource:  HashMap<String, usize>,
+    bif_by_resref:      HashMap<ResRef, usize>,
+    _temporary_storage: Option<TemporaryStorage>,
 }
 
 impl KeyDocument {
@@ -2419,6 +3378,7 @@ impl KeyDocument {
             entries,
             entry_by_resource: HashMap::new(),
             bif_by_resref: HashMap::new(),
+            _temporary_storage: None,
         };
         document
             .rebuild_indexes()
@@ -2537,6 +3497,29 @@ impl KeyDocument {
             .bytes()
     }
 
+    fn output_paths(&self, key_path: &Path) -> EditorResult<Vec<PathBuf>> {
+        let parent = key_path
+            .parent()
+            .filter(|path| !path.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        let mut paths = Vec::with_capacity(self.bifs.len() + 1);
+        let mut unique = HashSet::with_capacity(self.bifs.len() + 1);
+        paths.push(key_path.to_path_buf());
+        unique.insert(key_path.to_path_buf());
+        for bif in &self.bifs {
+            let relative = key_bif_relative_path(bif).map_err(display_error)?;
+            let path = parent.join(relative);
+            if !unique.insert(path.clone()) {
+                return Err(format!(
+                    "KEY/BIF save set contains duplicate target {}",
+                    path.display()
+                ));
+            }
+            paths.push(path);
+        }
+        Ok(paths)
+    }
+
     fn apply_edit(&mut self, action: &str, edit: &Value) -> EditorResult<(String, Value)> {
         if self.bifs.is_empty() {
             return Err("KEY table contains no BIF files".to_string());
@@ -2558,10 +3541,23 @@ impl KeyDocument {
                     .and_then(|entry| self.bif_by_resref.get(&entry.resref))
                     .copied()
             });
-        let result = apply_archive_edit(&mut self.entries, action, edit)?;
-        let target_bif = requested_bif.or(owning_bif);
-        self.rebuild_bif_entries(target_bif)?;
-        Ok(result)
+        let previous_entries = self.entries.clone();
+        let previous_bifs = self.bifs.clone();
+        let previous_entry_by_resource = self.entry_by_resource.clone();
+        let previous_bif_by_resref = self.bif_by_resref.clone();
+        let result = (|| {
+            let result = apply_archive_edit(&mut self.entries, action, edit)?;
+            let target_bif = requested_bif.or(owning_bif);
+            self.rebuild_bif_entries(target_bif)?;
+            Ok(result)
+        })();
+        if result.is_err() {
+            self.entries = previous_entries;
+            self.bifs = previous_bifs;
+            self.entry_by_resource = previous_entry_by_resource;
+            self.bif_by_resref = previous_bif_by_resref;
+        }
+        result
     }
 
     fn rebuild_bif_entries(&mut self, requested_bif: Option<usize>) -> EditorResult<()> {
@@ -2629,11 +3625,12 @@ impl KeyDocument {
                 .as_nanos()
         ));
         fs::create_dir(&staging).map_err(display_error)?;
-        let preparation = (|| -> EditorResult<()> {
-            let mut payloads = BTreeMap::new();
-            for entry in &self.entries {
-                payloads.insert(entry.resref.clone(), entry.bytes()?);
-            }
+        let preparation = {
+            let entry_by_resref = self
+                .entries
+                .iter()
+                .map(|entry| (entry.resref.clone(), entry))
+                .collect::<HashMap<_, _>>();
             let exocomp = if self
                 .entries
                 .iter()
@@ -2661,44 +3658,83 @@ impl KeyDocument {
                 self.metadata.build_day(),
                 self.metadata.raw_oid(),
                 |resref, output| {
-                    let bytes = payloads
+                    let entry = entry_by_resref
                         .get(resref)
                         .ok_or_else(|| io::Error::other(format!("missing payload for {resref}")))?;
-                    output.write_all(bytes)?;
-                    Ok((bytes.len(), sha1_digest(bytes)))
+                    let bytes = entry.bytes().map_err(io::Error::other)?;
+                    output.write_all(&bytes)?;
+                    Ok((bytes.len(), sha1_digest(&bytes)))
                 },
             )
             .map_err(display_error)
-        })();
+        };
         if let Err(error) = preparation {
             return discard_key_staging(&staging, error);
         }
         commit_key_staging(&staging, parent)
     }
 
-    fn backup_bytes(&self) -> EditorResult<Vec<u8>> {
-        let temporary = std::env::temp_dir().join(format!(
-            "nwnrs-key-backup-{}-{}",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_nanos()
-        ));
-        fs::create_dir(&temporary).map_err(display_error)?;
-        let key_path = temporary.join("backup.key");
-        let result = self.write_atomic(&key_path).and_then(|_| {
-            let mut files = Vec::new();
-            collect_relative_files(&temporary, &temporary, &mut files)?;
-            let bundle = files.into_iter().map(|relative| {
-                let bytes = fs::read(temporary.join(&relative)).map_err(display_error)?;
-                Ok(json!({ "path": relative.to_string_lossy(), "contents": BASE64.encode(bytes) }))
-            }).collect::<EditorResult<Vec<_>>>()?;
-            serde_json::to_vec(&json!({ "kind": "keyBundle", "files": bundle }))
-                .map_err(display_error)
-        });
-        let _ = fs::remove_dir_all(&temporary);
-        result
+    fn write_backup(
+        &self,
+        backup_path: &Path,
+        revision: u64,
+        fingerprint: &FileFingerprint,
+        related_fingerprints: &BTreeMap<PathBuf, FileFingerprint>,
+    ) -> EditorResult<()> {
+        let storage = create_temporary_storage("key-backup-write")?;
+        let key_path = storage.path.join("backup.key");
+        self.write_atomic(&key_path)?;
+
+        let mut relative_files = Vec::new();
+        collect_relative_files(&storage.path, &storage.path, &mut relative_files)?;
+        let files = relative_files
+            .iter()
+            .map(|relative| {
+                let path = storage.path.join(relative);
+                let size = fs::metadata(&path)
+                    .map_err(|error| format!("failed to inspect {}: {error}", path.display()))?
+                    .len();
+                Ok(BackupFile {
+                    path: portable_relative_path(relative)?,
+                    size,
+                })
+            })
+            .collect::<EditorResult<Vec<_>>>()?;
+        let header = BackupHeader {
+            revision,
+            fingerprint: fingerprint.clone(),
+            related_fingerprints: related_fingerprints.clone(),
+            payload: BackupPayload::KeyBundle {
+                files,
+            },
+        };
+        atomic_write_with(backup_path, |output| {
+            write_backup_header(output, &header)?;
+            for relative in &relative_files {
+                let source_path = storage.path.join(relative);
+                let expected = fs::metadata(&source_path)
+                    .map_err(|error| {
+                        format!("failed to inspect {}: {error}", source_path.display())
+                    })?
+                    .len();
+                let mut source = File::open(&source_path).map_err(|error| {
+                    format!("failed to open {}: {error}", source_path.display())
+                })?;
+                let copied = io::copy(&mut source, output).map_err(|error| {
+                    format!(
+                        "failed to stream {} into backup: {error}",
+                        source_path.display()
+                    )
+                })?;
+                if copied != expected {
+                    return Err(format!(
+                        "backup source {} changed while being copied",
+                        source_path.display()
+                    ));
+                }
+            }
+            Ok(())
+        })
     }
 }
 
@@ -2874,6 +3910,17 @@ fn apply_archive_edit(
         }
         _ => Err(format!("unknown archive edit: {action}")),
     }
+}
+
+fn apply_archive_edit_transactional(
+    entries: &mut Vec<ArchiveEntry>,
+    action: &str,
+    edit: &Value,
+) -> EditorResult<(String, Value)> {
+    let mut candidate = entries.clone();
+    let result = apply_archive_edit(&mut candidate, action, edit)?;
+    *entries = candidate;
+    Ok(result)
 }
 
 fn algorithm_from_name(value: &str) -> EditorResult<Algorithm> {
@@ -3152,6 +4199,114 @@ mod tests {
     }
 
     #[test]
+    fn gff_merge_rejects_duplicate_labels_without_mutating_document() {
+        let mut root = GffRoot::new("UTC ");
+        root.put_value("First", GffValue::Int(1))
+            .expect("insert first field");
+        root.put_value("Second", GffValue::Int(2))
+            .expect("insert second field");
+        let before = root.clone();
+        let mut edited = gff_root_to_json(&root);
+        *edited
+            .pointer_mut("/root/fields/0/label")
+            .expect("first label") = json!("Second");
+
+        let mut candidate = root.clone();
+        let error =
+            merge_gff_root(&mut candidate, &edited).expect_err("duplicate labels must be rejected");
+        assert!(error.contains("duplicate field label Second"));
+        assert_eq!(root, before);
+    }
+
+    #[test]
+    fn gff_nodes_page_and_granular_edits_preserve_unrelated_data() {
+        let mut root = GffRoot::new("UTC ");
+        for index in 0..205 {
+            root.put_value(format!("Field{index}"), GffValue::Int(index))
+                .expect("insert paged field");
+        }
+        let mut list_entry = GffStruct::new(7);
+        list_entry
+            .put_value("Name", GffValue::CExoString("before".to_string()))
+            .expect("insert nested value");
+        root.put_value("Entries", GffValue::List(vec![list_entry]))
+            .expect("insert list");
+
+        let first = gff_document_snapshot(&root);
+        assert_eq!(
+            first.pointer("/root/total").and_then(Value::as_u64),
+            Some(206)
+        );
+        assert_eq!(
+            first
+                .pointer("/root/fields")
+                .and_then(Value::as_array)
+                .map(Vec::len),
+            Some(DEFAULT_PAGE_SIZE)
+        );
+        let final_page = gff_node_page(&root, &json!({ "path": [], "offset": 200, "limit": 200 }))
+            .expect("read final page");
+        assert_eq!(
+            final_page
+                .get("fields")
+                .and_then(Value::as_array)
+                .map(Vec::len),
+            Some(6)
+        );
+        let list_page =
+            gff_node_page(&root, &json!({ "path": ["Entries"] })).expect("read list page");
+        assert_eq!(list_page.get("kind").and_then(Value::as_str), Some("list"));
+        assert_eq!(list_page.get("total").and_then(Value::as_u64), Some(1));
+
+        let untouched = root.root.get_field("Field0").cloned();
+        apply_gff_edit(
+            &mut root,
+            "setGffValue",
+            &json!({ "path": ["Entries", 0], "label": "Name", "value": "after" }),
+        )
+        .expect("edit nested scalar");
+        assert_eq!(root.root.get_field("Field0").cloned(), untouched);
+        let Some(GffValue::List(entries)) = root.root.get_field("Entries").map(GffField::value)
+        else {
+            panic!("list field missing");
+        };
+        assert!(matches!(
+            entries.first().and_then(|entry| entry.get_field("Name")).map(GffField::value),
+            Some(GffValue::CExoString(value)) if value == "after"
+        ));
+    }
+
+    #[test]
+    fn failed_archive_removal_does_not_mutate_entries() {
+        let resource = ResolvedResRef::from_filename("missing.utc")
+            .expect("resource reference")
+            .base()
+            .clone();
+        let mut entries = vec![ArchiveEntry {
+            resref:      resource,
+            original:    None,
+            replacement: None,
+            algorithm:   Algorithm::None,
+        }];
+
+        let error = apply_archive_edit_transactional(
+            &mut entries,
+            "removeEntry",
+            &json!({ "resource": "missing.utc" }),
+        )
+        .expect_err("missing payload must fail removal");
+        assert!(error.contains("missing payload"));
+        assert_eq!(entries.len(), 1);
+        assert_eq!(
+            entries
+                .first()
+                .map(|entry| resource_name(&entry.resref))
+                .as_deref(),
+            Some("missing.utc")
+        );
+    }
+
+    #[test]
     fn dialog_json_documents_remain_canonical_json_after_typed_edits() {
         let directory = temporary_directory("dialog-json");
         let source_path = directory.join("conversation.dlg.json");
@@ -3333,7 +4488,103 @@ mod tests {
                 .expect("payload"),
             b"after"
         );
+
+        let key_path = directory.join("demo.key");
+        let mut editor =
+            EditorDocument::open(key_path.clone(), false).expect("open key editor document");
+        let plan = editor
+            .build_save_as_plan(&key_path)
+            .expect("build KEY save plan");
+        assert_eq!(plan.targets.len(), 2);
+        assert_eq!(plan.conflicts.len(), 2);
+        let confirmation_token = plan
+            .confirmation_token
+            .expect("existing KEY set requires confirmation");
+        let error = editor
+            .save_as(&json!({ "path": key_path }))
+            .expect_err("unconfirmed KEY overwrite must fail");
+        assert!(error.contains("SAVE_AS_CONFIRMATION_REQUIRED"));
+        editor
+            .save_as(&json!({
+                "path": directory.join("demo.key"),
+                "confirmationToken": confirmation_token,
+            }))
+            .expect("confirmed KEY overwrite");
+
+        let backup_path = directory.join("demo.resource-backup");
+        editor
+            .backup(&json!({ "path": backup_path }))
+            .expect("stream KEY/BIF backup");
+        let backup_bytes = fs::read(&backup_path).expect("read backup header");
+        assert_eq!(
+            backup_bytes.get(..BACKUP_MAGIC.len()),
+            Some(BACKUP_MAGIC.as_slice())
+        );
+        drop(editor);
+        fs::remove_file(directory.join("demo.key")).expect("remove source KEY");
+        fs::remove_file(directory.join("demo.bif")).expect("remove source BIF");
+        let restored = EditorDocument::from_backup(directory.join("demo.key"), backup_path, false)
+            .expect("restore streaming KEY/BIF backup");
+        assert_eq!(
+            restored
+                .content
+                .read_entry("sample.utc")
+                .expect("read restored resource"),
+            b"after"
+        );
         fs::remove_dir_all(directory).expect("remove temporary directory");
+    }
+
+    #[test]
+    fn streaming_backup_roundtrips_edits_without_base64_envelopes() {
+        let directory = temporary_directory("stream-backup");
+        let source_path = directory.join("demo.2da");
+        let backup_path = directory.join("demo.resource-backup");
+        fs::write(&source_path, b"2DA V2.0\n\nValue\n0 before\n").expect("write source");
+        let mut document =
+            EditorDocument::open(source_path.clone(), false).expect("open 2DA document");
+        document
+            .apply_edit(&json!({
+                "edit": {
+                    "action": "set2daCell",
+                    "row": 0,
+                    "column": "Value",
+                    "value": "after",
+                }
+            }))
+            .expect("edit 2DA");
+        document
+            .backup(&json!({ "path": backup_path }))
+            .expect("write streaming backup");
+        let backup = fs::read(&backup_path).expect("read backup");
+        assert_eq!(
+            backup.get(..BACKUP_MAGIC.len()),
+            Some(BACKUP_MAGIC.as_slice())
+        );
+        assert!(!backup.windows(10).any(|window| window == b"contents\":"));
+
+        let mut restored =
+            EditorDocument::from_backup(source_path, backup_path, false).expect("restore backup");
+        let snapshot = restored
+            .snapshot(&json!({}))
+            .expect("snapshot restored 2DA");
+        assert_eq!(
+            snapshot
+                .pointer("/data/rows/0/cells/0")
+                .and_then(Value::as_str),
+            Some("after")
+        );
+        fs::remove_dir_all(directory).expect("remove temporary directory");
+    }
+
+    #[test]
+    fn streaming_key_backup_rejects_unsafe_manifest_paths() {
+        for value in ["../outside.bif", "/absolute.bif", ".", "C:\\outside.bif"] {
+            assert!(
+                safe_backup_relative_path(value).is_err(),
+                "{value} must be rejected"
+            );
+        }
     }
 
     #[test]

@@ -203,6 +203,18 @@ test('native resource editor exposes an editable 2DA custom-document lifecycle',
 
     await resourceRequest(service, 'backupDocument', { documentId, path: backupPath });
     assert.ok(fs.statSync(backupPath).size > 0);
+    assert.deepEqual(
+      fs.readFileSync(backupPath).subarray(0, 8),
+      Buffer.from('NWNRSB02'),
+    );
+    const restoredId = '2da-restored-document';
+    const restored = await resourceRequest(service, 'openDocument', {
+      documentId: restoredId,
+      path: sourcePath,
+      backupPath,
+    });
+    assert.equal(restored.data.rows[1].cells[1], '7');
+    await resourceRequest(service, 'closeDocument', { documentId: restoredId });
     await resourceRequest(service, 'saveDocument', { documentId });
     assert.match(fs.readFileSync(sourcePath, 'utf8'), /beta\s+7/u);
 
@@ -386,10 +398,14 @@ test('native custom-document lifecycle edits DLG JSON without changing its sourc
   const binding = require(bindingPath);
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nwnrs-dialog-json-'));
   const sourcePath = path.join(root, 'conversation.dlg.json');
-  fs.writeFileSync(sourcePath, JSON.stringify({
+  const source: Record<string, unknown> = {
     __data_type: 'DLG ',
     EndConverAbort: { type: 'resref', value: 'before' },
-  }, null, 2));
+  };
+  for (let index = 0; index < 205; index += 1) {
+    source[`Field${index}`] = { type: 'int', value: index };
+  }
+  fs.writeFileSync(sourcePath, JSON.stringify(source, null, 2));
   const service = new binding.ResourceEditorService();
   try {
     const opened = await resourceRequest(service, 'openDocument', {
@@ -397,13 +413,20 @@ test('native custom-document lifecycle edits DLG JSON without changing its sourc
     });
     assert.equal(opened.kind, 'gff');
     assert.equal(opened.data.fileType, 'DLG ');
-    const rootField = opened.data.root.fields.find(
-      ({ label }: { readonly label: string }) => label === 'EndConverAbort',
-    );
-    rootField.value = 'after';
+    assert.equal(opened.data.root.total, 206);
+    assert.equal(opened.data.root.fields.length, 200);
+    const finalPage = await resourceRequest(service, 'gffNode', {
+      documentId: 'dialog-json', path: [], offset: 200, limit: 200,
+    });
+    assert.equal(finalPage.fields.length, 6);
     await resourceRequest(service, 'applyEdit', {
       documentId: 'dialog-json',
-      edit: { action: 'replaceGff', root: opened.data },
+      edit: {
+        action: 'setGffValue',
+        path: [],
+        label: 'EndConverAbort',
+        value: 'after',
+      },
     });
     await resourceRequest(service, 'saveDocument', { documentId: 'dialog-json' });
     const saved = JSON.parse(fs.readFileSync(sourcePath, 'utf8'));

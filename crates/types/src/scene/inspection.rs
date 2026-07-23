@@ -1102,7 +1102,13 @@ mod tests {
         );
         assert_eq!(inspection.sources.len(), 1);
         assert_eq!(
-            inspection.sources[0].data.fields.len(),
+            inspection
+                .sources
+                .first()
+                .unwrap_or_else(|| panic!("inspection source"))
+                .data
+                .fields
+                .len(),
             authored_field_count
         );
         let identity = inspection

@@ -3,9 +3,9 @@ use std::collections::BTreeMap;
 use nwnrs_types::{
     dds::{DdsFormat, DdsMipLevel},
     mdl::{
-        NodeKind, NwnAnimMeshTrack, NwnComposedScene, NwnEmitterControllerTrack, NwnMaterial,
+        Mat4, NodeKind, NwnAnimMeshTrack, NwnComposedScene, NwnEmitterControllerTrack, NwnMaterial,
         NwnNodeAnimationTrack, NwnPrimitive, NwnPropertyValue, NwnScene, NwnSceneAttachment,
-        NwnSceneNode, NwnTextureSlot, ScalarKey, Vec3Key, Vec4Key,
+        NwnSceneNode, NwnTextureSlot, ScalarKey, Vec3Key, Vec4Key, scene_world_transforms,
     },
 };
 use serde::{Deserialize, Serialize};
@@ -432,6 +432,16 @@ pub struct PacketAttachment {
     pub model:            usize,
 }
 
+/// Model-local axis-aligned geometry bounds.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PacketBounds {
+    /// Minimum XYZ corner.
+    pub min: [f32; 3],
+    /// Maximum XYZ corner.
+    pub max: [f32; 3],
+}
+
 /// One packed model asset.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -446,6 +456,9 @@ pub struct PacketModel {
     pub animation_scale:       Option<f32>,
     /// Fog override.
     pub ignore_fog:            Option<i32>,
+    /// Static geometry bounds after applying authored node transforms.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bounds:                Option<PacketBounds>,
     /// Scene nodes.
     pub nodes:                 Vec<PacketNode>,
     /// Meshes.
@@ -462,6 +475,44 @@ pub struct PacketModel {
     pub hidden_geometry_nodes: Vec<String>,
     /// Referenced child models.
     pub attachments:           Vec<PacketAttachment>,
+}
+
+fn packet_scene_bounds(scene: &NwnScene) -> Option<PacketBounds> {
+    let worlds = scene_world_transforms(scene, Mat4::identity());
+    let mut minimum = [f32::INFINITY; 3];
+    let mut maximum = [f32::NEG_INFINITY; 3];
+    let mut populated = false;
+    for mesh in &scene.meshes {
+        let Some(world) = worlds.get(mesh.source_node).copied() else {
+            continue;
+        };
+        for primitive in &mesh.primitives {
+            for position in &primitive.positions {
+                let point = world.transform_point(*position);
+                if !point.iter().all(|value| value.is_finite()) {
+                    continue;
+                }
+                let [minimum_x, minimum_y, minimum_z] = minimum;
+                let [maximum_x, maximum_y, maximum_z] = maximum;
+                let [point_x, point_y, point_z] = point;
+                minimum = [
+                    minimum_x.min(point_x),
+                    minimum_y.min(point_y),
+                    minimum_z.min(point_z),
+                ];
+                maximum = [
+                    maximum_x.max(point_x),
+                    maximum_y.max(point_y),
+                    maximum_z.max(point_z),
+                ];
+                populated = true;
+            }
+        }
+    }
+    populated.then_some(PacketBounds {
+        min: minimum,
+        max: maximum,
+    })
 }
 
 /// One decoded texture in the packed binary payload.
@@ -956,6 +1007,7 @@ impl PacketBuilder {
         node_textures: Vec<SceneNodeTexture>,
         include_animation_tracks: bool,
     ) -> SceneResult<PacketModel> {
+        let bounds = packet_scene_bounds(scene);
         Ok(PacketModel {
             name: scene.name.clone(),
             supermodel: scene.supermodel.clone(),
@@ -965,6 +1017,7 @@ impl PacketBuilder {
                 .map(|value| format!("{value:?}")),
             animation_scale: scene.animation_scale,
             ignore_fog: scene.ignore_fog,
+            bounds,
             nodes: scene.nodes.iter().map(pack_node).collect(),
             meshes: scene
                 .meshes
@@ -1616,11 +1669,14 @@ mod tests {
         let encoded = packet
             .encode()
             .unwrap_or_else(|error| panic!("encode packet: {error}"));
-        let manifest_length = u32::from_le_bytes(
-            encoded[8..12]
+        let manifest_length = usize::try_from(u32::from_le_bytes(
+            encoded
+                .get(8..12)
+                .unwrap_or_else(|| panic!("packet manifest range"))
                 .try_into()
                 .unwrap_or_else(|_| panic!("packet manifest length")),
-        ) as usize;
+        ))
+        .unwrap_or_else(|error| panic!("packet manifest length: {error}"));
         assert_eq!((12 + manifest_length) % 4, 0);
         let decoded =
             ScenePacket::decode(&encoded).unwrap_or_else(|error| panic!("decode packet: {error}"));
@@ -1650,7 +1706,12 @@ mod tests {
 
         let catalog = ScenePacket::catalog_from_scene(&scene)
             .unwrap_or_else(|error| panic!("build scene catalog: {error}"));
-        let catalog_animation = &catalog.manifest.models[0].animations[0];
+        let catalog_animation = catalog
+            .manifest
+            .models
+            .first()
+            .and_then(|model| model.animations.first())
+            .unwrap_or_else(|| panic!("expected catalog animation"));
         assert!(!catalog_animation.tracks_loaded);
         assert!(catalog_animation.node_tracks.is_empty());
         assert!(catalog.binary.len() < packet.binary.len());
@@ -1665,11 +1726,14 @@ mod tests {
         let selected_encoded = selected
             .encode()
             .unwrap_or_else(|error| panic!("encode animation packet: {error}"));
-        let selected_manifest_length = u32::from_le_bytes(
-            selected_encoded[8..12]
+        let selected_manifest_length = usize::try_from(u32::from_le_bytes(
+            selected_encoded
+                .get(8..12)
+                .unwrap_or_else(|| panic!("animation manifest range"))
                 .try_into()
                 .unwrap_or_else(|_| panic!("animation manifest length")),
-        ) as usize;
+        ))
+        .unwrap_or_else(|error| panic!("animation manifest length: {error}"));
         assert_eq!((12 + selected_manifest_length) % 4, 0);
     }
 
@@ -1710,15 +1774,30 @@ mod tests {
         let encoded = packet
             .encode()
             .unwrap_or_else(|error| panic!("encode compressed texture packet: {error}"));
-        let manifest_length = u32::from_le_bytes(
-            encoded[8..12]
+        let manifest_length = usize::try_from(u32::from_le_bytes(
+            encoded
+                .get(8..12)
+                .unwrap_or_else(|| panic!("texture manifest range"))
                 .try_into()
                 .unwrap_or_else(|_| panic!("texture manifest length")),
-        ) as usize;
+        ))
+        .unwrap_or_else(|error| panic!("texture manifest length: {error}"));
         assert_eq!((12 + manifest_length) % 4, 0);
-        let view = packet.manifest.mip_levels[0].data;
+        let view = packet
+            .manifest
+            .mip_levels
+            .first()
+            .unwrap_or_else(|| panic!("expected texture mip"))
+            .data;
+        let end = view
+            .byte_offset
+            .checked_add(view.byte_length)
+            .unwrap_or_else(|| panic!("texture payload range overflow"));
         assert_eq!(
-            &packet.binary[view.byte_offset..view.byte_offset + view.byte_length],
+            packet
+                .binary
+                .get(view.byte_offset..end)
+                .unwrap_or_else(|| panic!("texture payload range")),
             authored
         );
     }

@@ -113,6 +113,10 @@ interface ResourceEditorMessage {
   readonly options?: unknown;
   readonly bifIndex?: unknown;
   readonly message?: unknown;
+  readonly path?: unknown;
+  readonly offset?: unknown;
+  readonly limit?: unknown;
+  readonly requestId?: unknown;
 }
 
 interface SceneManifest {
@@ -122,6 +126,14 @@ interface SceneManifest {
       readonly origin?: string | null;
     }[];
   };
+}
+
+interface SaveAsPlan {
+  readonly targets: readonly string[];
+  readonly conflicts: readonly {
+    readonly path: string;
+  }[];
+  readonly confirmationToken?: string;
 }
 
 type ResourceDocumentChangeEvent =
@@ -763,6 +775,29 @@ implements vscode.CustomEditorProvider<ResourceCustomDocument> {
           await document.refresh(isRecord(message.options) ? message.options : {});
           await this.broadcast(document);
           break;
+        case 'gffNode':
+          if (document.snapshot?.kind === 'gff'
+            && Array.isArray(message.path)
+            && typeof message.requestId === 'number'
+            && Number.isInteger(message.requestId)) {
+            const node = await document.request('gffNode', {
+              path: message.path,
+              offset: typeof message.offset === 'number' && Number.isInteger(message.offset)
+                ? message.offset
+                : 0,
+              limit: typeof message.limit === 'number' && Number.isInteger(message.limit)
+                ? message.limit
+                : 200,
+            });
+            if (view.ready) {
+              await view.webview.postMessage({
+                type: 'gffNode',
+                requestId: message.requestId,
+                node,
+              });
+            }
+          }
+          break;
         case 'openEntry':
           if (typeof message.resource === 'string') {
             await this.openEntry(document, message.resource);
@@ -791,6 +826,15 @@ implements vscode.CustomEditorProvider<ResourceCustomDocument> {
           break;
       }
     } catch (error) {
+      if (message.type === 'edit') {
+        try {
+          await this.broadcast(document);
+        } catch (resyncError) {
+          this.output.appendLine(
+            `Resource editor resync failed after rejected edit: ${errorStack(resyncError)}`,
+          );
+        }
+      }
       this.output.appendLine(`Resource editor error: ${errorStack(error)}`);
       void vscode.window.showErrorMessage(`nwnrs resource editor: ${errorMessage(error)}`);
     }
@@ -845,7 +889,7 @@ implements vscode.CustomEditorProvider<ResourceCustomDocument> {
       if (message.includes('READ_ONLY_ORIGIN')) {
         const destination = await this.pickOverrideDestination(document);
         if (!destination) throw new Error('Save was cancelled.');
-        await document.request('saveDocumentAs', { path: destination.fsPath }, cancellationToken);
+        await this.saveDocumentAsConfirmed(document, destination, cancellationToken);
       } else if (message.includes('EXTERNAL_CHANGE')) {
         const choice = await vscode.window.showWarningMessage(
           `${path.basename(document.uri.fsPath)} changed on disk.`,
@@ -874,8 +918,57 @@ implements vscode.CustomEditorProvider<ResourceCustomDocument> {
     cancellationToken: vscode.CancellationToken,
   ): Promise<void> {
     if (document.viewer) throw new Error('3D viewer documents are read-only.');
-    await document.request('saveDocumentAs', { path: destination.fsPath }, cancellationToken);
+    await this.saveDocumentAsConfirmed(document, destination, cancellationToken);
     document.dirty = false;
+  }
+
+  private async saveDocumentAsConfirmed(
+    document: ResourceCustomDocument,
+    destination: vscode.Uri,
+    cancellationToken: vscode.CancellationToken,
+  ): Promise<void> {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      if (cancellationToken.isCancellationRequested) {
+        throw new Error('Save was cancelled.');
+      }
+      const plan = await document.request<SaveAsPlan>(
+        'planSaveDocumentAs',
+        { path: destination.fsPath },
+        cancellationToken,
+      );
+      let confirmationToken: string | undefined;
+      if (plan.conflicts.length > 0) {
+        const displayed = plan.conflicts
+          .slice(0, 12)
+          .map((conflict) => `• ${conflict.path}`)
+          .join('\n');
+        const remaining = plan.conflicts.length - Math.min(plan.conflicts.length, 12);
+        const suffix = remaining > 0 ? `\n• …and ${remaining} more` : '';
+        const choice = await vscode.window.showWarningMessage(
+          `Saving this KEY will replace ${plan.conflicts.length} files:\n${displayed}${suffix}`,
+          { modal: true, detail: 'The KEY and every listed BIF are committed as one resource set.' },
+          'Replace All',
+        );
+        if (choice !== 'Replace All') throw new Error('Save was cancelled.');
+        confirmationToken = plan.confirmationToken;
+      }
+      try {
+        await document.request(
+          'saveDocumentAs',
+          {
+            path: destination.fsPath,
+            ...(confirmationToken ? { confirmationToken } : {}),
+          },
+          cancellationToken,
+        );
+        return;
+      } catch (error) {
+        if (!errorMessage(error).includes('SAVE_AS_CONFIRMATION_REQUIRED') || attempt === 2) {
+          throw error;
+        }
+      }
+    }
+    throw new Error('Save destination continued changing while confirmation was in progress.');
   }
 
   async revertCustomDocument(

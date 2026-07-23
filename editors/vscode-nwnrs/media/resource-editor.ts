@@ -98,6 +98,7 @@ interface ModelRuntime {
   readonly poseResult: { asset: InstalledAnimationAsset | undefined; pose: ModelPose };
   poseFrame: number;
   chunkBatch: ChunkBatch;
+  staticBatch: ChunkBatch;
 }
 
 interface RibbonParticleBuffer {
@@ -159,6 +160,7 @@ interface AnimationTransition {
 
 interface PointLightCollection {
   storage: Float32Array;
+  scores: Float64Array;
   count: number;
   values: Float32Array;
 }
@@ -264,28 +266,58 @@ type JsonValue =
   | JsonValue[]
   | { [key: string]: JsonValue };
 
-interface GffStructure {
-  id: number;
-  fields: GffField[];
-}
-
 const gffKinds = [
   'byte', 'char', 'word', 'short', 'dword', 'int', 'float', 'dword64',
   'int64', 'double', 'string', 'resref', 'locstring', 'void', 'struct', 'list',
 ] as const;
 type GffKind = typeof gffKinds[number];
+type GffPath = Array<string | number>;
 
-interface GffField {
-  label: string;
-  kind: GffKind;
-  value: JsonValue | GffStructure | GffStructure[];
+interface GffChildSummary {
+  readonly kind: 'struct' | 'list';
+  readonly path: GffPath;
+  readonly id?: number;
+  readonly total: number;
+}
+
+interface GffFieldSummary {
+  readonly label: string;
+  readonly kind: GffKind;
+  readonly value: JsonValue;
+  readonly child: GffChildSummary | null;
+}
+
+interface GffStructPage {
+  readonly kind: 'struct';
+  readonly path: GffPath;
+  readonly id: number;
+  readonly total: number;
+  readonly offset: number;
+  readonly limit: number;
+  readonly fields: readonly GffFieldSummary[];
+}
+
+interface GffListPage {
+  readonly kind: 'list';
+  readonly path: GffPath;
+  readonly total: number;
+  readonly offset: number;
+  readonly limit: number;
+  readonly items: readonly {
+    readonly index: number;
+    readonly path: GffPath;
+    readonly id: number;
+    readonly total: number;
+  }[];
 }
 
 interface GffData {
   readonly fileType: string;
   readonly fileVersion: string;
-  root: GffStructure;
+  readonly root: GffStructPage;
 }
+
+type GffNodePage = GffStructPage | GffListPage;
 
 interface ScriptSourceLocation {
   readonly file: string;
@@ -577,6 +609,11 @@ let scriptDebugState: {
   query: string;
   page: number;
 } = { functionIndex: 0, selectedOffset: undefined, query: '', page: 0 };
+const gffNodeCache = new Map<string, GffNodePage>();
+const gffNodeOffsets = new Map<string, number>();
+const gffOpenNodes = new Set<string>(['[]']);
+const gffPendingRequests = new Map<number, string>();
+let nextGffRequestId = 1;
 
 window.addEventListener('message', (event: MessageEvent<unknown>) => {
   try {
@@ -587,6 +624,12 @@ window.addEventListener('message', (event: MessageEvent<unknown>) => {
     if (data.type === 'snapshot') {
       clearTimeout(loadingTimer);
       model = parseResourceModel(data.snapshot);
+      if (model.kind === 'gff') {
+        gffNodeCache.clear();
+        gffNodeOffsets.clear();
+        gffPendingRequests.clear();
+        cacheGffNode(model.data.root);
+      }
       render();
     } else if (data.type === 'scene') {
       clearTimeout(loadingTimer);
@@ -603,6 +646,13 @@ window.addEventListener('message', (event: MessageEvent<unknown>) => {
       viewer?.applyInspection(data.assetKey, data.objectKey, data.inspection);
     } else if (data.type === 'areaObjectInspectionError') {
       viewer?.applyInspectionError(data.assetKey, data.objectKey, data.message);
+    } else if (data.type === 'gffNode') {
+      const requestId = typeof data.requestId === 'number' ? data.requestId : -1;
+      const requestedKey = gffPendingRequests.get(requestId);
+      gffPendingRequests.delete(requestId);
+      if (!requestedKey || !isGffNodePage(data.node) || gffPageKey(data.node.path, data.node.offset) !== requestedKey) return;
+      cacheGffNode(data.node);
+      if (model?.kind === 'gff') renderGff();
     }
   } catch (error) {
     reportFatalError(error);
@@ -1444,7 +1494,12 @@ function createViewer(
   let displayedEventTimer: ReturnType<typeof setTimeout> | undefined;
   let pointLightsCache: PointLightCollection | undefined;
   let pointLightsDirty = true;
-  const lightRuntime = { storage: new Float32Array(12 * 16), count: 0, values: new Float32Array(12) };
+  const lightRuntime = {
+    storage: new Float32Array(12 * 128),
+    scores: new Float64Array(128),
+    count: 0,
+    values: new Float32Array(12),
+  };
   let renderScale = 1; let slowFrames = 0; let fastFrames = 0;
   const viewerStarted = performance.now();
   const hasDynamicEffects = scene.manifest.models.some((model) => model.nodes.some((node) => node.emitter || node.dangly)
@@ -1514,9 +1569,14 @@ function createViewer(
       }
     });
   });
-  for (const runtime of modelRuntime) runtime.chunkBatch = {
-    buffer: gl.createBuffer(), values: new Float32Array(16 * 16), count: 0, gpuCapacity: 0,
-  };
+  for (const runtime of modelRuntime) {
+    runtime.chunkBatch = {
+      buffer: gl.createBuffer(), values: new Float32Array(16 * 16), count: 0, gpuCapacity: 0,
+    };
+    runtime.staticBatch = {
+      buffer: gl.createBuffer(), values: new Float32Array(16 * 32), count: 0, gpuCapacity: 0,
+    };
+  }
   const modelIndexByName = new Map<string, number>(
     scene.manifest.models.map((model, index) => [model.name.toLowerCase(), index]),
   );
@@ -1526,7 +1586,21 @@ function createViewer(
     dynamic: instance.kind === 'creature' || instance.kind === 'door' || instance.kind === 'placeable' || instance.kind === 'item',
     overlay: createOverlayGpu(gl, instance.polygon),
   }));
+  const batchableTileModels = new Set<number>(scene.manifest.models.flatMap((model, index) =>
+    model.animations.length === 0
+      && !model.nodes.some((node) => node.emitter || node.dangly)
+      ? [index]
+      : []));
+  const dynamicBoundsModels = new Set<number>(scene.manifest.models.flatMap((model, index) =>
+    model.animations.length > 0
+      || model.nodes.some((node) => node.emitter || node.dangly)
+      ? [index]
+      : []));
   let poseFrame = 0;
+  const maxSceneParticles = 100_000;
+  const maxSceneChunks = 10_000;
+  let remainingParticleBudget = maxSceneParticles;
+  let remainingChunkBudget = maxSceneChunks;
 
   for (const [textureIndex, asset] of session.textureAssets) {
     if (scene.manifest.textures[textureIndex]) gpuTextures[textureIndex] = createTexture(gl, asset.manifest, asset.binary, s3tc);
@@ -1646,7 +1720,10 @@ function createViewer(
     canvas,
     camera,
     draw,
-    () => persistState(),
+    () => {
+      pointLightsDirty = true;
+      persistState();
+    },
     (event) => selectObject(pickAreaObject(event), false, true),
   );
   const contextLost = (event: Event): void => {
@@ -1827,7 +1904,7 @@ function createViewer(
     return gpu;
   }
 
-  function draw() {
+  function draw(cameraChanged = false) {
     if (disposed) return;
     const drawStarted = performance.now();
     const pixelRatio = Math.min(devicePixelRatio, 2) * renderScale; const width = Math.max(1, Math.floor(canvas.clientWidth * pixelRatio));
@@ -1840,16 +1917,32 @@ function createViewer(
     gl.clearColor(background[0] ?? 0, background[1] ?? 0, background[2] ?? 0, 1); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
     const projection = perspective(Math.PI / 4, width / height, Math.max(0.01, camera.distance / 1000), Math.max(1000, camera.distance * 20));
     const eye = orbitEye(camera); const view = lookAt(eye, camera.target, [0, 0, 1]); const viewProjection = multiply4(projection, view);
+    const frustum = frustumPlanes(viewProjection);
+    const visibleEntries = instanceRuntime.filter(({ instance }, index) => {
+      if (instance.kind === 'skybox') return true;
+      // Static authored bounds cannot conservatively contain skeletal,
+      // danglymesh, or emitter motion. Keep those instances in the draw set;
+      // culling them against a bind-pose box can make visible animation vanish.
+      if (instance.model != null && dynamicBoundsModels.has(instance.model)) return true;
+      const componentId = Number.isInteger(instance.id) ? instance.id : index;
+      const selection = boundsCatalog.componentSelections.get(componentId);
+      return !selection || boundsIntersectsFrustum(selection.bounds, frustum, 1);
+    });
     gl.useProgram(program); gl.uniform3fv(meshUniforms.uEnvironmentLight, illumination.environmentLight);
     gl.uniform1i(meshUniforms.uInstanced, 0);
-    for (const runtime of modelRuntime) runtime.chunkBatch.count = 0;
+    remainingParticleBudget = maxSceneParticles;
+    remainingChunkBudget = maxSceneChunks;
+    for (const runtime of modelRuntime) {
+      runtime.chunkBatch.count = 0;
+      runtime.staticBatch.count = 0;
+    }
     gl.uniform3fv(meshUniforms.uCamera, eye);
     gl.uniform1i(meshUniforms.uFogEnabled, illumination.fogEnabled ? 1 : 0);
     gl.uniform3fv(meshUniforms.uFogColor, illumination.fogColor);
     gl.uniform1f(meshUniforms.uFogEnd, illumination.fogEnd);
     if (sceneHasPointLights) {
-      if (pointLightsDirty || animationPlaying || !pointLightsCache) {
-        const collected = collectSceneLights(scene, poseForModel, modelRuntime, instanceRuntime, lightRuntime);
+      if (pointLightsDirty || animationPlaying || cameraChanged || !pointLightsCache) {
+        const collected = collectSceneLights(scene, poseForModel, modelRuntime, visibleEntries, lightRuntime, eye);
         pointLightsCache = collected;
         if (collected.count > maxTextureSize) throw new Error(`Scene has ${collected.count} lights, exceeding this GPU's ${maxTextureSize}-light texture capacity.`);
         gl.activeTexture(gl.TEXTURE6); gl.bindTexture(gl.TEXTURE_2D, pointLightTexture);
@@ -1860,20 +1953,30 @@ function createViewer(
       if (!lights) throw new Error('Point-light collection was not initialized.');
       gl.uniform1i(meshUniforms.uPointLights, 6); gl.uniform1i(meshUniforms.uPointLightCount, lights.count);
     }
-    for (const skyboxPass of [true, false]) for (const entry of instanceRuntime) {
+    for (const skyboxPass of [true, false]) for (const entry of visibleEntries) {
       const { instance } = entry;
       const collision = instance.kind === 'collision'; const skybox = instance.kind === 'skybox';
       if (skybox !== skyboxPass || (mode === 'collision' ? !collision : collision)) continue;
       if (instance.model == null) continue;
+      if (!skybox
+        && instance.kind === 'tile'
+        && batchableTileModels.has(instance.model)) {
+        const runtime = modelRuntime[instance.model];
+        if (runtime) {
+          appendChunkInstance(runtime.staticBatch, entry.base);
+          continue;
+        }
+      }
       if (skybox) { gl.disable(gl.CULL_FACE); gl.depthMask(false); } else { gl.enable(gl.CULL_FACE); gl.depthMask(true); }
       const base = skybox ? composeTransform4(camera.target, instance.rotationAxisAngle, instance.scale) : entry.base;
       gl.uniform1i(meshUniforms.uDynamicObject, entry.dynamic ? 1 : 0);
       drawModel(instance.model, base, viewProjection, new Set(), illumination.fogEnabled);
     }
+    drawStaticBatches(viewProjection, illumination.fogEnabled);
     drawChunkBatches(viewProjection, illumination.fogEnabled);
     gl.depthMask(true); gl.enable(gl.CULL_FACE);
-    if (mode !== 'collision') drawEffects(viewProjection, view, eye, (performance.now() - viewerStarted) / 1000);
-    drawOverlays(viewProjection);
+    if (mode !== 'collision') drawEffects(viewProjection, view, eye, (performance.now() - viewerStarted) / 1000, visibleEntries);
+    drawOverlays(viewProjection, visibleEntries);
     drawSelection(viewProjection);
     const selected = selectedObjectKey ? authoredObjects.get(selectedObjectKey) : undefined;
     if (elements.status) {
@@ -1940,7 +2043,11 @@ function createViewer(
       const chunkName = String(emitterProperty(node.emitter, 'chunkname', '')).trim(); const chunkModel = modelIndexByName.get(chunkName.toLowerCase()); if (!chunkName || chunkModel == null) return;
       const value = (name: string, fallback: number): number =>
         animatedEmitterValue(modelIndex, nodeIndex, track, name, emitterProperty(node.emitter, name, fallback));
-      const life = Math.max(0.001, value('lifeexp', 1)); const count = Math.ceil(Math.max(0, value('birthrate', 1)) * life); if (count > 20000) throw new Error(`Emitter ${node.name} requests ${count} concurrent chunks; the viewer safety limit is 20000.`);
+      const life = Math.max(0.001, value('lifeexp', 1));
+      const requested = Math.ceil(Math.max(0, value('birthrate', 1)) * life);
+      const count = Math.min(requested, 20_000, remainingChunkBudget);
+      remainingChunkBudget -= count;
+      if (count === 0) return;
       const nodeBase = multiply4Into(base, nodeWorld[nodeIndex] || IDENTITY_MATRIX, runtime.emitterWorld); const velocity = value('velocity', 0); const randomVelocity = value('randvel', 0); const spread = value('spread', 0); const gravity = value('grav', 0); const drag = Math.max(0, value('drag', 0));
       for (let index = 0; index < count; index += 1) {
         const phase = random01(index, 0); const ageSeconds = (((performance.now() - viewerStarted) / 1000 + phase * life) % life + life) % life; const azimuth = random01(index, 1) * Math.PI * 2; const cone = spread * Math.sqrt(random01(index, 2)); const speed = velocity + (random01(index, 3) * 2 - 1) * randomVelocity; const damping = drag > 0 ? (1 - Math.exp(-drag * ageSeconds)) / drag : ageSeconds;
@@ -1959,12 +2066,24 @@ function createViewer(
     });
   }
 
+  function drawStaticBatches(viewProjection: Float32Array, fogEnabled: boolean): void {
+    drawModelBatches(viewProjection, fogEnabled, (runtime) => runtime.staticBatch);
+  }
+
   function drawChunkBatches(viewProjection: Float32Array, fogEnabled: boolean): void {
+    drawModelBatches(viewProjection, fogEnabled, (runtime) => runtime.chunkBatch);
+  }
+
+  function drawModelBatches(
+    viewProjection: Float32Array,
+    fogEnabled: boolean,
+    selectBatch: (runtime: ModelRuntime) => ChunkBatch,
+  ): void {
     gl.uniform1i(meshUniforms.uInstanced, 1); gl.uniformMatrix4fv(meshUniforms.uViewProjection, false, viewProjection);
     for (let modelIndex = 0; modelIndex < modelRuntime.length; modelIndex += 1) {
       const runtime = modelRuntime[modelIndex];
       if (!runtime) continue;
-      const batch = runtime.chunkBatch; if (!batch.count) continue;
+      const batch = selectBatch(runtime); if (!batch.count) continue;
       gl.bindBuffer(gl.ARRAY_BUFFER, batch.buffer); const byteLength = batch.count * 16 * 4;
       if (byteLength > batch.gpuCapacity) { batch.gpuCapacity = Math.max(byteLength, Math.ceil(batch.gpuCapacity*1.5), 16*16*4); gl.bufferData(gl.ARRAY_BUFFER, batch.gpuCapacity, gl.DYNAMIC_DRAW); }
       gl.bufferSubData(gl.ARRAY_BUFFER, 0, batch.values, 0, batch.count * 16);
@@ -2065,7 +2184,10 @@ function createViewer(
     return lerpArrayInto(sourceResult, result, transitionFactor(), result);
   }
 
-  function drawOverlays(viewProjection: Float32Array): void {
+  function drawOverlays(
+    viewProjection: Float32Array,
+    visibleEntries: readonly SceneInstanceRuntime[],
+  ): void {
     gl.useProgram(lineProgram); gl.disable(gl.CULL_FACE); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     const colors: Readonly<Partial<Record<string, [number, number, number, number]>>> = {
       trigger: [1, 0.55, 0.1, 1],
@@ -2074,7 +2196,7 @@ function createViewer(
       sound: [0.2, 0.9, 0.45, 0.75],
       store: [1, 0.85, 0.15, 1],
     };
-    for (const { instance, base, overlay } of instanceRuntime) {
+    for (const { instance, base, overlay } of visibleEntries) {
       if (!instance.polygon?.length || (mode === 'collision' && instance.kind !== 'trigger' && instance.kind !== 'encounter')) continue;
       if (!overlay) continue;
       gl.bindVertexArray(overlay.vao);
@@ -2420,12 +2542,13 @@ function createViewer(
     view: Float32Array,
     eye: readonly number[],
     effectTime: number,
+    visibleEntries: readonly SceneInstanceRuntime[],
   ): void {
     gl.useProgram(spriteProgram); gl.disable(gl.CULL_FACE); gl.enable(gl.BLEND); gl.depthMask(false);
     gl.uniformMatrix4fv(spriteUniforms.uViewProjection, false, viewProjection);
     gl.uniform3f(spriteUniforms.uCameraRight, view[0] ?? 0, view[4] ?? 0, view[8] ?? 0);
     gl.uniform3f(spriteUniforms.uCameraUp, view[1] ?? 0, view[5] ?? 0, view[9] ?? 0);
-    for (const { instance, base } of instanceRuntime) {
+    for (const { instance, base } of visibleEntries) {
       if (instance.model == null || instance.kind === 'collision' || instance.kind === 'skybox') continue;
       drawModelEffects(instance.model, base, effectTime, eye, viewProjection, new Set());
     }
@@ -2474,7 +2597,20 @@ function createViewer(
     const value = (name: string, fallback: number): number =>
       animatedEmitterValue(modelIndex, nodeIndex, track, name, emitterProperty(emitter, name, fallback));
     const life = Math.max(0.001, value('lifeexp', 1)); const birthrate = Math.max(0, value('birthrate', 10));
-    const requestedParticles = Math.ceil(life * birthrate); if (requestedParticles > 20000) throw new Error(`Emitter ${node.name} requests ${requestedParticles} concurrent particles; the viewer safety limit is 20000.`); const particleCount = requestedParticles; if (!particleCount) return;
+    const requestedParticles = Math.ceil(life * birthrate);
+    const distance = Math.hypot(
+      (world[12] ?? 0) - (eye[0] ?? 0),
+      (world[13] ?? 0) - (eye[1] ?? 0),
+      (world[14] ?? 0) - (eye[2] ?? 0),
+    );
+    const distanceLod = effectDistanceLod(distance);
+    const particleCount = Math.min(
+      Math.ceil(requestedParticles * distanceLod),
+      20_000,
+      remainingParticleBudget,
+    );
+    remainingParticleBudget -= particleCount;
+    if (!particleCount) return;
     const velocity = value('velocity', 0); const randomVelocity = value('randvel', 0); const spread = value('spread', 0);
     const mass = value('mass', 0); const drag = Math.max(0, value('drag', 0)); const fps = Math.max(0, value('fps', 0));
     const sizeStart = value('sizestart', 1); const sizeMid = value('sizemid', sizeStart); const sizeEnd = value('sizeend', sizeMid);
@@ -2655,7 +2791,7 @@ function createViewer(
       poseFrame += 1;
       if (elements.animationTime) elements.animationTime.textContent = `${animationTime.toFixed(2)}s`;
     }
-    if (animationPlaying || hasDynamicEffects || cameraMoved) draw(); animationFrame = requestAnimationFrame(tick);
+    if (animationPlaying || hasDynamicEffects || cameraMoved) draw(cameraMoved); animationFrame = requestAnimationFrame(tick);
   }
   function emitAnimationEvent(event: PacketAnimationEvent): void {
     if (!elements.animationEvent) return;
@@ -2703,7 +2839,10 @@ function createViewer(
       for (const gpu of primitiveCache.values()) {
         gl.deleteBuffer(gpu.buffer); gl.deleteVertexArray(gpu.vao); gl.deleteTexture(gpu.boneTexture);
       }
-      for (const runtime of modelRuntime) gl.deleteBuffer(runtime.chunkBatch.buffer);
+      for (const runtime of modelRuntime) {
+        gl.deleteBuffer(runtime.chunkBatch.buffer);
+        gl.deleteBuffer(runtime.staticBatch.buffer);
+      }
       for (const entry of instanceRuntime) {
         if (entry.overlay) {
           gl.deleteBuffer(entry.overlay.buffer); gl.deleteVertexArray(entry.overlay.vao);
@@ -2822,96 +2961,178 @@ function renderGff(): void {
   }
   const data = model.data;
   requiredWebviewElement('toolbar').innerHTML = `<span>Type <strong>${escapeHtml(data.fileType)}</strong></span><span>Version <strong>${escapeHtml(data.fileVersion)}</strong></span><button id="gff-add">Add root field</button>`;
-  requiredWebviewElement('content').innerHTML = `<div class="gff-root">${renderGffStruct(data.root, ['root'])}</div>`;
-  requiredWebviewElement('gff-add').onclick = () => addGffField(['root']);
+  requiredWebviewElement('content').innerHTML = `<div class="gff-root">${renderGffNode(data.root)}</div>`;
+  requiredWebviewElement('gff-add').onclick = () => addGffField([]);
   bindGffControls();
 }
 
-type DataPath = Array<string | number>;
-
-function renderGffStruct(structure: GffStructure, pathParts: DataPath): string {
-  return `<details open><summary>Struct ${structure.id} · ${structure.fields.length} fields</summary><div class="gff-node">
-    ${structure.fields.map((field, index) => renderGffField(field, [...pathParts, 'fields', index])).join('')}
-    <button class="secondary gff-add-field" data-path="${encodePath(pathParts)}">Add field</button></div></details>`;
+function gffPathKey(pathParts: GffPath): string {
+  return JSON.stringify(pathParts);
 }
 
-function renderGffField(field: GffField, pathParts: DataPath): string {
-  const compound = field.kind === 'struct' && isGffStructure(field.value)
-    ? renderGffStruct(field.value, [...pathParts, 'value'])
-    : field.kind === 'list'
-      ? (() => {
-        const entries = Array.isArray(field.value)
-          ? field.value.filter(isGffStructure)
-          : [];
-        return `<details open><summary>List · ${entries.length} structs</summary><div class="gff-node">${entries.map((item, index) => `${renderGffStruct(item, [...pathParts, 'value', index])}<button class="danger gff-remove-list" data-path="${encodePath([...pathParts, 'value'])}" data-index="${index}">Remove struct</button>`).join('')}<button class="secondary gff-add-list" data-path="${encodePath([...pathParts, 'value'])}">Add struct</button></div></details>`;
-      })()
-      : gffValueControl(field, pathParts);
-  return `<div class="gff-field"><input class="gff-label" data-path="${encodePath(pathParts)}" value="${escapeAttribute(field.label)}" maxlength="16">
-    <select class="gff-kind" data-path="${encodePath(pathParts)}">${gffKinds.map((kind) => `<option ${kind === field.kind ? 'selected' : ''}>${kind}</option>`).join('')}</select>
-    <div>${compound}</div><button class="danger gff-remove" data-path="${encodePath(pathParts)}">Remove</button></div>`;
+function gffPageKey(pathParts: GffPath, offset: number): string {
+  return `${gffPathKey(pathParts)}@${offset}`;
 }
 
-function gffValueControl(field: GffField, pathParts: DataPath): string {
-  const valuePath = encodePath([...pathParts, 'value']);
-  if (field.kind === 'locstring') return `<textarea class="gff-value" data-kind="locstring" data-path="${valuePath}">${escapeHtml(JSON.stringify(field.value, null, 2))}</textarea>`;
-  if (field.kind === 'void') return `<textarea class="gff-value" data-kind="void" data-path="${valuePath}" title="Base64 encoded bytes">${escapeHtml(field.value)}</textarea>`;
+function cacheGffNode(node: GffNodePage): void {
+  const pathKey = gffPathKey(node.path);
+  gffNodeOffsets.set(pathKey, node.offset);
+  gffNodeCache.set(gffPageKey(node.path, node.offset), node);
+}
+
+function currentGffNode(pathParts: GffPath): GffNodePage | undefined {
+  const offset = gffNodeOffsets.get(gffPathKey(pathParts)) ?? 0;
+  return gffNodeCache.get(gffPageKey(pathParts, offset));
+}
+
+function requestGffNode(pathParts: GffPath, offset = 0): void {
+  const key = gffPageKey(pathParts, offset);
+  if (gffNodeCache.has(key) || [...gffPendingRequests.values()].includes(key)) return;
+  const requestId = nextGffRequestId;
+  nextGffRequestId += 1;
+  gffPendingRequests.set(requestId, key);
+  vscode.postMessage({ type: 'gffNode', requestId, path: pathParts, offset, limit: tablePageSize });
+}
+
+function renderGffNode(node: GffNodePage): string {
+  return node.kind === 'struct' ? renderGffStructPage(node) : renderGffListPage(node);
+}
+
+function renderGffStructPage(structure: GffStructPage): string {
+  return `<section class="gff-node" data-gff-node="${encodePath(structure.path)}">
+    <header><strong>Struct ${structure.id}</strong><span>${structure.total} fields</span></header>
+    ${structure.fields.map((field) => renderGffField(field, structure.path)).join('')}
+    ${renderGffPager(structure)}
+    <button class="secondary gff-add-field" data-path="${encodePath(structure.path)}">Add field</button>
+  </section>`;
+}
+
+function renderGffListPage(list: GffListPage): string {
+  return `<section class="gff-node" data-gff-node="${encodePath(list.path)}">
+    ${list.items.map((item) => {
+      const pathKey = gffPathKey(item.path);
+      const open = gffOpenNodes.has(pathKey);
+      const child = currentGffNode(item.path);
+      if (open && !child) requestGffNode(item.path);
+      return `<details class="gff-child" data-path="${encodePath(item.path)}" ${open ? 'open' : ''}>
+        <summary>Struct ${item.id} · ${item.total} fields</summary>
+        <div class="gff-child-content">${child ? renderGffNode(child) : '<div class="muted">Loading…</div>'}</div>
+        <button class="danger gff-remove-list" data-path="${encodePath(list.path)}" data-index="${item.index}">Remove struct</button>
+      </details>`;
+    }).join('')}
+    ${renderGffPager(list)}
+    <button class="secondary gff-add-list" data-path="${encodePath(list.path)}">Add struct</button>
+  </section>`;
+}
+
+function renderGffField(field: GffFieldSummary, structurePath: GffPath): string {
+  let value: string;
+  if (field.child) {
+    const pathKey = gffPathKey(field.child.path);
+    const open = gffOpenNodes.has(pathKey);
+    const child = currentGffNode(field.child.path);
+    if (open && !child) requestGffNode(field.child.path);
+    value = `<details class="gff-child" data-path="${encodePath(field.child.path)}" ${open ? 'open' : ''}>
+      <summary>${field.child.kind === 'list' ? 'List' : `Struct ${field.child.id ?? 0}`} · ${field.child.total} ${field.child.kind === 'list' ? 'structs' : 'fields'}</summary>
+      <div class="gff-child-content">${child ? renderGffNode(child) : '<div class="muted">Loading…</div>'}</div>
+    </details>`;
+  } else {
+    value = gffValueControl(field, structurePath);
+  }
+  return `<div class="gff-field">
+    <input class="gff-label" data-path="${encodePath(structurePath)}" data-label="${escapeAttribute(field.label)}" value="${escapeAttribute(field.label)}" maxlength="16">
+    <select class="gff-kind" data-path="${encodePath(structurePath)}" data-label="${escapeAttribute(field.label)}">${gffKinds.map((kind) => `<option ${kind === field.kind ? 'selected' : ''}>${kind}</option>`).join('')}</select>
+    <div>${value}</div>
+    <button class="danger gff-remove" data-path="${encodePath(structurePath)}" data-label="${escapeAttribute(field.label)}">Remove</button>
+  </div>`;
+}
+
+function gffValueControl(field: GffFieldSummary, structurePath: GffPath): string {
+  const metadata = `data-path="${encodePath(structurePath)}" data-label="${escapeAttribute(field.label)}" data-kind="${field.kind}"`;
+  if (field.kind === 'locstring') return `<textarea class="gff-value" ${metadata}>${escapeHtml(JSON.stringify(field.value, null, 2))}</textarea>`;
+  if (field.kind === 'void') return `<textarea class="gff-value" ${metadata} title="Base64 encoded bytes">${escapeHtml(String(field.value))}</textarea>`;
   const numeric = ['byte', 'char', 'word', 'short', 'dword', 'int', 'float', 'double'].includes(field.kind);
-  return `<input class="gff-value" data-kind="${field.kind}" data-path="${valuePath}" ${numeric ? 'type="number" step="any"' : ''} value="${escapeAttribute(String(field.value))}">`;
+  return `<input class="gff-value" ${metadata} ${numeric ? 'type="number" step="any"' : ''} value="${escapeAttribute(String(field.value))}">`;
+}
+
+function renderGffPager(node: GffNodePage): string {
+  if (node.total <= node.limit) return '';
+  const end = Math.min(node.offset + (node.kind === 'struct' ? node.fields.length : node.items.length), node.total);
+  return `<div class="pager">
+    <button class="secondary gff-page" data-path="${encodePath(node.path)}" data-offset="${Math.max(0, node.offset - node.limit)}" ${node.offset === 0 ? 'disabled' : ''}>Previous</button>
+    <span>${node.total ? node.offset + 1 : 0}–${end} of ${node.total}</span>
+    <button class="secondary gff-page" data-path="${encodePath(node.path)}" data-offset="${node.offset + node.limit}" ${end >= node.total ? 'disabled' : ''}>Next</button>
+  </div>`;
 }
 
 function bindGffControls(): void {
+  document.querySelectorAll<HTMLDetailsElement>('details.gff-child').forEach((details) => {
+    details.ontoggle = () => {
+      const pathParts = decodePath(details.dataset.path);
+      const key = gffPathKey(pathParts);
+      if (details.open) {
+        gffOpenNodes.add(key);
+        if (!currentGffNode(pathParts)) requestGffNode(pathParts);
+      } else {
+        gffOpenNodes.delete(key);
+      }
+    };
+  });
+  document.querySelectorAll<WebviewElement>('.gff-page').forEach((button) => {
+    button.onclick = () => {
+      const pathParts = decodePath(button.dataset.path);
+      const offset = Number(button.dataset.offset);
+      if (!Number.isInteger(offset) || offset < 0) return;
+      gffNodeOffsets.set(gffPathKey(pathParts), offset);
+      const cached = currentGffNode(pathParts);
+      if (cached) renderGff();
+      else requestGffNode(pathParts, offset);
+    };
+  });
   document.querySelectorAll<WebviewElement>('.gff-value').forEach((input) => input.onchange = () => {
     let value: JsonValue = input.value;
     if (input.dataset.kind === 'locstring') { try { value = JSON.parse(input.value) as JsonValue; } catch { return showError('Localized string value must be valid JSON.'); } }
     else if (['byte', 'char', 'word', 'short', 'dword', 'int', 'float', 'double'].includes(input.dataset.kind ?? '')) value = Number(value);
-    const next = clone(currentGffData()); setAtPath(next, decodePath(input.dataset.path), value); submitGff(next);
+    edit({ action: 'setGffValue', path: decodePath(input.dataset.path), label: input.dataset.label, value });
   });
   document.querySelectorAll<WebviewElement>('.gff-label').forEach((input) => input.onchange = () => {
     if (!input.value || new TextEncoder().encode(input.value).length > 16) return showError('GFF labels must be 1–16 bytes.');
-    const next = clone(currentGffData()); setAtPath(next, [...decodePath(input.dataset.path), 'label'], input.value); submitGff(next);
+    edit({
+      action: 'renameGffField',
+      path: decodePath(input.dataset.path),
+      label: input.dataset.label,
+      newLabel: input.value,
+    });
   });
   document.querySelectorAll<WebviewElement>('.gff-kind').forEach((select) => select.onchange = () => {
-    const next = clone(currentGffData());
-    const field = getAtPath(next, decodePath(select.dataset.path));
-    if (!isGffField(field)) return;
     if (!isGffKind(select.value)) return showError(`Unsupported GFF field kind: ${select.value}`);
-    field.kind = select.value; field.value = defaultGffValue(select.value); submitGff(next);
+    edit({
+      action: 'setGffKind',
+      path: decodePath(select.dataset.path),
+      label: select.dataset.label,
+      kind: select.value,
+    });
   });
   document.querySelectorAll<WebviewElement>('.gff-remove').forEach((button) => button.onclick = () => {
-    const pathParts = decodePath(button.dataset.path); const index = pathParts.pop(); const next = clone(currentGffData());
-    const parent = getAtPath(next, pathParts);
-    if (Array.isArray(parent) && typeof index === 'number') parent.splice(index, 1);
-    submitGff(next);
+    edit({ action: 'removeGffField', path: decodePath(button.dataset.path), label: button.dataset.label });
   });
   document.querySelectorAll<WebviewElement>('.gff-add-field').forEach((button) => button.onclick = () => addGffField(decodePath(button.dataset.path)));
   document.querySelectorAll<WebviewElement>('.gff-add-list').forEach((button) => button.onclick = () => {
-    const next = clone(currentGffData());
-    const list = getAtPath(next, decodePath(button.dataset.path));
-    if (Array.isArray(list)) list.push({ id: 0, fields: [] });
-    submitGff(next);
+    edit({ action: 'addGffListStruct', path: decodePath(button.dataset.path), id: 0 });
   });
   document.querySelectorAll<WebviewElement>('.gff-remove-list').forEach((button) => button.onclick = () => {
-    const next = clone(currentGffData());
-    const list = getAtPath(next, decodePath(button.dataset.path));
-    if (Array.isArray(list)) list.splice(Number(button.dataset.index), 1);
-    submitGff(next);
+    edit({
+      action: 'removeGffListStruct',
+      path: decodePath(button.dataset.path),
+      index: Number(button.dataset.index),
+    });
   });
 }
 
-function addGffField(structPath: DataPath): void {
+function addGffField(structPath: GffPath): void {
   const label = prompt('Field label (maximum 16 bytes)'); if (!label) return;
   if (new TextEncoder().encode(label).length > 16) return showError('GFF labels cannot exceed 16 bytes.');
-  const next = clone(currentGffData()); const structure = getAtPath(next, structPath);
-  if (!isGffStructure(structure)) return;
-  if (structure.fields.some((field) => field.label === label)) return showError(`Field ${label} already exists in this structure.`);
-  structure.fields.push({ label, kind: 'int', value: 0 }); submitGff(next);
-}
-
-function submitGff(root: GffData): void { edit({ action: 'replaceGff', root }); }
-
-function currentGffData(): GffData {
-  if (!model || model.kind !== 'gff') throw new Error('No GFF document is active.');
-  return model.data;
+  edit({ action: 'addGffField', path: structPath, label, kind: 'int' });
 }
 
 function renderScriptDebug(): void {
@@ -3767,6 +3988,12 @@ function createModelRuntime(model: PacketModel): ModelRuntime {
       count: 0,
       gpuCapacity: 0,
     },
+    staticBatch: {
+      buffer: null,
+      values: new Float32Array(0),
+      count: 0,
+      gpuCapacity: 0,
+    },
   };
   runtime.inverseBindWorlds = runtime.bindWorlds.map((world) => inverse4(world));
   return runtime;
@@ -4057,15 +4284,31 @@ function collectSceneLights(
   modelRuntime: readonly ModelRuntime[],
   instanceRuntime: readonly SceneInstanceRuntime[],
   target: PointLightCollection,
+  eye: readonly number[],
 ): PointLightCollection {
   target.count = 0;
+  const maximumLights = 128;
   const append = (values: Float32Array): void => {
-    const required = (target.count + 1) * 12;
-    if (required > target.storage.length) {
-      const grown = new Float32Array(Math.max(required, Math.ceil(target.storage.length * 1.5)));
-      grown.set(target.storage); target.storage = grown;
+    const distance = Math.hypot(
+      (values[0] ?? 0) - (eye[0] ?? 0),
+      (values[1] ?? 0) - (eye[1] ?? 0),
+      (values[2] ?? 0) - (eye[2] ?? 0),
+    );
+    const score = (values[10] ?? 0) * 10_000 - distance;
+    let targetIndex = target.count;
+    if (target.count >= maximumLights) {
+      targetIndex = 0;
+      for (let index = 1; index < target.count; index += 1) {
+        if ((target.scores[index] ?? Infinity) < (target.scores[targetIndex] ?? Infinity)) {
+          targetIndex = index;
+        }
+      }
+      if (score <= (target.scores[targetIndex] ?? -Infinity)) return;
+    } else {
+      target.count += 1;
     }
-    target.storage.set(values, target.count * 12); target.count += 1;
+    target.storage.set(values, targetIndex * 12);
+    target.scores[targetIndex] = score;
   };
   const collectModel = (
     modelIndex: number,
@@ -4513,9 +4756,15 @@ function sceneBoundsCatalog(scene: DecodedScenePacket): BoundsCatalog {
   ): void => {
     if (stack.has(modelIndex)) return; const model = scene.manifest.models[modelIndex]; if (!model) return; stack.add(modelIndex);
     const worlds = resolveNodeWorlds(model, model.nodes);
-    for (const mesh of model.meshes) for (const primitive of mesh.primitives) {
-      const world = multiply4(base, worlds[mesh.sourceNode] || identity4()); const positions = numericView(scene.binary, primitive.positions);
-      for (let index = 0; index < positions.length; index += 3) include(transformPoint4(world, [Number(positions[index] ?? 0), Number(positions[index + 1] ?? 0), Number(positions[index + 2] ?? 0)]));
+    if (model.bounds) {
+      for (const point of boundsCorners(model.bounds)) include(transformPoint4(base, point));
+    } else {
+      // Backward compatibility for packets produced before model-local bounds
+      // became part of the native scene contract.
+      for (const mesh of model.meshes) for (const primitive of mesh.primitives) {
+        const world = multiply4(base, worlds[mesh.sourceNode] || identity4()); const positions = numericView(scene.binary, primitive.positions);
+        for (let index = 0; index < positions.length; index += 3) include(transformPoint4(world, [Number(positions[index] ?? 0), Number(positions[index + 1] ?? 0), Number(positions[index + 2] ?? 0)]));
+      }
     }
     model.nodes.forEach((node, nodeIndex) => {
       if (!node.emitter) return;
@@ -4577,6 +4826,57 @@ function sceneBoundsCatalog(scene: DecodedScenePacket): BoundsCatalog {
   return { scene: finalizeBounds(sceneAccumulator), objects, objectSelections, componentSelections };
 }
 
+function boundsCorners(bounds: { readonly min: readonly number[]; readonly max: readonly number[] }): MutableVec3[] {
+  const [x0 = 0, y0 = 0, z0 = 0] = bounds.min;
+  const [x1 = 0, y1 = 0, z1 = 0] = bounds.max;
+  return [
+    [x0, y0, z0], [x1, y0, z0], [x1, y1, z0], [x0, y1, z0],
+    [x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1],
+  ];
+}
+
+type FrustumPlane = readonly [number, number, number, number];
+
+function frustumPlanes(matrix: Float32Array): FrustumPlane[] {
+  const row = (index: number): [number, number, number, number] => [
+    matrix[index] ?? 0,
+    matrix[index + 4] ?? 0,
+    matrix[index + 8] ?? 0,
+    matrix[index + 12] ?? 0,
+  ];
+  const r0 = row(0); const r1 = row(1); const r2 = row(2); const r3 = row(3);
+  const combine = (left: readonly number[], right: readonly number[], sign: number): FrustumPlane => {
+    const x = (left[0] ?? 0) + (right[0] ?? 0) * sign;
+    const y = (left[1] ?? 0) + (right[1] ?? 0) * sign;
+    const z = (left[2] ?? 0) + (right[2] ?? 0) * sign;
+    const w = (left[3] ?? 0) + (right[3] ?? 0) * sign;
+    const length = Math.hypot(x, y, z) || 1;
+    return [x / length, y / length, z / length, w / length];
+  };
+  return [
+    combine(r3, r0, 1),
+    combine(r3, r0, -1),
+    combine(r3, r1, 1),
+    combine(r3, r1, -1),
+    combine(r3, r2, 1),
+    combine(r3, r2, -1),
+  ];
+}
+
+function boundsIntersectsFrustum(
+  bounds: Bounds,
+  planes: readonly FrustumPlane[],
+  padding = 0,
+): boolean {
+  for (const [x, y, z, w] of planes) {
+    const px = (x >= 0 ? bounds.max[0] : bounds.min[0]) + (x >= 0 ? padding : -padding);
+    const py = (y >= 0 ? bounds.max[1] : bounds.min[1]) + (y >= 0 ? padding : -padding);
+    const pz = (z >= 0 ? bounds.max[2] : bounds.min[2]) + (z >= 0 ? padding : -padding);
+    if (x * px + y * py + z * pz + w < 0) return false;
+  }
+  return true;
+}
+
 function emitterSpatialExtent(emitter: PacketEmitter): MutableVec3 {
   const life=Math.max(0,Number(emitterProperty(emitter,'lifeexp',0))||0);
   const velocity=Math.abs(Number(emitterProperty(emitter,'velocity',0))||0)+Math.abs(Number(emitterProperty(emitter,'randvel',0))||0)*0.5;
@@ -4591,6 +4891,13 @@ function emitterSpatialExtent(emitter: PacketEmitter): MutableVec3 {
   )*0.5;
   const travel=velocity*life+mass*9.81*life*life*0.5;
   return [Math.abs(emitter.xSize||0)/200+travel+particleSize,Math.abs(emitter.ySize||0)/200+travel+particleSize,travel+particleSize];
+}
+
+function effectDistanceLod(distance: number): number {
+  if (distance <= 30) return 1;
+  if (distance >= 300) return 0;
+  if (distance <= 120) return 1 - ((distance - 30) / 90) * 0.6;
+  return 0.4 * (1 - (distance - 120) / 180);
 }
 
 function newBoundsAccumulator(): Bounds {
@@ -4843,44 +5150,17 @@ function editorToolbar(): WebviewElement | null { return webviewElement('toolbar
 function content(): WebviewElement | null { return webviewElement('content'); }
 function clone<Value>(value: Value): Value { return structuredClone(value); }
 function cellValue(value: string): string | null { return value === '****' ? null : value; }
-function encodePath(value: DataPath): string { return encodeURIComponent(JSON.stringify(value)); }
-function decodePath(value: string | undefined): DataPath {
+function encodePath(value: GffPath): string { return encodeURIComponent(JSON.stringify(value)); }
+function decodePath(value: string | undefined): GffPath {
   if (value === undefined) throw new Error('A GFF editor control is missing its data path.');
   const decoded: unknown = JSON.parse(decodeURIComponent(value));
   if (!Array.isArray(decoded) || !decoded.every(
-    (part) => typeof part === 'string' || (typeof part === 'number' && Number.isInteger(part)),
+    (part) => (typeof part === 'string' && part.length > 0)
+      || (typeof part === 'number' && Number.isInteger(part) && part >= 0),
   )) {
     throw new Error('A GFF editor control contains an invalid data path.');
   }
   return decoded;
-}
-function getAtPath(value: unknown, pathParts: DataPath): unknown {
-  let current = value;
-  for (const part of pathParts) {
-    if (Array.isArray(current) && typeof part === 'number') {
-      current = current[part];
-    } else if (isRecord(current) && typeof part === 'string') {
-      current = current[part];
-    } else {
-      return undefined;
-    }
-  }
-  return current;
-}
-function setAtPath(value: unknown, pathParts: DataPath, replacement: unknown): void {
-  const last = pathParts.at(-1);
-  if (last === undefined) throw new Error('Cannot replace an empty GFF data path.');
-  const parent = getAtPath(value, pathParts.slice(0, -1));
-  if (Array.isArray(parent) && typeof last === 'number') {
-    if (last < 0 || last >= parent.length) throw new Error('GFF array path is out of bounds.');
-    parent[last] = replacement;
-    return;
-  }
-  if (isRecord(parent) && typeof last === 'string') {
-    parent[last] = replacement;
-    return;
-  }
-  throw new Error('GFF data path does not identify a writable value.');
 }
 function bytesToBase64(bytes: Uint8Array): string { let binary = ''; const chunk = 0x8000; for (let index = 0; index < bytes.length; index += chunk) binary += String.fromCharCode(...bytes.subarray(index, index + chunk)); return btoa(binary); }
 function formatBytes(value: number): string { if (value < 1024) return `${value} B`; if (value < 1048576) return `${(value / 1024).toFixed(1)} KiB`; return `${(value / 1048576).toFixed(1)} MiB`; }
@@ -4890,14 +5170,6 @@ function isCustomEditorType(extension: unknown): boolean { return CUSTOM_EDITOR_
 
 function isGffKind(value: string): value is GffKind {
   return gffKinds.some((kind) => kind === value);
-}
-
-function defaultGffValue(kind: GffKind): GffField['value'] {
-  if (['string', 'resref', 'void', 'dword64', 'int64'].includes(kind)) return kind.endsWith('64') ? '0' : '';
-  if (kind === 'locstring') return { strRef: 4294967295, entries: [] };
-  if (kind === 'struct') return { id: 0, fields: [] };
-  if (kind === 'list') return [];
-  return 0;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -4988,7 +5260,7 @@ function isGffData(value: unknown): value is GffData {
   return isRecord(value)
     && typeof value.fileType === 'string'
     && typeof value.fileVersion === 'string'
-    && isGffStructure(value.root);
+    && isGffStructPage(value.root);
 }
 
 function isTextureData(value: unknown): value is TextureData {
@@ -5221,35 +5493,57 @@ function isInspectionField(
   return 'label' in value && typeof value.label === 'string';
 }
 
-function isGffStructure(value: unknown): value is GffStructure {
-  return isRecord(value)
-    && typeof value.id === 'number'
-    && Array.isArray(value.fields)
-    && value.fields.every(isGffField);
+function isGffPath(value: unknown): value is GffPath {
+  return Array.isArray(value)
+    && value.every((part) => (typeof part === 'string' && part.length > 0)
+      || (isNonNegativeInteger(part)));
 }
 
-function isGffField(value: unknown): value is GffField {
+function isGffChildSummary(value: unknown): value is GffChildSummary {
+  return isRecord(value)
+    && (value.kind === 'struct' || value.kind === 'list')
+    && isGffPath(value.path)
+    && isNonNegativeInteger(value.total)
+    && (value.id === undefined || Number.isInteger(value.id));
+}
+
+function isGffFieldSummary(value: unknown): value is GffFieldSummary {
   return isRecord(value)
     && typeof value.label === 'string'
     && typeof value.kind === 'string'
     && isGffKind(value.kind)
-    && isGffFieldValue(value.kind, value.value);
+    && isJsonValue(value.value)
+    && (value.child === null || isGffChildSummary(value.child));
 }
 
-function isGffFieldValue(kind: GffKind, value: unknown): boolean {
-  if (kind === 'struct') return isGffStructure(value);
-  if (kind === 'list') return Array.isArray(value) && value.every(isGffStructure);
-  if (kind === 'locstring') {
-    return isRecord(value)
-      && isNonNegativeInteger(value.strRef)
-      && Array.isArray(value.entries)
-      && value.entries.every((entry) => isRecord(entry)
-        && isNonNegativeInteger(entry.language)
-        && typeof entry.text === 'string');
-  }
-  if (kind === 'string' || kind === 'resref' || kind === 'void'
-      || kind === 'dword64' || kind === 'int64') {
-    return typeof value === 'string';
-  }
-  return isFiniteNumber(value);
+function isGffPageBase(value: Record<string, unknown>): boolean {
+  return isGffPath(value.path)
+    && isNonNegativeInteger(value.total)
+    && isNonNegativeInteger(value.offset)
+    && isPositiveInteger(value.limit);
+}
+
+function isGffStructPage(value: unknown): value is GffStructPage {
+  return isRecord(value)
+    && value.kind === 'struct'
+    && isGffPageBase(value)
+    && Number.isInteger(value.id)
+    && Array.isArray(value.fields)
+    && value.fields.every(isGffFieldSummary);
+}
+
+function isGffListPage(value: unknown): value is GffListPage {
+  return isRecord(value)
+    && value.kind === 'list'
+    && isGffPageBase(value)
+    && Array.isArray(value.items)
+    && value.items.every((item) => isRecord(item)
+      && isNonNegativeInteger(item.index)
+      && isGffPath(item.path)
+      && Number.isInteger(item.id)
+      && isNonNegativeInteger(item.total));
+}
+
+function isGffNodePage(value: unknown): value is GffNodePage {
+  return isGffStructPage(value) || isGffListPage(value);
 }

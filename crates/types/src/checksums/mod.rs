@@ -11,13 +11,16 @@ pub use types::*;
 pub mod prelude {
     pub use crate::checksums::{
         EMPTY_SHA1_DIGEST, Md5Digest, ParseSha1DigestError, SHA1_HEX_LEN, SHA256_HEX_LEN,
-        Sha1Digest, Sha256Digest, md5_digest, parse_sha1_digest, sha1_digest, sha256_digest,
+        Sha1Digest, Sha256Digest, md5_digest, parse_sha1_digest, sha1_digest, sha1_digest_reader,
+        sha256_digest,
     };
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::checksums::{md5_digest, parse_sha1_digest, sha1_digest, sha256_digest};
+    use crate::checksums::{
+        md5_digest, parse_sha1_digest, sha1_digest, sha1_digest_reader, sha256_digest,
+    };
 
     #[test]
     fn sha1_digest_matches_known_vector_and_parses_case_insensitively() {
@@ -29,6 +32,15 @@ mod tests {
         assert_eq!(
             parse_sha1_digest("A9993E364706816ABA3E25717850C26C9CD0D89D"),
             Ok(digest)
+        );
+    }
+
+    #[test]
+    fn streamed_sha1_matches_in_memory_digest() {
+        let bytes = b"streamed archive fingerprint";
+        assert_eq!(
+            sha1_digest_reader(bytes.as_slice()).expect("stream digest"),
+            sha1_digest(bytes)
         );
     }
 

@@ -3,6 +3,7 @@ import {
   type CancellationTokenLike,
   type OutputChannelLike,
 } from './worker-client';
+import { isResourceEditorMutation } from './resource-editor-methods';
 
 export class ResourceEditorWorkerClient extends WorkerClient {
   public constructor(workerPath: string, bindingPath: string, output?: OutputChannelLike) {
@@ -14,13 +15,16 @@ export class ResourceEditorWorkerClient extends WorkerClient {
     request: unknown,
     cancellationToken?: CancellationTokenLike,
   ): Promise<TResponse> {
-    // Resource writes are transactional and must run to a definite completion.
-    // VS Code cancellation is therefore observed before a request is queued by
-    // the provider, not by abandoning an in-flight native mutation or save.
     if (cancellationToken?.isCancellationRequested) {
       return Promise.reject(new Error(`${method} cancelled before it was queued`));
     }
-    return super.request<TResponse>(method, request);
+    // Mutations run to a definite completion once queued. Read-only work stays
+    // cooperatively cancellable through the worker and native task.
+    return super.request<TResponse>(
+      method,
+      request,
+      isResourceEditorMutation(method) ? undefined : cancellationToken,
+    );
   }
 
   public readEntryBytes<TResponse = Uint8Array>(

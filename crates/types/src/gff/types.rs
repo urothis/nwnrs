@@ -348,6 +348,52 @@ impl GffStruct {
         Ok(())
     }
 
+    /// Inserts a new field at a specific stored-order position.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GffError`] when the label is invalid or already exists.
+    pub fn insert_field(
+        &mut self,
+        index: usize,
+        label: impl Into<String>,
+        field: GffField,
+    ) -> GffResult<()> {
+        let label = label.into();
+        ensure_label(&label)?;
+        if self.fields.iter().any(|(name, _)| *name == label) {
+            return Err(GffError::msg(format!(
+                "GFF structure already contains field {label}"
+            )));
+        }
+        self.fields
+            .insert(index.min(self.fields.len()), (label, field));
+        Ok(())
+    }
+
+    /// Renames a field without changing its stored position or value.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GffError`] when either label is invalid, the source field is
+    /// absent, or the destination label already exists.
+    pub fn rename_field(&mut self, old_label: &str, new_label: impl Into<String>) -> GffResult<()> {
+        let new_label = new_label.into();
+        ensure_label(&new_label)?;
+        if old_label != new_label && self.fields.iter().any(|(name, _)| *name == new_label) {
+            return Err(GffError::msg(format!(
+                "GFF structure already contains field {new_label}"
+            )));
+        }
+        let (label, _) = self
+            .fields
+            .iter_mut()
+            .find(|(name, _)| name == old_label)
+            .ok_or_else(|| GffError::msg(format!("GFF field not found: {old_label}")))?;
+        *label = new_label;
+        Ok(())
+    }
+
     /// Inserts or replaces a labeled value.
     ///
     /// # Errors

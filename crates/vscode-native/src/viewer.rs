@@ -55,8 +55,12 @@ struct ViewerSession {
     resman:            ResMan,
     scenes:            WeightedLru<String, Arc<CachedViewerScene>>,
     resources:         Option<Arc<Vec<ViewerResourceEntry>>>,
-    inspection_cache:  AreaInspectionCache,
-    localization:      ViewerLocalization,
+    inspection:        Arc<Mutex<ViewerInspectionState>>,
+}
+
+struct ViewerInspectionState {
+    inspection_cache: AreaInspectionCache,
+    localization:     ViewerLocalization,
 }
 
 struct CachedViewerScene {
@@ -1766,15 +1770,22 @@ impl Task for ViewerAreaInspectionTask {
                 napi::Error::from_reason("viewer session is no longer available; reload the scene")
             })?)
         };
-        let mut session = session.lock().map_err(|error| {
-            napi::Error::from_reason(format!("viewer package session is poisoned: {error}"))
-        })?;
-        let session = session
-            .as_mut()
-            .ok_or_else(|| napi::Error::from_reason("viewer session was not initialized"))?;
-        let cached = Arc::clone(session.scenes.get(&request.asset_key).ok_or_else(|| {
-            napi::Error::from_reason("viewer scene assets were evicted; reload the scene")
-        })?);
+        let (cached, mut resman, inspection) = {
+            let mut session = session.lock().map_err(|error| {
+                napi::Error::from_reason(format!("viewer package session is poisoned: {error}"))
+            })?;
+            let session = session
+                .as_mut()
+                .ok_or_else(|| napi::Error::from_reason("viewer session was not initialized"))?;
+            let cached = Arc::clone(session.scenes.get(&request.asset_key).ok_or_else(|| {
+                napi::Error::from_reason("viewer scene assets were evicted; reload the scene")
+            })?);
+            (
+                cached,
+                session.resman.fork(),
+                Arc::clone(&session.inspection),
+            )
+        };
         {
             let mut inspections = cached.inspections.lock().map_err(|error| {
                 napi::Error::from_reason(format!("inspection cache is poisoned: {error}"))
@@ -1790,18 +1801,19 @@ impl Task for ViewerAreaInspectionTask {
             .module
             .as_ref()
             .and_then(|module| module.custom_tlk.as_deref());
-        let ViewerSession {
-            resman,
+        let mut inspection = inspection.lock().map_err(|error| {
+            napi::Error::from_reason(format!("viewer inspection state is poisoned: {error}"))
+        })?;
+        let ViewerInspectionState {
             inspection_cache,
             localization,
-            ..
-        } = session;
-        localization.ensure_custom(resman, custom_tlk);
+        } = &mut *inspection;
+        localization.ensure_custom(&mut resman, custom_tlk);
         let mut localization = ViewerInspectionLocalization {
             localization,
             custom_tlk,
         };
-        let inspection = AreaInspector::new(resman, inspection_cache, &mut localization)
+        let inspection = AreaInspector::new(&mut resman, inspection_cache, &mut localization)
             .inspect(&cached.scene, &request.object_key)
             .map_err(|error| napi::Error::from_reason(error.to_string()))?;
         check_cancellation(&self.cancellation)?;
@@ -1969,8 +1981,10 @@ fn build_session(
         resman,
         scenes: WeightedLru::new(96 * 1024 * 1024, 1),
         resources: None,
-        inspection_cache: AreaInspectionCache::default(),
-        localization,
+        inspection: Arc::new(Mutex::new(ViewerInspectionState {
+            inspection_cache: AreaInspectionCache::default(),
+            localization,
+        })),
     })
 }
 

@@ -1,7 +1,6 @@
 import { createRequire } from 'node:module';
 import { parentPort, workerData, type MessagePort } from 'node:worker_threads';
-
-type RequestClass = 'interactive' | 'background';
+import { LanguageRequestScheduler } from './language-scheduler';
 
 interface OneShotWorkerData {
   readonly bindingPath: string;
@@ -37,17 +36,6 @@ interface RequestMessage {
   readonly method: string;
   readonly request: unknown;
   readonly sessionKey?: string;
-}
-
-interface QueuedRequest {
-  readonly id: number;
-  readonly method: string;
-  readonly request: unknown;
-  readonly sessionKey: string;
-  readonly className: RequestClass;
-  cancelled: boolean;
-  preempted: boolean;
-  controller?: AbortController;
 }
 
 function requireParentPort(): MessagePort {
@@ -128,87 +116,18 @@ function runPersistent(): void {
     throw new Error('native compiler does not export LanguageService');
   }
   const service = new binding.LanguageService();
-  const queues: Record<RequestClass, QueuedRequest[]> = {
-    interactive: [],
-    background: [],
-  };
-  const active = new Map<number, QueuedRequest>();
-  const limits: Record<RequestClass, number> = { interactive: 2, background: 1 };
-  const running: Record<RequestClass, number> = { interactive: 0, background: 0 };
-
-  function requestClass(method: string): RequestClass {
-    return method === 'checkNss' || method === 'indexProject' ? 'background' : 'interactive';
-  }
-
-  function complete(entry: QueuedRequest, response?: unknown, error?: unknown): void {
-    active.delete(entry.id);
-    running[entry.className] -= 1;
-    if (entry.preempted && !entry.cancelled) {
-      entry.preempted = false;
-      entry.controller = undefined;
-      queues[entry.className].unshift(entry);
-      pump();
-      return;
-    }
-    if (!entry.cancelled) {
-      port.postMessage({
-        type: 'response',
-        id: entry.id,
-        response,
-        error: error instanceof Error ? error.message : error ? String(error) : undefined,
-      });
-    }
-    pump();
-  }
-
-  function start(entry: QueuedRequest): void {
-    entry.controller = new AbortController();
-    active.set(entry.id, entry);
-    running[entry.className] += 1;
-    Promise.resolve(service.execute(
-      entry.method,
-      JSON.stringify(entry.request),
-      entry.sessionKey,
-      entry.controller.signal,
-    )).then(
-      (response: string) => complete(entry, JSON.parse(response)),
-      (error: unknown) => complete(entry, undefined, error),
-    );
-  }
-
-  function pump(): void {
-    for (const className of ['interactive', 'background'] as const) {
-      while (running[className] < limits[className] && queues[className].length > 0) {
-        const entry = queues[className].shift();
-        if (entry && !entry.cancelled) start(entry);
-      }
-    }
-  }
-
-  function cancel(id: number): void {
-    const runningEntry = active.get(id);
-    if (runningEntry) {
-      runningEntry.cancelled = true;
-      runningEntry.controller?.abort();
-      return;
-    }
-    for (const queue of Object.values(queues)) {
-      const index = queue.findIndex((entry) => entry.id === id);
-      if (index >= 0) {
-        queue.splice(index, 1);
-        return;
-      }
-    }
-  }
-
-  function preemptProjectIndexing(): void {
-    for (const entry of active.values()) {
-      if (entry.method === 'indexProject' && !entry.cancelled && !entry.preempted) {
-        entry.preempted = true;
-        entry.controller?.abort();
-      }
-    }
-  }
+  const scheduler = new LanguageRequestScheduler(
+    async (request, signal) => {
+      const response = await service.execute(
+        request.method,
+        JSON.stringify(request.request),
+        request.sessionKey,
+        signal,
+      );
+      return JSON.parse(response) as unknown;
+    },
+    (response) => port.postMessage(response),
+  );
 
   port.postMessage({ type: 'ready' });
 
@@ -216,35 +135,29 @@ function runPersistent(): void {
     const type = messageType(message);
     if (type === 'cancel') {
       const id = messageNumber(message, 'id');
-      if (id !== undefined) cancel(id);
+      if (id !== undefined) scheduler.cancel(id);
       return;
     }
     if (type === 'invalidate') {
+      const sessionKey = messageString(message, 'sessionKey');
+      scheduler.invalidate(sessionKey);
       service.invalidate(
-        messageString(message, 'sessionKey'),
+        sessionKey,
         messageString(message, 'changedPath'),
       );
       return;
     }
     if (type === 'release') {
       const sessionKey = messageString(message, 'sessionKey');
-      if (sessionKey !== undefined) service.release(sessionKey);
+      if (sessionKey !== undefined) {
+        scheduler.invalidate(sessionKey, 'released');
+        service.release(sessionKey);
+      }
       return;
     }
     if (!isRequestMessage(message)) return;
     const { id, method, request, sessionKey = '' } = message;
-    const className = requestClass(method);
-    if (className === 'interactive') preemptProjectIndexing();
-    queues[className].push({
-      id,
-      method,
-      request,
-      sessionKey,
-      className,
-      cancelled: false,
-      preempted: false,
-    });
-    pump();
+    scheduler.enqueue({ id, method, request, sessionKey });
   });
 }
 

@@ -1,8 +1,8 @@
 use std::{
-    collections::hash_map::RandomState,
+    collections::{HashSet, hash_map::RandomState},
     fs::{self, File},
     io::{self, BufWriter, Read, Seek, SeekFrom, Write},
-    path::Path,
+    path::{Component, Path, PathBuf},
     sync::Mutex,
 };
 
@@ -51,13 +51,13 @@ pub fn read_key_table_from_file(path: impl AsRef<Path>) -> KeyResult<KeyTable> {
         .unwrap_or_else(|| Path::new("."))
         .to_path_buf();
     let resolver: BifResolver = std::sync::Arc::new(move |filename: &str| {
-        let normalized = normalize_bif_filename(filename);
-        let direct = parent.join(&normalized);
+        let relative = safe_bif_relative_path(filename).map_err(io::Error::other)?;
+        let direct = parent.join(&relative);
         if direct.is_file() {
             return Ok(Some(shared_stream(File::open(direct)?)));
         }
 
-        if let Some(basename) = Path::new(&normalized).file_name() {
+        if let Some(basename) = relative.file_name() {
             let basename_candidate = parent.join(basename);
             if basename_candidate.is_file() {
                 return Ok(Some(shared_stream(File::open(basename_candidate)?)));
@@ -130,7 +130,9 @@ where
     for (_, filename_offset, filename_size, drives) in &file_table {
         reader.seek(SeekFrom::Start(io_start + u64::from(*filename_offset)))?;
         let filename = trim_trailing_nuls(&read_bytes(&mut reader, usize::from(*filename_size))?);
-        let resolver_filename = normalize_bif_filename(&filename);
+        let resolver_filename = safe_bif_relative_path(&filename)?
+            .to_string_lossy()
+            .into_owned();
         bifs.push(crate::key::BifHandle {
             filename,
             resolver_filename,
@@ -310,14 +312,34 @@ where
     let dest_dir = dest_dir.as_ref();
     fs::create_dir_all(dest_dir)?;
     let key_oid = normalize_oid(key_oid.unwrap_or("000000000000000000000000"))?;
+    let key_relative = safe_bif_relative_path(&format!("{key_name}.key"))?;
+    if key_relative.components().count() != 1 {
+        return Err(KeyError::msg(format!(
+            "invalid KEY name {key_name}: the name must not contain directories"
+        )));
+    }
+    let bif_relative_paths = bifs
+        .iter()
+        .map(key_bif_relative_path)
+        .collect::<KeyResult<Vec<_>>>()?;
+    let mut output_paths = HashSet::with_capacity(bif_relative_paths.len() + 1);
+    output_paths.insert(key_relative.clone());
+    for path in &bif_relative_paths {
+        if !output_paths.insert(path.clone()) {
+            return Err(KeyError::msg(format!(
+                "KEY/BIF output path is duplicated: {}",
+                path.display()
+            )));
+        }
+    }
 
     let mut file_table = std::io::Cursor::new(Vec::new());
     let mut filenames = std::io::Cursor::new(Vec::new());
     let mut bif_results = Vec::with_capacity(bifs.len());
 
-    for bif in bifs {
+    for (bif, relative_path) in bifs.iter().zip(&bif_relative_paths) {
         let filename_for_bif = build_bif_filename(bif_prefix, bif);
-        let bif_path = dest_dir.join(build_bif_disk_filename(bif));
+        let bif_path = dest_dir.join(relative_path);
         if let Some(parent) = bif_path.parent() {
             fs::create_dir_all(parent)?;
         }
@@ -375,7 +397,7 @@ where
     let filenames_size = filenames.position();
     let total_resref_count: usize = bifs.iter().map(|bif| bif.entries.len()).sum();
 
-    let key_path = dest_dir.join(format!("{key_name}.key"));
+    let key_path = dest_dir.join(key_relative);
     let key_file = File::create(&key_path)?;
     let mut key_writer = BufWriter::new(key_file);
     key_writer.write_all(b"KEY ")?;
@@ -636,6 +658,36 @@ fn normalize_bif_filename(filename: &str) -> String {
     filename.replace('\\', "/")
 }
 
+fn safe_bif_relative_path(filename: &str) -> KeyResult<PathBuf> {
+    let normalized = normalize_bif_filename(filename);
+    let windows_drive = normalized
+        .as_bytes()
+        .get(0..2)
+        .is_some_and(|prefix| matches!(prefix, [drive, b':'] if drive.is_ascii_alphabetic()));
+    if normalized.starts_with('/') || windows_drive {
+        return Err(KeyError::msg(format!(
+            "unsafe BIF path {filename}: absolute paths are not allowed"
+        )));
+    }
+    let path = Path::new(&normalized);
+    let mut relative = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::Normal(value) => relative.push(value),
+            Component::CurDir => {}
+            Component::Prefix(_) | Component::RootDir | Component::ParentDir => {
+                return Err(KeyError::msg(format!(
+                    "unsafe BIF path {filename}: paths must remain relative to the KEY directory"
+                )));
+            }
+        }
+    }
+    if relative.as_os_str().is_empty() || relative.file_name().is_none() {
+        return Err(KeyError::msg(format!("invalid BIF path {filename}")));
+    }
+    Ok(relative)
+}
+
 fn build_bif_filename(bif_prefix: &str, bif: &crate::key::KeyBifEntry) -> String {
     if let Some(filename) = &bif.recorded_filename {
         return filename.clone();
@@ -649,20 +701,24 @@ fn build_bif_filename(bif_prefix: &str, bif: &crate::key::KeyBifEntry) -> String
     }
 }
 
-fn build_bif_disk_filename(bif: &crate::key::KeyBifEntry) -> String {
+/// Returns the confined relative disk path for a BIF output specification.
+///
+/// # Errors
+///
+/// Rejects absolute paths, parent traversal, platform prefixes, and empty
+/// filenames.
+pub fn key_bif_relative_path(bif: &crate::key::KeyBifEntry) -> KeyResult<PathBuf> {
     if let Some(filename) = &bif.recorded_filename {
-        return normalize_bif_filename(filename);
+        return safe_bif_relative_path(filename);
     }
 
     let filename = format!("{}.bif", bif.name);
-    if bif.directory.is_empty() {
-        filename
+    let path = if bif.directory.is_empty() {
+        PathBuf::from(filename)
     } else {
-        Path::new(&bif.directory)
-            .join(filename)
-            .to_string_lossy()
-            .into_owned()
-    }
+        Path::new(&bif.directory).join(filename)
+    };
+    safe_bif_relative_path(&path.to_string_lossy())
 }
 
 fn infer_key_exocomp(value: &KeyTable) -> KeyResult<ExoResFileCompressionType> {
@@ -903,6 +959,53 @@ mod tests {
         assert_eq!(
             fs::read(source_dir.join("Data/Second.BIF")).expect("read source second bif"),
             fs::read(output_dir.join("Data/Second.BIF")).expect("read output second bif")
+        );
+    }
+
+    #[test]
+    fn key_writer_rejects_recorded_bif_paths_outside_destination() {
+        let destination = unique_test_dir("unsafe-write-destination");
+        let outside = unique_test_dir("unsafe-write-outside").with_extension("bif");
+        fs::create_dir_all(&destination).expect("create destination");
+        fs::write(&outside, b"must-not-change").expect("write outside sentinel");
+
+        for recorded_filename in [
+            format!(
+                "../{}",
+                outside
+                    .file_name()
+                    .expect("outside filename")
+                    .to_string_lossy()
+            ),
+            outside.to_string_lossy().into_owned(),
+            "C:\\outside\\game.bif".to_string(),
+        ] {
+            let result = write_key_and_bif(
+                KeyBifVersion::V1,
+                ExoResFileCompressionType::None,
+                Algorithm::None,
+                &destination,
+                "unsafe",
+                "",
+                &[KeyBifEntry {
+                    directory:         String::new(),
+                    name:              "unsafe".to_string(),
+                    recorded_filename: Some(recorded_filename),
+                    drives:            0,
+                    bif_oid:           None,
+                    entries:           Vec::new(),
+                }],
+                2026,
+                1,
+                None,
+                |_rr, _io| unreachable!("empty BIF must not request a payload"),
+            );
+            assert!(result.is_err(), "unsafe recorded BIF path must be rejected");
+        }
+
+        assert_eq!(
+            fs::read(&outside).expect("read outside sentinel"),
+            b"must-not-change"
         );
     }
 }

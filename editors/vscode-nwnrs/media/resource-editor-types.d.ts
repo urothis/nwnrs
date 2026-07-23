@@ -221,6 +221,10 @@ interface PacketModel {
   readonly classification: string | null;
   readonly animationScale: number | null;
   readonly ignoreFog: number | null;
+  readonly bounds?: {
+    readonly min: readonly [number, number, number];
+    readonly max: readonly [number, number, number];
+  } | null;
   readonly nodes: readonly PacketNode[];
   readonly meshes: readonly PacketMesh[];
   readonly materials: readonly PacketMaterial[];
