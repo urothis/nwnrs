@@ -36,9 +36,8 @@
     "onCommand:nwnrs.showStatusMenu",
     "onCommand:nwnrs.showCompilerOutput",
     "onCustomEditor:nwnrs.resourceEditor",
-    "onView:nwnrs.project",
+    "onView:nwnrs.packages",
     "onView:nwnrs.resources",
-    "onView:nwnrs.tools",
     "workspaceContains:**/*.nss"
   ],
   "contributes": {
@@ -104,6 +103,7 @@
           { "filenamePattern": "*.ifo" },
           { "filenamePattern": "*.fac" },
           { "filenamePattern": "*.dlg" },
+          { "filenamePattern": "*.dlg.json" },
           { "filenamePattern": "*.itp" },
           { "filenamePattern": "*.bic" },
           { "filenamePattern": "*.jrl" },
@@ -113,6 +113,8 @@
           { "filenamePattern": "*.mod" },
           { "filenamePattern": "*.nwm" },
           { "filenamePattern": "*.key" },
+          { "filenamePattern": "*.ncs" },
+          { "filenamePattern": "*.ndb" },
           { "filenamePattern": "*.mdl" },
           { "filenamePattern": "*.wok" },
           { "filenamePattern": "*.dwk" },
@@ -133,34 +135,25 @@
     "views": {
       "nwnrs": [
         {
-          "id": "nwnrs.project",
-          "name": "Project",
+          "id": "nwnrs.packages",
+          "name": "Packages",
           "visibility": "visible"
         },
         {
           "id": "nwnrs.resources",
           "name": "Resources",
           "visibility": "collapsed"
-        },
-        {
-          "id": "nwnrs.tools",
-          "name": "Tools",
-          "visibility": "collapsed"
         }
       ]
     },
     "viewsWelcome": [
       {
-        "view": "nwnrs.project",
-        "contents": "nwnrs project tools will appear here."
+        "view": "nwnrs.packages",
+        "contents": "No nwnrs packages found.\n[Refresh Packages](command:nwnrs.sidebar.refreshPackages)"
       },
       {
         "view": "nwnrs.resources",
-        "contents": "nwnrs resource tools will appear here."
-      },
-      {
-        "view": "nwnrs.tools",
-        "contents": "Additional nwnrs tools will appear here."
+        "contents": "No resources were found. Check your Neverwinter Nights paths in [nwnrs Settings](command:nwnrs.openSettings)."
       }
     ],
     "commands": [
@@ -179,6 +172,38 @@
       {
         "command": "nwnrs.showCompilerOutput",
         "title": "nwnrs: Show Compiler Output"
+      },
+      {
+        "command": "nwnrs.reindexCurrentPackage",
+        "title": "nwnrs: Reindex Current Package",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "nwnrs.restartLanguageService",
+        "title": "nwnrs: Restart Language Service"
+      },
+      {
+        "command": "nwnrs.clearDiagnostics",
+        "title": "nwnrs: Clear Diagnostics"
+      },
+      {
+        "command": "nwnrs.openSettings",
+        "title": "nwnrs: Open nwnrs Settings"
+      },
+      {
+        "command": "nwnrs.sidebar.refreshPackages",
+        "title": "Refresh Packages",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "nwnrs.sidebar.unpinPackage",
+        "title": "Follow Active Editor",
+        "icon": "$(pinned-dirty)"
+      },
+      {
+        "command": "nwnrs.sidebar.refreshResources",
+        "title": "Refresh Resources",
+        "icon": "$(refresh)"
       }
     ],
     "menus": {
@@ -187,6 +212,23 @@
           "command": "nwnrs.checkCurrentFile",
           "when": "editorLangId == nwscript",
           "group": "navigation"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "nwnrs.sidebar.refreshPackages",
+          "when": "view == nwnrs.packages",
+          "group": "navigation@1"
+        },
+        {
+          "command": "nwnrs.sidebar.unpinPackage",
+          "when": "view == nwnrs.packages && nwnrs.packagePinned",
+          "group": "navigation@2"
+        },
+        {
+          "command": "nwnrs.sidebar.refreshResources",
+          "when": "view == nwnrs.resources",
+          "group": "navigation@1"
         }
       ]
     },
@@ -246,7 +288,7 @@
         "nwnrs.overrideDirectory": {
           "type": "string",
           "default": "",
-          "description": "Destination used by Save as Override for protected game resources. Empty uses the configured userPath/override directory or prompts for a destination."
+          "description": "Default save destination for protected game resources. Empty uses the configured userPath/override directory or prompts for a destination."
         },
         "nwnrs.language": {
           "type": "string",
@@ -308,7 +350,7 @@
   "scripts": {
     "build-native": "node scripts/build-native.js",
     "vscode:prepublish": "npm run build-native && npm run check && npm test",
-    "check": "node --check src/compiler.js && node --check src/compiler-worker.js && node --check src/worker-client.js && node --check src/language-worker-client.js && node --check src/resource-editor-worker.js && node --check src/resource-editor-worker-client.js && node --check src/viewer-worker.js && node --check src/viewer-worker-client.js && node --check src/resource-editor-view.js && node --check src/resource-custom-editor.js && node --check media/resource-editor.js && node --check src/extension.js",
+    "check": "node --check src/compiler.js && node --check src/compiler-worker.js && node --check src/worker-client.js && node --check src/language-worker-client.js && node --check src/resource-editor-worker.js && node --check src/resource-editor-worker-client.js && node --check src/viewer-worker.js && node --check src/viewer-worker-client.js && node --check src/resource-editor-view.js && node --check src/resource-custom-editor.js && node --check src/sidebar.js && node --check media/resource-editor.js && node --check src/extension.js",
     "test": "node --test test/*.test.js"
   }
 }

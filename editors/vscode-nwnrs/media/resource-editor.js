@@ -21,6 +21,7 @@ let loadingTimer;
 let fatalErrorReported = false;
 let viewer;
 let viewerSession;
+let scriptDebugState = { functionIndex: 0, selectedOffset: undefined, query: '', page: 0 };
 
 window.addEventListener('message', (event) => {
   try {
@@ -32,13 +33,13 @@ window.addEventListener('message', (event) => {
       clearTimeout(loadingTimer);
       model = { kind: 'viewer', path: '3D Scene' };
       viewerSession = createViewerSession(decodeScenePacket(event.data.packet));
-      renderViewer(viewerSession);
+      renderViewer(viewerSession, event.data.selectedObjectKey);
+    } else if (event.data?.type === 'selectAreaObject') {
+      viewer?.selectObject(event.data.objectKey, event.data.frame !== false, false);
     } else if (event.data?.type === 'animationAsset') {
       viewer?.applyAnimation(decodeScenePacket(event.data.packet));
     } else if (event.data?.type === 'textureAsset') {
       viewer?.applyTexture(decodeScenePacket(event.data.packet));
-    } else if (event.data?.type === 'textureFile') {
-      void importTexture(event.data.contents).catch(reportFatalError);
     }
   } catch (error) {
     reportFatalError(error);
@@ -66,8 +67,7 @@ function render() {
   if (!model) return;
   const title = escapeHtml(model.path?.split(/[\\/]/u).pop() || 'NWN resource');
   app.innerHTML = `<section class="shell">
-    <header class="titlebar"><h1>${title}</h1><span class="badge">${escapeHtml(model.kind.toUpperCase())}</span>
-    ${model.readOnlyOrigin ? '<span class="badge">Save as Override</span>' : ''}</header>
+    <header class="titlebar"><h1>${title}</h1><span class="badge">${escapeHtml(model.kind.toUpperCase())}</span></header>
     <div id="toolbar" class="toolbar"></div><div id="content" class="content"></div></section>`;
   const renderers = {
     gff: renderGff,
@@ -78,6 +78,8 @@ function render() {
     plt: renderTexture,
     erf: renderArchive,
     key: renderArchive,
+    ncs: renderScriptDebug,
+    ndb: renderScriptDebug,
   };
   (renderers[model.kind] || renderUnsupported)();
 }
@@ -110,7 +112,7 @@ function createViewerSession(scene) {
   return { scene, animationAssets: new Map(), textureAssets: new Map() };
 }
 
-function renderViewer(session) {
+function renderViewer(session, initialObjectKey) {
   viewer?.dispose();
   viewerSession = session;
   const { scene } = session;
@@ -118,17 +120,20 @@ function renderViewer(session) {
     ? 'collision'
     : 'model';
   const animations = viewerAnimations(scene);
+  const animationInSelectedData = (scene.manifest.areaObjects || []).length > 0;
+  const savedViewer = vscode.getState?.()?.viewer;
+  const savedIndex = savedViewer?.scene === viewerStateKey(scene)
+    ? savedAnimationIndex(animations, savedViewer)
+    : -1;
   app.innerHTML = `<section class="viewer-shell">
     <header class="viewer-toolbar">
       <strong>${escapeHtml(scene.manifest.name)}</strong>
       <span class="spacer"></span>
       ${scene.manifest.module ? `<label>Area <select id="viewer-area">${scene.manifest.module.areas.map((area) => `<option ${area.toLowerCase() === scene.manifest.module.entryArea.toLowerCase() ? 'selected' : ''}>${escapeHtml(area)}</option>`).join('')}</select></label>` : ''}
-      <label class="viewer-animation-control">Animation <select id="viewer-animation"><option value="">None</option>${animations.map((entry, index) => `<option value="${index}">${escapeHtml(entry.label)}</option>`).join('')}</select></label>
-      <span id="viewer-animation-time" class="viewer-animation-time" aria-live="off"></span>
-      <span id="viewer-animation-event" class="viewer-animation-time" aria-live="polite"></span>
+      ${animationInSelectedData ? '' : animationControl(animations, savedIndex)}
     </header>
-    <div class="viewer-body"><div class="viewer-viewport"><canvas id="viewer-canvas" tabindex="0" aria-label="Interactive nwnrs 3D viewport"></canvas>
-      <aside class="viewer-overlay-stack" aria-label="Scene information">${sceneDisclosure(scene)}${dependenciesDisclosure(scene)}</aside>
+    <div class="viewer-body"><div class="viewer-viewport"><canvas id="viewer-canvas" tabindex="0" aria-label="Interactive nwnrs 3D viewport. Use W A S D to fly and Q E to descend or ascend."></canvas>
+      <aside class="viewer-overlay-stack" aria-label="Scene information">${sceneDisclosure(scene)}${dependenciesDisclosure(scene)}${selectedDataDisclosure(scene)}</aside>
       <div id="viewer-status" class="viewer-status" role="status"></div>
     </div></div>
   </section>`;
@@ -136,24 +141,10 @@ function renderViewer(session) {
     status: document.getElementById('viewer-status'),
     animationTime: document.getElementById('viewer-animation-time'),
     animationEvent: document.getElementById('viewer-animation-event'),
-  }, initialMode, session);
-  document.getElementById('viewer-animation').onchange = (event) => {
-    const entry = event.target.value === '' ? undefined : animations[Number(event.target.value)];
-    viewer.setAnimation(entry?.modelIndex, entry?.animationIndex);
-  };
-  const savedViewer = vscode.getState?.()?.viewer;
-  if (savedViewer?.scene === viewerStateKey(scene)) {
-    const selection = savedViewer.animationSelection;
-    const savedIndex = selection
-      ? animations.findIndex((entry) => entry.modelIndex === selection.modelIndex && entry.animationIndex === selection.animationIndex)
-      : savedViewer.animationName
-        ? animations.findIndex((entry) => entry.name.toLowerCase() === savedViewer.animationName)
-        : -1;
-    if (savedIndex >= 0) {
-      document.getElementById('viewer-animation').value = String(savedIndex);
-      viewer.setAnimation(animations[savedIndex].modelIndex, animations[savedIndex].animationIndex);
-    }
-  }
+    selectedData: document.getElementById('viewer-selected-data'),
+    selectedDataSummary: document.getElementById('viewer-selected-data-summary'),
+    selectedDataContent: document.getElementById('viewer-selected-data-content'),
+  }, initialMode, session, initialObjectKey, animations, savedIndex, animationInSelectedData);
   bindLazyDisclosure('viewer-scene-data', () => sceneDisclosureContent(scene));
   bindLazyDisclosure('viewer-dependencies', () => dependenciesDisclosureContent(scene), () => {
     document.querySelectorAll('.dependency:not(:disabled)').forEach((button) => {
@@ -178,13 +169,25 @@ function bindLazyDisclosure(id, renderContent, afterRender) {
 }
 
 function viewerAnimations(scene) {
-  const animatedModels = scene.manifest.models.filter((entry) => entry.animations.length > 0);
+  const animatedModels = scene.manifest.models.filter((entry) => (entry.animations || []).length > 0);
   return animatedModels.flatMap((model) => model.animations.map((animation, animationIndex) => ({
     modelIndex: scene.manifest.models.indexOf(model),
     animationIndex,
     name: animation.name,
     label: animatedModels.length > 1 ? `${model.name} — ${animation.name}` : animation.name,
   })));
+}
+
+function savedAnimationIndex(animations, savedViewer) {
+  const selection = savedViewer?.animationSelection;
+  if (selection) return animations.findIndex((entry) => entry.modelIndex === selection.modelIndex && entry.animationIndex === selection.animationIndex);
+  return savedViewer?.animationName
+    ? animations.findIndex((entry) => entry.name.toLowerCase() === savedViewer.animationName)
+    : -1;
+}
+
+function animationControl(animations, selectedIndex = -1) {
+  return `<div class="viewer-animation-row"><label class="viewer-animation-control">Animation <select id="viewer-animation"><option value="">None</option>${animations.map((entry, index) => `<option value="${index}" ${index === selectedIndex ? 'selected' : ''}>${escapeHtml(entry.label)}</option>`).join('')}</select></label><span id="viewer-animation-time" class="viewer-animation-time" aria-live="off"></span><span id="viewer-animation-event" class="viewer-animation-time" aria-live="polite"></span></div>`;
 }
 
 function animationPlaybackScope(scene, modelIndex, animationIndex) {
@@ -264,7 +267,63 @@ function dependenciesDisclosureContent(scene) {
   return nodes.map((node) => `<button class="dependency ${node.state}" data-resource="${escapeAttribute(node.resource)}" ${node.state === 'resolved' ? '' : 'disabled'}><span>${escapeHtml(node.resource)}</span><small>${escapeHtml(node.kind)} · ${escapeHtml(node.state)}${incoming.get(node.id)?.length ? ` · ${escapeHtml(incoming.get(node.id).join(', '))}` : ''}</small>${node.origin ? `<small>${escapeHtml(node.origin)}</small>` : ''}${node.message ? `<small>${escapeHtml(node.message)}</small>` : ''}</button>`).join('') || '<div class="muted">No dependencies</div>';
 }
 
-function createViewer(canvas, scene, elements, initialMode = 'model', session = createViewerSession(scene)) {
+function selectedDataDisclosure(scene) {
+  if (!(scene.manifest.areaObjects || []).length) return '';
+  return '<details id="viewer-selected-data" class="viewer-disclosure" hidden><summary><span>Selected Data</span><small id="viewer-selected-data-summary"></small></summary><div id="viewer-selected-data-content" class="viewer-disclosure-content"></div></details>';
+}
+
+function selectedDataDisclosureContent(scene, objectKey, selectedComponentId, animations = [], selectedAnimationIndex = -1) {
+  const object = (scene.manifest.areaObjects || []).find((candidate) => candidate.key === objectKey);
+  if (!object) return '';
+  const instances = (scene.manifest.instances || [])
+    .map((instance, index) => ({ instance, id: Number.isInteger(instance.id) ? instance.id : index }))
+    .filter(({ instance }) => instance.objectKey === object.key);
+  const vector = (values, digits = 3) => (values || []).map((value) => Number(value).toFixed(digits)).join(', ');
+  const rotation = object.rotationAxisAngle || [0, 0, 1, 0];
+  const angle = Number(rotation[3]) || 0;
+  const models = [...new Set(instances
+    .map(({ instance }) => Number.isInteger(instance.model) ? scene.manifest.models[instance.model]?.name : undefined)
+    .filter(Boolean))];
+  const components = instances.map(({ instance, id }) => {
+    const modelName = Number.isInteger(instance.model) ? scene.manifest.models[instance.model]?.name : undefined;
+    return `<div class="selected-component${id === selectedComponentId ? ' selected' : ''}" data-component-id="${id}"><button class="component-select" data-component-id="${id}" aria-label="Select ${escapeAttribute(instance.label || instance.kind)}"><strong>${escapeHtml(instance.label || instance.kind)}</strong><span>${escapeHtml(instance.kind)}${modelName ? ` · ${escapeHtml(modelName)}` : ''}</span>${instance.resource ? `<small>${escapeHtml(instance.resource)}</small>` : ''}<small>position ${escapeHtml(vector(instance.position))}</small><small>scale ${escapeHtml(vector(instance.scale))}</small></button>${instance.resource ? `<button class="component-open" data-resource="${escapeAttribute(instance.resource)}" title="Open ${escapeAttribute(instance.resource)}">Open Resource</button>` : ''}</div>`;
+  }).join('');
+  return `${animationControl(animations, selectedAnimationIndex)}<dl>
+    <dt>Label</dt><dd>${escapeHtml(object.label)}</dd>
+    <dt>Type</dt><dd>${escapeHtml(object.kind)}</dd>
+    <dt>GIT index</dt><dd>${object.sourceIndex}</dd>
+    <dt>Key</dt><dd>${escapeHtml(object.key)}</dd>
+    <dt>Tag</dt><dd>${escapeHtml(object.tag || 'unset')}</dd>
+    <dt>Blueprint</dt><dd>${escapeHtml(object.templateResref || 'unset')}</dd>
+    <dt>Position</dt><dd>${escapeHtml(vector(object.position))}</dd>
+    <dt>Rotation axis</dt><dd>${escapeHtml(vector(rotation.slice(0, 3)))}</dd>
+    <dt>Rotation angle</dt><dd>${angle.toFixed(3)} rad · ${(angle * 180 / Math.PI).toFixed(1)}°</dd>
+    <dt>Components</dt><dd>${instances.length}</dd>
+    <dt>Models</dt><dd>${escapeHtml(models.join(', ') || 'none')}</dd>
+  </dl><details class="viewer-nested-details selected-components"><summary>Rendered Components · ${instances.length}</summary><div class="viewer-detail-section">${components || '<div class="muted">No rendered components</div>'}</div></details>`;
+}
+
+function updateSelectedDataPanel(elements, scene, objectKey, selectedComponentId, animations, selectedAnimationIndex) {
+  if (!elements.selectedData) return;
+  const object = (scene.manifest.areaObjects || []).find((candidate) => candidate.key === objectKey);
+  elements.selectedData.hidden = !object;
+  elements.selectedDataSummary.textContent = object?.label || '';
+  elements.selectedDataContent.innerHTML = object
+    ? selectedDataDisclosureContent(scene, objectKey, selectedComponentId, animations, selectedAnimationIndex)
+    : '';
+}
+
+function createViewer(
+  canvas,
+  scene,
+  elements,
+  initialMode = 'model',
+  session = createViewerSession(scene),
+  initialObjectKey,
+  animations = viewerAnimations(scene),
+  initialAnimationIndex = -1,
+  animationInSelectedData = false,
+) {
   const gl = canvas.getContext('webgl2', { antialias: true, alpha: false });
   if (!gl) throw new Error('WebGL 2 is required for the nwnrs model viewer.');
   const sceneHasSkinning = scene.manifest.models.some((model) => model.meshes.some((mesh) => mesh.primitives.some((primitive) => (primitive.skinBones || []).length > 0)));
@@ -369,17 +428,30 @@ function createViewer(canvas, scene, elements, initialMode = 'model', session = 
     precision highp float;
     layout(location=0) in vec2 aCorner; layout(location=1) in vec3 aCenter;
     layout(location=2) in vec4 aSizeRotationAlpha; layout(location=3) in vec3 aColor;
-    layout(location=4) in vec4 aUvRect;
+    layout(location=4) in vec4 aUvRect; layout(location=5) in float aRenderMode;
     uniform mat4 uViewProjection; uniform vec3 uCameraRight; uniform vec3 uCameraUp;
     out vec2 vUv; out vec4 vColor;
     void main(){
       float c=cos(aSizeRotationAlpha.z),s=sin(aSizeRotationAlpha.z);
       vec2 rotated=mat2(c,-s,s,c)*(aCorner*aSizeRotationAlpha.xy);
-      vec3 world=aCenter+uCameraRight*rotated.x+uCameraUp*rotated.y;
+      vec3 world=aRenderMode>0.5
+        ? aCenter+vec3(rotated.x,rotated.y,0.0)
+        : aCenter+uCameraRight*rotated.x+uCameraUp*rotated.y;
       gl_Position=uViewProjection*vec4(world,1.0);
       vec2 unit=aCorner*0.5+0.5; vUv=aUvRect.xy+unit*aUvRect.zw;
       vColor=vec4(aColor,aSizeRotationAlpha.w);
     }
+  `, `#version 300 es
+    precision highp float; in vec2 vUv; in vec4 vColor;
+    uniform sampler2D uTexture; uniform bool uHasTexture; out vec4 color;
+    void main(){vec4 texel=uHasTexture?texture(uTexture,vUv):vec4(1.0);color=texel*vColor;if(color.a<0.01)discard;}
+  `);
+  const ribbonProgram = createProgram(gl, `#version 300 es
+    precision highp float;
+    layout(location=0) in vec3 aPosition; layout(location=1) in vec2 aUv;
+    layout(location=2) in vec4 aColor; uniform mat4 uViewProjection;
+    out vec2 vUv; out vec4 vColor;
+    void main(){gl_Position=uViewProjection*vec4(aPosition,1.0);vUv=aUv;vColor=aColor;}
   `, `#version 300 es
     precision highp float; in vec2 vUv; in vec4 vColor;
     uniform sampler2D uTexture; uniform bool uHasTexture; out vec4 color;
@@ -394,6 +466,7 @@ function createViewer(canvas, scene, elements, initialMode = 'model', session = 
   ]);
   const lineUniforms = uniformLocations(gl, lineProgram, ['uModelViewProjection', 'uColor']);
   const spriteUniforms = uniformLocations(gl, spriteProgram, ['uViewProjection', 'uCameraRight', 'uCameraUp', 'uTexture', 'uHasTexture']);
+  const ribbonUniforms = uniformLocations(gl, ribbonProgram, ['uViewProjection', 'uTexture', 'uHasTexture']);
   const gpuTextures = new Array(scene.manifest.textures.length);
   const requestedTextures = new Set(); const requestedAnimations = new Set();
   const maxTextureSize = gl.getParameter(gl.MAX_TEXTURE_SIZE);
@@ -402,6 +475,7 @@ function createViewer(canvas, scene, elements, initialMode = 'model', session = 
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
   const primitiveCache = new Map();
   const spriteGpu = createSpriteGpu(gl);
+  const ribbonGpu = createRibbonGpu(gl);
   const stateKey = viewerStateKey(scene);
   const savedViewer = vscode.getState?.()?.viewer;
   const savedCamera = savedViewer?.scene === stateKey ? savedViewer.camera : undefined;
@@ -410,6 +484,9 @@ function createViewer(canvas, scene, elements, initialMode = 'model', session = 
     ? { yaw: savedCamera.yaw, pitch: savedCamera.pitch, distance: savedCamera.distance, target: [...savedCamera.target] }
     : { yaw: -0.8, pitch: 0.65, distance: 20, target: [0, 0, 0] };
   let mode = initialMode; let animationFrame; let disposed = false;
+  let selectedAnimationIndex = Number.isInteger(initialAnimationIndex) && animations[initialAnimationIndex]
+    ? initialAnimationIndex
+    : -1;
   let activeAnimation; let pendingAnimation; let animationTime = 0; let animationElapsed = 0;
   let animationStarted = 0; let animationPlaying = false; let transition;
   let displayedEventTimer;
@@ -419,7 +496,28 @@ function createViewer(canvas, scene, elements, initialMode = 'model', session = 
   const viewerStarted = performance.now();
   const hasDynamicEffects = scene.manifest.models.some((model) => model.nodes.some((node) => node.emitter || node.dangly)
     || model.resolvedMaterials.some((material) => material.textures.some((texture) => directiveValue(texture, 'proceduretype')?.toLowerCase() === 'cycle')));
-  const bounds = sceneBounds(scene);
+  const boundsCatalog = sceneBoundsCatalog(scene);
+  const bounds = boundsCatalog.scene;
+  const authoredObjects = new Map((scene.manifest.areaObjects || [])
+    .map((object) => [object.key, object]));
+  const savedObjectKey = savedViewer?.scene === stateKey
+    ? savedViewer.selectedObjectKey
+    : undefined;
+  let selectedObjectKey = authoredObjects.has(initialObjectKey)
+    ? initialObjectKey
+    : authoredObjects.has(savedObjectKey) ? savedObjectKey : undefined;
+  const componentInstances = new Map((scene.manifest.instances || []).map((instance, index) => [
+    Number.isInteger(instance.id) ? instance.id : index,
+    instance,
+  ]));
+  const savedComponentId = savedViewer?.scene === stateKey && Number.isInteger(savedViewer.selectedComponentId)
+    ? savedViewer.selectedComponentId
+    : undefined;
+  let selectedComponentId = componentInstances.get(savedComponentId)?.objectKey === selectedObjectKey
+    ? savedComponentId
+    : undefined;
+  let hoveredComponentId;
+  let selectionGpu;
   const modelRuntime = scene.manifest.models.map((entry) => createModelRuntime(entry));
   scene.manifest.models.forEach((entry, modelIndex) => {
     entry.animations.forEach((animation, animationIndex) => {
@@ -502,9 +600,17 @@ function createViewer(canvas, scene, elements, initialMode = 'model', session = 
       scene: stateKey,
       camera: { yaw: camera.yaw, pitch: camera.pitch, distance: camera.distance, target: [...camera.target] },
       animationSelection: animationSelection === undefined ? previous.viewer?.animationSelection : animationSelection,
+      selectedObjectKey: selectedObjectKey || null,
+      selectedComponentId: Number.isInteger(selectedComponentId) ? selectedComponentId : null,
     } });
   };
-  bindViewportControls(canvas, camera, draw, () => persistState());
+  const cameraControls = bindViewportControls(
+    canvas,
+    camera,
+    draw,
+    () => persistState(),
+    (event) => selectObject(pickAreaObject(event), false, true),
+  );
   const contextLost = (event) => { event.preventDefault(); elements.status.textContent = 'Graphics context lost; waiting for VS Code to restore it…'; };
   const contextRestored = () => { if (!disposed) renderViewer(session); };
   canvas.addEventListener('webglcontextlost', contextLost); canvas.addEventListener('webglcontextrestored', contextRestored);
@@ -660,9 +766,13 @@ function createViewer(canvas, scene, elements, initialMode = 'model', session = 
     }
     drawChunkBatches(viewProjection, illumination.fogEnabled);
     gl.depthMask(true); gl.enable(gl.CULL_FACE);
-    if (mode !== 'collision') drawEffects(viewProjection, view, (performance.now() - viewerStarted) / 1000);
+    if (mode !== 'collision') drawEffects(viewProjection, view, eye, (performance.now() - viewerStarted) / 1000);
     drawOverlays(viewProjection);
-    elements.status.textContent = `${scene.manifest.models.length} models · ${scene.manifest.textures.length} textures · ${scene.manifest.instances.length} instances`;
+    drawSelection(viewProjection);
+    const selected = authoredObjects.get(selectedObjectKey);
+    elements.status.textContent = selected
+      ? `${selected.label} · ${selected.kind} #${selected.sourceIndex + 1}`
+      : `${scene.manifest.models.length} models · ${scene.manifest.textures.length} textures · ${scene.manifest.instances.length} instances`;
     if (animationPlaying || hasDynamicEffects) {
       const duration = performance.now() - drawStarted;
       slowFrames = duration > 20 ? slowFrames + 1 : 0; fastFrames = duration < 10 ? fastFrames + 1 : 0;
@@ -805,41 +915,184 @@ function createViewer(canvas, scene, elements, initialMode = 'model', session = 
       if (!overlay) continue;
       gl.bindVertexArray(overlay.vao);
       gl.uniformMatrix4fv(lineUniforms.uModelViewProjection, false, multiply4(viewProjection, base));
-      const color = ({ trigger: [1, 0.55, 0.1, 1], encounter: [0.7, 0.25, 1, 1], waypoint: [0.15, 0.85, 1, 1], sound: [0.2, 0.9, 0.45, 0.75], store: [1, 0.85, 0.15, 1] })[instance.kind] || [0.85, 0.85, 0.85, 1];
+      const color = instance.objectKey === selectedObjectKey
+        ? [1, 0.78, 0.12, 1]
+        : ({ trigger: [1, 0.55, 0.1, 1], encounter: [0.7, 0.25, 1, 1], waypoint: [0.15, 0.85, 1, 1], sound: [0.2, 0.9, 0.45, 0.75], store: [1, 0.85, 0.15, 1] })[instance.kind] || [0.85, 0.85, 0.85, 1];
       gl.uniform4f(lineUniforms.uColor, ...color); gl.drawArrays(gl.LINE_LOOP, 0, overlay.count);
     }
     gl.enable(gl.CULL_FACE);
   }
 
-  function drawEffects(viewProjection, view, effectTime) {
+  function drawSelection(viewProjection) {
+    if (!selectedObjectKey) return;
+    if (!selectionGpu) return;
+    gl.useProgram(lineProgram); gl.disable(gl.CULL_FACE); gl.disable(gl.DEPTH_TEST);
+    gl.bindVertexArray(selectionGpu.vao);
+    gl.uniformMatrix4fv(lineUniforms.uModelViewProjection, false, viewProjection);
+    gl.uniform4f(lineUniforms.uColor, ...(Number.isInteger(hoveredComponentId)
+      ? [0.2, 0.82, 1, 1]
+      : [1, 0.78, 0.12, 1]));
+    gl.drawArrays(gl.LINES, 0, selectionGpu.count);
+    gl.enable(gl.DEPTH_TEST); gl.enable(gl.CULL_FACE);
+  }
+
+  function refreshSelectionGpu() {
+    const componentId = Number.isInteger(hoveredComponentId) ? hoveredComponentId : selectedComponentId;
+    const component = componentInstances.get(componentId);
+    if (component?.objectKey === selectedObjectKey && boundsCatalog.componentSelections.has(componentId)) {
+      selectionGpu = replaceSelectionGpu(gl, selectionGpu, componentId, boundsCatalog.componentSelections);
+    } else {
+      selectionGpu = replaceSelectionGpu(gl, selectionGpu, selectedObjectKey, boundsCatalog.objectSelections);
+    }
+  }
+
+  function bindSelectedComponentInteractions() {
+    document.querySelectorAll('.selected-component').forEach((row) => {
+      const componentId = Number(row.dataset.componentId);
+      row.onmouseenter = () => {
+        if (!componentInstances.has(componentId)) return;
+        hoveredComponentId = componentId; refreshSelectionGpu(); draw();
+      };
+      row.onmouseleave = () => {
+        if (hoveredComponentId !== componentId) return;
+        hoveredComponentId = undefined; refreshSelectionGpu(); draw();
+      };
+    });
+    document.querySelectorAll('.component-select').forEach((button) => {
+      const componentId = Number(button.dataset.componentId);
+      button.onclick = () => selectComponent(componentId, false);
+      button.ondblclick = () => selectComponent(componentId, true);
+      button.onfocus = () => button.parentElement?.onmouseenter?.();
+      button.onblur = () => button.parentElement?.onmouseleave?.();
+      button.onkeydown = (event) => {
+        if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); selectComponent(componentId, false); }
+        else if (event.key.toLowerCase() === 'f') { event.preventDefault(); selectComponent(componentId, true); }
+      };
+    });
+    document.querySelectorAll('.component-open').forEach((button) => {
+      button.onclick = (event) => {
+        event.stopPropagation();
+        vscode.postMessage({ type: 'openDependency', resource: button.dataset.resource });
+      };
+      button.ondblclick = (event) => event.stopPropagation();
+    });
+  }
+
+  function bindAnimationControl() {
+    const control = document.getElementById('viewer-animation');
+    if (animationInSelectedData) {
+      elements.animationTime = document.getElementById('viewer-animation-time');
+      elements.animationEvent = document.getElementById('viewer-animation-event');
+    }
+    if (!control) return;
+    control.value = selectedAnimationIndex >= 0 ? String(selectedAnimationIndex) : '';
+    control.onchange = () => {
+      const index = control.value === '' ? -1 : Number(control.value);
+      const entry = animations[index];
+      setAnimation(entry?.modelIndex, entry?.animationIndex);
+    };
+  }
+
+  function refreshSelectedDataPanel() {
+    updateSelectedDataPanel(
+      elements,
+      scene,
+      selectedObjectKey,
+      selectedComponentId,
+      animationInSelectedData ? animations : undefined,
+      selectedAnimationIndex,
+    );
+    bindSelectedComponentInteractions();
+    if (animationInSelectedData) bindAnimationControl();
+  }
+
+  function updateSelectedComponentClasses() {
+    document.querySelectorAll('.selected-component').forEach((row) => {
+      row.classList.toggle('selected', Number(row.dataset.componentId) === selectedComponentId);
+    });
+  }
+
+  function selectComponent(componentId, frame) {
+    const component = componentInstances.get(componentId);
+    if (!component || component.objectKey !== selectedObjectKey) return;
+    selectedComponentId = componentId; hoveredComponentId = undefined;
+    refreshSelectionGpu(); updateSelectedComponentClasses();
+    if (frame) {
+      const selection = boundsCatalog.componentSelections.get(componentId);
+      if (selection) frameBounds(camera, selection.bounds);
+    }
+    persistState(undefined); draw();
+  }
+
+  function selectObject(objectKey, frame = true, notify = false) {
+    const nextKey = authoredObjects.has(objectKey) ? objectKey : undefined;
+    selectedObjectKey = nextKey;
+    selectedComponentId = undefined; hoveredComponentId = undefined;
+    refreshSelectionGpu(); refreshSelectedDataPanel();
+    const selectedBounds = boundsCatalog.objects.get(selectedObjectKey);
+    if (frame && selectedBounds) frameBounds(camera, selectedBounds);
+    persistState(undefined);
+    draw();
+    if (notify) vscode.postMessage({
+      type: 'selectAreaObject',
+      objectKey: selectedObjectKey || null,
+    });
+  }
+
+  function pickAreaObject(event) {
+    if (!boundsCatalog.objects.size) return undefined;
+    const rect = canvas.getBoundingClientRect();
+    const x = ((event.clientX - rect.left) / Math.max(1, rect.width)) * 2 - 1;
+    const y = 1 - ((event.clientY - rect.top) / Math.max(1, rect.height)) * 2;
+    const eye = orbitEye(camera);
+    const projection = perspective(
+      Math.PI / 4,
+      Math.max(1, canvas.width) / Math.max(1, canvas.height),
+      Math.max(0.01, camera.distance / 1000),
+      Math.max(1000, camera.distance * 20),
+    );
+    const viewProjection = multiply4(projection, lookAt(eye, camera.target, [0, 0, 1]));
+    const inverse = inverse4(viewProjection);
+    const near = transformHomogeneous4(inverse, [x, y, -1, 1]);
+    const far = transformHomogeneous4(inverse, [x, y, 1, 1]);
+    const direction = normalize3([far[0] - near[0], far[1] - near[1], far[2] - near[2]]);
+    let selected; let distance = Infinity;
+    for (const [objectKey, objectBounds] of boundsCatalog.objects) {
+      const hit = rayBoundsDistance(near, direction, objectBounds);
+      if (hit != null && hit < distance) { selected = objectKey; distance = hit; }
+    }
+    return selected;
+  }
+
+  function drawEffects(viewProjection, view, eye, effectTime) {
     gl.useProgram(spriteProgram); gl.disable(gl.CULL_FACE); gl.enable(gl.BLEND); gl.depthMask(false);
     gl.uniformMatrix4fv(spriteUniforms.uViewProjection, false, viewProjection);
     gl.uniform3f(spriteUniforms.uCameraRight, view[0], view[4], view[8]);
     gl.uniform3f(spriteUniforms.uCameraUp, view[1], view[5], view[9]);
     for (const { instance, base } of instanceRuntime) {
       if (instance.model == null || instance.kind === 'collision' || instance.kind === 'skybox') continue;
-      drawModelEffects(instance.model, base, effectTime, new Set());
+      drawModelEffects(instance.model, base, effectTime, eye, viewProjection, new Set());
     }
     gl.depthMask(true); gl.enable(gl.CULL_FACE); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA); gl.useProgram(program);
   }
 
-  function drawModelEffects(modelIndex, base, effectTime, stack) {
+  function drawModelEffects(modelIndex, base, effectTime, eye, viewProjection, stack) {
     if (stack.has(modelIndex)) return; stack.add(modelIndex);
     const model = scene.manifest.models[modelIndex]; const runtime = modelRuntime[modelIndex]; if (!model || !runtime) return;
     const { asset, pose } = poseForModel(modelIndex); const worlds = pose.worlds;
     pose.nodes.forEach((node, nodeIndex) => {
       const world = multiply4Into(base, worlds[nodeIndex] || IDENTITY_MATRIX, runtime.effectWorld);
-      if (node.emitter) drawEmitter(modelIndex, model, nodeIndex, node, world, asset, effectTime);
+      if (node.emitter) drawEmitter(modelIndex, model, nodeIndex, node, world, asset, effectTime, eye, viewProjection);
       if (node.light?.lensFlares) drawLensFlares(modelIndex, model, nodeIndex, node, world);
     });
     for (const attachment of model.attachments) {
       const target = runtime.attachmentTargets.get(attachment);
       multiply4Into(base, worlds[target] || IDENTITY_MATRIX, runtime.effectAttachment);
-      drawModelEffects(attachment.model, runtime.effectAttachment, effectTime, new Set(stack));
+      drawModelEffects(attachment.model, runtime.effectAttachment, effectTime, eye, viewProjection, new Set(stack));
     }
   }
 
-  function drawEmitter(modelIndex, model, nodeIndex, node, world, asset, effectTime) {
+  function drawEmitter(modelIndex, model, nodeIndex, node, world, asset, effectTime, eye, viewProjection) {
     const runtime = modelRuntime[modelIndex];
     const emitter = node.emitter; const track = asset?.runtime.tracksByNode[nodeIndex];
     if (String(emitterProperty(emitter, 'update', '')).toLowerCase() === 'explosion') return;
@@ -847,9 +1100,10 @@ function createViewer(canvas, scene, elements, initialMode = 'model', session = 
     const life = Math.max(0.001, value('lifeexp', 1)); const birthrate = Math.max(0, value('birthrate', 10));
     const requestedParticles = Math.ceil(life * birthrate); if (requestedParticles > 20000) throw new Error(`Emitter ${node.name} requests ${requestedParticles} concurrent particles; the viewer safety limit is 20000.`); const particleCount = requestedParticles; if (!particleCount) return;
     const velocity = value('velocity', 0); const randomVelocity = value('randvel', 0); const spread = value('spread', 0);
-    const gravity = value('grav', 0); const drag = Math.max(0, value('drag', 0)); const fps = Math.max(0, value('fps', 0));
+    const mass = value('mass', 0); const drag = Math.max(0, value('drag', 0)); const fps = Math.max(0, value('fps', 0));
     const sizeStart = value('sizestart', 1); const sizeMid = value('sizemid', sizeStart); const sizeEnd = value('sizeend', sizeMid);
-    const sizeStartY = value('sizestart_y', sizeStart); const sizeMidY = value('sizemid_y', sizeMid); const sizeEndY = value('sizeend_y', sizeEnd);
+    const sizeStartY = value('sizestart_y', 0); const sizeMidY = value('sizemid_y', 0); const sizeEndY = value('sizeend_y', 0);
+    const anisotropicSize = Math.abs(sizeStartY) + Math.abs(sizeMidY) + Math.abs(sizeEndY) > 1e-6;
     const colorScratch = runtime.emitterColors[nodeIndex];
     const intervalScratch = runtime.emitterIntervals[nodeIndex];
     emitterVectorInto(emitter, 'colorstart', WHITE_COLOR, colorScratch[0]); animatedEmitterVectorInto(modelIndex, nodeIndex, track, 'colorstart', colorScratch[0], colorScratch[0], intervalScratch);
@@ -857,40 +1111,67 @@ function createViewer(canvas, scene, elements, initialMode = 'model', session = 
     emitterVectorInto(emitter, 'colorend', colorScratch[1], colorScratch[2]); animatedEmitterVectorInto(modelIndex, nodeIndex, track, 'colorend', colorScratch[2], colorScratch[2], intervalScratch);
     const [colorStart, colorMid, colorEnd] = colorScratch;
     const alphaStart = value('alphastart', 1); const alphaMid = value('alphamid', alphaStart); const alphaEnd = value('alphaend', 0);
+    const hasSizeMid = emitterHasValue(emitter, track, 'sizemid');
+    const hasSizeMidY = emitterHasValue(emitter, track, 'sizemid_y');
+    const hasAlphaMid = emitterHasValue(emitter, track, 'alphamid');
+    const hasColorMid = emitterHasValue(emitter, track, 'colormid');
     const percentMid = Math.max(0.001, Math.min(0.999, value('percentmid', 50) / 100));
     const xGrid = Math.max(1, Math.round(emitterProperty(emitter, 'xgrid', 1))); const yGrid = Math.max(1, Math.round(emitterProperty(emitter, 'ygrid', 1)));
     const frameStart = Math.max(0, Math.round(value('framestart', 0))); const frameEnd = Math.max(frameStart, Math.round(value('frameend', xGrid * yGrid - 1)));
-    const rotationRate = value('particlerot', 0) * Math.PI / 180;
+    const rotationRate = value('particlerot', 0);
+    const opacity = Math.max(0, Math.min(1, value('opacity', 1)));
+    const xExtent = value('xsize', emitter.xSize) / 100;
+    const yExtent = value('ysize', emitter.ySize) / 100;
+    const renderMode = String(emitterProperty(emitter, 'render', 'normal')).toLowerCase();
+    const randomFrames = Boolean(value('random', 0));
     let values = runtime.emitterBuffers[nodeIndex];
-    if (!values || values.length < particleCount * 14) {
-      values = new Float32Array(Math.max(particleCount * 14, Math.ceil((values?.length || 14) * 1.5)));
+    if (!values || values.length < particleCount * 15) {
+      values = new Float32Array(Math.max(particleCount * 15, Math.ceil((values?.length || 15) * 1.5)));
       runtime.emitterBuffers[nodeIndex] = values;
     }
-    for (let index = 0; index < particleCount; index += 1) {
-      const phase = random01(index, 0); const ageSeconds = ((effectTime + phase * life) % life + life) % life; const age = ageSeconds / life;
-      const azimuth = random01(index, 1) * Math.PI * 2; const cone = spread * Math.sqrt(random01(index, 2)); const speed = velocity + (random01(index, 3) * 2 - 1) * randomVelocity;
-      let localX = (random01(index, 4) - 0.5) * value('xsize', emitter.xSize);
-      let localY = (random01(index, 5) - 0.5) * value('ysize', emitter.ySize);
+    const spawnPosition = effectTime * birthrate; const latestSpawn = Math.floor(spawnPosition); const spawnFraction = spawnPosition - latestSpawn;
+    let liveParticles = 0;
+    for (let ageSlot = 0; ageSlot < particleCount; ageSlot += 1) {
+      const ageSeconds = (ageSlot + spawnFraction) / birthrate; if (ageSeconds >= life) continue;
+      const age = ageSeconds / life; const seed = latestSpawn - ageSlot;
+      const azimuth = random01(seed, 1) * Math.PI * 2;
+      const halfAngle = Math.max(0, Math.min(Math.PI, spread * 0.5));
+      const cosine = 1 - random01(seed, 2) * (1 - Math.cos(halfAngle)); const sine = Math.sqrt(Math.max(0, 1 - cosine * cosine));
+      const speed = velocity + (random01(seed, 3) - 0.5) * randomVelocity;
+      let localX = (random01(seed, 4) - 0.5) * xExtent;
+      let localY = (random01(seed, 5) - 0.5) * yExtent;
       let localZ = 0;
       const damping = drag > 0 ? (1 - Math.exp(-drag * ageSeconds)) / drag : ageSeconds;
-      localX += Math.sin(cone) * Math.cos(azimuth) * speed * damping;
-      localY += Math.sin(cone) * Math.sin(azimuth) * speed * damping;
-      localZ += Math.cos(cone) * speed * damping - gravity * ageSeconds * ageSeconds * 0.5;
+      localX += sine * Math.cos(azimuth) * speed * damping;
+      localY += sine * Math.sin(azimuth) * speed * damping;
+      localZ += cosine * speed * damping;
       const centerX=world[0]*localX+world[4]*localY+world[8]*localZ+world[12];
       const centerY=world[1]*localX+world[5]*localY+world[9]*localZ+world[13];
-      const centerZ=world[2]*localX+world[6]*localY+world[10]*localZ+world[14];
-      const stage = stagedValue3(age, percentMid, sizeStart, sizeMid, sizeEnd); const stageY = stagedValue3(age, percentMid, sizeStartY, sizeMidY, sizeEndY);
-      const red=stagedValue3(age,percentMid,colorStart[0],colorMid[0],colorEnd[0]); const green=stagedValue3(age,percentMid,colorStart[1],colorMid[1],colorEnd[1]); const blue=stagedValue3(age,percentMid,colorStart[2],colorMid[2],colorEnd[2]); const alpha = stagedValue3(age, percentMid, alphaStart, alphaMid, alphaEnd);
-      const frame = frameStart + Math.floor(ageSeconds * fps) % Math.max(1, frameEnd - frameStart + 1); const frameX = frame % xGrid; const frameY = Math.floor(frame / xGrid) % yGrid;
-      const offset = index * 14;
-      values[offset]=centerX; values[offset+1]=centerY; values[offset+2]=centerZ; values[offset+3]=stage*0.5; values[offset+4]=stageY*0.5; values[offset+5]=rotationRate*ageSeconds; values[offset+6]=alpha;
+      const centerZ=world[2]*localX+world[6]*localY+world[10]*localZ+world[14]-mass*9.81*ageSeconds*ageSeconds*0.5;
+      const stage = emitterCurve(age, percentMid, sizeStart, sizeMid, sizeEnd, hasSizeMid);
+      const stageY = anisotropicSize ? emitterCurve(age, percentMid, sizeStartY, sizeMidY, sizeEndY, hasSizeMidY) : stage;
+      const red=emitterCurve(age,percentMid,colorStart[0],colorMid[0],colorEnd[0],hasColorMid); const green=emitterCurve(age,percentMid,colorStart[1],colorMid[1],colorEnd[1],hasColorMid); const blue=emitterCurve(age,percentMid,colorStart[2],colorMid[2],colorEnd[2],hasColorMid); const alpha = emitterCurve(age, percentMid, alphaStart, alphaMid, alphaEnd, hasAlphaMid) * opacity;
+      const frameCount = Math.max(1, frameEnd - frameStart + 1); const randomOffset = randomFrames ? Math.floor(random01(seed, 6) * frameCount) : 0;
+      const frame = frameStart + (Math.floor(ageSeconds * fps) + randomOffset) % frameCount; const frameX = frame % xGrid; const frameY = Math.floor(frame / xGrid) % yGrid;
+      const offset = liveParticles * 15;
+      values[offset]=centerX; values[offset+1]=centerY; values[offset+2]=centerZ; values[offset+3]=Math.max(0.001,stage)*0.5; values[offset+4]=Math.max(0.001,stageY)*0.5; values[offset+5]=rotationRate*ageSeconds; values[offset+6]=alpha;
       values[offset+7]=red; values[offset+8]=green; values[offset+9]=blue; values[offset+10]=frameX/xGrid; values[offset+11]=frameY/yGrid; values[offset+12]=1/xGrid; values[offset+13]=1/yGrid;
+      values[offset+14]=renderMode === 'billboard_to_world_z' ? 1 : 0; liveParticles += 1;
     }
     const texture = runtime?.nodeTextures.get(`${nodeIndex}:emitter`);
     if (texture) requestTexture(texture.texture); const textureHandle = texture ? gpuTextures[texture.texture] : undefined;
-    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, textureHandle || null); gl.uniform1i(spriteUniforms.uTexture, 0); gl.uniform1i(spriteUniforms.uHasTexture, Boolean(textureHandle));
     const blend = String(emitterProperty(emitter, 'blend', 'normal')).toLowerCase(); gl.blendFunc(gl.SRC_ALPHA, blend.includes('lighten') || blend.includes('add') ? gl.ONE : gl.ONE_MINUS_SRC_ALPHA);
-    uploadAndDrawSprites(gl, spriteGpu, values, particleCount);
+    if (renderMode === 'linked') {
+      const linked = buildLinkedParticleVertices(values, liveParticles, eye, runtime.emitterLinkedBuffers[nodeIndex]);
+      runtime.emitterLinkedBuffers[nodeIndex] = linked;
+      gl.useProgram(ribbonProgram); gl.uniformMatrix4fv(ribbonUniforms.uViewProjection, false, viewProjection);
+      gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, textureHandle || null); gl.uniform1i(ribbonUniforms.uTexture, 0); gl.uniform1i(ribbonUniforms.uHasTexture, Boolean(textureHandle));
+      uploadAndDrawRibbon(gl, ribbonGpu, linked.values, linked.vertexCount);
+      gl.useProgram(spriteProgram);
+    } else {
+      gl.useProgram(spriteProgram); gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, textureHandle || null); gl.uniform1i(spriteUniforms.uTexture, 0); gl.uniform1i(spriteUniforms.uHasTexture, Boolean(textureHandle));
+      uploadAndDrawSprites(gl, spriteGpu, values, liveParticles);
+    }
   }
 
   function drawLensFlares(modelIndex, model, nodeIndex, node, world) {
@@ -903,6 +1184,7 @@ function createViewer(canvas, scene, elements, initialMode = 'model', session = 
       const position = node.light.flarePositions[index] ?? 0; const center = origin.map((value, axis) => value + (camera.target[axis] - value) * position);
       const values = runtime.flareBuffer;
       values.set(center, 0); values.set([size, size, 0, Math.max(0, node.alpha ?? 1)], 3); values.set(shift, 7); values.set([0, 0, 1, 1], 10);
+      values[14] = 0;
       if (texture) requestTexture(texture.texture); const textureHandle = texture ? gpuTextures[texture.texture] : undefined;
       gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, textureHandle || null); gl.uniform1i(spriteUniforms.uTexture, 0); gl.uniform1i(spriteUniforms.uHasTexture, Boolean(textureHandle)); gl.blendFunc(gl.SRC_ALPHA, gl.ONE); uploadAndDrawSprites(gl, spriteGpu, values, 1);
     }
@@ -916,6 +1198,11 @@ function createViewer(canvas, scene, elements, initialMode = 'model', session = 
     const animation = Number.isInteger(modelIndex) && Number.isInteger(animationIndex)
       ? scene.manifest.models[modelIndex]?.animations[animationIndex]
       : undefined;
+    selectedAnimationIndex = animation
+      ? animations.findIndex((entry) => entry.modelIndex === modelIndex && entry.animationIndex === animationIndex)
+      : -1;
+    const control = document.getElementById('viewer-animation');
+    if (control) control.value = selectedAnimationIndex >= 0 ? String(selectedAnimationIndex) : '';
     pendingAnimation = animation ? {
       modelIndex,
       animationIndex,
@@ -957,6 +1244,8 @@ function createViewer(canvas, scene, elements, initialMode = 'model', session = 
   }
   function tick(now) {
     if (disposed) return;
+    const cameraMoved = cameraControls.update(Math.max(0, Math.min(0.1, (now - previousTick) / 1000)));
+    previousTick = now;
     if (animationPlaying && activeAnimation) {
       const previousElapsed = animationElapsed;
       animationElapsed = Math.max(0, (now - animationStarted) / 1000);
@@ -967,7 +1256,7 @@ function createViewer(canvas, scene, elements, initialMode = 'model', session = 
       poseFrame += 1;
       if (elements.animationTime) elements.animationTime.textContent = `${animationTime.toFixed(2)}s`;
     }
-    if (animationPlaying || hasDynamicEffects) draw(); animationFrame = requestAnimationFrame(tick);
+    if (animationPlaying || hasDynamicEffects || cameraMoved) draw(); animationFrame = requestAnimationFrame(tick);
   }
   function emitAnimationEvent(event) {
     if (!elements.animationEvent) return;
@@ -975,13 +1264,28 @@ function createViewer(canvas, scene, elements, initialMode = 'model', session = 
     clearTimeout(displayedEventTimer);
     displayedEventTimer = setTimeout(() => { if (!disposed && elements.animationEvent) elements.animationEvent.textContent = ''; }, 1200);
   }
-  if (restoredCamera) draw(); else { frameScene(); persistState(undefined); }
+  refreshSelectedDataPanel();
+  if (!animationInSelectedData) bindAnimationControl();
+  if (selectedAnimationIndex >= 0) {
+    const initialAnimation = animations[selectedAnimationIndex];
+    setAnimation(initialAnimation.modelIndex, initialAnimation.animationIndex);
+  }
+  if (selectedObjectKey) {
+    refreshSelectionGpu();
+    const initialBounds = Number.isInteger(selectedComponentId)
+      ? boundsCatalog.componentSelections.get(selectedComponentId)?.bounds
+      : boundsCatalog.objects.get(selectedObjectKey);
+    frameBounds(camera, initialBounds || boundsCatalog.objects.get(selectedObjectKey));
+    draw(); persistState(undefined);
+  } else if (restoredCamera) draw(); else { frameScene(); persistState(undefined); }
+  let previousTick = performance.now();
   animationFrame = requestAnimationFrame(tick);
   return {
     setAnimation,
     applyAnimation,
     applyTexture,
-    dispose() { disposed = true; clearTimeout(displayedEventTimer); cancelAnimationFrame(animationFrame); resizeObserver.disconnect(); canvas.removeEventListener('webglcontextlost', contextLost); canvas.removeEventListener('webglcontextrestored', contextRestored); for (const gpu of primitiveCache.values()) { gl.deleteBuffer(gpu.buffer); gl.deleteVertexArray(gpu.vao); gl.deleteTexture(gpu.boneTexture); } for (const runtime of modelRuntime) gl.deleteBuffer(runtime.chunkBatch.buffer); for (const entry of instanceRuntime) { if (entry.overlay) { gl.deleteBuffer(entry.overlay.buffer); gl.deleteVertexArray(entry.overlay.vao); } } gl.deleteBuffer(spriteGpu.cornerBuffer); gl.deleteBuffer(spriteGpu.instanceBuffer); gl.deleteVertexArray(spriteGpu.vao); gpuTextures.forEach((texture) => gl.deleteTexture(texture)); gl.deleteTexture(pointLightTexture); gl.deleteProgram(program); gl.deleteProgram(lineProgram); gl.deleteProgram(spriteProgram); },
+    selectObject,
+    dispose() { disposed = true; clearTimeout(displayedEventTimer); cancelAnimationFrame(animationFrame); cameraControls.dispose(); resizeObserver.disconnect(); canvas.removeEventListener('webglcontextlost', contextLost); canvas.removeEventListener('webglcontextrestored', contextRestored); for (const gpu of primitiveCache.values()) { gl.deleteBuffer(gpu.buffer); gl.deleteVertexArray(gpu.vao); gl.deleteTexture(gpu.boneTexture); } for (const runtime of modelRuntime) gl.deleteBuffer(runtime.chunkBatch.buffer); for (const entry of instanceRuntime) { if (entry.overlay) { gl.deleteBuffer(entry.overlay.buffer); gl.deleteVertexArray(entry.overlay.vao); } } destroyOverlayGpu(gl, selectionGpu); gl.deleteBuffer(spriteGpu.cornerBuffer); gl.deleteBuffer(spriteGpu.instanceBuffer); gl.deleteVertexArray(spriteGpu.vao); gl.deleteBuffer(ribbonGpu.buffer); gl.deleteVertexArray(ribbonGpu.vao); gpuTextures.forEach((texture) => gl.deleteTexture(texture)); gl.deleteTexture(pointLightTexture); gl.deleteProgram(program); gl.deleteProgram(lineProgram); gl.deleteProgram(spriteProgram); gl.deleteProgram(ribbonProgram); },
   };
 }
 
@@ -1137,29 +1441,215 @@ function addGffField(structPath) {
 
 function submitGff(root) { edit({ action: 'replaceGff', root }); }
 
+function renderScriptDebug() {
+  const data = model.data;
+  content().classList.add('ncs-content');
+  const functions = data.functions || [];
+  if (!functions[scriptDebugState.functionIndex]) scriptDebugState.functionIndex = 0;
+  const activeFunction = functions[scriptDebugState.functionIndex];
+  toolbar().innerHTML = `<input id="ncs-search" type="search" placeholder="Search instructions, operands, source, or bytes" value="${escapeAttribute(scriptDebugState.query)}" aria-label="Search disassembly"><span class="spacer"></span>${scriptDebugStatusBadge('NCS', data.hasNcs)}${scriptDebugStatusBadge('NDB', data.hasNdb)}${scriptDebugStatusBadge('Sources', (data.sourceFiles || []).some((file) => file.available))}${scriptDebugStatusBadge('nwscript', data.hasLangspec)}`;
+  content().innerHTML = `<div class="ncs-workbench">
+    <aside class="ncs-outline" aria-label="NCS outline">${scriptDebugOutline(data)}</aside>
+    <section class="ncs-disassembly" aria-label="Disassembly">${scriptDebugSummary(data)}<div id="ncs-table"></div></section>
+    <aside class="ncs-context" aria-label="Instruction and control-flow details"><section id="ncs-detail" class="ncs-panel"></section><section class="ncs-panel ncs-cfg"><header><h2>Control Flow</h2><small>${activeFunction ? escapeHtml(activeFunction.name) : 'Unavailable'}</small></header><div id="ncs-graph"></div></section>${scriptDebugDiagnostics(data)}</aside>
+  </div>`;
+  renderScriptDebugTable();
+  renderScriptDebugDetail();
+  renderScriptDebugGraph();
+  let searchTimer;
+  document.getElementById('ncs-search').oninput = (event) => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => {
+      scriptDebugState.query = event.target.value;
+      scriptDebugState.page = 0;
+      renderScriptDebugTable();
+    }, 100);
+  };
+  bindScriptDebugOutline();
+}
+
+function scriptDebugStatusBadge(label, available) {
+  return `<span class="ncs-status ${available ? 'available' : 'missing'}"><span aria-hidden="true">${available ? '✓' : '—'}</span>${escapeHtml(label)}</span>`;
+}
+
+function scriptDebugSummary(data) {
+  const header = data.header;
+  const summary = data.summary || {};
+  return `<header class="ncs-summary"><div><strong>${header ? `${header.instructionCount} instructions` : 'Debug information only'}</strong><small>${header ? `${header.fileSize} bytes · ${header.codeSize} byte code section` : 'Matching NCS unavailable'}</small></div><dl><dt>Functions</dt><dd>${(data.functions || []).length}</dd><dt>Variables</dt><dd>${summary.variables || 0}</dd><dt>Source maps</dt><dd>${summary.lineMappings || 0}</dd></dl></header>`;
+}
+
+function scriptDebugOutline(data) {
+  const functions = data.functions || [];
+  const files = data.sourceFiles || [];
+  const structs = data.summary?.structEntries || [];
+  const variables = data.summary?.variableEntries || [];
+  const functionRows = functions.map((entry, index) => `<button class="ncs-outline-item function ${index === scriptDebugState.functionIndex ? 'selected' : ''}" data-function-index="${index}"><span>${escapeHtml(entry.name)}</span><small>${entry.synthetic ? 'inferred' : `${escapeHtml(entry.returnType)}(${entry.arguments.map(escapeHtml).join(', ')})`} · ${formatNcsOffset(entry.start)}–${formatNcsOffset(entry.end)}</small></button>`).join('');
+  const fileRows = files.map((file) => `<button class="ncs-outline-item source ${file.available ? '' : 'unavailable'}" data-source-file="${escapeAttribute(file.name)}" data-source-line="1" ${file.available ? '' : 'disabled'}><span>${escapeHtml(scriptSourceResource(file.name))}</span><small>${file.isRoot ? 'root source' : 'include'} · ${file.available ? 'resolved' : 'unavailable'}</small></button>`).join('');
+  const structRows = structs.map((entry) => `<details class="ncs-debug-entry"><summary>${escapeHtml(entry.name)} <small>${entry.fields.length} fields</small></summary>${entry.fields.map((field) => `<div><code>${escapeHtml(field.type)}</code> ${escapeHtml(field.name)}</div>`).join('')}</details>`).join('');
+  const variableRows = variables.map((entry) => `<button class="ncs-outline-item variable" data-offset="${entry.start}"><span>${escapeHtml(entry.name)}</span><small>${escapeHtml(entry.type)} · stack ${entry.stackLocation} · ${formatNcsOffset(entry.start)}</small></button>`).join('');
+  return `<details open><summary>Functions <small>${functions.length}</small></summary><div>${functionRows || '<div class="muted">No function information</div>'}</div></details>
+    <details ${files.length ? 'open' : ''}><summary>Source Files <small>${files.length}</small></summary><div>${fileRows || '<div class="muted">No source table</div>'}</div></details>
+    <details><summary>Variables <small>${variables.length}</small></summary><div>${variableRows || '<div class="muted">No variable records</div>'}</div></details>
+    <details><summary>Structs <small>${structs.length}</small></summary><div>${structRows || '<div class="muted">No struct records</div>'}</div></details>`;
+}
+
+function bindScriptDebugOutline() {
+  document.querySelectorAll('[data-function-index]').forEach((button) => button.onclick = () => {
+    scriptDebugState.functionIndex = Number(button.dataset.functionIndex);
+    scriptDebugState.selectedOffset = model.data.functions[scriptDebugState.functionIndex]?.start;
+    scriptDebugState.page = 0;
+    document.querySelectorAll('[data-function-index]').forEach((entry) => entry.classList.toggle('selected', entry === button));
+    renderScriptDebugTable(); renderScriptDebugDetail(); renderScriptDebugGraph();
+  });
+  document.querySelectorAll('[data-source-file]').forEach((button) => button.onclick = () => openScriptSource(button.dataset.sourceFile, Number(button.dataset.sourceLine)));
+  document.querySelectorAll('.ncs-outline-item.variable').forEach((button) => button.onclick = () => selectScriptInstruction(Number(button.dataset.offset), true));
+}
+
+function filteredScriptInstructions() {
+  const data = model.data;
+  const active = data.functions?.[scriptDebugState.functionIndex];
+  const query = scriptDebugState.query.trim().toLowerCase();
+  return (data.instructions || []).filter((instruction) => {
+    if (active && (instruction.offset < active.start || instruction.offset >= active.end)) return false;
+    if (!query) return true;
+    const source = instruction.source ? `${instruction.source.file} ${instruction.source.line} ${instruction.source.text || ''}` : '';
+    return `${instruction.offset} ${instruction.label || ''} ${instruction.opcode} ${instruction.opcodeInternal} ${instruction.auxcode || ''} ${instruction.operand || ''} ${instruction.action?.name || ''} ${instruction.rawHex} ${source}`.toLowerCase().includes(query);
+  });
+}
+
+function renderScriptDebugTable() {
+  const host = document.getElementById('ncs-table'); if (!host) return;
+  const rows = filteredScriptInstructions();
+  const pageSize = 300;
+  const pages = Math.max(1, Math.ceil(rows.length / pageSize));
+  scriptDebugState.page = Math.min(scriptDebugState.page, pages - 1);
+  const start = scriptDebugState.page * pageSize;
+  const visible = rows.slice(start, start + pageSize);
+  host.innerHTML = `<div class="ncs-table-wrap"><table class="ncs-table"><thead><tr><th>Offset</th><th>Local</th><th>Label</th><th>Instruction</th><th>Operand</th><th>Source</th></tr></thead><tbody>${visible.map(scriptInstructionRow).join('')}</tbody></table></div><footer class="ncs-pager"><span>${rows.length ? start + 1 : 0}–${Math.min(start + pageSize, rows.length)} of ${rows.length}</span><div><button id="ncs-prev" class="secondary" ${scriptDebugState.page === 0 ? 'disabled' : ''}>Previous</button><span>Page ${scriptDebugState.page + 1} of ${pages}</span><button id="ncs-next" class="secondary" ${scriptDebugState.page + 1 >= pages ? 'disabled' : ''}>Next</button></div></footer>`;
+  document.querySelectorAll('.ncs-instruction-row').forEach((row) => row.onclick = () => selectScriptInstruction(Number(row.dataset.offset), false));
+  document.querySelectorAll('.ncs-target').forEach((button) => button.onclick = (event) => { event.stopPropagation(); selectScriptInstruction(Number(button.dataset.target), true); });
+  document.querySelectorAll('.ncs-source-link').forEach((button) => button.onclick = (event) => { event.stopPropagation(); openScriptSource(button.dataset.sourceFile, Number(button.dataset.sourceLine)); });
+  document.getElementById('ncs-prev').onclick = () => { scriptDebugState.page -= 1; renderScriptDebugTable(); };
+  document.getElementById('ncs-next').onclick = () => { scriptDebugState.page += 1; renderScriptDebugTable(); };
+  highlightSelectedScriptInstruction();
+}
+
+function scriptInstructionRow(instruction) {
+  const selected = instruction.offset === scriptDebugState.selectedOffset ? ' selected' : '';
+  const operand = instruction.action
+    ? `<span class="ncs-action"><strong>${escapeHtml(instruction.action.name)}</strong><small>#${instruction.action.id} · ${instruction.action.argumentCount} args</small></span>`
+    : Number.isInteger(instruction.jumpTarget)
+    ? `<button class="ncs-target" data-target="${instruction.jumpTarget}" title="Go to ${formatNcsOffset(instruction.jumpTarget)}">${escapeHtml(instruction.operand || formatNcsOffset(instruction.jumpTarget))}</button>`
+    : escapeHtml(instruction.operand || '');
+  const source = instruction.source
+    ? `<button class="ncs-source-link" data-source-file="${escapeAttribute(instruction.source.file)}" data-source-line="${instruction.source.line}" ${instruction.source.available ? '' : 'disabled'}><span>${escapeHtml(scriptSourceResource(instruction.source.file))}:${instruction.source.line}</span><small>${escapeHtml(instruction.source.text || (instruction.source.available ? '' : 'source unavailable'))}</small></button>`
+    : '';
+  return `<tr id="ncs-offset-${instruction.offset}" class="ncs-instruction-row${selected}" data-offset="${instruction.offset}"><td><code>${formatNcsOffset(instruction.offset)}</code></td><td><code>${Number.isInteger(instruction.localOffset) ? formatNcsOffset(instruction.localOffset) : ''}</code></td><td><code>${escapeHtml(instruction.label || '')}</code></td><td><strong>${escapeHtml(instruction.opcode)}</strong>${instruction.auxcode ? `<small>.${escapeHtml(instruction.auxcode)}</small>` : ''}</td><td><code>${operand}</code></td><td>${source}</td></tr>`;
+}
+
+function selectScriptInstruction(offset, reveal) {
+  const instruction = (model.data.instructions || []).find((entry) => entry.offset === offset);
+  if (!instruction) return;
+  if (Number.isInteger(instruction.functionIndex) && instruction.functionIndex !== scriptDebugState.functionIndex) {
+    scriptDebugState.functionIndex = instruction.functionIndex;
+    scriptDebugState.page = 0;
+    document.querySelectorAll('[data-function-index]').forEach((entry) => entry.classList.toggle('selected', Number(entry.dataset.functionIndex) === scriptDebugState.functionIndex));
+    renderScriptDebugTable(); renderScriptDebugGraph();
+  }
+  scriptDebugState.selectedOffset = offset;
+  highlightSelectedScriptInstruction(); renderScriptDebugDetail(); highlightScriptGraphBlock();
+  if (reveal) document.getElementById(`ncs-offset-${offset}`)?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+}
+
+function highlightSelectedScriptInstruction() {
+  document.querySelectorAll('.ncs-instruction-row').forEach((row) => row.classList.toggle('selected', Number(row.dataset.offset) === scriptDebugState.selectedOffset));
+}
+
+function renderScriptDebugDetail() {
+  const host = document.getElementById('ncs-detail'); if (!host) return;
+  const instruction = (model.data.instructions || []).find((entry) => entry.offset === scriptDebugState.selectedOffset);
+  if (!instruction) { host.innerHTML = '<header><h2>Instruction</h2></header><div class="muted">Select an instruction to inspect its encoding and control flow.</div>'; return; }
+  const targets = `${Number.isInteger(instruction.callTarget) ? `<button class="ncs-detail-target" data-target="${instruction.callTarget}">call → ${formatNcsOffset(instruction.callTarget)}</button>` : ''}${(instruction.successors || []).map((successor) => `<button class="ncs-detail-target" data-target="${successor.offset}">${escapeHtml(successor.kind)} → ${formatNcsOffset(successor.offset)}</button>`).join('')}`;
+  const action = instruction.action ? `<section class="ncs-action-detail"><strong>${escapeHtml(formatBuiltinType(instruction.action.returnType))} ${escapeHtml(instruction.action.name)}(${instruction.action.parameters.map((parameter) => `${escapeHtml(formatBuiltinType(parameter.ty))} ${escapeHtml(parameter.name)}`).join(', ')})</strong><small>Engine action ${instruction.action.id} · encoded argument count ${instruction.action.argumentCount}${instruction.action.arityMatches ? '' : ' · argument count differs from nwscript.nss'}</small></section>` : '';
+  host.innerHTML = `<header><h2>${escapeHtml(instruction.opcode)}${instruction.auxcode ? `.${escapeHtml(instruction.auxcode)}` : ''}</h2><code>${formatNcsOffset(instruction.offset)}</code></header><dl><dt>Internal</dt><dd><code>${escapeHtml(instruction.opcodeInternal)}${instruction.auxcodeInternal ? `.${escapeHtml(instruction.auxcodeInternal)}` : ''}</code></dd><dt>Size</dt><dd>${instruction.size} bytes</dd><dt>Operand</dt><dd><code>${escapeHtml(instruction.operand || 'none')}</code></dd><dt>Encoded bytes</dt><dd><code>${escapeHtml(instruction.rawHex)}</code></dd></dl>${action}${targets ? `<div class="ncs-detail-targets"><strong>Successors</strong>${targets}</div>` : ''}${instruction.source ? `<button id="ncs-detail-source" class="ncs-source-card" ${instruction.source.available ? '' : 'disabled'}><strong>${escapeHtml(scriptSourceResource(instruction.source.file))}:${instruction.source.line}</strong><code>${escapeHtml(instruction.source.text || 'Source unavailable')}</code></button>` : ''}`;
+  document.querySelectorAll('.ncs-detail-target').forEach((button) => button.onclick = () => selectScriptInstruction(Number(button.dataset.target), true));
+  const source = document.getElementById('ncs-detail-source'); if (source) source.onclick = () => openScriptSource(instruction.source.file, instruction.source.line);
+}
+
+function renderScriptDebugGraph() {
+  const host = document.getElementById('ncs-graph'); if (!host) return;
+  const fn = model.data.functions?.[scriptDebugState.functionIndex];
+  if (!fn?.blocks?.length) { host.innerHTML = '<div class="muted">No control-flow blocks are available.</div>'; return; }
+  const blocks = fn.blocks;
+  const width = 560; const nodeX = 160; const nodeWidth = 240; const nodeHeight = 58; const gap = 42;
+  const yFor = (index) => 24 + index * (nodeHeight + gap);
+  const indexByStart = new Map(blocks.map((block, index) => [block.start, index]));
+  const edges = [];
+  blocks.forEach((block, index) => (block.successors || []).forEach((edge, edgeIndex) => {
+    const targetIndex = indexByStart.get(edge.offset); if (targetIndex == null) return;
+    const fromY = yFor(index) + nodeHeight; const toY = yFor(targetIndex);
+    const lane = targetIndex > index ? 430 + edgeIndex * 18 : 125 - edgeIndex * 18;
+    const color = edge.kind === 'branch' ? 'var(--vscode-charts-yellow)' : 'var(--vscode-charts-blue)';
+    edges.push(`<path d="M ${nodeX + nodeWidth / 2} ${fromY} C ${lane} ${fromY + 18}, ${lane} ${toY - 18}, ${nodeX + nodeWidth / 2} ${toY}" fill="none" stroke="${color}" marker-end="url(#ncs-arrow)"/>`);
+  }));
+  const nodes = blocks.map((block, index) => {
+    const rows = block.instructionIndices.map((instructionIndex) => model.data.instructions[instructionIndex]).filter(Boolean);
+    const label = `${formatNcsOffset(block.start)}–${formatNcsOffset(block.end)}`;
+    const preview = rows.slice(0, 2).map((row) => `${row.opcode}${row.action ? ` ${row.action.name}` : row.operand ? ` ${row.operand}` : ''}`).join(' · ');
+    return `<g class="ncs-graph-block" data-block-start="${block.start}" data-block-end="${block.end}" role="button" tabindex="0"><rect x="${nodeX}" y="${yFor(index)}" width="${nodeWidth}" height="${nodeHeight}" rx="5"/><text x="${nodeX + 10}" y="${yFor(index) + 20}" class="title">${escapeHtml(label)}</text><text x="${nodeX + 10}" y="${yFor(index) + 41}" class="preview">${escapeHtml(preview.slice(0, 52))}</text></g>`;
+  }).join('');
+  host.innerHTML = `<svg class="ncs-flow-graph" viewBox="0 0 ${width} ${yFor(blocks.length - 1) + nodeHeight + 24}" aria-label="Control-flow graph for ${escapeAttribute(fn.name)}"><defs><marker id="ncs-arrow" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0,0 L7,3.5 L0,7 z" fill="context-stroke"/></marker></defs>${edges.join('')}${nodes}</svg>`;
+  document.querySelectorAll('.ncs-graph-block').forEach((node) => {
+    const activate = () => selectScriptInstruction(Number(node.dataset.blockStart), true);
+    node.onclick = activate; node.onkeydown = (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); activate(); } };
+  });
+  highlightScriptGraphBlock();
+}
+
+function highlightScriptGraphBlock() {
+  document.querySelectorAll('.ncs-graph-block').forEach((node) => {
+    const offset = scriptDebugState.selectedOffset;
+    node.classList.toggle('selected', Number.isInteger(offset) && offset >= Number(node.dataset.blockStart) && offset < Number(node.dataset.blockEnd));
+  });
+}
+
+function scriptDebugDiagnostics(data) {
+  const diagnostics = data.diagnostics || [];
+  return diagnostics.length ? `<section class="ncs-panel ncs-diagnostics"><header><h2>Diagnostics</h2><small>${diagnostics.length}</small></header>${diagnostics.map((message) => `<div class="diagnostic warning">${escapeHtml(message)}</div>`).join('')}</section>` : '';
+}
+
+function openScriptSource(file, line) {
+  vscode.postMessage({ type: 'openScriptSource', file, line });
+}
+
+function scriptSourceResource(file) {
+  const value = String(file || '');
+  return value.toLowerCase().endsWith('.nss') ? value : `${value}.nss`;
+}
+
+function formatBuiltinType(value) {
+  if (typeof value === 'string') return value.toLowerCase();
+  if (value?.EngineStructure) return String(value.EngineStructure);
+  return Object.keys(value || {})[0]?.toLowerCase() || '?';
+}
+
+function formatNcsOffset(offset) {
+  return Number(offset || 0).toString(16).toUpperCase().padStart(4, '0');
+}
+
 function renderTexture() {
   const data = model.data;
-  toolbar().innerHTML = `${model.kind === 'plt' ? '' : '<button id="texture-import">Import image pixels…</button>'}<span>${data.width} × ${data.height}</span>`;
+  toolbar().innerHTML = `<span>${data.width} × ${data.height}</span>`;
   content().innerHTML = `<div class="texture-layout"><div class="canvas-wrap"><canvas id="texture-canvas" width="${data.width}" height="${data.height}"></canvas></div>
     <aside class="inspector"><h2>Texture</h2><dl>${Object.entries(data.metadata || {}).filter(([key]) => key !== 'pixels').map(([key, value]) => `<dt>${escapeHtml(key)}</dt><dd>${escapeHtml(String(value))}</dd>`).join('')}</dl>
     ${model.kind === 'plt' ? '<div id="plt-inspector" class="muted">Click a pixel to edit its value and material layer.</div>' : ''}</aside></div>`;
   const canvas = document.getElementById('texture-canvas'); drawRgba(canvas, data.rgba);
-  if (model.kind !== 'plt') document.getElementById('texture-import').onclick = () => vscode.postMessage({ type: 'importTexture' });
   if (model.kind === 'plt') canvas.onclick = (event) => showPltPixel(canvas, event);
 }
 
 function drawRgba(canvas, base64) {
   const bytes = Uint8ClampedArray.from(atob(base64), (character) => character.charCodeAt(0));
   const context = canvas.getContext('2d'); context.putImageData(new ImageData(bytes, canvas.width, canvas.height), 0, 0);
-}
-
-async function importTexture(base64) {
-  const bytes = Uint8Array.from(atob(base64), (character) => character.charCodeAt(0));
-  const blob = new Blob([bytes]); const bitmap = await createImageBitmap(blob);
-  const canvas = document.createElement('canvas'); canvas.width = bitmap.width; canvas.height = bitmap.height;
-  const context = canvas.getContext('2d'); context.drawImage(bitmap, 0, 0); bitmap.close();
-  const rgba = context.getImageData(0, 0, canvas.width, canvas.height).data;
-  edit({ action: 'replaceTexture', width: canvas.width, height: canvas.height, rgba: bytesToBase64(rgba) });
 }
 
 function showPltPixel(canvas, event) {
@@ -1259,8 +1749,8 @@ function createSpriteGpu(gl) {
   gl.bindVertexArray(vao); gl.bindBuffer(gl.ARRAY_BUFFER, cornerBuffer);
   gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
   gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
-  gl.bindBuffer(gl.ARRAY_BUFFER, instanceBuffer); const stride = 14 * 4;
-  for (const [location, size, offset] of [[1, 3, 0], [2, 4, 3], [3, 3, 7], [4, 4, 10]]) {
+  gl.bindBuffer(gl.ARRAY_BUFFER, instanceBuffer); const stride = 15 * 4;
+  for (const [location, size, offset] of [[1, 3, 0], [2, 4, 3], [3, 3, 7], [4, 4, 10], [5, 1, 14]]) {
     gl.enableVertexAttribArray(location); gl.vertexAttribPointer(location, size, gl.FLOAT, false, stride, offset * 4); gl.vertexAttribDivisor(location, 1);
   }
   return { vao, cornerBuffer, instanceBuffer, capacity: 0 };
@@ -1268,13 +1758,34 @@ function createSpriteGpu(gl) {
 
 function uploadAndDrawSprites(gl, gpu, values, count) {
   gl.bindVertexArray(gpu.vao); gl.bindBuffer(gl.ARRAY_BUFFER, gpu.instanceBuffer);
-  const byteLength = count * 14 * 4;
+  const byteLength = count * 15 * 4;
   if (byteLength > gpu.capacity) {
-    gpu.capacity = Math.max(byteLength, Math.ceil(gpu.capacity * 1.5), 14 * 4);
+    gpu.capacity = Math.max(byteLength, Math.ceil(gpu.capacity * 1.5), 15 * 4);
     gl.bufferData(gl.ARRAY_BUFFER, gpu.capacity, gl.DYNAMIC_DRAW);
   }
-  gl.bufferSubData(gl.ARRAY_BUFFER, 0, values, 0, count * 14);
+  gl.bufferSubData(gl.ARRAY_BUFFER, 0, values, 0, count * 15);
   gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, count);
+}
+
+function createRibbonGpu(gl) {
+  const vao = gl.createVertexArray(); const buffer = gl.createBuffer(); const stride = 9 * 4;
+  gl.bindVertexArray(vao); gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+  for (const [location, size, offset] of [[0, 3, 0], [1, 2, 3], [2, 4, 5]]) {
+    gl.enableVertexAttribArray(location); gl.vertexAttribPointer(location, size, gl.FLOAT, false, stride, offset * 4);
+  }
+  return { vao, buffer, capacity: 0 };
+}
+
+function uploadAndDrawRibbon(gl, gpu, values, vertexCount) {
+  if (!vertexCount) return;
+  gl.bindVertexArray(gpu.vao); gl.bindBuffer(gl.ARRAY_BUFFER, gpu.buffer);
+  const byteLength = vertexCount * 9 * 4;
+  if (byteLength > gpu.capacity) {
+    gpu.capacity = Math.max(byteLength, Math.ceil(gpu.capacity * 1.5), 9 * 6 * 4);
+    gl.bufferData(gl.ARRAY_BUFFER, gpu.capacity, gl.DYNAMIC_DRAW);
+  }
+  gl.bufferSubData(gl.ARRAY_BUFFER, 0, values, 0, vertexCount * 9);
+  gl.drawArrays(gl.TRIANGLES, 0, vertexCount);
 }
 
 function createOverlayGpu(gl, polygon) {
@@ -1315,6 +1826,12 @@ function emitterProperty(emitter, name, fallback) {
   const tagged = properties.get(name.toLowerCase())?.[0];
   if (tagged == null) return fallback; const value = typeof tagged === 'object' && 'value' in tagged ? tagged.value : tagged;
   return value == null ? fallback : value;
+}
+
+function emitterHasValue(emitter, nodeTrack, name) {
+  emitterProperty(emitter, name, undefined);
+  return (EMITTER_PROPERTY_CACHE.get(emitter)?.has(name.toLowerCase()) ?? false)
+    || (nodeTrack?.emitterControllers?.has(name.toLowerCase()) ?? false);
 }
 
 function emitterVector(emitter, name, fallback) {
@@ -1408,6 +1925,51 @@ function random01(index, stream) {
 function stagedValue3(age, midpoint, start, middle, end) {
   if (age <= midpoint) { const factor = age / midpoint; return start + (middle - start) * factor; }
   const factor = (age - midpoint) / (1 - midpoint); return middle + (end - middle) * factor;
+}
+
+function emitterCurve(age, midpoint, start, middle, end, hasMiddle) {
+  return hasMiddle
+    ? stagedValue3(age, midpoint, start, middle, end)
+    : start + (end - start) * age;
+}
+
+function buildLinkedParticleVertices(particles, particleCount, eye, state) {
+  const segmentCount = Math.max(0, particleCount - 1); const required = segmentCount * 6 * 9;
+  const output = state || { values: new Float32Array(Math.max(required, 54)), vertexCount: 0 };
+  if (output.values.length < required) {
+    output.values = new Float32Array(Math.max(required, Math.ceil(output.values.length * 1.5)));
+  }
+  let vertex = 0;
+  for (let segment = 0; segment < segmentCount; segment += 1) {
+    const start = segment * 15; const end = start + 15;
+    const dx=particles[end]-particles[start],dy=particles[end+1]-particles[start+1],dz=particles[end+2]-particles[start+2];
+    const mx=(particles[start]+particles[end])*0.5,my=(particles[start+1]+particles[end+1])*0.5,mz=(particles[start+2]+particles[end+2])*0.5;
+    const vx=eye[0]-mx,vy=eye[1]-my,vz=eye[2]-mz;
+    let sx=dy*vz-dz*vy,sy=dz*vx-dx*vz,sz=dx*vy-dy*vx; let sideLength=Math.hypot(sx,sy,sz);
+    if (sideLength < 1e-6) { sx=-dy;sy=dx;sz=0;sideLength=Math.hypot(sx,sy); }
+    if (sideLength < 1e-6) { sx=1;sy=0;sz=0;sideLength=1; }
+    sx/=sideLength;sy/=sideLength;sz/=sideLength;
+    const startWidth=Math.max(0.001,particles[start+4]),endWidth=Math.max(0.001,particles[end+4]);
+    const s0x=particles[start]-sx*startWidth,s0y=particles[start+1]-sy*startWidth,s0z=particles[start+2]-sz*startWidth;
+    const s1x=particles[start]+sx*startWidth,s1y=particles[start+1]+sy*startWidth,s1z=particles[start+2]+sz*startWidth;
+    const e0x=particles[end]-sx*endWidth,e0y=particles[end+1]-sy*endWidth,e0z=particles[end+2]-sz*endWidth;
+    const e1x=particles[end]+sx*endWidth,e1y=particles[end+1]+sy*endWidth,e1z=particles[end+2]+sz*endWidth;
+    const u0=particles[start+10],v0=particles[start+11],u1=u0+particles[start+12],v1=v0+particles[start+13];
+    vertex=writeRibbonVertex(output.values,vertex,s0x,s0y,s0z,u0,v0,particles,start);
+    vertex=writeRibbonVertex(output.values,vertex,s1x,s1y,s1z,u1,v0,particles,start);
+    vertex=writeRibbonVertex(output.values,vertex,e0x,e0y,e0z,u0,v1,particles,end);
+    vertex=writeRibbonVertex(output.values,vertex,e0x,e0y,e0z,u0,v1,particles,end);
+    vertex=writeRibbonVertex(output.values,vertex,s1x,s1y,s1z,u1,v0,particles,start);
+    vertex=writeRibbonVertex(output.values,vertex,e1x,e1y,e1z,u1,v1,particles,end);
+  }
+  output.vertexCount = vertex;
+  return output;
+}
+
+function writeRibbonVertex(output, vertex, x, y, z, u, v, particle, particleOffset) {
+  const offset=vertex*9; output[offset]=x;output[offset+1]=y;output[offset+2]=z;output[offset+3]=u;output[offset+4]=v;
+  output[offset+5]=particle[particleOffset+7];output[offset+6]=particle[particleOffset+8];output[offset+7]=particle[particleOffset+9];output[offset+8]=particle[particleOffset+6];
+  return vertex+1;
 }
 
 function createTexture(gl, texture, binary, s3tc) {
@@ -1505,11 +2067,12 @@ function createModelRuntime(model) {
     attachmentTargets: new Map(model.attachments.map((attachment) => [attachment, nodeByName.get(attachment.targetNodeName.toLowerCase()) ?? -1])),
     animationAssets: new Map(),
     emitterBuffers: new Array(model.nodes.length),
+    emitterLinkedBuffers: new Array(model.nodes.length),
     emitterColors: model.nodes.map(() => [new Float32Array(3), new Float32Array(3), new Float32Array(3)]),
     emitterIntervals: model.nodes.map(() => new Float64Array(3)),
     emitterTransitionVectors: model.nodes.map(() => new Float32Array(3)),
     emitterTransitionIntervals: model.nodes.map(() => new Float64Array(3)),
-    flareBuffer: new Float32Array(14),
+    flareBuffer: new Float32Array(15),
     chunkTranslation: new Float32Array(3),
     chunkRotation: new Float32Array(4),
     chunkScale: new Float32Array(3),
@@ -1979,45 +2542,292 @@ function surfaceColor(materialIndex) {
   return palette[index];
 }
 
-function bindViewportControls(canvas, camera, draw, changed = () => {}) {
-  let drag;
-  canvas.addEventListener('pointerdown', (event) => { drag = { x: event.clientX, y: event.clientY, button: event.button }; canvas.setPointerCapture(event.pointerId); });
-  canvas.addEventListener('pointermove', (event) => {
+function bindViewportControls(canvas, camera, draw, changed = () => {}, clicked = () => {}) {
+  let drag; const pressed = new Set(); let fastMovement = false;
+  const pointerdown = (event) => {
+    canvas.focus?.();
+    drag = {
+      x: event.clientX,
+      y: event.clientY,
+      startX: event.clientX,
+      startY: event.clientY,
+      button: event.button,
+      moved: false,
+    };
+    canvas.setPointerCapture(event.pointerId);
+  };
+  const pointermove = (event) => {
     if (!drag) return; const dx = event.clientX - drag.x; const dy = event.clientY - drag.y; drag.x = event.clientX; drag.y = event.clientY;
+    if (Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) > 3) drag.moved = true;
     if (drag.button === 0) { camera.yaw -= dx * 0.008; camera.pitch = Math.max(-1.5, Math.min(1.5, camera.pitch + dy * 0.008)); }
     else { const scale = camera.distance * 0.002; camera.target[0] -= dx * scale; camera.target[2] += dy * scale; }
     changed(); draw();
-  });
-  canvas.addEventListener('pointerup', () => { drag = undefined; });
-  canvas.addEventListener('pointercancel', () => { drag = undefined; });
-  canvas.addEventListener('contextmenu', (event) => event.preventDefault());
-  canvas.addEventListener('wheel', (event) => { event.preventDefault(); camera.distance = Math.max(0.1, camera.distance * Math.exp(event.deltaY * 0.001)); changed(); draw(); }, { passive: false });
-  canvas.addEventListener('keydown', (event) => {
+  };
+  const pointerup = (event) => {
+    if (drag?.button === 0 && !drag.moved) clicked(event);
+    drag = undefined;
+  };
+  const pointercancel = () => { drag = undefined; };
+  const contextmenu = (event) => event.preventDefault();
+  const wheel = (event) => { event.preventDefault(); camera.distance = Math.max(0.1, camera.distance * Math.exp(event.deltaY * 0.001)); changed(); draw(); };
+  const keydown = (event) => {
+    const key = String(event.key).toLowerCase();
+    if (key === 'shift') { fastMovement = true; return; }
+    if (['w', 'a', 's', 'd', 'q', 'e'].includes(key)) {
+      event.preventDefault(); pressed.add(key); return;
+    }
     const step = event.shiftKey ? 0.2 : 0.06; let handled = true;
     if (event.key === 'ArrowLeft') camera.yaw += step; else if (event.key === 'ArrowRight') camera.yaw -= step; else if (event.key === 'ArrowUp') camera.pitch = Math.min(1.5, camera.pitch + step); else if (event.key === 'ArrowDown') camera.pitch = Math.max(-1.5, camera.pitch - step); else if (event.key === '+' || event.key === '=') camera.distance = Math.max(0.1, camera.distance * 0.9); else if (event.key === '-') camera.distance *= 1.1; else handled = false;
     if (handled) { event.preventDefault(); changed(); draw(); }
-  });
+  };
+  const keyup = (event) => {
+    const key = String(event.key).toLowerCase();
+    if (key === 'shift') fastMovement = false;
+    if (pressed.delete(key)) { event.preventDefault(); changed(); }
+  };
+  const blur = () => {
+    if (pressed.size) changed();
+    pressed.clear(); fastMovement = false; drag = undefined;
+  };
+  canvas.addEventListener('pointerdown', pointerdown);
+  canvas.addEventListener('pointermove', pointermove);
+  canvas.addEventListener('pointerup', pointerup);
+  canvas.addEventListener('pointercancel', pointercancel);
+  canvas.addEventListener('contextmenu', contextmenu);
+  canvas.addEventListener('wheel', wheel, { passive: false });
+  canvas.addEventListener('keydown', keydown);
+  canvas.addEventListener('keyup', keyup);
+  canvas.addEventListener('blur', blur);
+  return {
+    update(deltaSeconds) {
+      if (!pressed.size || !(deltaSeconds > 0)) return false;
+      const eye = orbitEye(camera);
+      const forward = normalize3([
+        camera.target[0] - eye[0],
+        camera.target[1] - eye[1],
+        camera.target[2] - eye[2],
+      ]);
+      let right = normalize3([forward[1], -forward[0], 0]);
+      if (Math.hypot(right[0], right[1]) < 1e-6) right = [-Math.sin(camera.yaw), Math.cos(camera.yaw), 0];
+      const direction = [0, 0, 0];
+      const apply = (vector, amount) => { for (let axis = 0; axis < 3; axis += 1) direction[axis] += vector[axis] * amount; };
+      if (pressed.has('w')) apply(forward, 1);
+      if (pressed.has('s')) apply(forward, -1);
+      if (pressed.has('d')) apply(right, 1);
+      if (pressed.has('a')) apply(right, -1);
+      if (pressed.has('e')) direction[2] += 1;
+      if (pressed.has('q')) direction[2] -= 1;
+      const magnitude = Math.hypot(...direction);
+      if (magnitude < 1e-6) return false;
+      const speed = Math.max(1, camera.distance * 0.75) * (fastMovement ? 3 : 1);
+      for (let axis = 0; axis < 3; axis += 1) camera.target[axis] += direction[axis] / magnitude * speed * deltaSeconds;
+      return true;
+    },
+    dispose() {
+      blur();
+      canvas.removeEventListener('pointerdown', pointerdown);
+      canvas.removeEventListener('pointermove', pointermove);
+      canvas.removeEventListener('pointerup', pointerup);
+      canvas.removeEventListener('pointercancel', pointercancel);
+      canvas.removeEventListener('contextmenu', contextmenu);
+      canvas.removeEventListener('wheel', wheel);
+      canvas.removeEventListener('keydown', keydown);
+      canvas.removeEventListener('keyup', keyup);
+      canvas.removeEventListener('blur', blur);
+    },
+  };
 }
 
 function sceneBounds(scene) {
-  const min = [Infinity, Infinity, Infinity]; const max = [-Infinity, -Infinity, -Infinity];
-  const include = (point) => point.forEach((value, index) => { min[index] = Math.min(min[index], value); max[index] = Math.max(max[index], value); });
-  const includeModel = (modelIndex, base, stack) => {
+  return sceneBoundsCatalog(scene).scene;
+}
+
+function sceneBoundsCatalog(scene) {
+  const sceneAccumulator = newBoundsAccumulator();
+  const objectLocalAccumulators = new Map();
+  const objectBases = new Map((scene.manifest.areaObjects || []).map((object) => [
+    object.key,
+    composeTransform4(object.position || [0, 0, 0], object.rotationAxisAngle || [0, 0, 1, 0], [1, 1, 1]),
+  ]));
+  const componentLocalAccumulators = new Map();
+  const componentBases = new Map();
+  const includeModel = (modelIndex, base, stack, include) => {
     if (stack.has(modelIndex)) return; const model = scene.manifest.models[modelIndex]; if (!model) return; stack.add(modelIndex);
     const worlds = resolveNodeWorlds(model, model.nodes);
     for (const mesh of model.meshes) for (const primitive of mesh.primitives) {
       const world = multiply4(base, worlds[mesh.sourceNode] || identity4()); const positions = numericView(scene.binary, primitive.positions);
       for (let index = 0; index < positions.length; index += 3) include(transformPoint4(world, [positions[index], positions[index + 1], positions[index + 2]]));
     }
-    for (const attachment of model.attachments) { const target = model.nodes.findIndex((node) => node.name.toLowerCase() === attachment.targetNodeName.toLowerCase()); includeModel(attachment.model, multiply4(base, worlds[target] || identity4()), new Set(stack)); }
+    model.nodes.forEach((node, nodeIndex) => {
+      if (!node.emitter) return;
+      const world = multiply4(base, worlds[nodeIndex] || identity4()); const extent = emitterSpatialExtent(node.emitter);
+      // Particle travel affects whole-scene framing, but it is not part of the
+      // authored object's selectable geometry. Keeping it out of the logical
+      // object accumulator prevents effects from inflating selection boxes and
+      // changing the camera distance used when an object is selected.
+      for (const x of [-extent[0], extent[0]]) for (const y of [-extent[1], extent[1]]) for (const z of [-extent[2], extent[2]]) includeBoundsPoint(sceneAccumulator, transformPoint4(world, [x, y, z]));
+    });
+    for (const attachment of model.attachments) { const target = model.nodes.findIndex((node) => node.name.toLowerCase() === attachment.targetNodeName.toLowerCase()); includeModel(attachment.model, multiply4(base, worlds[target] || identity4()), new Set(stack), include); }
   };
-  scene.manifest.instances.forEach((instance) => {
+  scene.manifest.instances.forEach((instance, instanceIndex) => {
     if (instance.kind === 'skybox') return;
-    const base = multiply4(translation4(instance.position), multiply4(axisAngle4(instance.rotationAxisAngle), scale4(instance.scale))); include(instance.position);
-    instance.polygon?.forEach((point) => include(transformPoint4(base, point))); if (instance.model != null) includeModel(instance.model, base, new Set());
+    const componentId = Number.isInteger(instance.id) ? instance.id : instanceIndex;
+    const base = multiply4(translation4(instance.position), multiply4(axisAngle4(instance.rotationAxisAngle), scale4(instance.scale)));
+    const inverseBase = inverse4(base);
+    const componentAccumulator = newBoundsAccumulator();
+    componentLocalAccumulators.set(componentId, componentAccumulator);
+    componentBases.set(componentId, base);
+    const objectBase = instance.objectKey
+      ? mapGetOrInsert(objectBases, instance.objectKey, () => base)
+      : undefined;
+    const inverseObjectBase = objectBase ? inverse4(objectBase) : undefined;
+    const objectLocalAccumulator = instance.objectKey
+      ? mapGetOrInsert(objectLocalAccumulators, instance.objectKey, newBoundsAccumulator)
+      : undefined;
+    const include = (point) => {
+      includeBoundsPoint(sceneAccumulator, point);
+      includeBoundsPoint(componentAccumulator, transformPoint4(inverseBase, point));
+      if (objectLocalAccumulator) {
+        includeBoundsPoint(objectLocalAccumulator, transformPoint4(inverseObjectBase, point));
+      }
+    };
+    include(instance.position);
+    instance.polygon?.forEach((point) => include(transformPoint4(base, point))); if (instance.model != null) includeModel(instance.model, base, new Set(), include);
   });
-  if (!Number.isFinite(min[0])) return { min: [-1, -1, -1], max: [1, 1, 1] };
-  return { min, max };
+  for (const object of scene.manifest.areaObjects || []) {
+    const local = mapGetOrInsert(objectLocalAccumulators, object.key, newBoundsAccumulator);
+    includeBoundsPoint(local, [0, 0, 0]);
+  }
+  const selectionFromLocalBounds = (localAccumulator, base) => {
+    const localBounds = paddedBounds(finalizeBounds(localAccumulator), 0.25);
+    const vertices = boxLineVertices(localBounds).map((point) => transformPoint4(base, point));
+    const worldAccumulator = newBoundsAccumulator();
+    vertices.forEach((point) => includeBoundsPoint(worldAccumulator, point));
+    return { bounds: finalizeBounds(worldAccumulator), vertices };
+  };
+  const objectSelections = new Map([...objectLocalAccumulators].map(([key, accumulator]) => [
+    key,
+    selectionFromLocalBounds(accumulator, objectBases.get(key) || identity4()),
+  ]));
+  const componentSelections = new Map([...componentLocalAccumulators].map(([id, accumulator]) => [
+    id,
+    selectionFromLocalBounds(accumulator, componentBases.get(id) || identity4()),
+  ]));
+  const objects = new Map([...objectSelections].map(([key, selection]) => [key, selection.bounds]));
+  return { scene: finalizeBounds(sceneAccumulator), objects, objectSelections, componentSelections };
+}
+
+function emitterSpatialExtent(emitter) {
+  const life=Math.max(0,Number(emitterProperty(emitter,'lifeexp',0))||0);
+  const velocity=Math.abs(Number(emitterProperty(emitter,'velocity',0))||0)+Math.abs(Number(emitterProperty(emitter,'randvel',0))||0)*0.5;
+  const mass=Math.abs(Number(emitterProperty(emitter,'mass',0))||0);
+  const particleSize=Math.max(0,
+    Math.abs(Number(emitterProperty(emitter,'sizestart',0))||0),
+    Math.abs(Number(emitterProperty(emitter,'sizemid',0))||0),
+    Math.abs(Number(emitterProperty(emitter,'sizeend',0))||0),
+    Math.abs(Number(emitterProperty(emitter,'sizestart_y',0))||0),
+    Math.abs(Number(emitterProperty(emitter,'sizemid_y',0))||0),
+    Math.abs(Number(emitterProperty(emitter,'sizeend_y',0))||0),
+  )*0.5;
+  const travel=velocity*life+mass*9.81*life*life*0.5;
+  return [Math.abs(emitter.xSize||0)/200+travel+particleSize,Math.abs(emitter.ySize||0)/200+travel+particleSize,travel+particleSize];
+}
+
+function newBoundsAccumulator() {
+  return { min: [Infinity, Infinity, Infinity], max: [-Infinity, -Infinity, -Infinity] };
+}
+
+function includeBoundsPoint(bounds, point) {
+  point.forEach((value, index) => {
+    bounds.min[index] = Math.min(bounds.min[index], value);
+    bounds.max[index] = Math.max(bounds.max[index], value);
+  });
+}
+
+function finalizeBounds(bounds) {
+  return Number.isFinite(bounds.min[0])
+    ? { min: [...bounds.min], max: [...bounds.max] }
+    : { min: [-1, -1, -1], max: [1, 1, 1] };
+}
+
+function paddedBounds(bounds, minimumExtent) {
+  const result = { min: [...bounds.min], max: [...bounds.max] };
+  for (let axis = 0; axis < 3; axis += 1) {
+    const missing = Math.max(0, minimumExtent - (result.max[axis] - result.min[axis]));
+    result.min[axis] -= missing / 2;
+    result.max[axis] += missing / 2;
+  }
+  return result;
+}
+
+function mapGetOrInsert(map, key, create) {
+  let value = map.get(key);
+  if (!value) { value = create(); map.set(key, value); }
+  return value;
+}
+
+function boxLineVertices(bounds) {
+  const [x0, y0, z0] = bounds.min; const [x1, y1, z1] = bounds.max;
+  const corners = [
+    [x0, y0, z0], [x1, y0, z0], [x1, y1, z0], [x0, y1, z0],
+    [x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1],
+  ];
+  return [[0, 1], [1, 2], [2, 3], [3, 0], [4, 5], [5, 6], [6, 7], [7, 4], [0, 4], [1, 5], [2, 6], [3, 7]]
+    .flatMap(([start, end]) => [corners[start], corners[end]]);
+}
+
+function replaceSelectionGpu(gl, previous, selectionKey, selections) {
+  destroyOverlayGpu(gl, previous);
+  const selection = selections.get(selectionKey);
+  if (!selection) return undefined;
+  return { ...createOverlayGpu(gl, selection.vertices), selectionKey };
+}
+
+function destroyOverlayGpu(gl, gpu) {
+  if (!gpu) return;
+  gl.deleteBuffer(gpu.buffer);
+  gl.deleteVertexArray(gpu.vao);
+}
+
+function frameBounds(camera, bounds) {
+  camera.target = [0, 1, 2].map((axis) => (bounds.min[axis] + bounds.max[axis]) / 2);
+  camera.distance = Math.max(1.5, Math.hypot(
+    bounds.max[0] - bounds.min[0],
+    bounds.max[1] - bounds.min[1],
+    bounds.max[2] - bounds.min[2],
+  ) * 1.6);
+}
+
+function transformHomogeneous4(matrix, [x, y, z, w]) {
+  const result = [
+    matrix[0]*x+matrix[4]*y+matrix[8]*z+matrix[12]*w,
+    matrix[1]*x+matrix[5]*y+matrix[9]*z+matrix[13]*w,
+    matrix[2]*x+matrix[6]*y+matrix[10]*z+matrix[14]*w,
+    matrix[3]*x+matrix[7]*y+matrix[11]*z+matrix[15]*w,
+  ];
+  const divisor = Math.abs(result[3]) > 1e-12 ? result[3] : 1;
+  return [result[0] / divisor, result[1] / divisor, result[2] / divisor];
+}
+
+function normalize3(vector) {
+  const length = Math.hypot(...vector) || 1;
+  return vector.map((value) => value / length);
+}
+
+function rayBoundsDistance(origin, direction, bounds) {
+  let near = -Infinity; let far = Infinity;
+  for (let axis = 0; axis < 3; axis += 1) {
+    if (Math.abs(direction[axis]) < 1e-12) {
+      if (origin[axis] < bounds.min[axis] || origin[axis] > bounds.max[axis]) return undefined;
+      continue;
+    }
+    const first = (bounds.min[axis] - origin[axis]) / direction[axis];
+    const second = (bounds.max[axis] - origin[axis]) / direction[axis];
+    near = Math.max(near, Math.min(first, second));
+    far = Math.min(far, Math.max(first, second));
+    if (far < near) return undefined;
+  }
+  return far < 0 ? undefined : Math.max(0, near);
 }
 
 function transformPoint4(matrix, [x, y, z]) {

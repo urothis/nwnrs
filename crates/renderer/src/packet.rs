@@ -506,6 +506,8 @@ pub struct ScenePacketManifest {
     pub module:       Option<RenderModule>,
     /// Scene instances.
     pub instances:    Vec<RenderInstance>,
+    /// Logical authored GIT objects for area navigation and selection.
+    pub area_objects: Vec<crate::RenderAreaObject>,
     /// Packed model assets.
     pub models:       Vec<PacketModel>,
     /// Packed-model index for each top-level [`RenderScene`] model.
@@ -621,6 +623,10 @@ impl ScenePacket {
                 environment: scene.environment.clone(),
                 module: scene.module.clone(),
                 instances,
+                area_objects: scene
+                    .area
+                    .as_ref()
+                    .map_or_else(Vec::new, |area| crate::area_object_catalog(&area.instances)),
                 models,
                 root_models,
                 textures,
@@ -1588,9 +1594,11 @@ mod tests {
             shaders:      Vec::new(),
             instances:    vec![RenderInstance {
                 id:                    0,
+                object_key:            None,
                 label:                 "triangle".into(),
                 kind:                  RenderInstanceKind::Model,
                 model:                 Some(0),
+                resource:              Some("triangle.mdl".into()),
                 position:              [0.0; 3],
                 rotation_axis_angle:   [0.0, 0.0, 1.0, 0.0],
                 scale:                 [1.0; 3],

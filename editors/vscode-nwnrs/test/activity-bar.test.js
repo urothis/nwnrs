@@ -8,23 +8,35 @@ const test = require('node:test');
 const extensionRoot = path.resolve(__dirname, '..');
 const manifest = JSON.parse(fs.readFileSync(path.join(extensionRoot, 'package.json'), 'utf8'));
 
-test('nwnrs contributes an always-visible Activity Bar container with native placeholders', () => {
+test('nwnrs contributes an always-visible Activity Bar container with package and resource views', () => {
   assert.deepEqual(manifest.contributes.viewsContainers.activitybar, [{
     id: 'nwnrs', title: 'nwnrs', icon: 'images/activity-bar.svg',
   }]);
   assert.deepEqual(manifest.contributes.views.nwnrs, [
-    { id: 'nwnrs.project', name: 'Project', visibility: 'visible' },
+    { id: 'nwnrs.packages', name: 'Packages', visibility: 'visible' },
     { id: 'nwnrs.resources', name: 'Resources', visibility: 'collapsed' },
-    { id: 'nwnrs.tools', name: 'Tools', visibility: 'collapsed' },
   ]);
   assert.deepEqual(
     manifest.contributes.viewsWelcome.map(({ view }) => view),
-    ['nwnrs.project', 'nwnrs.resources', 'nwnrs.tools'],
+    ['nwnrs.packages', 'nwnrs.resources'],
   );
   assert.ok(manifest.contributes.viewsWelcome.every(({ contents }) => contents.length > 0));
-  assert.ok(manifest.activationEvents.includes('onView:nwnrs.project'));
+  assert.ok(manifest.activationEvents.includes('onView:nwnrs.packages'));
   assert.ok(manifest.activationEvents.includes('onView:nwnrs.resources'));
-  assert.ok(manifest.activationEvents.includes('onView:nwnrs.tools'));
+  assert.equal(manifest.activationEvents.includes('onView:nwnrs.tools'), false);
+  assert.ok(manifest.contributes.menus['view/title'].some(
+    ({ command, when }) => command === 'nwnrs.sidebar.unpinPackage'
+      && when.includes('nwnrs.packagePinned'),
+  ));
+  assert.ok(manifest.contributes.customEditors[0].selector.some(
+    ({ filenamePattern }) => filenamePattern === '*.dlg.json',
+  ));
+  assert.ok(manifest.contributes.customEditors[0].selector.some(
+    ({ filenamePattern }) => filenamePattern === '*.ncs',
+  ));
+  assert.ok(manifest.contributes.customEditors[0].selector.some(
+    ({ filenamePattern }) => filenamePattern === '*.ndb',
+  ));
 });
 
 test('Activity Bar artwork is a dedicated theme-aware monochrome SVG', () => {

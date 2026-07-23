@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, BTreeSet, HashMap},
     fs::{self, File, OpenOptions},
     io::{self, Cursor, Write},
     path::{Path, PathBuf},
@@ -13,6 +13,10 @@ use napi::{
     bindgen_prelude::{AsyncTask, Buffer},
 };
 use napi_derive::napi;
+use nwnrs_nwscript::{
+    LangSpec, NCS_BINARY_HEADER_SIZE, NcsDisassemblyOptions, NcsInstruction, NcsOpcode, Ndb,
+    decode_ncs_header, decode_ncs_instructions, disassemble_ncs, parse_langspec_bytes, read_ndb,
+};
 use nwnrs_types::{
     checksums::sha1_digest,
     compressedbuf::Algorithm,
@@ -20,7 +24,8 @@ use nwnrs_types::{
     erf::{Erf, ErfVersion, ErfWriteOptions, read_erf, write_erf_with_options},
     exo::ExoResFileCompressionType,
     gff::{
-        GffCExoLocString, GffField, GffRoot, GffStruct, GffValue, read_gff_root, write_gff_root,
+        GffCExoLocString, GffField, GffRoot, GffStruct, GffValue, gff_root_from_json_bytes,
+        gff_root_to_json_bytes, read_gff_root, write_gff_root,
     },
     key::{KeyBifEntry, KeyBifVersion, KeyTable, read_key_table_from_file, write_key_and_bif},
     localization::Language,
@@ -158,6 +163,10 @@ fn execute_request(
         "openDocument" => open_document(state, request),
         "openDocumentBytes" => open_document_bytes(state, request),
         "snapshot" => with_document_mut(state, &request, |document| document.snapshot(&request)),
+        "configureScriptDebug" => with_document_mut(state, &request, |document| {
+            document.configure_script_debug(&request)?;
+            document.snapshot(&request)
+        }),
         "applyEdit" => with_document_mut(state, &request, |document| document.apply_edit(&request)),
         "readEntry" => with_document(state, &request, |document| document.read_entry(&request)),
         "exportDocument" => with_document_mut(state, &request, |document| {
@@ -320,7 +329,7 @@ struct EditorDocument {
 }
 
 enum EditorContent {
-    Gff(GffRoot),
+    Gff(GffDocument),
     TwoDa(TwoDa),
     Tlk(SingleTlk),
     Dds(DdsTexture),
@@ -328,6 +337,33 @@ enum EditorContent {
     Plt(PltTexture),
     Erf(ErfDocument),
     Key(KeyDocument),
+    ScriptDebug(ScriptDebugDocument),
+}
+
+#[derive(Clone, Copy)]
+enum GffSourceEncoding {
+    Binary,
+    Json,
+}
+
+struct GffDocument {
+    root:     GffRoot,
+    encoding: GffSourceEncoding,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ScriptDebugPrimary {
+    Ncs,
+    Ndb,
+}
+
+struct ScriptDebugDocument {
+    primary:     ScriptDebugPrimary,
+    primary_raw: Vec<u8>,
+    ncs:         Option<Vec<u8>>,
+    ndb:         Option<Ndb>,
+    langspec:    Option<LangSpec>,
+    sources:     BTreeMap<String, Vec<String>>,
 }
 
 impl EditorDocument {
@@ -381,6 +417,16 @@ impl EditorDocument {
             "fingerprint": self.fingerprint,
             "data": data,
         }))
+    }
+
+    fn configure_script_debug(&mut self, request: &Value) -> EditorResult<()> {
+        match &mut self.content {
+            EditorContent::ScriptDebug(value) => value.configure(request),
+            _ => Err(format!(
+                "{} is not an NCS/NDB document",
+                self.content.kind()
+            )),
+        }
     }
 
     fn apply_edit(&mut self, request: &Value) -> EditorResult<Value> {
@@ -445,8 +491,9 @@ impl EditorDocument {
     fn persist_to(&mut self, path: PathBuf) -> EditorResult<()> {
         match &mut self.content {
             EditorContent::Key(key) => key.write_atomic(&path)?,
-            _ => atomic_write(&path, &self.content.serialize()?)?,
+            _ => atomic_write(&path, &self.content.serialize_for_path(&path)?)?,
         }
+        self.content.update_path_encoding(&path)?;
         self.fingerprint = FileFingerprint::read(&path)?;
         self.related_fingerprints = self.content.related_fingerprints(&path)?;
         Ok(())
@@ -495,6 +542,18 @@ impl EditorContent {
             .unwrap_or_default()
             .to_ascii_lowercase();
         let mut cursor = Cursor::new(bytes.to_vec());
+        if let Some(encoding) = gff_source_encoding(path) {
+            let root = match encoding {
+                GffSourceEncoding::Binary => read_gff_root(&mut cursor).map_err(display_error)?,
+                GffSourceEncoding::Json => {
+                    gff_root_from_json_bytes(bytes).map_err(display_error)?
+                }
+            };
+            return Ok(Self::Gff(GffDocument {
+                root,
+                encoding,
+            }));
+        }
         match extension.as_str() {
             "2da" => read_twoda(&mut cursor)
                 .map(Self::TwoDa)
@@ -513,9 +572,8 @@ impl EditorContent {
                 .and_then(KeyDocument::new)
                 .map(Self::Key)
                 .map_err(display_error),
-            extension if is_gff_extension(extension) => read_gff_root(&mut cursor)
-                .map(Self::Gff)
-                .map_err(display_error),
+            "ncs" => ScriptDebugDocument::from_ncs(bytes).map(Self::ScriptDebug),
+            "ndb" => ScriptDebugDocument::from_ndb(bytes).map(Self::ScriptDebug),
             _ => Err(format!(
                 "unsupported nwnrs resource type: {}",
                 path.display()
@@ -588,6 +646,10 @@ impl EditorContent {
             Self::Plt(_) => "plt",
             Self::Erf(_) => "erf",
             Self::Key(_) => "key",
+            Self::ScriptDebug(value) => match value.primary {
+                ScriptDebugPrimary::Ncs => "ncs",
+                ScriptDebugPrimary::Ndb => "ndb",
+            },
         }
     }
 
@@ -616,7 +678,7 @@ impl EditorContent {
 
     fn snapshot(&mut self, request: &Value) -> EditorResult<Value> {
         match self {
-            Self::Gff(value) => Ok(gff_root_to_json(value)),
+            Self::Gff(value) => Ok(gff_root_to_json(&value.root)),
             Self::TwoDa(value) => Ok(twoda_to_json(value)),
             Self::Tlk(value) => Ok(tlk_snapshot(value, request)?),
             Self::Dds(value) => texture_snapshot(
@@ -655,6 +717,7 @@ impl EditorContent {
             }
             Self::Erf(value) => Ok(value.snapshot(request)),
             Self::Key(value) => Ok(value.snapshot(request)),
+            Self::ScriptDebug(value) => value.snapshot(),
         }
         .map(|mut snapshot| {
             if let Some(object) = snapshot.as_object_mut() {
@@ -674,13 +737,13 @@ impl EditorContent {
         let action = required_string(edit, "action")?;
         match self {
             Self::Gff(value) if action == "replaceGff" => {
-                let before = gff_root_to_json(value);
+                let before = gff_root_to_json(&value.root);
                 let root = edit
                     .get("root")
                     .ok_or_else(|| "root is required".to_string())?;
-                let mut candidate = value.clone();
+                let mut candidate = value.root.clone();
                 merge_gff_root(&mut candidate, root)?;
-                *value = candidate;
+                value.root = candidate;
                 Ok((
                     "Edit GFF".to_string(),
                     json!({ "action": "replaceGff", "root": before }),
@@ -723,6 +786,7 @@ impl EditorContent {
             Self::Plt(value) if action == "setPltPixel" => apply_plt_edit(value, edit),
             Self::Erf(value) => value.apply_edit(action, edit),
             Self::Key(value) => value.apply_edit(action, edit),
+            Self::ScriptDebug(_) => Err("NCS/NDB workbench documents are read-only".to_string()),
             _ => Err(format!("edit {action} is not valid for {}", self.kind())),
         }
     }
@@ -738,7 +802,14 @@ impl EditorContent {
     fn serialize(&mut self) -> EditorResult<Vec<u8>> {
         let mut cursor = Cursor::new(Vec::new());
         match self {
-            Self::Gff(value) => write_gff_root(&mut cursor, value).map_err(display_error)?,
+            Self::Gff(value) => match value.encoding {
+                GffSourceEncoding::Binary => {
+                    write_gff_root(&mut cursor, &value.root).map_err(display_error)?
+                }
+                GffSourceEncoding::Json => {
+                    return gff_root_to_json_bytes(&value.root).map_err(display_error)
+                }
+            },
             Self::TwoDa(value) => write_twoda(&mut cursor, value, false).map_err(display_error)?,
             Self::Tlk(value) => write_single_tlk(&mut cursor, value).map_err(display_error)?,
             Self::Dds(value) => write_dds(&mut cursor, value).map_err(display_error)?,
@@ -748,8 +819,40 @@ impl EditorContent {
             Self::Key(_) => {
                 return Err("KEY/BIF sets require transactional path serialization".to_string())
             }
+            Self::ScriptDebug(value) => return Ok(value.primary_raw.clone()),
         }
         Ok(cursor.into_inner())
+    }
+
+    fn serialize_for_path(&mut self, path: &Path) -> EditorResult<Vec<u8>> {
+        match self {
+            Self::Gff(value) => match gff_source_encoding(path)
+                .ok_or_else(|| format!("{} is not a supported GFF destination", path.display()))?
+            {
+                GffSourceEncoding::Binary => {
+                    let mut cursor = Cursor::new(Vec::new());
+                    write_gff_root(&mut cursor, &value.root).map_err(display_error)?;
+                    Ok(cursor.into_inner())
+                }
+                GffSourceEncoding::Json => {
+                    gff_root_to_json_bytes(&value.root).map_err(display_error)
+                }
+            },
+            _ if gff_source_encoding(path).is_some() => Err(format!(
+                "cannot save {} content as GFF source {}",
+                self.kind(),
+                path.display()
+            )),
+            _ => self.serialize(),
+        }
+    }
+
+    fn update_path_encoding(&mut self, path: &Path) -> EditorResult<()> {
+        if let Self::Gff(value) = self {
+            value.encoding = gff_source_encoding(path)
+                .ok_or_else(|| format!("{} is not a supported GFF destination", path.display()))?;
+        }
+        Ok(())
     }
 
     fn serialize_for_backup(&mut self) -> EditorResult<Vec<u8>> {
@@ -758,6 +861,578 @@ impl EditorContent {
             _ => self.serialize(),
         }
     }
+}
+
+impl ScriptDebugDocument {
+    fn from_ncs(bytes: &[u8]) -> EditorResult<Self> {
+        decode_ncs_header(bytes).map_err(display_error)?;
+        decode_ncs_instructions(bytes).map_err(display_error)?;
+        Ok(Self {
+            primary:     ScriptDebugPrimary::Ncs,
+            primary_raw: bytes.to_vec(),
+            ncs:         Some(bytes.to_vec()),
+            ndb:         None,
+            langspec:    None,
+            sources:     BTreeMap::new(),
+        })
+    }
+
+    fn from_ndb(bytes: &[u8]) -> EditorResult<Self> {
+        let ndb = read_ndb(&mut Cursor::new(bytes)).map_err(display_error)?;
+        Ok(Self {
+            primary:     ScriptDebugPrimary::Ndb,
+            primary_raw: bytes.to_vec(),
+            ncs:         None,
+            ndb:         Some(ndb),
+            langspec:    None,
+            sources:     BTreeMap::new(),
+        })
+    }
+
+    fn configure(&mut self, request: &Value) -> EditorResult<()> {
+        if let Some(encoded) = request.get("ncs").and_then(Value::as_str) {
+            let bytes = BASE64
+                .decode(encoded)
+                .map_err(|error| format!("invalid NCS companion payload: {error}"))?;
+            decode_ncs_header(&bytes).map_err(display_error)?;
+            decode_ncs_instructions(&bytes).map_err(display_error)?;
+            self.ncs = Some(bytes);
+        }
+        if let Some(encoded) = request.get("ndb").and_then(Value::as_str) {
+            let bytes = BASE64
+                .decode(encoded)
+                .map_err(|error| format!("invalid NDB companion payload: {error}"))?;
+            self.ndb = Some(read_ndb(&mut Cursor::new(bytes)).map_err(display_error)?);
+        }
+        if let Some(encoded) = request.get("langspec").and_then(Value::as_str) {
+            let bytes = BASE64
+                .decode(encoded)
+                .map_err(|error| format!("invalid nwscript.nss payload: {error}"))?;
+            self.langspec =
+                Some(parse_langspec_bytes("nwscript.nss", &bytes).map_err(display_error)?);
+        }
+        if let Some(source_values) = request.get("sources").and_then(Value::as_object) {
+            self.sources.clear();
+            for (name, encoded) in source_values {
+                let encoded = encoded
+                    .as_str()
+                    .ok_or_else(|| format!("source payload for {name} must be base64 text"))?;
+                let bytes = BASE64
+                    .decode(encoded)
+                    .map_err(|error| format!("invalid source payload for {name}: {error}"))?;
+                self.sources.insert(
+                    name.clone(),
+                    String::from_utf8_lossy(&bytes)
+                        .lines()
+                        .map(str::to_string)
+                        .collect(),
+                );
+            }
+        }
+        Ok(())
+    }
+
+    fn snapshot(&self) -> EditorResult<Value> {
+        let source_files = self
+            .ndb
+            .as_ref()
+            .map(|ndb| {
+                ndb.files
+                    .iter()
+                    .enumerate()
+                    .map(|(index, file)| {
+                        json!({
+                            "index": index,
+                            "name": file.name,
+                            "isRoot": file.is_root,
+                            "available": self.sources.contains_key(&file.name),
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let Some(bytes) = self.ncs.as_deref() else {
+            return Ok(json!({
+                "primary": "ndb",
+                "hasNcs": false,
+                "hasNdb": true,
+                "hasLangspec": self.langspec.is_some(),
+                "sourceFiles": source_files,
+                "summary": self.debug_summary(),
+                "functions": self.debug_functions(&[]),
+                "instructions": [],
+                "diagnostics": ["Matching NCS bytecode was not resolved."],
+            }));
+        };
+
+        let header = decode_ncs_header(bytes).map_err(display_error)?;
+        let decoded = decode_ncs_instructions(bytes).map_err(display_error)?;
+        let asm = disassemble_ncs(
+            bytes,
+            self.langspec.as_ref(),
+            NcsDisassemblyOptions {
+                max_string_length: 4096,
+                ..NcsDisassemblyOptions::default()
+            },
+        )
+        .map_err(display_error)?;
+        if decoded.len() != asm.len() {
+            return Err("NCS decoder and disassembler produced different instruction counts".into());
+        }
+        let code_size = decoded
+            .iter()
+            .map(NcsInstruction::encoded_len)
+            .sum::<usize>();
+        let functions = self.workbench_functions(&decoded, code_size);
+        let valid_offsets = instruction_offsets(&decoded)
+            .into_iter()
+            .collect::<BTreeSet<_>>();
+        let mut diagnostics = Vec::new();
+        if usize::try_from(header.code_size).unwrap_or(usize::MAX) != bytes.len() {
+            diagnostics.push(format!(
+                "Header declares {} bytes but the resource contains {} bytes.",
+                header.code_size,
+                bytes.len()
+            ));
+        }
+        let offsets = instruction_offsets(&decoded);
+        let instructions = decoded
+            .iter()
+            .zip(&asm)
+            .zip(&offsets)
+            .enumerate()
+            .map(|(index, ((instruction, rendered), offset))| {
+                let target = ncs_jump_target(instruction, *offset);
+                if let Some(target) = target
+                    && !valid_offsets.contains(&target)
+                {
+                    diagnostics.push(format!(
+                        "Instruction at offset {offset} targets non-instruction offset {target}."
+                    ));
+                }
+                let function_index = functions
+                    .iter()
+                    .position(|function| *offset >= function.start && *offset < function.end);
+                let next_offset = offsets.get(index + 1).copied();
+                let successors = instruction_successors(instruction.opcode, target, next_offset);
+                let source = self.source_location(*offset);
+                let action = self.action_details(instruction);
+                let raw = std::iter::once(instruction.opcode as u8)
+                    .chain(std::iter::once(instruction.auxcode as u8))
+                    .chain(instruction.extra.iter().copied())
+                    .collect::<Vec<_>>();
+                json!({
+                    "index": index,
+                    "offset": offset,
+                    "localOffset": function_index.map(|function_index| offset.saturating_sub(functions[function_index].start)),
+                    "size": instruction.encoded_len(),
+                    "label": rendered.label,
+                    "opcode": instruction.opcode.canonical_name(),
+                    "opcodeInternal": instruction.opcode.internal_name(),
+                    "auxcode": instruction.auxcode.canonical_name(),
+                    "auxcodeInternal": instruction.auxcode.internal_name(),
+                    "operand": rendered.extra,
+                    "action": action,
+                    "rawHex": hex_bytes(&raw),
+                    "jumpTarget": target,
+                    "callTarget": (instruction.opcode == NcsOpcode::Jsr).then_some(target).flatten(),
+                    "successors": successors,
+                    "functionIndex": function_index,
+                    "source": source,
+                })
+            })
+            .collect::<Vec<_>>();
+        let function_values = functions
+            .iter()
+            .enumerate()
+            .map(|(index, function)| {
+                let blocks = control_flow_blocks(index, function, &decoded, &offsets);
+                json!({
+                    "index": index,
+                    "name": function.name,
+                    "start": function.start,
+                    "end": function.end,
+                    "returnType": function.return_type,
+                    "arguments": function.arguments,
+                    "synthetic": function.synthetic,
+                    "source": function.source,
+                    "blocks": blocks,
+                })
+            })
+            .collect::<Vec<_>>();
+
+        Ok(json!({
+            "primary": if self.primary == ScriptDebugPrimary::Ncs { "ncs" } else { "ndb" },
+            "hasNcs": true,
+            "hasNdb": self.ndb.is_some(),
+            "hasLangspec": self.langspec.is_some(),
+            "sourceFiles": source_files,
+            "header": {
+                "format": "NCS V1.0",
+                "fileSize": bytes.len(),
+                "declaredSize": header.code_size,
+                "codeSize": code_size,
+                "instructionCount": decoded.len(),
+            },
+            "summary": self.debug_summary(),
+            "functions": function_values,
+            "instructions": instructions,
+            "diagnostics": diagnostics,
+        }))
+    }
+
+    fn debug_summary(&self) -> Value {
+        let Some(ndb) = &self.ndb else {
+            return json!({ "files": 0, "structs": 0, "functions": 0, "variables": 0, "lineMappings": 0 });
+        };
+        json!({
+            "files": ndb.files.len(),
+            "structs": ndb.structs.len(),
+            "functions": ndb.functions.len(),
+            "variables": ndb.variables.len(),
+            "lineMappings": ndb.lines.len(),
+            "structEntries": ndb.structs.iter().map(|entry| json!({
+                "name": entry.label,
+                "fields": entry.fields.iter().map(|field| json!({ "name": field.label, "type": field.ty.to_string() })).collect::<Vec<_>>(),
+            })).collect::<Vec<_>>(),
+            "variableEntries": ndb.variables.iter().map(|entry| json!({
+                "name": entry.label,
+                "type": entry.ty.to_string(),
+                "start": entry.binary_start.saturating_sub(NCS_BINARY_HEADER_SIZE as u32),
+                "end": entry.binary_end.saturating_sub(NCS_BINARY_HEADER_SIZE as u32),
+                "stackLocation": entry.stack_loc,
+            })).collect::<Vec<_>>(),
+        })
+    }
+
+    fn debug_functions(&self, _decoded: &[NcsInstruction]) -> Vec<Value> {
+        self.ndb
+            .as_ref()
+            .map(|ndb| {
+                ndb.functions
+                    .iter()
+                    .enumerate()
+                    .map(|(index, function)| json!({
+                        "index": index,
+                        "name": function.label,
+                        "start": function.binary_start.saturating_sub(NCS_BINARY_HEADER_SIZE as u32),
+                        "end": function.binary_end.saturating_sub(NCS_BINARY_HEADER_SIZE as u32),
+                        "returnType": function.return_type.to_string(),
+                        "arguments": function.args.iter().map(ToString::to_string).collect::<Vec<_>>(),
+                        "synthetic": false,
+                        "blocks": [],
+                    }))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    fn workbench_functions(
+        &self,
+        decoded: &[NcsInstruction],
+        code_size: usize,
+    ) -> Vec<WorkbenchFunction> {
+        if let Some(ndb) = &self.ndb
+            && !ndb.functions.is_empty()
+        {
+            let mut debug_functions = ndb
+                .functions
+                .iter()
+                .map(|function| {
+                    let start = function
+                        .binary_start
+                        .saturating_sub(NCS_BINARY_HEADER_SIZE as u32)
+                        as usize;
+                    let end = function
+                        .binary_end
+                        .saturating_sub(NCS_BINARY_HEADER_SIZE as u32)
+                        as usize;
+                    WorkbenchFunction {
+                        name: function.label.clone(),
+                        start,
+                        end: end.max(start).min(code_size),
+                        return_type: function.return_type.to_string(),
+                        arguments: function.args.iter().map(ToString::to_string).collect(),
+                        synthetic: false,
+                        source: self.source_location(start),
+                    }
+                })
+                .collect::<Vec<_>>();
+            debug_functions.sort_by_key(|function| function.start);
+            let mut functions = Vec::new();
+            let mut covered_until = 0usize;
+            for function in debug_functions {
+                if function.start > covered_until {
+                    functions.push(WorkbenchFunction {
+                        name:        if covered_until == 0 {
+                            "entry".to_string()
+                        } else {
+                            format!("code_{covered_until:04}")
+                        },
+                        start:       covered_until,
+                        end:         function.start.min(code_size),
+                        return_type: "?".to_string(),
+                        arguments:   Vec::new(),
+                        synthetic:   true,
+                        source:      self.source_location(covered_until),
+                    });
+                }
+                covered_until = covered_until.max(function.end);
+                functions.push(function);
+            }
+            if covered_until < code_size {
+                functions.push(WorkbenchFunction {
+                    name:        format!("code_{covered_until:04}"),
+                    start:       covered_until,
+                    end:         code_size,
+                    return_type: "?".to_string(),
+                    arguments:   Vec::new(),
+                    synthetic:   true,
+                    source:      self.source_location(covered_until),
+                });
+            }
+            return functions;
+        }
+        let offsets = instruction_offsets(decoded);
+        let mut entries = BTreeSet::from([0usize]);
+        for (instruction, offset) in decoded.iter().zip(&offsets) {
+            if instruction.opcode == NcsOpcode::Jsr
+                && let Some(target) = ncs_jump_target(instruction, *offset)
+            {
+                entries.insert(target);
+            }
+        }
+        let entries = entries
+            .into_iter()
+            .filter(|offset| *offset < code_size)
+            .collect::<Vec<_>>();
+        entries
+            .iter()
+            .enumerate()
+            .map(|(index, start)| WorkbenchFunction {
+                name:        if index == 0 {
+                    "entry".to_string()
+                } else {
+                    format!("sub_{start:04}")
+                },
+                start:       *start,
+                end:         entries.get(index + 1).copied().unwrap_or(code_size),
+                return_type: "?".to_string(),
+                arguments:   Vec::new(),
+                synthetic:   true,
+                source:      None,
+            })
+            .collect()
+    }
+
+    fn source_location(&self, offset: usize) -> Option<Value> {
+        let ndb = self.ndb.as_ref()?;
+        let matches = ndb
+            .lines
+            .iter()
+            .filter(|line| {
+                let start =
+                    line.binary_start
+                        .saturating_sub(NCS_BINARY_HEADER_SIZE as u32) as usize;
+                let end =
+                    line.binary_end
+                        .saturating_sub(NCS_BINARY_HEADER_SIZE as u32) as usize;
+                (start..end).contains(&offset)
+            })
+            .collect::<Vec<_>>();
+        if matches.len() != 1 {
+            return None;
+        }
+        let line = matches[0];
+        let file = ndb.files.get(line.file_num)?;
+        let text = self
+            .sources
+            .get(&file.name)
+            .and_then(|lines| lines.get(line.line_num.saturating_sub(1)))
+            .map(|line| line.trim().to_string());
+        Some(json!({
+            "file": file.name,
+            "line": line.line_num,
+            "text": text,
+            "available": self.sources.contains_key(&file.name),
+        }))
+    }
+
+    fn action_details(&self, instruction: &NcsInstruction) -> Option<Value> {
+        if instruction.opcode != NcsOpcode::ExecuteCommand || instruction.extra.len() != 3 {
+            return None;
+        }
+        let id = usize::from(u16::from_be_bytes(
+            instruction.extra.get(..2)?.try_into().ok()?,
+        ));
+        let argument_count = instruction.extra[2];
+        let function = self.langspec.as_ref()?.functions.get(id)?;
+        Some(json!({
+            "id": id,
+            "argumentCount": argument_count,
+            "name": function.name,
+            "returnType": function.return_type,
+            "parameters": function.parameters,
+            "arityMatches": usize::from(argument_count) == function.parameters.len(),
+        }))
+    }
+}
+
+struct WorkbenchFunction {
+    name:        String,
+    start:       usize,
+    end:         usize,
+    return_type: String,
+    arguments:   Vec<String>,
+    synthetic:   bool,
+    source:      Option<Value>,
+}
+
+fn instruction_offsets(instructions: &[NcsInstruction]) -> Vec<usize> {
+    instructions
+        .iter()
+        .scan(0usize, |offset, instruction| {
+            let current = *offset;
+            *offset = offset.saturating_add(instruction.encoded_len());
+            Some(current)
+        })
+        .collect()
+}
+
+fn ncs_jump_target(instruction: &NcsInstruction, offset: usize) -> Option<usize> {
+    if !matches!(
+        instruction.opcode,
+        NcsOpcode::Jmp | NcsOpcode::Jsr | NcsOpcode::Jz | NcsOpcode::Jnz
+    ) || instruction.extra.len() != 4
+    {
+        return None;
+    }
+    let relative = i32::from_be_bytes(instruction.extra.as_slice().try_into().ok()?);
+    let origin = i64::try_from(offset).ok()?;
+    usize::try_from(origin.saturating_add(i64::from(relative))).ok()
+}
+
+fn instruction_successors(
+    opcode: NcsOpcode,
+    target: Option<usize>,
+    next: Option<usize>,
+) -> Vec<Value> {
+    let mut successors = Vec::new();
+    match opcode {
+        NcsOpcode::Jmp => {
+            if let Some(target) = target {
+                successors.push(json!({ "offset": target, "kind": "jump" }));
+            }
+        }
+        NcsOpcode::Jz | NcsOpcode::Jnz => {
+            if let Some(target) = target {
+                successors.push(json!({ "offset": target, "kind": "branch" }));
+            }
+            if let Some(next) = next {
+                successors.push(json!({ "offset": next, "kind": "fallthrough" }));
+            }
+        }
+        NcsOpcode::Ret => {}
+        _ => {
+            if let Some(next) = next {
+                successors.push(json!({ "offset": next, "kind": "fallthrough" }));
+            }
+        }
+    }
+    successors
+}
+
+fn control_flow_blocks(
+    function_index: usize,
+    function: &WorkbenchFunction,
+    instructions: &[NcsInstruction],
+    offsets: &[usize],
+) -> Vec<Value> {
+    let function_rows = offsets
+        .iter()
+        .enumerate()
+        .filter(|(_index, offset)| **offset >= function.start && **offset < function.end)
+        .collect::<Vec<_>>();
+    if function_rows.is_empty() {
+        return Vec::new();
+    }
+    let valid = function_rows
+        .iter()
+        .map(|(_index, offset)| **offset)
+        .collect::<BTreeSet<_>>();
+    let mut leaders = BTreeSet::from([function.start]);
+    for (row, (instruction_index, offset)) in function_rows.iter().enumerate() {
+        let instruction = &instructions[*instruction_index];
+        if let Some(target) = ncs_jump_target(instruction, **offset)
+            && valid.contains(&target)
+        {
+            leaders.insert(target);
+        }
+        if matches!(
+            instruction.opcode,
+            NcsOpcode::Jmp | NcsOpcode::Jz | NcsOpcode::Jnz | NcsOpcode::Ret
+        ) && let Some((_next_index, next_offset)) = function_rows.get(row + 1)
+        {
+            leaders.insert(**next_offset);
+        }
+    }
+    let leaders = leaders.into_iter().collect::<Vec<_>>();
+    leaders
+        .iter()
+        .enumerate()
+        .map(|(block_index, start)| {
+            let end = leaders
+                .get(block_index + 1)
+                .copied()
+                .unwrap_or(function.end);
+            let rows = function_rows
+                .iter()
+                .filter(|(_index, offset)| **offset >= *start && **offset < end)
+                .map(|(index, _offset)| *index)
+                .collect::<Vec<_>>();
+            let last = rows.last().copied();
+            let successors = last.map_or_else(Vec::new, |last| {
+                let target = ncs_jump_target(&instructions[last], offsets[last]);
+                let next = offsets
+                    .get(last + 1)
+                    .copied()
+                    .filter(|offset| *offset < function.end);
+                instruction_successors(instructions[last].opcode, target, next)
+                    .into_iter()
+                    .filter(|successor| {
+                        successor
+                            .get("offset")
+                            .and_then(Value::as_u64)
+                            .is_some_and(|offset| valid.contains(&(offset as usize)))
+                    })
+                    .collect()
+            });
+            let calls = rows
+                .iter()
+                .filter_map(|index| {
+                    (instructions[*index].opcode == NcsOpcode::Jsr)
+                        .then(|| ncs_jump_target(&instructions[*index], offsets[*index]))
+                        .flatten()
+                })
+                .collect::<Vec<_>>();
+            json!({
+                "id": format!("f{function_index}b{block_index}"),
+                "start": start,
+                "end": end,
+                "instructionIndices": rows,
+                "successors": successors,
+                "calls": calls,
+            })
+        })
+        .collect()
+}
+
+fn hex_bytes(bytes: &[u8]) -> String {
+    bytes
+        .iter()
+        .map(|byte| format!("{byte:02X}"))
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn is_gff_extension(extension: &str) -> bool {
@@ -784,6 +1459,19 @@ fn is_gff_extension(extension: &str) -> bool {
             | "jrl"
             | "gui"
     )
+}
+
+fn gff_source_encoding(path: &Path) -> Option<GffSourceEncoding> {
+    let extension = path.extension()?.to_str()?;
+    if is_gff_extension(&extension.to_ascii_lowercase()) {
+        return Some(GffSourceEncoding::Binary);
+    }
+    if !extension.eq_ignore_ascii_case("json") {
+        return None;
+    }
+    let resource_name = path.file_stem()?.to_str()?;
+    let resource_extension = Path::new(resource_name).extension()?.to_str()?;
+    is_gff_extension(&resource_extension.to_ascii_lowercase()).then_some(GffSourceEncoding::Json)
 }
 
 fn display_error(error: impl std::fmt::Display) -> String {
@@ -2291,6 +2979,55 @@ mod tests {
             nested.get_field("Count").map(GffField::value),
             Some(GffValue::Int(2))
         ));
+    }
+
+    #[test]
+    fn dialog_json_documents_remain_canonical_json_after_typed_edits() {
+        let directory = temporary_directory("dialog-json");
+        let source_path = directory.join("conversation.dlg.json");
+        let binary_path = directory.join("conversation.dlg");
+        let mut root = GffRoot::new("DLG ");
+        root.put_value("EndConverAbort", GffValue::ResRef("before".to_string()))
+            .expect("insert dialog field");
+        fs::write(
+            &source_path,
+            gff_root_to_json_bytes(&root).expect("encode dialog JSON"),
+        )
+        .expect("write dialog JSON");
+
+        let mut document =
+            EditorDocument::open(source_path.clone(), false).expect("open dialog JSON document");
+        let mut edited = document.snapshot(&json!({})).expect("snapshot dialog")["data"].clone();
+        *edited
+            .pointer_mut("/root/fields/0/value")
+            .expect("dialog field") = json!("after");
+        document
+            .apply_edit(&json!({
+                "edit": { "action": "replaceGff", "root": edited }
+            }))
+            .expect("edit dialog JSON");
+        document.save(&json!({})).expect("save dialog JSON");
+        let saved = fs::read(&source_path).expect("read saved dialog JSON");
+        let saved_json: Value = serde_json::from_slice(&saved).expect("parse saved dialog JSON");
+        assert_eq!(saved_json["__data_type"], "DLG ");
+        assert_eq!(saved_json["EndConverAbort"]["value"], "after");
+
+        document
+            .save_as(&json!({ "path": binary_path }))
+            .expect("save dialog as binary");
+        let binary = fs::read(directory.join("conversation.dlg")).expect("read binary dialog");
+        assert_eq!(&binary[..4], b"DLG ");
+        let reopened = EditorDocument::open(directory.join("conversation.dlg"), false)
+            .expect("reopen binary dialog");
+        let EditorContent::Gff(reopened) = reopened.content else {
+            panic!("binary dialog did not reopen as GFF");
+        };
+        assert!(matches!(
+            reopened.root.root.get_field("EndConverAbort").map(GffField::value),
+            Some(GffValue::ResRef(value)) if value == "after"
+        ));
+
+        fs::remove_dir_all(directory).expect("remove temporary directory");
     }
 
     #[test]

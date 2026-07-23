@@ -1,7 +1,10 @@
 use std::{f32::consts::FRAC_PI_2, io::Cursor};
 
 use nwnrs_types::{
-    gff::{AreFile, GffRoot, GffStruct, GitFile, GitTransform, ModuleInfo, read_gff_root},
+    gff::{
+        AreFile, GffCExoLocString, GffRoot, GffStruct, GitFile, GitTransform, ModuleInfo,
+        read_gff_root,
+    },
     mdl::{
         ModelResourceKind, NwnAppearanceOverrides, NwnBlueprintKind, NwnBlueprintVisual,
         NwnComposedScene, NwnPropertyValue, compose_blueprint_visual_from_resman,
@@ -16,14 +19,173 @@ use tracing::instrument;
 
 use crate::{
     AreEnvironmentView, AreaScene, DependencyGraph, DependencyKind, DependencyState, ModelScene,
-    RenderDiagnostic, RenderDiagnosticSeverity, RenderEnvironment, RenderInstance,
-    RenderInstanceKind, RenderModule, RenderScene, RendererError, RendererResult, SceneSource,
-    assets::resolve_model_assets,
+    RenderAreaObject, RenderDiagnostic, RenderDiagnosticSeverity, RenderEnvironment,
+    RenderInstance, RenderInstanceKind, RenderModule, RenderScene, RendererError, RendererResult,
+    SceneSource, assets::resolve_model_assets,
 };
 
 /// Stateful scene assembler over one layered NWN resource view.
 pub struct SceneLoader<'a> {
     resman: &'a mut ResMan,
+}
+
+/// Builds the stable logical-object catalog shared by area packets and editor
+/// navigation. Authored list indices remain category-local, matching GIT.
+#[must_use]
+pub fn area_object_catalog(git: &GitFile) -> Vec<RenderAreaObject> {
+    let mut result = Vec::new();
+    for (index, value) in git.creatures.iter().enumerate() {
+        push_area_object(
+            &mut result,
+            RenderInstanceKind::Creature,
+            index,
+            value.localized_name.as_ref(),
+            value.tag.as_deref(),
+            value.template_resref.as_deref(),
+            &value.transform,
+        );
+    }
+    for (index, value) in git.doors.iter().enumerate() {
+        push_area_object(
+            &mut result,
+            RenderInstanceKind::Door,
+            index,
+            value.localized_name.as_ref(),
+            value.tag.as_deref(),
+            value.template_resref.as_deref(),
+            &value.transform,
+        );
+    }
+    for (index, value) in git.placeables.iter().enumerate() {
+        push_area_object(
+            &mut result,
+            RenderInstanceKind::Placeable,
+            index,
+            value.localized_name.as_ref(),
+            value.tag.as_deref(),
+            value.template_resref.as_deref(),
+            &value.transform,
+        );
+    }
+    for (index, value) in git.encounters.iter().enumerate() {
+        push_area_object(
+            &mut result,
+            RenderInstanceKind::Encounter,
+            index,
+            value.localized_name.as_ref(),
+            value.tag.as_deref(),
+            None,
+            &value.transform,
+        );
+    }
+    for (index, value) in git.sounds.iter().enumerate() {
+        push_area_object(
+            &mut result,
+            RenderInstanceKind::Sound,
+            index,
+            value.localized_name.as_ref(),
+            value.tag.as_deref(),
+            value.template_resref.as_deref(),
+            &value.transform,
+        );
+    }
+    for (index, value) in git.stores.iter().enumerate() {
+        push_area_object(
+            &mut result,
+            RenderInstanceKind::Store,
+            index,
+            value.localized_name.as_ref(),
+            value.tag.as_deref(),
+            value.template_resref.as_deref(),
+            &value.transform,
+        );
+    }
+    for (index, value) in git.triggers.iter().enumerate() {
+        push_area_object(
+            &mut result,
+            RenderInstanceKind::Trigger,
+            index,
+            value.localized_name.as_ref(),
+            value.tag.as_deref(),
+            None,
+            &value.transform,
+        );
+    }
+    for (index, value) in git.waypoints.iter().enumerate() {
+        push_area_object(
+            &mut result,
+            RenderInstanceKind::Waypoint,
+            index,
+            value.localized_name.as_ref(),
+            value.tag.as_deref(),
+            value.template_resref.as_deref(),
+            &value.transform,
+        );
+    }
+    result
+}
+
+fn push_area_object(
+    target: &mut Vec<RenderAreaObject>,
+    kind: RenderInstanceKind,
+    source_index: usize,
+    localized_name: Option<&GffCExoLocString>,
+    tag: Option<&str>,
+    template_resref: Option<&str>,
+    transform: &GitTransform,
+) {
+    let kind_name = render_instance_kind_name(kind);
+    let tag = tag.filter(|value| !value.trim().is_empty());
+    let template_resref = template_resref.filter(|value| !value.trim().is_empty());
+    let label = localized_name
+        .and_then(|value| {
+            value
+                .entries
+                .iter()
+                .map(|(_, text)| text.trim())
+                .find(|text| !text.is_empty())
+        })
+        .or(tag)
+        .or(template_resref)
+        .map_or_else(
+            || format!("{} {}", title_case_kind(kind_name), source_index + 1),
+            str::to_string,
+        );
+    target.push(RenderAreaObject {
+        key: format!("{kind_name}:{source_index}"),
+        label,
+        kind,
+        source_index,
+        tag: tag.map(str::to_string),
+        template_resref: template_resref.map(str::to_string),
+        position: transform_position(transform),
+        rotation_axis_angle: transform_rotation(transform),
+    });
+}
+
+const fn render_instance_kind_name(kind: RenderInstanceKind) -> &'static str {
+    match kind {
+        RenderInstanceKind::Creature => "creature",
+        RenderInstanceKind::Door => "door",
+        RenderInstanceKind::Placeable => "placeable",
+        RenderInstanceKind::Encounter => "encounter",
+        RenderInstanceKind::Sound => "sound",
+        RenderInstanceKind::Store => "store",
+        RenderInstanceKind::Trigger => "trigger",
+        RenderInstanceKind::Waypoint => "waypoint",
+        RenderInstanceKind::Item => "item",
+        RenderInstanceKind::Model => "model",
+        RenderInstanceKind::Tile => "tile",
+        RenderInstanceKind::Skybox => "skybox",
+        RenderInstanceKind::Collision => "collision",
+    }
+}
+
+fn title_case_kind(value: &str) -> String {
+    let mut chars = value.chars();
+    chars.next().map_or_else(String::new, |first| {
+        first.to_uppercase().collect::<String>() + chars.as_str()
+    })
 }
 
 impl<'a> SceneLoader<'a> {
@@ -85,6 +247,7 @@ impl<'a> SceneLoader<'a> {
         let mut models = vec![model];
         let mut instances = vec![RenderInstance {
             id:                    0,
+            object_key:            None,
             label:                 resource.to_string(),
             kind:                  if kind == ModelResourceKind::Model {
                 RenderInstanceKind::Model
@@ -92,6 +255,7 @@ impl<'a> SceneLoader<'a> {
                 RenderInstanceKind::Collision
             },
             model:                 Some(0),
+            resource:              Some(resource.to_string()),
             position:              [0.0; 3],
             rotation_axis_angle:   [0.0, 0.0, 1.0, 0.0],
             scale:                 [1.0; 3],
@@ -130,9 +294,11 @@ impl<'a> SceneLoader<'a> {
                 models.push(ModelScene::Auxiliary(scene));
                 instances.push(RenderInstance {
                     id:                    instances.len(),
+                    object_key:            None,
                     label:                 resolved.to_string(),
                     kind:                  RenderInstanceKind::Collision,
                     model:                 Some(model_index),
+                    resource:              Some(resolved.to_string()),
                     position:              [0.0; 3],
                     rotation_axis_angle:   [0.0, 0.0, 1.0, 0.0],
                     scale:                 [1.0; 3],
@@ -206,9 +372,11 @@ impl<'a> SceneLoader<'a> {
             models.push(ModelScene::Composed(composed));
             instances.push(RenderInstance {
                 id:                    instances.len(),
+                object_key:            None,
                 label:                 resource.to_string(),
                 kind:                  render_kind_for_blueprint(kind),
                 model:                 Some(model_index),
+                resource:              Some(format!("{model_name}.mdl")),
                 position:              [0.0; 3],
                 rotation_axis_angle:   [0.0, 0.0, 1.0, 0.0],
                 scale:                 [1.0; 3],
@@ -218,6 +386,7 @@ impl<'a> SceneLoader<'a> {
             self.append_blueprint_collision(
                 kind,
                 &model_name,
+                None,
                 root_id,
                 [0.0; 3],
                 [0.0, 0.0, 1.0, 0.0],
@@ -260,6 +429,7 @@ impl<'a> SceneLoader<'a> {
             .map_err(|error| RendererError::invalid(error.to_string()))?;
         let git = GitFile::from_resman(self.resman, area_name, CachePolicy::Use)
             .map_err(|error| RendererError::invalid(error.to_string()))?;
+        let area_objects = area_object_catalog(&git);
         let tileset_name = area
             .tileset
             .as_deref()
@@ -366,9 +536,11 @@ impl<'a> SceneLoader<'a> {
             let orientation = tile.orientation.unwrap_or_default().rem_euclid(4) as f32 * FRAC_PI_2;
             instances.push(RenderInstance {
                 id:                    instances.len(),
+                object_key:            None,
                 label:                 format!("Tile {} ({}, {})", tile.index, tile.x, tile.y),
                 kind:                  RenderInstanceKind::Tile,
                 model:                 Some(model_index),
+                resource:              Some(format!("{model_name}.mdl")),
                 position:              [
                     tile.x as f32 * 10.0,
                     tile.y as f32 * 10.0,
@@ -478,9 +650,11 @@ impl<'a> SceneLoader<'a> {
                 if let Some(walkmesh_index) = walkmesh_index {
                     instances.push(RenderInstance {
                         id:                    instances.len(),
+                        object_key:            None,
                         label:                 format!("Tile {} collision", tile.index),
                         kind:                  RenderInstanceKind::Collision,
                         model:                 Some(walkmesh_index),
+                        resource:              Some(format!("{walkmesh_name}.wok")),
                         position:              [
                             tile.x as f32 * 10.0,
                             tile.y as f32 * 10.0,
@@ -496,6 +670,7 @@ impl<'a> SceneLoader<'a> {
         }
         self.append_git_visuals(
             &git,
+            &area_objects,
             git_id,
             &mut model_indices,
             &mut models,
@@ -503,7 +678,7 @@ impl<'a> SceneLoader<'a> {
             &mut dependencies,
             &mut diagnostics,
         );
-        append_git_overlays(&git, &mut instances);
+        append_git_overlays(&git, &area_objects, &mut instances);
         self.append_skybox(
             &area,
             area_id,
@@ -605,6 +780,7 @@ impl<'a> SceneLoader<'a> {
     fn append_git_visuals(
         &mut self,
         git: &GitFile,
+        area_objects: &[RenderAreaObject],
         git_id: usize,
         model_indices: &mut std::collections::BTreeMap<String, usize>,
         models: &mut Vec<ModelScene>,
@@ -612,9 +788,10 @@ impl<'a> SceneLoader<'a> {
         dependencies: &mut DependencyGraph,
         diagnostics: &mut Vec<RenderDiagnostic>,
     ) {
-        for creature in &git.creatures {
+        for (index, creature) in git.creatures.iter().enumerate() {
             self.append_blueprint_instance(
                 NwnBlueprintKind::Creature,
+                area_object_key(area_objects, RenderInstanceKind::Creature, index),
                 creature.template_resref.as_deref(),
                 &creature.raw,
                 creature.tag.as_deref().unwrap_or("Creature"),
@@ -627,9 +804,10 @@ impl<'a> SceneLoader<'a> {
                 diagnostics,
             );
         }
-        for door in &git.doors {
+        for (index, door) in git.doors.iter().enumerate() {
             self.append_blueprint_instance(
                 NwnBlueprintKind::Door,
+                area_object_key(area_objects, RenderInstanceKind::Door, index),
                 door.template_resref.as_deref(),
                 &door.raw,
                 door.tag.as_deref().unwrap_or("Door"),
@@ -642,9 +820,10 @@ impl<'a> SceneLoader<'a> {
                 diagnostics,
             );
         }
-        for placeable in &git.placeables {
+        for (index, placeable) in git.placeables.iter().enumerate() {
             self.append_blueprint_instance(
                 NwnBlueprintKind::Placeable,
+                area_object_key(area_objects, RenderInstanceKind::Placeable, index),
                 placeable.template_resref.as_deref(),
                 &placeable.raw,
                 placeable.tag.as_deref().unwrap_or("Placeable"),
@@ -770,9 +949,11 @@ impl<'a> SceneLoader<'a> {
         };
         instances.push(RenderInstance {
             id:                    instances.len(),
+            object_key:            None,
             label:                 format!("Skybox {skybox_id} ({model_name})"),
             kind:                  RenderInstanceKind::Skybox,
             model:                 Some(model_index),
+            resource:              Some(format!("{model_name}.mdl")),
             position:              [0.0; 3],
             rotation_axis_angle:   [0.0, 0.0, 1.0, 0.0],
             scale:                 [1.0; 3],
@@ -842,6 +1023,7 @@ impl<'a> SceneLoader<'a> {
     fn append_blueprint_instance(
         &mut self,
         kind: NwnBlueprintKind,
+        object_key: &str,
         template: Option<&str>,
         raw: &GffStruct,
         label: &str,
@@ -900,9 +1082,11 @@ impl<'a> SceneLoader<'a> {
                 });
             instances.push(RenderInstance {
                 id:                    instances.len(),
+                object_key:            Some(object_key.to_string()),
                 label:                 label.to_string(),
                 kind:                  render_kind_for_blueprint(kind),
                 model:                 Some(model_index),
+                resource:              Some(format!("{model_name}.mdl")),
                 position:              transform_position(transform),
                 rotation_axis_angle:   transform_rotation(transform),
                 scale:                 [1.0; 3],
@@ -912,6 +1096,7 @@ impl<'a> SceneLoader<'a> {
             self.append_blueprint_collision(
                 kind,
                 &model_name,
+                Some(object_key),
                 blueprint_id.unwrap_or(git_id),
                 transform_position(transform),
                 transform_rotation(transform),
@@ -929,6 +1114,7 @@ impl<'a> SceneLoader<'a> {
         &mut self,
         kind: NwnBlueprintKind,
         model_name: &str,
+        object_key: Option<&str>,
         parent_id: usize,
         position: [f32; 3],
         rotation: [f32; 4],
@@ -995,7 +1181,7 @@ impl<'a> SceneLoader<'a> {
                             severity: RenderDiagnosticSeverity::Error,
                             code:     "blueprint.collision.invalid".into(),
                             message:  format!("could not parse {filename}: {error}"),
-                            resource: Some(filename),
+                            resource: Some(filename.clone()),
                         });
                         None
                     }
@@ -1016,9 +1202,11 @@ impl<'a> SceneLoader<'a> {
         if let Some(model) = model_index {
             instances.push(RenderInstance {
                 id: instances.len(),
+                object_key: object_key.map(str::to_string),
                 label: format!("{model_name} collision"),
                 kind: RenderInstanceKind::Collision,
                 model: Some(model),
+                resource: Some(filename),
                 position,
                 rotation_axis_angle: rotation,
                 scale: [1.0; 3],
@@ -1265,28 +1453,47 @@ fn model_tree_contains_name(model: &ModelScene, name: &str) -> bool {
     }
 }
 
-fn append_git_overlays(git: &GitFile, target: &mut Vec<RenderInstance>) {
-    for trigger in &git.triggers {
+fn area_object_key(
+    objects: &[RenderAreaObject],
+    kind: RenderInstanceKind,
+    source_index: usize,
+) -> &str {
+    objects
+        .iter()
+        .find(|object| object.kind == kind && object.source_index == source_index)
+        .map(|object| object.key.as_str())
+        .expect("area object catalog must contain every authored GIT object")
+}
+
+fn append_git_overlays(
+    git: &GitFile,
+    area_objects: &[RenderAreaObject],
+    target: &mut Vec<RenderInstance>,
+) {
+    for (index, trigger) in git.triggers.iter().enumerate() {
         push_polygon_instance(
             target,
+            area_object_key(area_objects, RenderInstanceKind::Trigger, index),
             trigger.tag.as_deref().unwrap_or("Trigger"),
             RenderInstanceKind::Trigger,
             &trigger.transform,
             &trigger.geometry,
         );
     }
-    for encounter in &git.encounters {
+    for (index, encounter) in git.encounters.iter().enumerate() {
         push_polygon_instance(
             target,
+            area_object_key(area_objects, RenderInstanceKind::Encounter, index),
             encounter.tag.as_deref().unwrap_or("Encounter"),
             RenderInstanceKind::Encounter,
             &encounter.transform,
             &encounter.geometry,
         );
     }
-    for waypoint in &git.waypoints {
+    for (index, waypoint) in git.waypoints.iter().enumerate() {
         push_marker_instance(
             target,
+            area_object_key(area_objects, RenderInstanceKind::Waypoint, index),
             waypoint.tag.as_deref().unwrap_or("Waypoint"),
             RenderInstanceKind::Waypoint,
             &waypoint.transform,
@@ -1294,9 +1501,10 @@ fn append_git_overlays(git: &GitFile, target: &mut Vec<RenderInstance>) {
             4,
         );
     }
-    for sound in &git.sounds {
+    for (index, sound) in git.sounds.iter().enumerate() {
         push_marker_instance(
             target,
+            area_object_key(area_objects, RenderInstanceKind::Sound, index),
             sound.tag.as_deref().unwrap_or("Sound"),
             RenderInstanceKind::Sound,
             &sound.transform,
@@ -1304,9 +1512,10 @@ fn append_git_overlays(git: &GitFile, target: &mut Vec<RenderInstance>) {
             48,
         );
     }
-    for store in &git.stores {
+    for (index, store) in git.stores.iter().enumerate() {
         push_marker_instance(
             target,
+            area_object_key(area_objects, RenderInstanceKind::Store, index),
             store.tag.as_deref().unwrap_or("Store"),
             RenderInstanceKind::Store,
             &store.transform,
@@ -1360,6 +1569,7 @@ fn palette_color(palette: &[Option<[f32; 3]>], index: Option<i32>) -> Option<[f3
 
 fn push_marker_instance(
     target: &mut Vec<RenderInstance>,
+    object_key: &str,
     label: &str,
     kind: RenderInstanceKind,
     transform: &nwnrs_types::gff::GitTransform,
@@ -1368,9 +1578,11 @@ fn push_marker_instance(
 ) {
     target.push(RenderInstance {
         id: target.len(),
+        object_key: Some(object_key.to_string()),
         label: label.to_string(),
         kind,
         model: None,
+        resource: None,
         position: transform_position(transform),
         rotation_axis_angle: transform_rotation(transform),
         scale: [1.0; 3],
@@ -1386,6 +1598,7 @@ fn push_marker_instance(
 
 fn push_polygon_instance(
     target: &mut Vec<RenderInstance>,
+    object_key: &str,
     label: &str,
     kind: RenderInstanceKind,
     transform: &nwnrs_types::gff::GitTransform,
@@ -1393,9 +1606,11 @@ fn push_polygon_instance(
 ) {
     target.push(RenderInstance {
         id: target.len(),
+        object_key: Some(object_key.to_string()),
         label: label.to_string(),
         kind,
         model: None,
+        resource: None,
         position: transform_position(transform),
         rotation_axis_angle: transform_rotation(transform),
         scale: [1.0; 3],

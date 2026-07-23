@@ -18,8 +18,8 @@ pub use scene::*;
 pub mod prelude {
     pub use crate::{
         AreaScene, DependencyEdge, DependencyGraph, DependencyKind, DependencyNode,
-        DependencyState, ModelScene, RenderDiagnostic, RenderDiagnosticSeverity, RenderEnvironment,
-        RenderInstance, RenderInstanceKind, RenderScene, RendererError, RendererResult,
-        SceneLoader, ScenePacket, ScenePacketManifest, SceneSource,
+        DependencyState, ModelScene, RenderAreaObject, RenderDiagnostic, RenderDiagnosticSeverity,
+        RenderEnvironment, RenderInstance, RenderInstanceKind, RenderScene, RendererError,
+        RendererResult, SceneLoader, ScenePacket, ScenePacketManifest, SceneSource,
     };
 }

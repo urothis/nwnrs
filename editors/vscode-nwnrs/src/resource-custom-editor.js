@@ -23,6 +23,17 @@ const VIEWER_EXTENSIONS = new Set([
   '.are', '.git', '.ifo',
 ]);
 const TEXT_DEPENDENCY_EXTENSIONS = new Set(['.mtr', '.txi', '.shd', '.set']);
+const TEXT_RESOURCE_EXTENSIONS = new Set([
+  ...TEXT_DEPENDENCY_EXTENSIONS,
+  '.nss', '.lua', '.txt', '.ini', '.css',
+]);
+const CUSTOM_RESOURCE_EXTENSIONS = new Set([
+  '.2da', '.tlk', '.dds', '.tga', '.plt', '.gff',
+  '.utc', '.utd', '.ute', '.uti', '.utm', '.utp', '.uts', '.utt', '.utw',
+  '.git', '.are', '.gic', '.ifo', '.fac', '.dlg', '.itp', '.bic', '.jrl', '.gui',
+  '.erf', '.hak', '.mod', '.nwm', '.key', '.ncs', '.ndb',
+  ...VIEWER_EXTENSIONS,
+]);
 
 class ResourceCustomDocument {
   constructor(uri, worker, id, snapshot, parent, resource) {
@@ -101,6 +112,8 @@ class ResourceCustomEditorProvider {
     this.viewerChangedPaths = new Set();
     this._onDidChangeCustomDocument = new vscode.EventEmitter();
     this.onDidChangeCustomDocument = this._onDidChangeCustomDocument.event;
+    this._onDidSelectAreaObject = new vscode.EventEmitter();
+    this.onDidSelectAreaObject = this._onDidSelectAreaObject.event;
     this.worker = new ResourceEditorWorkerClient(
       path.join(__dirname, 'resource-editor-worker.js'),
       nativeBindingPath(context.extensionPath),
@@ -115,26 +128,22 @@ class ResourceCustomEditorProvider {
 
   register() {
     const viewerWatcher = vscode.workspace.createFileSystemWatcher(
-      '**/*.{mdl,wok,dwk,pwk,utc,utd,utp,uti,are,git,ifo,set,2da,mtr,txi,shd,dds,tga,plt,mod,erf,hak,nwm}',
+      '**/*.{mdl,wok,dwk,pwk,utc,utd,utp,uti,are,git,ifo,set,2da,mtr,txi,shd,dds,tga,plt,mod,erf,hak,nwm,json}',
     );
+    const scriptDebugWatcher = vscode.workspace.createFileSystemWatcher('**/*.{ncs,ndb,nss}');
     const changed = (uri) => this.scheduleViewerRefresh(uri);
+    const scriptDebugChanged = () => this.scheduleScriptDebugRefresh();
     this.context.subscriptions.push(
       this.worker,
       this.viewerWorker,
       this._onDidChangeCustomDocument,
+      this._onDidSelectAreaObject,
       vscode.window.registerCustomEditorProvider(VIEW_TYPE, this, {
         webviewOptions: { retainContextWhenHidden: false },
         supportsMultipleEditorsPerDocument: true,
       }),
       vscode.workspace.registerTextDocumentContentProvider(VIEWER_TEXT_SCHEME, {
-        provideTextDocumentContent: (uri) => {
-          const id = new URLSearchParams(uri.query).get('id');
-          const contents = this.viewerTextResources.get(id);
-          if (contents === undefined) {
-            throw new Error('The virtual nwnrs text dependency is no longer available.');
-          }
-          return contents;
-        },
+        provideTextDocumentContent: (uri) => this.virtualTextContents(uri),
       }),
       vscode.workspace.onDidCloseTextDocument((document) => {
         if (document.uri.scheme !== VIEWER_TEXT_SCHEME) return;
@@ -145,7 +154,77 @@ class ResourceCustomEditorProvider {
       viewerWatcher.onDidCreate(changed),
       viewerWatcher.onDidChange(changed),
       viewerWatcher.onDidDelete(changed),
+      scriptDebugWatcher,
+      scriptDebugWatcher.onDidCreate(scriptDebugChanged),
+      scriptDebugWatcher.onDidChange(scriptDebugChanged),
+      scriptDebugWatcher.onDidDelete(scriptDebugChanged),
     );
+  }
+
+  scheduleScriptDebugRefresh() {
+    clearTimeout(this.scriptDebugRefreshTimer);
+    this.scriptDebugRefreshTimer = setTimeout(() => {
+      this.scriptDebugRefreshTimer = undefined;
+      const previous = this.scriptDebugRefreshPromise || Promise.resolve();
+      this.scriptDebugRefreshPromise = previous.catch(() => {}).then(async () => {
+        const documents = [...this.documents.values()].filter((document) => document.snapshot?.kind === 'ncs' || document.snapshot?.kind === 'ndb');
+        for (const document of documents) {
+          if (document.parent || document.uri.scheme !== 'file' || document.dirty) continue;
+          try {
+            await document.revert();
+            await this.enrichScriptDebugDocument(document);
+            await this.broadcast(document);
+          } catch (error) {
+            this.output.appendLine(`Could not refresh script workbench ${document.uri.fsPath}: ${error.message || error}`);
+          }
+        }
+      });
+      void this.scriptDebugRefreshPromise.catch((error) => {
+        this.output.appendLine(`Could not refresh script workbenches: ${error.message || error}`);
+      });
+    }, 100);
+  }
+
+  async virtualTextContents(uri) {
+    const id = new URLSearchParams(uri.query).get('id');
+    if (!id) throw new Error('The virtual nwnrs text URI is missing its resource identity.');
+    const cached = this.viewerTextResources.get(id);
+    if (cached !== undefined) return cached;
+    const descriptor = decodeVirtualResourceDescriptor(uri);
+    if (!descriptor) {
+      throw new Error('This virtual nwnrs text tab predates restart-safe resources. Close it and open the dependency again.');
+    }
+    const resourceBytes = await this.viewerWorker.readResource(descriptor.request);
+    const contents = Buffer.from(
+      resourceBytes.buffer,
+      resourceBytes.byteOffset,
+      resourceBytes.byteLength,
+    ).toString('utf8');
+    this.viewerTextResources.set(id, contents);
+    return contents;
+  }
+
+  async resolveVirtualResource(uri) {
+    const id = new URLSearchParams(uri.query).get('id');
+    if (!id) throw new Error('The virtual nwnrs resource URI is missing its resource identity.');
+    const cached = this.viewerResources.get(id);
+    if (cached) return cached;
+    const descriptor = decodeVirtualResourceDescriptor(uri);
+    if (!descriptor) {
+      throw new Error('This virtual nwnrs tab predates restart-safe resources. Close it and open the resource again.');
+    }
+    let contents;
+    if (!descriptor.request.authored_area) {
+      const resourceBytes = await this.viewerWorker.readResource(descriptor.request);
+      contents = Buffer.from(
+        resourceBytes.buffer,
+        resourceBytes.byteOffset,
+        resourceBytes.byteLength,
+      );
+    }
+    const resolved = { contents, request: descriptor.request };
+    this.viewerResources.set(id, resolved);
+    return resolved;
   }
 
   scheduleViewerRefresh(changedUri) {
@@ -207,13 +286,14 @@ class ResourceCustomEditorProvider {
     let resource;
     let viewerContents;
     let viewerRequestOverride;
+    let selectedAreaObjectKey;
     const viewer = VIEWER_EXTENSIONS.has(path.extname(uri.path).toLowerCase());
     if (uri.scheme === VIEWER_RESOURCE_SCHEME) {
       const virtualResourceId = new URLSearchParams(uri.query).get('id');
-      const virtual = this.viewerResources.get(virtualResourceId);
-      if (!virtual) throw new Error('The virtual nwnrs dependency is no longer available.');
+      const virtual = await this.resolveVirtualResource(uri);
       viewerContents = virtual.contents;
       viewerRequestOverride = virtual.request;
+      selectedAreaObjectKey = virtual.selectedObjectKey;
       if (viewer) snapshot = viewerSnapshot(uri.path);
       else snapshot = await this.worker.request('openDocumentBytes', {
         documentId: id,
@@ -267,6 +347,10 @@ class ResourceCustomEditorProvider {
     document.viewer = viewer;
     document.viewerContents = viewerContents;
     document.viewerRequestOverride = viewerRequestOverride;
+    document.selectedAreaObjectKey = selectedAreaObjectKey;
+    document.viewerSourcePaths = Object.values(
+      viewerRequestOverride?.authored_area || {},
+    ).filter((value) => typeof value === 'string' && path.isAbsolute(value));
     document.scenePacket = undefined;
     document.scenePacketPromise = undefined;
     document.sceneGeneration = 0;
@@ -276,6 +360,9 @@ class ResourceCustomEditorProvider {
     document.virtualResourceId = uri.scheme === VIEWER_RESOURCE_SCHEME
       ? new URLSearchParams(uri.query).get('id')
       : undefined;
+    if (snapshot.kind === 'ncs' || snapshot.kind === 'ndb') {
+      await this.enrichScriptDebugDocument(document, cancellationToken);
+    }
     this.documents.set(key, document);
     this.documentsById.set(id, document);
     document.onDidDispose(() => {
@@ -290,18 +377,24 @@ class ResourceCustomEditorProvider {
   watchViewerSource(document) {
     if (!document.viewer) return;
     const sourceUri = document.parent?.uri || document.uri;
-    if (sourceUri?.scheme !== 'file' || !sourceUri.fsPath) return;
-    const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(
-      path.dirname(sourceUri.fsPath),
-      path.basename(sourceUri.fsPath),
-    ));
+    const sourcePaths = new Set(document.viewerSourcePaths || []);
+    if (sourceUri?.scheme === 'file' && sourceUri.fsPath) sourcePaths.add(sourceUri.fsPath);
+    if (sourcePaths.size === 0) return;
     const changed = (uri) => this.scheduleViewerRefresh(uri);
-    const disposable = vscode.Disposable.from(
-      watcher,
-      watcher.onDidCreate(changed),
-      watcher.onDidChange(changed),
-      watcher.onDidDelete(changed),
-    );
+    const watchers = [];
+    for (const sourcePath of sourcePaths) {
+      const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(
+        path.dirname(sourcePath),
+        path.basename(sourcePath),
+      ));
+      watchers.push(
+        watcher,
+        watcher.onDidCreate(changed),
+        watcher.onDidChange(changed),
+        watcher.onDidDelete(changed),
+      );
+    }
+    const disposable = vscode.Disposable.from(...watchers);
     document.onDidDispose(() => disposable.dispose());
     this.context.subscriptions.push(disposable);
   }
@@ -338,6 +431,26 @@ class ResourceCustomEditorProvider {
             document.sceneArea = message.area || undefined;
             this.invalidateScene(document);
             await this.broadcast(document);
+          }
+          break;
+        case 'selectAreaObject':
+          if (document.viewerRequestOverride?.authored_area) {
+            document.selectedAreaObjectKey = typeof message.objectKey === 'string'
+              ? message.objectKey
+              : undefined;
+            const request = this.viewerRequest(document);
+            this._onDidSelectAreaObject.fire({
+              manifestPath: request.session_key,
+              resref: request.authored_area.resref,
+              objectKey: document.selectedAreaObjectKey,
+            });
+            await Promise.all([...document.views]
+              .filter((candidate) => candidate !== view && candidate.ready)
+              .map((candidate) => candidate.webview.postMessage({
+                type: 'selectAreaObject',
+                objectKey: document.selectedAreaObjectKey || null,
+                frame: false,
+              })));
           }
           break;
         case 'loadAnimation':
@@ -391,6 +504,11 @@ class ResourceCustomEditorProvider {
         case 'openDependency':
           if (document.viewer) await this.openDependency(document, message.resource);
           break;
+        case 'openScriptSource':
+          if (document.snapshot?.kind === 'ncs' || document.snapshot?.kind === 'ndb') {
+            await this.openScriptSource(document, message.file, message.line);
+          }
+          break;
         case 'edit':
           await this.recordEdit(document, message.edit);
           break;
@@ -409,9 +527,6 @@ class ResourceCustomEditorProvider {
           break;
         case 'exportEntry':
           await this.exportEntry(document, message.resource);
-          break;
-        case 'importTexture':
-          await this.selectTexture(view.webview);
           break;
         case 'showError':
           this.output.appendLine(
@@ -469,7 +584,7 @@ class ResourceCustomEditorProvider {
     } catch (error) {
       if (String(error.message).includes('READ_ONLY_ORIGIN')) {
         const destination = await this.pickOverrideDestination(document);
-        if (!destination) throw new Error('Save as Override was cancelled.');
+        if (!destination) throw new Error('Save was cancelled.');
         await document.request('saveDocumentAs', { path: destination.fsPath }, cancellationToken);
       } else if (String(error.message).includes('EXTERNAL_CHANGE')) {
         const choice = await vscode.window.showWarningMessage(
@@ -507,6 +622,9 @@ class ResourceCustomEditorProvider {
       return;
     }
     await document.revert(cancellationToken);
+    if (document.snapshot?.kind === 'ncs' || document.snapshot?.kind === 'ndb') {
+      await this.enrichScriptDebugDocument(document, cancellationToken);
+    }
     await this.broadcast(document);
   }
 
@@ -527,7 +645,11 @@ class ResourceCustomEditorProvider {
     if (document.viewer) {
       if (!view.ready) return false;
       const packet = await this.scenePacket(document);
-      return view.webview.postMessage({ type: 'scene', packet });
+      return view.webview.postMessage({
+        type: 'scene',
+        packet,
+        selectedObjectKey: document.selectedAreaObjectKey || null,
+      });
     }
     await postResourceSnapshot(document, view);
   }
@@ -550,7 +672,11 @@ class ResourceCustomEditorProvider {
     if (recovered.generation !== document.sceneGeneration) return;
     await Promise.all([...document.views]
       .filter((view) => view.ready)
-      .map((view) => view.webview.postMessage({ type: 'scene', packet: recovered.packet })));
+      .map((view) => view.webview.postMessage({
+        type: 'scene',
+        packet: recovered.packet,
+        selectedObjectKey: document.selectedAreaObjectKey || null,
+      })));
   }
 
   async scenePacket(document) {
@@ -617,16 +743,173 @@ class ResourceCustomEditorProvider {
     };
   }
 
+  async enrichScriptDebugDocument(document, cancellationToken) {
+    const diagnostics = [];
+    const primary = document.snapshot.kind;
+    const base = path.basename(document.uri.path, path.extname(document.uri.path));
+    const companion = primary === 'ncs' ? `${base}.ndb` : `${base}.ncs`;
+    const companionBytes = await this.readScriptDebugResource(document, companion, cancellationToken);
+    if (companionBytes) {
+      try {
+        document.snapshot = await document.request('configureScriptDebug', {
+          [primary === 'ncs' ? 'ndb' : 'ncs']: companionBytes.toString('base64'),
+        }, cancellationToken);
+      } catch (error) {
+        diagnostics.push(`Could not use ${companion}: ${error.message || error}`);
+      }
+    }
+    const langspec = await this.readScriptDebugResource(document, 'nwscript.nss', cancellationToken);
+    if (langspec) {
+      try {
+        document.snapshot = await document.request('configureScriptDebug', {
+          langspec: langspec.toString('base64'),
+        }, cancellationToken);
+      } catch (error) {
+        diagnostics.push(`Could not use nwscript.nss: ${error.message || error}`);
+      }
+    }
+    const sourceFiles = document.snapshot.data?.sourceFiles || [];
+    const sources = {};
+    await Promise.all(sourceFiles.map(async (source) => {
+      const name = String(source.name || '');
+      if (!validScriptDebugResref(name)) return;
+      const resource = name.toLowerCase().endsWith('.nss') ? name : `${name}.nss`;
+      const bytes = await this.readScriptDebugResource(document, resource, cancellationToken);
+      if (bytes) sources[name] = bytes.toString('base64');
+    }));
+    if (Object.keys(sources).length > 0) {
+      try {
+        document.snapshot = await document.request('configureScriptDebug', { sources }, cancellationToken);
+      } catch (error) {
+        diagnostics.push(`Could not map NDB source files: ${error.message || error}`);
+      }
+    }
+    if (diagnostics.length > 0 && document.snapshot.data) {
+      document.snapshot.data.diagnostics = [
+        ...(document.snapshot.data.diagnostics || []),
+        ...diagnostics,
+      ];
+    }
+  }
+
+  async readScriptDebugResource(document, resource, cancellationToken) {
+    if (!resource || path.basename(resource) !== resource) return undefined;
+    if (document.parent) {
+      try {
+        return Buffer.from(await document.parent.readEntryBytes(resource, cancellationToken));
+      } catch {
+        // The archive does not contain the companion; continue through normal
+        // package/install precedence.
+      }
+    }
+    if (document.uri.scheme === 'file') {
+      const sibling = path.join(path.dirname(document.uri.fsPath), resource);
+      try {
+        return await fs.promises.readFile(sibling);
+      } catch (error) {
+        if (error?.code !== 'ENOENT') throw error;
+      }
+    }
+    try {
+      const request = this.viewerRequest(document);
+      request.path = path.join(request.project_root, resource);
+      request.area = null;
+      const bytes = await this.viewerWorker.readResource(request);
+      return Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    } catch {
+      return undefined;
+    }
+  }
+
+  async openScriptSource(document, file, line) {
+    const name = String(file || '');
+    if (!validScriptDebugResref(name)) return;
+    const resource = name.toLowerCase().endsWith('.nss') ? name : `${name}.nss`;
+    const selection = new vscode.Range(
+      Math.max(0, Number(line || 1) - 1),
+      0,
+      Math.max(0, Number(line || 1) - 1),
+      0,
+    );
+    if (document.uri.scheme === 'file') {
+      const sibling = path.join(path.dirname(document.uri.fsPath), resource);
+      try {
+        await fs.promises.access(sibling, fs.constants.R_OK);
+        const textDocument = await vscode.workspace.openTextDocument(vscode.Uri.file(sibling));
+        await vscode.window.showTextDocument(textDocument, { preview: true, selection });
+        return;
+      } catch (error) {
+        if (error?.code !== 'ENOENT') throw error;
+      }
+    }
+    const request = this.viewerRequest(document);
+    request.path = path.join(request.project_root, resource);
+    request.area = null;
+    if (document.parent) {
+      try {
+        const bytes = Buffer.from(await document.parent.readEntryBytes(resource));
+        await this.showVirtualScriptSource(request, resource, bytes, selection);
+        return;
+      } catch {
+        // Continue through package/install precedence when the archive has no
+        // matching source entry.
+      }
+    }
+    const resolved = await this.viewerWorker.resolveResource(request);
+    if (resolved.file_path) {
+      const textDocument = await vscode.workspace.openTextDocument(vscode.Uri.file(resolved.file_path));
+      await vscode.window.showTextDocument(textDocument, { preview: true, selection });
+      return;
+    }
+    const resourceBytes = await this.viewerWorker.readResource(request);
+    const contents = Buffer.from(
+      resourceBytes.buffer,
+      resourceBytes.byteOffset,
+      resourceBytes.byteLength,
+    );
+    await this.showVirtualScriptSource(request, resource, contents, selection);
+  }
+
+  async showVirtualScriptSource(request, resource, contents, selection) {
+    const id = crypto.randomUUID();
+    this.viewerTextResources.set(id, contents.toString('utf8'));
+    const uri = vscode.Uri.from({
+      scheme: VIEWER_TEXT_SCHEME,
+      authority: 'game',
+      path: `/${resource}`,
+      query: virtualResourceQuery(id, resource, request),
+    });
+    try {
+      const textDocument = await vscode.workspace.openTextDocument(uri);
+      await vscode.window.showTextDocument(textDocument, { preview: true, selection });
+    } catch (error) {
+      this.viewerTextResources.delete(id);
+      throw error;
+    }
+  }
+
   async openDependency(document, resource) {
     if (!resource || path.basename(resource) !== resource) return;
     const request = this.viewerRequest(document);
+    await this.openResolvedResource(request, resource);
+  }
+
+  canOpenResource(resource, filePath) {
+    if (filePath) return true;
+    const extension = path.extname(resource).toLowerCase();
+    return TEXT_RESOURCE_EXTENSIONS.has(extension) || CUSTOM_RESOURCE_EXTENSIONS.has(extension);
+  }
+
+  async openResolvedResource(baseRequest, resource) {
+    if (!resource || path.basename(resource) !== resource) return;
+    const request = { ...baseRequest };
     request.path = path.join(request.project_root, resource);
     request.area = null;
     const resolved = await this.viewerWorker.resolveResource(request);
     const extension = path.extname(resource).toLowerCase();
     if (resolved.file_path) {
       const uri = vscode.Uri.file(resolved.file_path);
-      if (TEXT_DEPENDENCY_EXTENSIONS.has(extension)) {
+      if (TEXT_RESOURCE_EXTENSIONS.has(extension) || !CUSTOM_RESOURCE_EXTENSIONS.has(extension)) {
         await vscode.commands.executeCommand('vscode.open', uri);
       } else {
         await vscode.commands.executeCommand('vscode.openWith', uri, VIEW_TYPE);
@@ -643,13 +926,13 @@ class ResourceCustomEditorProvider {
       resourceBytes.byteLength,
     );
     const id = crypto.randomUUID();
-    if (TEXT_DEPENDENCY_EXTENSIONS.has(extension)) {
+    if (TEXT_RESOURCE_EXTENSIONS.has(extension)) {
       this.viewerTextResources.set(id, contents.toString('utf8'));
       const uri = vscode.Uri.from({
         scheme: VIEWER_TEXT_SCHEME,
         authority: 'game',
         path: `/${resource}`,
-        query: new URLSearchParams({ id }).toString(),
+        query: virtualResourceQuery(id, resource, request),
       });
       try {
         const textDocument = await vscode.workspace.openTextDocument(uri);
@@ -660,14 +943,51 @@ class ResourceCustomEditorProvider {
       }
       return;
     }
+    if (!CUSTOM_RESOURCE_EXTENSIONS.has(extension)) {
+      throw new Error(`No nwnrs editor is registered for packed ${extension || 'unknown'} resources.`);
+    }
     this.viewerResources.set(id, { contents, request });
     const uri = vscode.Uri.from({
       scheme: VIEWER_RESOURCE_SCHEME,
       authority: 'game',
       path: `/${resource}`,
-      query: new URLSearchParams({ id }).toString(),
+      query: virtualResourceQuery(id, resource, request),
     });
     try {
+      await vscode.commands.executeCommand('vscode.openWith', uri, VIEW_TYPE);
+    } catch (error) {
+      this.viewerResources.delete(id);
+      throw error;
+    }
+  }
+
+  async openAuthoredArea(baseRequest, area, selectedObjectKey) {
+    const request = authoredAreaRequest(baseRequest, area);
+    const id = authoredAreaVirtualId(request);
+    this.viewerResources.set(id, {
+      contents: undefined,
+      request,
+      selectedObjectKey,
+    });
+    const uri = vscode.Uri.from({
+      scheme: VIEWER_RESOURCE_SCHEME,
+      authority: 'source',
+      path: `/${area.resref}.are`,
+      query: virtualResourceQuery(id, `${area.resref}.are`, request),
+    });
+    try {
+      const existing = this.documents.get(uri.toString());
+      if (existing) {
+        existing.viewerRequestOverride = request;
+        existing.selectedAreaObjectKey = selectedObjectKey;
+        await Promise.all([...existing.views]
+          .filter((view) => view.ready)
+          .map((view) => view.webview.postMessage({
+            type: 'selectAreaObject',
+            objectKey: selectedObjectKey || null,
+            frame: Boolean(selectedObjectKey),
+          })));
+      }
       await vscode.commands.executeCommand('vscode.openWith', uri, VIEW_TYPE);
     } catch (error) {
       this.viewerResources.delete(id);
@@ -690,6 +1010,9 @@ class ResourceCustomEditorProvider {
           this.viewerWorker.invalidate(this.viewerRequest(child).session_key);
         } else {
           await child.revert();
+          if (child.snapshot?.kind === 'ncs' || child.snapshot?.kind === 'ndb') {
+            await this.enrichScriptDebugDocument(child);
+          }
         }
         await this.broadcast(child);
       } catch (error) {
@@ -744,21 +1067,6 @@ class ResourceCustomEditorProvider {
     await vscode.workspace.fs.writeFile(destination, Buffer.from(payload.contents, 'base64'));
   }
 
-  async selectTexture(webview) {
-    const [uri] = await vscode.window.showOpenDialog({
-      canSelectMany: false,
-      openLabel: 'Import Texture Pixels',
-      filters: { Images: ['png', 'jpg', 'jpeg', 'webp', 'bmp', 'gif'] },
-    }) || [];
-    if (!uri) return;
-    const contents = await vscode.workspace.fs.readFile(uri);
-    await webview.postMessage({
-      type: 'textureFile',
-      name: path.basename(uri.fsPath),
-      contents: Buffer.from(contents).toString('base64'),
-    });
-  }
-
   async pickOverrideDestination(document) {
     const configuration = vscode.workspace.getConfiguration('nwnrs', document.uri);
     const configured = configuration.get('overrideDirectory', '').trim();
@@ -769,7 +1077,7 @@ class ResourceCustomEditorProvider {
       : vscode.Uri.file(path.basename(document.uri.path));
     return vscode.window.showSaveDialog({
       defaultUri,
-      saveLabel: 'Save as Override',
+      saveLabel: 'Save',
     });
   }
 
@@ -787,6 +1095,74 @@ class ResourceCustomEditorProvider {
   }
 }
 
+function virtualResourceQuery(id, resource, request) {
+  const descriptor = Buffer.from(JSON.stringify({
+    schema: 1,
+    resource,
+    request,
+  }), 'utf8').toString('base64url');
+  return new URLSearchParams({ id, context: descriptor }).toString();
+}
+
+function decodeVirtualResourceDescriptor(uri) {
+  const encoded = new URLSearchParams(uri.query).get('context');
+  if (!encoded || encoded.length > 65536) return undefined;
+  let descriptor;
+  try {
+    descriptor = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8'));
+  } catch {
+    return undefined;
+  }
+  if (!descriptor || descriptor.schema !== 1 || typeof descriptor.resource !== 'string') {
+    return undefined;
+  }
+  const resource = descriptor.resource;
+  if (!resource || path.basename(resource) !== resource
+      || path.basename(uri.path).toLowerCase() !== resource.toLowerCase()
+      || !validVirtualViewerRequest(descriptor.request, resource)) {
+    return undefined;
+  }
+  return { resource, request: descriptor.request };
+}
+
+function validVirtualViewerRequest(request, resource) {
+  if (!request || typeof request !== 'object' || Array.isArray(request)) return false;
+  if (typeof request.session_key !== 'string' || request.session_key.length === 0) return false;
+  if (typeof request.path !== 'string' || !path.isAbsolute(request.path)) return false;
+  if (typeof request.project_root !== 'string' || !path.isAbsolute(request.project_root)) return false;
+  if (path.basename(request.path).toLowerCase() !== resource.toLowerCase()) return false;
+  if (request.area != null && typeof request.area !== 'string') return false;
+  if (request.language != null && (typeof request.language !== 'string' || !request.language)) return false;
+  if (request.load_ovr != null && typeof request.load_ovr !== 'boolean') return false;
+  if (request.include_project_resources != null
+      && typeof request.include_project_resources !== 'boolean') return false;
+  for (const optionalPath of ['root', 'user']) {
+    const value = request[optionalPath];
+    if (value != null && (typeof value !== 'string' || !path.isAbsolute(value))) return false;
+  }
+  if (request.archives != null && (!Array.isArray(request.archives)
+      || request.archives.some((value) => typeof value !== 'string' || !path.isAbsolute(value)))) {
+    return false;
+  }
+  if (request.authored_area != null) {
+    const area = request.authored_area;
+    if (!area || typeof area !== 'object' || Array.isArray(area)
+        || typeof area.resref !== 'string' || !area.resref
+        || `${area.resref}.are`.toLowerCase() !== resource.toLowerCase()
+        || typeof area.are !== 'string' || !path.isAbsolute(area.are)
+        || typeof area.git !== 'string' || !path.isAbsolute(area.git)
+        || (area.gic != null && (typeof area.gic !== 'string' || !path.isAbsolute(area.gic)))) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function authoredAreaVirtualId(request) {
+  const identity = `${request.session_key}\0${request.authored_area.resref.toLowerCase()}`;
+  return `area-${crypto.createHash('sha256').update(identity).digest('hex').slice(0, 24)}`;
+}
+
 function viewerSnapshot(resourcePath) {
   return {
     path: resourcePath,
@@ -802,6 +1178,14 @@ function normalizeFilePath(value) {
   return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
 }
 
+function validScriptDebugResref(value) {
+  return typeof value === 'string'
+    && value.length > 0
+    && value.length <= 20
+    && path.basename(value) === value
+    && /^[A-Za-z0-9_]+(?:\.nss)?$/u.test(value);
+}
+
 function decodeScenePacketManifest(packetValue) {
   const packet = Buffer.from(packetValue);
   if (packet.length < 12 || packet.subarray(0, 8).toString('binary') !== 'NWNRS3D\0') {
@@ -815,17 +1199,51 @@ function decodeScenePacketManifest(packetValue) {
 
 function viewerAffectedByPaths(document, changedPaths, request) {
   if (changedPaths.size === 0) return true;
-  const directPaths = [document.uri?.fsPath, document.parent?.uri?.fsPath]
+  const directPaths = [
+    document.uri?.fsPath,
+    document.parent?.uri?.fsPath,
+    ...(document.viewerSourcePaths || []),
+  ]
     .filter(Boolean)
     .map(normalizeFilePath);
-  const projectRoot = normalizeFilePath(request.project_root);
   for (const changedPath of changedPaths) {
     if (directPaths.includes(changedPath)) return true;
     if ([...(document.viewerDependencyOrigins || [])].some((origin) => origin.includes(changedPath))) return true;
-    if (changedPath.startsWith(`${projectRoot}${path.sep}`)
-      && document.viewerDependencyResources?.has(path.basename(changedPath).toLowerCase())) return true;
+    if (document.viewerDependencyResources?.has(resourceNameForChangedPath(changedPath))) return true;
   }
   return false;
+}
+
+function authoredAreaRequest(baseRequest, area) {
+  if (!area?.resref) throw new Error('Area preview is missing its resource name.');
+  const byKind = new Map();
+  for (const file of area.files || []) {
+    const kind = String(file.kind || '').toLowerCase();
+    if (!['are', 'git', 'gic'].includes(kind)) continue;
+    if (byKind.has(kind)) {
+      throw new Error(`Area ${area.resref} has more than one ${kind.toUpperCase()} source.`);
+    }
+    byKind.set(kind, file.path);
+  }
+  if (!byKind.has('are') || !byKind.has('git')) {
+    throw new Error(`Area ${area.resref} requires both ARE and GIT sources.`);
+  }
+  return {
+    ...baseRequest,
+    path: path.join(path.dirname(baseRequest.path), `${area.resref}.are`),
+    area: null,
+    authored_area: {
+      resref: area.resref,
+      are: byKind.get('are'),
+      git: byKind.get('git'),
+      gic: byKind.get('gic') || null,
+    },
+  };
+}
+
+function resourceNameForChangedPath(changedPath) {
+  const basename = path.basename(changedPath).toLowerCase();
+  return basename.endsWith('.json') ? basename.slice(0, -'.json'.length) : basename;
 }
 
 function viewerAssetCacheMiss(error) {
@@ -836,7 +1254,11 @@ module.exports = {
   RESOURCE_SCHEME,
   VIEW_TYPE,
   ResourceCustomEditorProvider,
+  authoredAreaVirtualId,
+  authoredAreaRequest,
   decodeScenePacketManifest,
+  decodeVirtualResourceDescriptor,
+  virtualResourceQuery,
   viewerAssetCacheMiss,
   viewerAffectedByPaths,
 };

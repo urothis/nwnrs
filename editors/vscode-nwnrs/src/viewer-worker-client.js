@@ -38,6 +38,18 @@ class ViewerWorkerClient extends WorkerClient {
   resolveResource(request, cancellationToken) {
     return this.request('resolveResource', request, cancellationToken);
   }
+
+  inspectPackage(path, cancellationToken) {
+    return this.request('inspectPackage', { path }, cancellationToken);
+  }
+
+  inspectPackageSource(manifestPath, cancellationToken) {
+    return this.request('inspectPackageSource', { manifestPath }, cancellationToken);
+  }
+
+  listResources(request, cancellationToken) {
+    return this.request('listResources', request, cancellationToken);
+  }
 }
 
 module.exports = { ViewerWorkerClient };

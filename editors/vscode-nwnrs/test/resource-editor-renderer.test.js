@@ -28,6 +28,7 @@ function createRendererHarness() {
         value: '',
         dataset: {},
         type: '',
+        classList: { add() {}, toggle() {} },
         getContext() { return {}; },
       });
     }
@@ -174,6 +175,175 @@ test('viewer animation tracks interpolate and matrix inversion remains stable', 
     [0.2, 0.4, 0.6],
   );
   listeners.get('message')({ data: { type: 'snapshot', snapshot: { kind: 'unknown', path: 'done' } } });
+});
+
+test('Aurora emitter curves, extents, and linked ribbons preserve engine semantics', () => {
+  const { sandbox } = createRendererHarness();
+  assert.equal(sandbox.emitterCurve(0.25, 0.5, 0, 100, 0.8, false), 0.2);
+  assert.equal(sandbox.emitterCurve(0.25, 0.5, 0, 1, 0, true), 0.5);
+
+  const emitter = {
+    xSize: 1000,
+    ySize: 200,
+    properties: [
+      { name: 'lifeexp', values: [{ kind: 'float', value: 4 }] },
+      { name: 'velocity', values: [{ kind: 'float', value: 0.2 }] },
+      { name: 'randvel', values: [{ kind: 'float', value: 0.1 }] },
+      { name: 'mass', values: [{ kind: 'float', value: 0 }] },
+      { name: 'sizestart', values: [{ kind: 'float', value: 0.5 }] },
+      { name: 'sizeend', values: [{ kind: 'float', value: 0.25 }] },
+    ],
+  };
+  assert.deepEqual(Array.from(sandbox.emitterSpatialExtent(emitter)), [6.25, 2.25, 1.25]);
+
+  const particles = new Float32Array(30);
+  particles.set([
+    0, 0, 0, 0.25, 0.5, 0, 1, 1, 0.5, 0.25, 0, 0, 0.25, 0.25, 0,
+    0, 0, 2, 0.125, 0.25, 0, 0.5, 0.25, 0.5, 1, 0.25, 0, 0.25, 0.25, 0,
+  ]);
+  const ribbon = sandbox.buildLinkedParticleVertices(particles, 2, [4, 0, 1]);
+  assert.equal(ribbon.vertexCount, 6);
+  assert.ok(Array.from(ribbon.values.subarray(0, ribbon.vertexCount * 9)).every(Number.isFinite));
+  assert.equal(ribbon.values[8], 1);
+  assert.equal(ribbon.values[2 * 9 + 8], 0.5);
+  const retainedValues = ribbon.values;
+  assert.equal(
+    sandbox.buildLinkedParticleVertices(particles, 2, [4, 0, 1], ribbon).values,
+    retainedValues,
+  );
+  assert.match(rendererSource, /aRenderMode>0\.5/u);
+  assert.match(rendererSource, /renderMode === 'billboard_to_world_z'/u);
+  assert.match(rendererSource, /renderMode === 'linked'/u);
+});
+
+test('area-object bounds remain logical across visual fragments and support ray picking', () => {
+  const { sandbox } = createRendererHarness();
+  const scene = {
+    manifest: {
+      models: [],
+      areaObjects: [
+        { key: 'placeable:0', position: [4, 5, 0] },
+        { key: 'trigger:0', position: [10, 0, 0] },
+      ],
+      instances: [
+        {
+          objectKey: 'placeable:0', kind: 'placeable', model: null,
+          position: [4, 5, 0], rotationAxisAngle: [0, 0, 1, 0], scale: [1, 1, 1], polygon: [],
+        },
+        {
+          objectKey: 'placeable:0', kind: 'collision', model: null,
+          position: [4.1, 5.2, 0], rotationAxisAngle: [0, 0, 1, 0], scale: [1, 1, 1], polygon: [],
+        },
+        {
+          objectKey: 'trigger:0', kind: 'trigger', model: null,
+          position: [10, 0, 0], rotationAxisAngle: [0, 0, 1, 0], scale: [1, 1, 1],
+          polygon: [[-1, -1, 0], [1, -1, 0], [1, 1, 0], [-1, 1, 0]],
+        },
+      ],
+    },
+    binary: new Uint8Array(),
+  };
+  const catalog = sandbox.sceneBoundsCatalog(scene);
+  const placeable = catalog.objects.get('placeable:0');
+  assert.ok(placeable.min[0] < 4 && placeable.max[0] > 4.1);
+  assert.ok(placeable.min[2] < 0 && placeable.max[2] > 0);
+  assert.equal(
+    sandbox.rayBoundsDistance([10, 0, 5], [0, 0, -1], catalog.objects.get('trigger:0')),
+    4.875,
+  );
+  assert.equal(sandbox.rayBoundsDistance([20, 20, 5], [0, 0, -1], placeable), undefined);
+  assert.equal(sandbox.boxLineVertices(placeable).length, 24);
+});
+
+test('emitter volume affects scene framing without resizing selectable placeables', () => {
+  const { sandbox } = createRendererHarness();
+  const scene = {
+    manifest: {
+      models: [{
+        nodes: [{
+          name: 'mist', parent: null, translation: [0, 0, 0],
+          rotationAxisAngle: [0, 0, 1, 0], scale: [1, 1, 1],
+          emitter: {
+            xSize: 1000, ySize: 200,
+            properties: [
+              { name: 'lifeexp', values: [{ kind: 'float', value: 0 }] },
+              { name: 'sizestart', values: [{ kind: 'float', value: 2 }] },
+            ],
+          },
+        }],
+        meshes: [], attachments: [],
+      }],
+      areaObjects: [{ key: 'placeable:mist', position: [10, 20, 0] }],
+      instances: [{
+        objectKey: 'placeable:mist', kind: 'placeable', model: 0,
+        position: [10, 20, 0], rotationAxisAngle: [0, 0, 1, 0], scale: [1, 1, 1], polygon: [],
+      }],
+    },
+    binary: new Uint8Array(),
+  };
+  const catalog = sandbox.sceneBoundsCatalog(scene);
+  assert.deepEqual(Array.from(catalog.scene.min), [4, 18, -1]);
+  assert.deepEqual(Array.from(catalog.scene.max), [16, 22, 1]);
+  assert.deepEqual(Array.from(catalog.objects.get('placeable:mist').min), [9.875, 19.875, -0.125]);
+  assert.deepEqual(Array.from(catalog.objects.get('placeable:mist').max), [10.125, 20.125, 0.125]);
+});
+
+test('selection geometry retains authored rotation for objects and components', () => {
+  const { sandbox } = createRendererHarness();
+  const scene = {
+    manifest: {
+      models: [],
+      areaObjects: [{
+        key: 'trigger:0', position: [10, 20, 0], rotationAxisAngle: [0, 0, 1, Math.PI / 2],
+      }],
+      instances: [{
+        id: 7, objectKey: 'trigger:0', kind: 'trigger', model: null,
+        position: [10, 20, 0], rotationAxisAngle: [0, 0, 1, Math.PI / 2], scale: [1, 1, 1],
+        polygon: [[0, 0, 0], [2, 0, 0], [2, 1, 0], [0, 1, 0]],
+      }],
+    },
+    binary: new Uint8Array(),
+  };
+  const catalog = sandbox.sceneBoundsCatalog(scene);
+  const objectSelection = catalog.objectSelections.get('trigger:0');
+  const componentSelection = catalog.componentSelections.get(7);
+  for (const selection of [objectSelection, componentSelection]) {
+    const first = selection.vertices[0]; const second = selection.vertices[1];
+    assert.ok(Math.abs(second[0] - first[0]) < 1e-5);
+    assert.ok(Math.abs(Math.abs(second[1] - first[1]) - 2) < 1e-5);
+  }
+  assert.ok(Math.abs((objectSelection.bounds.max[0] - objectSelection.bounds.min[0]) - 1) < 1e-5);
+  assert.ok(Math.abs((objectSelection.bounds.max[1] - objectSelection.bounds.min[1]) - 2) < 1e-5);
+});
+
+test('WASD and QE provide elapsed-time fly-camera translation', () => {
+  const { sandbox } = createRendererHarness();
+  const listeners = new Map(); let changes = 0; let draws = 0;
+  const canvas = {
+    addEventListener: (type, listener) => listeners.set(type, listener),
+    removeEventListener: (type, listener) => {
+      if (listeners.get(type) === listener) listeners.delete(type);
+    },
+    setPointerCapture() {}, focus() {},
+  };
+  const camera = { yaw: 0, pitch: 0, distance: 10, target: [0, 0, 0] };
+  const key = (value) => ({ key: value, preventDefault() {} });
+  const controls = sandbox.bindViewportControls(canvas, camera, () => { draws += 1; }, () => { changes += 1; });
+  listeners.get('keydown')(key('w'));
+  assert.equal(controls.update(1), true);
+  assert.deepEqual(camera.target.map((value) => Math.round(value * 10) / 10), [-7.5, 0, 0]);
+  listeners.get('keyup')(key('w'));
+  listeners.get('keydown')(key('d'));
+  controls.update(1);
+  listeners.get('keyup')(key('d'));
+  listeners.get('keydown')(key('e'));
+  controls.update(1);
+  listeners.get('keyup')(key('e'));
+  assert.deepEqual(camera.target.map((value) => Math.round(value * 10) / 10), [-7.5, 7.5, 7.5]);
+  assert.equal(draws, 0, 'continuous movement is drawn by the retained viewer frame loop');
+  assert.equal(changes, 3, 'camera state is persisted when each held key is released');
+  controls.dispose();
+  assert.equal(listeners.size, 0);
 });
 
 test('packet decoder realigns legacy binary payloads before creating typed views', () => {
@@ -428,6 +598,57 @@ test('viewer creates, draws, and disposes a directly opened standalone scene', (
   assert.doesNotThrow(() => collisionViewer.dispose());
 });
 
+test('installed start area completes a full renderer draw with every resolved emitter', {
+  skip: !fs.existsSync(bindingPath) && 'run npm run build-native first',
+}, async (context) => {
+  const moduleRoot = path.join(repositoryRoot, 'module');
+  if (!fs.existsSync(path.join(moduleRoot, 'start.are.json'))) {
+    context.skip('repository authored-area fixture is unavailable');
+    return;
+  }
+  const binding = require(bindingPath);
+  const service = new binding.ViewerService();
+  let packet;
+  try {
+    packet = Buffer.from(await service.loadScene(JSON.stringify({
+      session_key: path.join(moduleRoot, 'nwpkg.toml'),
+      path: path.join(moduleRoot, 'start.are'),
+      project_root: moduleRoot,
+      area: null,
+      root: null,
+      user: null,
+      language: 'english',
+      load_ovr: false,
+      archives: [],
+      include_project_resources: true,
+      authored_area: {
+        resref: 'start',
+        are: path.join(moduleRoot, 'start.are.json'),
+        git: path.join(moduleRoot, 'start.git.json'),
+        gic: path.join(moduleRoot, 'start.gic.json'),
+      },
+    })));
+  } catch (error) {
+    if (/installation|root|language directory/iu.test(String(error))) {
+      context.skip('Neverwinter Nights installation was not discovered');
+      return;
+    }
+    throw error;
+  }
+  const { sandbox } = createRendererHarness();
+  const scene = sandbox.decodeScenePacket(packet);
+  const gl = createWebGlHarness();
+  const canvas = {
+    clientWidth: 800, clientHeight: 600, width: 0, height: 0,
+    getContext: (kind) => kind === 'webgl2' ? gl : null,
+    addEventListener() {}, removeEventListener() {},
+  };
+  const elements = { status: { textContent: '' }, animationTime: { textContent: '' } };
+  const viewer = sandbox.createViewer(canvas, scene, elements);
+  assert.match(elements.status.textContent, /models/u);
+  assert.doesNotThrow(() => viewer.dispose());
+});
+
 test('viewer chrome uses an animation selector and collapsed in-viewport disclosures', () => {
   const { sandbox } = createRendererHarness();
   const scene = {
@@ -457,6 +678,91 @@ test('viewer chrome uses an animation selector and collapsed in-viewport disclos
   assert.doesNotMatch(rendererSource, /viewer-modes|viewer-mode|viewer-inspector|viewer-fit|viewer-reload|reloadScene/u);
   assert.match(rendererSource, /id="viewer-animation"/u);
   assert.match(rendererSource, /viewer-overlay-stack/u);
+});
+
+test('Selected Data follows the logical area selection and exposes every scene field', () => {
+  const { sandbox } = createRendererHarness();
+  const scene = {
+    manifest: {
+      areaObjects: [{
+        key: 'placeable:2', label: 'Mist', kind: 'placeable', sourceIndex: 2,
+        tag: 'MIST_TAG', templateResref: 'x3_plc_mist', position: [4, 5, 6],
+        rotationAxisAngle: [0, 0, 1, Math.PI / 2],
+      }],
+      models: [{ name: 'tnp_gmist' }],
+      instances: [{
+        id: 8, objectKey: 'placeable:2', label: 'Mist visual', kind: 'placeable', model: 0,
+        resource: 'tnp_gmist.mdl',
+        position: [4, 5, 6], scale: [1, 1, 1],
+      }, {
+        id: 9, objectKey: 'placeable:2', label: 'Mist collision', kind: 'collision', model: null,
+        resource: 'tnp_gmist.pwk',
+        position: [4, 5, 6], scale: [1, 1, 1],
+      }],
+    },
+  };
+  assert.match(sandbox.selectedDataDisclosure(scene), /Selected Data/u);
+  assert.match(sandbox.selectedDataDisclosure(scene), /hidden/u);
+  assert.doesNotMatch(sandbox.selectedDataDisclosure(scene), /Select an area object|Nothing selected/u);
+  const content = sandbox.selectedDataDisclosureContent(scene, 'placeable:2');
+  assert.match(content, /MIST_TAG/u);
+  assert.match(content, /x3_plc_mist/u);
+  assert.match(content, /tnp_gmist/u);
+  assert.match(content, /tnp_gmist\.mdl/u);
+  assert.match(content, /tnp_gmist\.pwk/u);
+  assert.match(content, /Rendered Components · 2/u);
+  assert.match(content, /id="viewer-animation"/u);
+  assert.match(content, /class="viewer-animation-row"/u);
+  assert.doesNotMatch(content, /<details[^>]+open/u);
+  assert.match(content, /data-component-id="8"/u);
+  assert.match(content, /component-select/u);
+  assert.match(content, /component-open/u);
+  assert.match(content, /1\.571 rad · 90\.0°/u);
+  assert.match(content, /Mist visual/u);
+  assert.match(content, /Mist collision/u);
+
+  const elements = {
+    selectedData: { hidden: true },
+    selectedDataSummary: { textContent: '' },
+    selectedDataContent: { innerHTML: '' },
+  };
+  sandbox.updateSelectedDataPanel(elements, scene, 'placeable:2');
+  assert.equal(elements.selectedData.hidden, false);
+  assert.equal(elements.selectedDataSummary.textContent, 'Mist');
+  assert.match(elements.selectedDataContent.innerHTML, /GIT index/u);
+  sandbox.updateSelectedDataPanel(elements, scene, undefined);
+  assert.equal(elements.selectedData.hidden, true);
+  assert.equal(elements.selectedDataSummary.textContent, '');
+  assert.equal(elements.selectedDataContent.innerHTML, '');
+  assert.equal(sandbox.selectedDataDisclosure({ manifest: { areaObjects: [] } }), '');
+});
+
+test('NCS workbench renders structured navigation without editable or export controls', () => {
+  const { sandbox, listeners, content } = createRendererHarness();
+  listeners.get('message')({ data: { type: 'snapshot', snapshot: {
+    path: '/virtual/demo.ncs', kind: 'ncs', revision: 0, data: {
+      hasNcs: true, hasNdb: true, hasLangspec: true,
+      header: { fileSize: 23, codeSize: 10, instructionCount: 3 },
+      summary: { variables: 0, lineMappings: 1, structEntries: [], variableEntries: [] },
+      sourceFiles: [{ name: 'demo', isRoot: true, available: true }],
+      functions: [{
+        index: 0, name: 'main', start: 0, end: 10, returnType: 'v', arguments: [], synthetic: false,
+        blocks: [{ id: 'f0b0', start: 0, end: 10, instructionIndices: [0], successors: [], calls: [] }],
+      }],
+      instructions: [{
+        index: 0, offset: 0, localOffset: 0, size: 2, label: null, opcode: 'RET',
+        opcodeInternal: 'RET', auxcode: null, auxcodeInternal: 'NONE', operand: '', rawHex: '20 00',
+        jumpTarget: null, successors: [], functionIndex: 0,
+        source: { file: 'demo', line: 1, text: 'void main() {}', available: true },
+      }],
+      diagnostics: [],
+    },
+  } } });
+  assert.match(content.innerHTML, /ncs-workbench/u);
+  assert.match(content.innerHTML, /Control Flow/u);
+  assert.match(content.innerHTML, /Functions/u);
+  assert.doesNotMatch(content.innerHTML, /Export|Save|textarea/u);
+  assert.match(sandbox.scriptDebugOutline({ functions: [], sourceFiles: [], summary: {} }), /No function information/u);
 });
 
 test('all root acceptance resources open through the worker and render their custom view', {

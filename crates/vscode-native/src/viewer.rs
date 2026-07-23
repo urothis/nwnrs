@@ -1,6 +1,8 @@
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
+    fs,
     hash::{DefaultHasher, Hash, Hasher},
+    io::Cursor,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::UNIX_EPOCH,
@@ -11,14 +13,19 @@ use napi::{
     bindgen_prelude::{AsyncTask, Buffer},
 };
 use napi_derive::napi;
-use nwnrs_nwpkg::{DependencySpec, read_project_manifest};
-use nwnrs_renderer::{RenderScene, SceneLoader, ScenePacket};
+use nwnrs_nwpkg::{DependencySpec, PROJECT_MANIFEST_FILENAME, read_project_manifest};
+use nwnrs_renderer::{
+    RenderAreaObject, RenderScene, SceneLoader, ScenePacket, area_object_catalog,
+};
 use nwnrs_types::{
-    gff::{ARE_RES_TYPE, GIT_RES_TYPE, IFO_RES_TYPE},
+    gff::{
+        ARE_RES_TYPE, GIT_RES_TYPE, IFO_RES_TYPE, gff_root_from_json_bytes, parse_git_root,
+        parse_module_info_root, read_gff_root, write_gff_root,
+    },
     install::{find_nwnrs_root, find_user_root, new_default_resman},
     lru::WeightedLru,
     mdl::{ModelResourceKind, NwnBlueprintKind},
-    resman::{ResContainer, ResMan, ResolvedResRef, read_resmemfile},
+    resman::{ResContainer, ResMan, ResolvedResRef, read_resdir, read_resmemfile},
 };
 use serde::{Deserialize, Serialize};
 
@@ -41,6 +48,7 @@ struct ViewerSession {
     configuration_key: String,
     resman:            ResMan,
     scenes:            WeightedLru<String, Arc<CachedViewerScene>>,
+    resources:         Option<Arc<Vec<ViewerResourceEntry>>>,
 }
 
 struct CachedViewerScene {
@@ -130,6 +138,35 @@ impl ViewerService {
         })
     }
 
+    /// Reads typed package metadata for one discovered `nwpkg.toml`.
+    #[napi]
+    pub fn inspect_package(&self, request_json: String) -> AsyncTask<ViewerPackageTask> {
+        AsyncTask::new(ViewerPackageTask {
+            request_json,
+        })
+    }
+
+    /// Inspects the authored package source tree and projects the canonical
+    /// module-area, dialog, and NWScript sections used by the sidebar.
+    #[napi]
+    pub fn inspect_package_source(
+        &self,
+        request_json: String,
+    ) -> AsyncTask<ViewerPackageSourceTask> {
+        AsyncTask::new(ViewerPackageSourceTask {
+            request_json,
+        })
+    }
+
+    /// Returns one lazy level of the precedence-aware resource catalog.
+    #[napi]
+    pub fn list_resources(&self, request_json: String) -> AsyncTask<ViewerResourceCatalogTask> {
+        AsyncTask::new(ViewerResourceCatalogTask {
+            state: Arc::clone(&self.state),
+            request_json,
+        })
+    }
+
     /// Drops one cached package session, or every session when no key is
     /// supplied. The next load rebuilds the authoritative layered resource
     /// view.
@@ -182,6 +219,513 @@ pub struct ViewerTextureTask {
 pub struct ViewerResolveTask {
     state:        Arc<ViewerServiceState>,
     request_json: String,
+}
+
+/// Background package-manifest inspection task.
+pub struct ViewerPackageTask {
+    request_json: String,
+}
+
+/// Background package-source inspection task.
+pub struct ViewerPackageSourceTask {
+    request_json: String,
+}
+
+/// Background resource-catalog query task.
+pub struct ViewerResourceCatalogTask {
+    state:        Arc<ViewerServiceState>,
+    request_json: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ViewerPackageRequest {
+    path: PathBuf,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ViewerPackageInfo {
+    manifest_path:  PathBuf,
+    root:           PathBuf,
+    name:           String,
+    kind:           String,
+    source_path:    PathBuf,
+    resource_paths: Vec<PathBuf>,
+    dependencies:   Vec<ViewerPackageDependency>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ViewerPackageDependency {
+    name:          String,
+    root:          PathBuf,
+    manifest_path: PathBuf,
+}
+
+impl Task for ViewerPackageTask {
+    type JsValue = String;
+    type Output = String;
+
+    fn compute(&mut self) -> napi::Result<Self::Output> {
+        let request: ViewerPackageRequest =
+            serde_json::from_str(&self.request_json).map_err(|error| {
+                napi::Error::from_reason(format!("invalid package request: {error}"))
+            })?;
+        let manifest_path = if request.path.is_dir() {
+            request.path.join(PROJECT_MANIFEST_FILENAME)
+        } else {
+            request.path
+        };
+        let root = manifest_path
+            .parent()
+            .ok_or_else(|| napi::Error::from_reason("package manifest has no parent directory"))?
+            .to_path_buf();
+        let manifest = read_project_manifest(&manifest_path)
+            .map_err(napi::Error::from_reason)?
+            .ok_or_else(|| {
+                napi::Error::from_reason(format!(
+                    "{} is not an nwnrs package",
+                    manifest_path.display()
+                ))
+            })?;
+        let dependencies = manifest
+            .dependencies
+            .iter()
+            .map(|(name, dependency)| {
+                let DependencySpec::Path(dependency) = dependency;
+                let dependency_root = root.join(&dependency.path);
+                ViewerPackageDependency {
+                    name:          name.clone(),
+                    manifest_path: dependency_root.join(PROJECT_MANIFEST_FILENAME),
+                    root:          dependency_root,
+                }
+            })
+            .collect();
+        let resource_paths = package_resource_roots(&root)
+            .map_err(napi::Error::from_reason)?
+            .dependencies
+            .into_iter()
+            .chain(std::iter::once(root.join(&manifest.source.path)))
+            .collect();
+        serde_json::to_string(&ViewerPackageInfo {
+            manifest_path,
+            source_path: root.join(&manifest.source.path),
+            resource_paths,
+            root,
+            name: manifest.project.name,
+            kind: manifest.project.kind.to_string(),
+            dependencies,
+        })
+        .map_err(|error| napi::Error::from_reason(error.to_string()))
+    }
+
+    fn resolve(&mut self, _env: napi::Env, output: Self::Output) -> napi::Result<Self::JsValue> {
+        Ok(output)
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ViewerPackageSourceRequest {
+    manifest_path: PathBuf,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ViewerPackageSourceInfo {
+    source_path: PathBuf,
+    areas:       Vec<ViewerPackageSourceArea>,
+    dialogs:     Vec<ViewerPackageSourceFile>,
+    code:        Vec<ViewerPackageSourceFile>,
+    warnings:    Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ViewerPackageSourceArea {
+    resref:       String,
+    registered:   bool,
+    files:        Vec<ViewerPackageSourceFile>,
+    missing:      Vec<String>,
+    conflicts:    Vec<String>,
+    objects:      Vec<RenderAreaObject>,
+    object_error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ViewerPackageSourceFile {
+    path:          PathBuf,
+    relative_path: String,
+    kind:          String,
+}
+
+impl Task for ViewerPackageSourceTask {
+    type JsValue = String;
+    type Output = String;
+
+    fn compute(&mut self) -> napi::Result<Self::Output> {
+        let request: ViewerPackageSourceRequest = serde_json::from_str(&self.request_json)
+            .map_err(|error| {
+                napi::Error::from_reason(format!("invalid package-source request: {error}"))
+            })?;
+        let result =
+            inspect_package_source(&request.manifest_path).map_err(napi::Error::from_reason)?;
+        serde_json::to_string(&result).map_err(|error| napi::Error::from_reason(error.to_string()))
+    }
+
+    fn resolve(&mut self, _env: napi::Env, output: Self::Output) -> napi::Result<Self::JsValue> {
+        Ok(output)
+    }
+}
+
+fn inspect_package_source(manifest_path: &Path) -> Result<ViewerPackageSourceInfo, String> {
+    let root = manifest_path
+        .parent()
+        .ok_or_else(|| "package manifest has no parent directory".to_string())?;
+    let manifest = read_project_manifest(manifest_path)?
+        .ok_or_else(|| format!("{} is not an nwnrs package", manifest_path.display()))?;
+    let source_path = root.join(manifest.source.path);
+    let source_path = source_path
+        .canonicalize()
+        .map_err(|error| format!("failed to resolve {}: {error}", source_path.display()))?;
+    let mut paths = Vec::new();
+    let mut warnings = Vec::new();
+    collect_source_paths(
+        &source_path,
+        &mut BTreeSet::new(),
+        &mut paths,
+        &mut warnings,
+    )?;
+    paths.sort_by(|left, right| {
+        source_relative_path(&source_path, left)
+            .to_ascii_lowercase()
+            .cmp(&source_relative_path(&source_path, right).to_ascii_lowercase())
+            .then(left.cmp(right))
+    });
+
+    let mut dialogs = Vec::new();
+    let mut code = Vec::new();
+    let mut area_files = BTreeMap::<String, (String, Vec<ViewerPackageSourceFile>)>::new();
+    let mut module_ifos = Vec::new();
+    for path in paths {
+        let Some(file_name) = path.file_name().and_then(|value| value.to_str()) else {
+            continue;
+        };
+        let lower_name = file_name.to_ascii_lowercase();
+        if lower_name == "module.ifo" || lower_name == "module.ifo.json" {
+            module_ifos.push(path.clone());
+        }
+        if lower_name.ends_with(".nss") && lower_name != "nwscript.nss" {
+            code.push(source_file(&source_path, &path, "nss"));
+            continue;
+        }
+        let Some((resref, extension, json_source)) = compound_resource_identity(file_name) else {
+            continue;
+        };
+        match extension.as_str() {
+            "dlg" => dialogs.push(source_file(
+                &source_path,
+                &path,
+                if json_source { "dlgJson" } else { "dlg" },
+            )),
+            "are" | "git" | "gic" => {
+                let entry = area_files
+                    .entry(resref.to_ascii_lowercase())
+                    .or_insert_with(|| (resref, Vec::new()));
+                entry.1.push(source_file(&source_path, &path, &extension));
+            }
+            _ => {}
+        }
+    }
+
+    module_ifos.sort_by_key(|path| {
+        let json_source = path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .is_some_and(|value| value.to_ascii_lowercase().ends_with(".json"));
+        (!json_source, path.clone())
+    });
+    if module_ifos.len() > 1 {
+        warnings.push(format!(
+            "multiple module IFO sources found; using {}",
+            module_ifos[0].display()
+        ));
+    }
+    let registered = if let Some(path) = module_ifos.first() {
+        match read_module_area_resrefs(path) {
+            Ok(areas) => areas,
+            Err(error) => {
+                warnings.push(error);
+                Vec::new()
+            }
+        }
+    } else {
+        warnings.push("module.ifo or module.ifo.json was not found".to_string());
+        Vec::new()
+    };
+
+    let mut seen = BTreeSet::new();
+    let mut areas = Vec::new();
+    for resref in registered {
+        let key = resref.to_ascii_lowercase();
+        if !seen.insert(key.clone()) {
+            warnings.push(format!("module IFO declares area {resref} more than once"));
+            continue;
+        }
+        let files = area_files
+            .remove(&key)
+            .map_or_else(Vec::new, |(_, files)| files);
+        areas.push(source_area(resref, true, files));
+    }
+    areas.extend(
+        area_files
+            .into_values()
+            .map(|(resref, files)| source_area(resref, false, files)),
+    );
+    dialogs.sort_by(source_file_order);
+    code.sort_by(source_file_order);
+
+    Ok(ViewerPackageSourceInfo {
+        source_path,
+        areas,
+        dialogs,
+        code,
+        warnings,
+    })
+}
+
+fn collect_source_paths(
+    directory: &Path,
+    visited: &mut BTreeSet<PathBuf>,
+    output: &mut Vec<PathBuf>,
+    warnings: &mut Vec<String>,
+) -> Result<(), String> {
+    let canonical = directory
+        .canonicalize()
+        .map_err(|error| format!("failed to resolve {}: {error}", directory.display()))?;
+    if !visited.insert(canonical) {
+        return Ok(());
+    }
+    let mut entries = Vec::new();
+    for entry in fs::read_dir(directory)
+        .map_err(|error| format!("failed to read {}: {error}", directory.display()))?
+    {
+        match entry {
+            Ok(entry) => entries.push(entry),
+            Err(error) => warnings.push(format!(
+                "failed to read an entry in {}: {error}",
+                directory.display()
+            )),
+        }
+    }
+    entries.sort_by_key(|entry| entry.file_name());
+    for entry in entries {
+        let path = entry.path();
+        let metadata = match fs::metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(error) => {
+                warnings.push(format!("failed to inspect {}: {error}", path.display()));
+                continue;
+            }
+        };
+        if metadata.is_dir() {
+            if matches!(
+                path.file_name().and_then(|value| value.to_str()),
+                Some(".git" | ".svn")
+            ) {
+                continue;
+            }
+            collect_source_paths(&path, visited, output, warnings)?;
+        } else if metadata.is_file() {
+            output.push(path);
+        }
+    }
+    Ok(())
+}
+
+fn compound_resource_identity(file_name: &str) -> Option<(String, String, bool)> {
+    let lower_name = file_name.to_ascii_lowercase();
+    let (resource_name, json_source) = lower_name
+        .strip_suffix(".json")
+        .map_or((lower_name.as_str(), false), |value| (value, true));
+    let resource = Path::new(resource_name);
+    let extension = resource.extension()?.to_str()?.to_ascii_lowercase();
+    let resref = resource.file_stem()?.to_str()?.to_string();
+    Some((resref, extension, json_source))
+}
+
+fn source_file(source_root: &Path, path: &Path, kind: &str) -> ViewerPackageSourceFile {
+    ViewerPackageSourceFile {
+        path:          path.to_path_buf(),
+        relative_path: source_relative_path(source_root, path),
+        kind:          kind.to_string(),
+    }
+}
+
+fn source_relative_path(source_root: &Path, path: &Path) -> String {
+    path.strip_prefix(source_root)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .replace('\\', "/")
+}
+
+fn source_file_order(
+    left: &ViewerPackageSourceFile,
+    right: &ViewerPackageSourceFile,
+) -> std::cmp::Ordering {
+    left.relative_path
+        .to_ascii_lowercase()
+        .cmp(&right.relative_path.to_ascii_lowercase())
+        .then(left.relative_path.cmp(&right.relative_path))
+}
+
+fn source_area(
+    resref: String,
+    registered: bool,
+    mut files: Vec<ViewerPackageSourceFile>,
+) -> ViewerPackageSourceArea {
+    files.sort_by(|left, right| {
+        area_component_order(&left.kind)
+            .cmp(&area_component_order(&right.kind))
+            .then_with(|| source_file_order(left, right))
+    });
+    let mut counts = BTreeMap::<&str, usize>::new();
+    for file in &files {
+        *counts.entry(file.kind.as_str()).or_default() += 1;
+    }
+    let missing = ["are", "git", "gic"]
+        .into_iter()
+        .filter(|kind| !counts.contains_key(kind))
+        .map(|kind| kind.to_ascii_uppercase())
+        .collect();
+    let conflicts = counts
+        .into_iter()
+        .filter(|(_, count)| *count > 1)
+        .map(|(kind, _)| kind.to_ascii_uppercase())
+        .collect();
+    let (objects, object_error) = read_source_area_objects(&files)
+        .map(|objects| (objects, None))
+        .unwrap_or_else(|error| (Vec::new(), Some(error)));
+    ViewerPackageSourceArea {
+        resref,
+        registered,
+        files,
+        missing,
+        conflicts,
+        objects,
+        object_error,
+    }
+}
+
+fn read_source_area_objects(
+    files: &[ViewerPackageSourceFile],
+) -> Result<Vec<RenderAreaObject>, String> {
+    let git_files = files
+        .iter()
+        .filter(|file| file.kind.eq_ignore_ascii_case("git"))
+        .collect::<Vec<_>>();
+    match git_files.as_slice() {
+        [] => Ok(Vec::new()),
+        [file] => {
+            let bytes = encode_gff_source(&file.path, "GIT")?;
+            let root = read_gff_root(&mut Cursor::new(bytes)).map_err(|error| {
+                format!(
+                    "failed to parse authored objects from {}: {error}",
+                    file.path.display()
+                )
+            })?;
+            let git = parse_git_root(&root).map_err(|error| {
+                format!(
+                    "failed to inspect authored objects in {}: {error}",
+                    file.path.display()
+                )
+            })?;
+            Ok(area_object_catalog(&git))
+        }
+        _ => Err("authored objects are unavailable while multiple GIT sources conflict".into()),
+    }
+}
+
+fn area_component_order(kind: &str) -> usize {
+    match kind {
+        "are" => 0,
+        "git" => 1,
+        "gic" => 2,
+        _ => 3,
+    }
+}
+
+fn read_module_area_resrefs(path: &Path) -> Result<Vec<String>, String> {
+    let bytes =
+        fs::read(path).map_err(|error| format!("failed to read {}: {error}", path.display()))?;
+    let json_source = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .is_some_and(|value| value.to_ascii_lowercase().ends_with(".json"));
+    let root = if json_source {
+        gff_root_from_json_bytes(bytes)
+    } else {
+        read_gff_root(&mut Cursor::new(bytes))
+    }
+    .map_err(|error| format!("failed to parse {}: {error}", path.display()))?;
+    parse_module_info_root(&root)
+        .map(|info| info.areas)
+        .map_err(|error| format!("failed to inspect {}: {error}", path.display()))
+}
+
+#[derive(Debug, Clone)]
+struct ViewerResourceEntry {
+    resource:  String,
+    extension: String,
+    family:    String,
+    layer:     String,
+    origin:    String,
+    file_path: Option<PathBuf>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ViewerResourceCatalogRequest {
+    #[serde(flatten)]
+    viewer:    ViewerLoadRequest,
+    stage:     String,
+    #[serde(default)]
+    layer:     Option<String>,
+    #[serde(default)]
+    family:    Option<String>,
+    #[serde(default)]
+    extension: Option<String>,
+    #[serde(default)]
+    prefix:    String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ViewerResourceCatalogResponse {
+    items: Vec<ViewerResourceCatalogItem>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ViewerResourceCatalogItem {
+    kind:      String,
+    label:     String,
+    count:     usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    layer:     Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    family:    Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    extension: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    prefix:    Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    resource:  Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    origin:    Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    file_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Serialize)]
@@ -273,6 +817,352 @@ impl Task for ViewerReadTask {
     }
 }
 
+impl Task for ViewerResourceCatalogTask {
+    type JsValue = String;
+    type Output = String;
+
+    fn compute(&mut self) -> napi::Result<Self::Output> {
+        let request: ViewerResourceCatalogRequest = serde_json::from_str(&self.request_json)
+            .map_err(|error| {
+                napi::Error::from_reason(format!("invalid resource catalog request: {error}"))
+            })?;
+        let package = package_session(&self.state, &request.viewer)?;
+        let mut package = package.lock().map_err(|error| {
+            napi::Error::from_reason(format!("viewer package session is poisoned: {error}"))
+        })?;
+        ensure_session(&mut package, &request.viewer)?;
+        let session = package
+            .as_mut()
+            .ok_or_else(|| napi::Error::from_reason("viewer session was not initialized"))?;
+        if session.resources.is_none() {
+            session.resources = Some(Arc::new(build_resource_catalog(
+                &session.resman,
+                &request.viewer,
+            )));
+        }
+        let resources = session.resources.as_deref().ok_or_else(|| {
+            napi::Error::from_reason("viewer resource catalog was not initialized")
+        })?;
+        let items = query_resource_catalog(resources, &request)?;
+        serde_json::to_string(&ViewerResourceCatalogResponse {
+            items,
+        })
+        .map_err(|error| napi::Error::from_reason(error.to_string()))
+    }
+
+    fn resolve(&mut self, _env: napi::Env, output: Self::Output) -> napi::Result<Self::JsValue> {
+        Ok(output)
+    }
+}
+
+fn build_resource_catalog(
+    resman: &ResMan,
+    request: &ViewerLoadRequest,
+) -> Vec<ViewerResourceEntry> {
+    let mut references = resman.contents().into_iter().collect::<Vec<_>>();
+    references.sort_by(|left, right| {
+        left.res_ref()
+            .to_ascii_lowercase()
+            .cmp(&right.res_ref().to_ascii_lowercase())
+            .then(left.res_type().cmp(&right.res_type()))
+    });
+    let package_roots = package_resource_roots(&request.project_root).unwrap_or_default();
+    let installation_root = request.root.clone().or_else(|| find_nwnrs_root("").ok());
+    let override_root = installation_root.as_ref().map(|root| root.join("ovr"));
+    let archive_roots = request
+        .archives
+        .iter()
+        .map(|path| path.canonicalize().unwrap_or_else(|_| path.clone()))
+        .collect::<Vec<_>>();
+    let mut result = Vec::with_capacity(references.len());
+    for reference in references {
+        let Some(resolved) = reference.resolve() else {
+            continue;
+        };
+        let Some(resource) = resman
+            .containers()
+            .iter()
+            .find(|container| container.contains(&reference))
+            .and_then(|container| container.demand(&reference).ok())
+        else {
+            continue;
+        };
+        let origin = resource.origin();
+        let file_path = PathBuf::from(origin.label());
+        let layer = classify_resource_layer(
+            origin.container(),
+            &file_path,
+            request,
+            &package_roots,
+            override_root.as_deref(),
+            &archive_roots,
+        );
+        let extension = resolved.res_ext().to_ascii_lowercase();
+        result.push(ViewerResourceEntry {
+            resource: resolved.to_file(),
+            family: resource_family(&extension).into(),
+            extension,
+            layer: layer.into(),
+            origin: origin.to_string(),
+            file_path: (origin.container().starts_with("ResDir:") && file_path.is_file())
+                .then_some(file_path),
+        });
+    }
+    result
+}
+
+#[derive(Default)]
+struct PackageResourceRoots {
+    workspace:    Vec<PathBuf>,
+    dependencies: Vec<PathBuf>,
+}
+
+fn package_resource_roots(project_root: &Path) -> Result<PackageResourceRoots, String> {
+    let normalized = project_root
+        .canonicalize()
+        .unwrap_or_else(|_| project_root.to_path_buf());
+    let Some(manifest) = read_project_manifest(&normalized)? else {
+        return Ok(PackageResourceRoots {
+            workspace:    vec![normalized],
+            dependencies: Vec::new(),
+        });
+    };
+    let mut dependencies = Vec::new();
+    let mut visited = BTreeSet::new();
+    for dependency in manifest.dependencies.values() {
+        let DependencySpec::Path(dependency) = dependency;
+        collect_project_resource_directories(
+            &normalized.join(&dependency.path),
+            &mut visited,
+            &mut dependencies,
+        )?;
+    }
+    Ok(PackageResourceRoots {
+        workspace: vec![normalized.join(manifest.source.path)],
+        dependencies,
+    })
+}
+
+fn path_is_within(path: &Path, root: &Path) -> bool {
+    let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    path.starts_with(root)
+}
+
+fn classify_resource_layer(
+    container: &str,
+    file_path: &Path,
+    request: &ViewerLoadRequest,
+    package_roots: &PackageResourceRoots,
+    override_root: Option<&Path>,
+    archives: &[PathBuf],
+) -> &'static str {
+    if container.starts_with("KeyTable:") || container.starts_with("ResNWSync") {
+        return "Vanilla";
+    }
+    if container.starts_with("Erf:")
+        || archives
+            .iter()
+            .any(|archive| container.contains(archive.to_string_lossy().as_ref()))
+    {
+        return "Archives";
+    }
+    if override_root.is_some_and(|root| path_is_within(file_path, root)) {
+        return "User Override";
+    }
+    if package_roots
+        .workspace
+        .iter()
+        .any(|root| path_is_within(file_path, root))
+        || path_is_within(file_path, &request.project_root)
+            && !package_roots
+                .dependencies
+                .iter()
+                .any(|root| path_is_within(file_path, root))
+    {
+        return "Workspace";
+    }
+    if package_roots
+        .dependencies
+        .iter()
+        .any(|root| path_is_within(file_path, root))
+    {
+        return "Package Dependencies";
+    }
+    "Vanilla"
+}
+
+fn resource_family(extension: &str) -> &'static str {
+    match extension {
+        "mdl" | "wok" | "dwk" | "pwk" | "plh" => "Models",
+        "dds" | "tga" | "plt" | "txi" | "mtr" | "tex" | "bmp" | "ktx" | "png" | "jpg" => "Textures",
+        "nss" | "ncs" | "lua" => "Scripts",
+        "utc" | "utd" | "ute" | "uti" | "utm" | "utp" | "uts" | "utt" | "utw" | "utg" => {
+            "Blueprints"
+        }
+        "2da" | "tlk" | "ids" => "Tables",
+        "wav" | "bmu" | "mpg" | "mve" | "wfx" | "bik" | "wbm" => "Audio",
+        "are" | "git" | "gic" | "ifo" | "mod" | "nwm" | "sav" => "Areas & Modules",
+        "dlg" | "gui" | "jui" => "Dialogs & UI",
+        "erf" | "hak" | "key" | "bif" => "Archives",
+        _ => "Other",
+    }
+}
+
+fn query_resource_catalog(
+    resources: &[ViewerResourceEntry],
+    request: &ViewerResourceCatalogRequest,
+) -> napi::Result<Vec<ViewerResourceCatalogItem>> {
+    let filtered = resources
+        .iter()
+        .filter(|entry| {
+            request
+                .layer
+                .as_ref()
+                .is_none_or(|value| &entry.layer == value)
+        })
+        .filter(|entry| {
+            request
+                .family
+                .as_ref()
+                .is_none_or(|value| &entry.family == value)
+        })
+        .filter(|entry| {
+            request
+                .extension
+                .as_ref()
+                .is_none_or(|value| &entry.extension == value)
+        })
+        .collect::<Vec<_>>();
+    match request.stage.as_str() {
+        "layers" => Ok(group_catalog(
+            &filtered,
+            |entry| entry.layer.clone(),
+            "layer",
+        )),
+        "families" => Ok(group_catalog(
+            &filtered,
+            |entry| entry.family.clone(),
+            "family",
+        )),
+        "types" => Ok(group_catalog(
+            &filtered,
+            |entry| entry.extension.to_ascii_uppercase(),
+            "extension",
+        )),
+        "names" => Ok(name_catalog(&filtered, &request.prefix)),
+        stage => Err(napi::Error::from_reason(format!(
+            "unsupported resource catalog stage: {stage}"
+        ))),
+    }
+}
+
+fn group_catalog(
+    resources: &[&ViewerResourceEntry],
+    key: impl Fn(&ViewerResourceEntry) -> String,
+    kind: &str,
+) -> Vec<ViewerResourceCatalogItem> {
+    let mut groups = BTreeMap::<String, usize>::new();
+    for resource in resources {
+        *groups.entry(key(resource)).or_default() += 1;
+    }
+    groups
+        .into_iter()
+        .map(|(label, count)| ViewerResourceCatalogItem {
+            kind: kind.into(),
+            label: label.clone(),
+            count,
+            layer: (kind == "layer").then_some(label.clone()),
+            family: (kind == "family").then_some(label.clone()),
+            extension: (kind == "extension").then_some(label.to_ascii_lowercase()),
+            prefix: None,
+            resource: None,
+            origin: None,
+            file_path: None,
+        })
+        .collect()
+}
+
+fn name_catalog(
+    resources: &[&ViewerResourceEntry],
+    prefix: &str,
+) -> Vec<ViewerResourceCatalogItem> {
+    const MAX_LEAVES: usize = 200;
+    let prefix = prefix.to_ascii_lowercase();
+    let matching = resources
+        .iter()
+        .copied()
+        .filter(|entry| entry.resource.to_ascii_lowercase().starts_with(&prefix))
+        .collect::<Vec<_>>();
+    if matching.len() <= MAX_LEAVES {
+        return matching
+            .into_iter()
+            .map(|entry| ViewerResourceCatalogItem {
+                kind:      "resource".into(),
+                label:     entry.resource.clone(),
+                count:     1,
+                layer:     Some(entry.layer.clone()),
+                family:    Some(entry.family.clone()),
+                extension: Some(entry.extension.clone()),
+                prefix:    None,
+                resource:  Some(entry.resource.clone()),
+                origin:    Some(entry.origin.clone()),
+                file_path: entry.file_path.clone(),
+            })
+            .collect();
+    }
+    let mut exact = Vec::new();
+    let mut groups = BTreeMap::<String, usize>::new();
+    for entry in matching {
+        let resource = entry.resource.to_ascii_lowercase();
+        let base = resource
+            .strip_suffix(&format!(".{}", entry.extension))
+            .unwrap_or(&resource);
+        let mut characters = base.chars();
+        for _ in 0..prefix.chars().count() {
+            let _ = characters.next();
+        }
+        if let Some(next) = characters.next() {
+            let child = format!("{prefix}{next}");
+            *groups.entry(child).or_default() += 1;
+        } else {
+            exact.push(entry);
+        }
+    }
+    let mut result = exact
+        .into_iter()
+        .map(|entry| ViewerResourceCatalogItem {
+            kind:      "resource".into(),
+            label:     entry.resource.clone(),
+            count:     1,
+            layer:     Some(entry.layer.clone()),
+            family:    Some(entry.family.clone()),
+            extension: Some(entry.extension.clone()),
+            prefix:    None,
+            resource:  Some(entry.resource.clone()),
+            origin:    Some(entry.origin.clone()),
+            file_path: entry.file_path.clone(),
+        })
+        .collect::<Vec<_>>();
+    result.extend(
+        groups
+            .into_iter()
+            .map(|(child, count)| ViewerResourceCatalogItem {
+                kind: "prefix".into(),
+                label: child.to_ascii_uppercase(),
+                count,
+                layer: None,
+                family: None,
+                extension: None,
+                prefix: Some(child),
+                resource: None,
+                origin: None,
+                file_path: None,
+            }),
+    );
+    result
+}
+
 impl Task for ViewerLoadTask {
     type JsValue = Buffer;
     type Output = Vec<u8>;
@@ -297,21 +1187,38 @@ impl Task for ViewerLoadTask {
             .ok_or_else(|| napi::Error::from_reason("viewer path has no UTF-8 filename"))?;
         let resource = ResolvedResRef::from_filename(filename)
             .map_err(|error| napi::Error::from_reason(format!("viewer resource name: {error}")))?;
-        let cache_key = scene_cache_key(&request, &resource, self.contents.as_deref());
+        let overlay_sources = if let Some(authored) = &request.authored_area {
+            authored_area_overlay_sources(authored)?
+        } else if let Some(contents) = self.contents.take() {
+            vec![(filename.to_string(), contents)]
+        } else {
+            Vec::new()
+        };
+        let cache_key = scene_cache_key(&request, &resource, &overlay_sources);
         if let Some(cached) = session.scenes.get(&cache_key) {
             return Ok(cached.catalog.as_ref().clone());
         }
-        let overlay = if let Some(contents) = self.contents.take() {
-            let memory =
-                read_resmemfile(filename, resource.clone().into(), contents).map_err(|error| {
-                    napi::Error::from_reason(format!("virtual viewer resource: {error}"))
-                })?;
-            let overlay = Arc::new(memory) as Arc<dyn ResContainer>;
-            session.resman.add(Arc::clone(&overlay));
-            Some(overlay)
-        } else {
-            None
-        };
+        let overlays = overlay_sources
+            .into_iter()
+            .map(|(overlay_filename, contents)| {
+                let resolved =
+                    ResolvedResRef::from_filename(&overlay_filename).map_err(|error| {
+                        napi::Error::from_reason(format!(
+                            "virtual viewer resource {overlay_filename}: {error}"
+                        ))
+                    })?;
+                let memory = read_resmemfile(&overlay_filename, resolved.into(), contents)
+                    .map_err(|error| {
+                        napi::Error::from_reason(format!(
+                            "virtual viewer resource {overlay_filename}: {error}"
+                        ))
+                    })?;
+                Ok(Arc::new(memory) as Arc<dyn ResContainer>)
+            })
+            .collect::<napi::Result<Vec<_>>>()?;
+        for overlay in &overlays {
+            session.resman.add(Arc::clone(overlay));
+        }
         let loaded = {
             let mut loader = SceneLoader::new(&mut session.resman);
             if ModelResourceKind::from_res_type(resource.base().res_type()).is_some() {
@@ -330,8 +1237,8 @@ impl Task for ViewerLoadTask {
             }
             .map_err(|error| napi::Error::from_reason(error.to_string()))
         };
-        if let Some(overlay) = overlay {
-            session.resman.remove(&overlay);
+        for overlay in &overlays {
+            session.resman.remove(overlay);
         }
         let scene = Arc::new(loaded?);
         let mut packet = ScenePacket::catalog_from_scene(&scene)
@@ -441,21 +1348,34 @@ impl Task for ViewerTextureTask {
 
 #[derive(Debug, Clone, Deserialize)]
 struct ViewerLoadRequest {
-    session_key:  String,
-    path:         PathBuf,
+    session_key: String,
+    path: PathBuf,
     project_root: PathBuf,
     #[serde(default)]
-    area:         Option<String>,
+    area: Option<String>,
     #[serde(default)]
-    root:         Option<PathBuf>,
+    authored_area: Option<ViewerAuthoredAreaRequest>,
     #[serde(default)]
-    user:         Option<PathBuf>,
+    root: Option<PathBuf>,
+    #[serde(default)]
+    user: Option<PathBuf>,
     #[serde(default = "default_language")]
-    language:     String,
+    language: String,
     #[serde(default)]
-    load_ovr:     bool,
+    load_ovr: bool,
     #[serde(default)]
-    archives:     Vec<PathBuf>,
+    archives: Vec<PathBuf>,
+    #[serde(default = "default_true")]
+    include_project_resources: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ViewerAuthoredAreaRequest {
+    resref: String,
+    are:    PathBuf,
+    git:    PathBuf,
+    #[serde(default)]
+    gic:    Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -476,24 +1396,26 @@ struct ViewerAssetRequest {
 #[derive(Serialize)]
 struct ViewerConfiguration<'a> {
     project_root: &'a Path,
-    root:         &'a Option<PathBuf>,
-    user:         &'a Option<PathBuf>,
-    language:     &'a str,
-    load_ovr:     bool,
+    root: &'a Option<PathBuf>,
+    user: &'a Option<PathBuf>,
+    language: &'a str,
+    load_ovr: bool,
     resource_dir: Option<&'a Path>,
-    archives:     &'a [PathBuf],
+    archives: &'a [PathBuf],
+    include_project_resources: bool,
 }
 
 impl ViewerLoadRequest {
     fn configuration(&self) -> ViewerConfiguration<'_> {
         ViewerConfiguration {
             project_root: &self.project_root,
-            root:         &self.root,
-            user:         &self.user,
-            language:     &self.language,
-            load_ovr:     self.load_ovr,
+            root: &self.root,
+            user: &self.user,
+            language: &self.language,
+            load_ovr: self.load_ovr,
             resource_dir: self.path.parent(),
-            archives:     &self.archives,
+            archives: &self.archives,
+            include_project_resources: self.include_project_resources,
         }
     }
 }
@@ -510,11 +1432,17 @@ fn build_session(
         .user
         .clone()
         .map_or_else(|| find_user_root("").map_err(|error| error.to_string()), Ok)?;
-    let mut directories = project_resource_directories(&request.project_root)?;
-    if let Some(parent) = request.path.parent() {
+    let mut directories = if request.include_project_resources {
+        project_resource_directories(&request.project_root)?
+    } else {
+        Vec::new()
+    };
+    if request.include_project_resources
+        && let Some(parent) = request.path.parent()
+    {
         push_unique_path(&mut directories, parent.to_path_buf());
     }
-    let resman = new_default_resman(
+    let mut resman = new_default_resman(
         root,
         user,
         &request.language,
@@ -523,15 +1451,94 @@ fn build_session(
         request.load_ovr,
         &[],
         &request.archives,
-        &directories,
+        &[],
         &[],
     )
     .map_err(|error| error.to_string())?;
+    for directory in &directories {
+        resman.add(
+            Arc::new(read_resdir(directory).map_err(|error| error.to_string())?)
+                as Arc<dyn ResContainer>,
+        );
+        for (filename, contents) in gff_json_resources(directory)? {
+            let resource = ResolvedResRef::from_filename(&filename)
+                .map_err(|error| format!("invalid GFF JSON resource {filename}: {error}"))?;
+            let memory = read_resmemfile(&filename, resource.into(), contents)
+                .map_err(|error| format!("failed to load GFF JSON resource {filename}: {error}"))?;
+            resman.add(Arc::new(memory) as Arc<dyn ResContainer>);
+        }
+    }
     Ok(ViewerSession {
         configuration_key,
         resman,
         scenes: WeightedLru::new(96 * 1024 * 1024, 1),
+        resources: None,
     })
+}
+
+fn gff_json_resources(directory: &Path) -> Result<Vec<(String, Vec<u8>)>, String> {
+    let mut paths = Vec::new();
+    collect_source_paths(directory, &mut BTreeSet::new(), &mut paths, &mut Vec::new())?;
+    paths.sort();
+    let mut resources = BTreeMap::new();
+    for path in paths {
+        let Some(file_name) = path.file_name().and_then(|value| value.to_str()) else {
+            continue;
+        };
+        let lower = file_name.to_ascii_lowercase();
+        let Some(resource_name) = lower.strip_suffix(".json") else {
+            continue;
+        };
+        let Some(extension) = Path::new(resource_name)
+            .extension()
+            .and_then(|value| value.to_str())
+        else {
+            continue;
+        };
+        if !is_gff_resource_extension(extension) {
+            continue;
+        }
+        if ResolvedResRef::from_filename(resource_name).is_err() {
+            continue;
+        }
+        if resources.contains_key(resource_name) {
+            return Err(format!(
+                "duplicate authored resource {resource_name} in {}",
+                directory.display()
+            ));
+        }
+        resources.insert(
+            resource_name.to_string(),
+            encode_gff_source(&path, extension)?,
+        );
+    }
+    Ok(resources.into_iter().collect())
+}
+
+fn is_gff_resource_extension(extension: &str) -> bool {
+    matches!(
+        extension.to_ascii_lowercase().as_str(),
+        "gff"
+            | "are"
+            | "bic"
+            | "dlg"
+            | "fac"
+            | "gic"
+            | "git"
+            | "gui"
+            | "ifo"
+            | "itp"
+            | "jrl"
+            | "utc"
+            | "utd"
+            | "ute"
+            | "uti"
+            | "utm"
+            | "utp"
+            | "uts"
+            | "utt"
+            | "utw"
+    )
 }
 
 fn cached_scene(
@@ -597,14 +1604,17 @@ fn ensure_session(
 fn scene_cache_key(
     request: &ViewerLoadRequest,
     resource: &ResolvedResRef,
-    contents: Option<&[u8]>,
+    overlay_sources: &[(String, Vec<u8>)],
 ) -> String {
     let mut hasher = DefaultHasher::new();
     resource.to_string().hash(&mut hasher);
     request.area.hash(&mut hasher);
     request.path.hash(&mut hasher);
-    if let Some(contents) = contents {
-        contents.hash(&mut hasher);
+    if !overlay_sources.is_empty() {
+        for (filename, contents) in overlay_sources {
+            filename.hash(&mut hasher);
+            contents.hash(&mut hasher);
+        }
     } else if let Ok(metadata) = request.path.metadata() {
         metadata.len().hash(&mut hasher);
         metadata
@@ -615,6 +1625,55 @@ fn scene_cache_key(
             .hash(&mut hasher);
     }
     format!("{resource}:{}", hasher.finish())
+}
+
+fn authored_area_overlay_sources(
+    authored: &ViewerAuthoredAreaRequest,
+) -> napi::Result<Vec<(String, Vec<u8>)>> {
+    let mut sources = Vec::with_capacity(if authored.gic.is_some() { 3 } else { 2 });
+    for (kind, path) in [
+        ("ARE", Some(&authored.are)),
+        ("GIT", Some(&authored.git)),
+        ("GIC", authored.gic.as_ref()),
+    ] {
+        let Some(path) = path else { continue };
+        let bytes = encode_gff_source(path, kind).map_err(napi::Error::from_reason)?;
+        sources.push((
+            format!("{}.{}", authored.resref, kind.to_ascii_lowercase()),
+            bytes,
+        ));
+    }
+    Ok(sources)
+}
+
+fn encode_gff_source(path: &Path, expected_type: &str) -> Result<Vec<u8>, String> {
+    let source =
+        fs::read(path).map_err(|error| format!("failed to read {}: {error}", path.display()))?;
+    let json_source = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .is_some_and(|value| value.to_ascii_lowercase().ends_with(".json"));
+    let root = if json_source {
+        gff_root_from_json_bytes(&source)
+    } else {
+        read_gff_root(&mut Cursor::new(&source))
+    }
+    .map_err(|error| format!("failed to parse {}: {error}", path.display()))?;
+    let expected_file_type = format!("{:<4}", expected_type.to_ascii_uppercase());
+    if root.file_type != expected_file_type {
+        return Err(format!(
+            "{} contains {} data, expected {expected_file_type}",
+            path.display(),
+            root.file_type
+        ));
+    }
+    if !json_source {
+        return Ok(source);
+    }
+    let mut output = Cursor::new(Vec::new());
+    write_gff_root(&mut output, &root)
+        .map_err(|error| format!("failed to encode {}: {error}", path.display()))?;
+    Ok(output.into_inner())
 }
 
 fn project_resource_directories(project_root: &Path) -> Result<Vec<PathBuf>, String> {
@@ -656,4 +1715,208 @@ fn push_unique_path(target: &mut Vec<PathBuf>, path: PathBuf) {
 
 fn default_language() -> String {
     "english".into()
+}
+
+const fn default_true() -> bool {
+    true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temporary_directory(label: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "nwnrs-vscode-viewer-{label}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        fs::create_dir(&path).expect("create temporary directory");
+        path
+    }
+
+    fn entry(resource: String) -> ViewerResourceEntry {
+        ViewerResourceEntry {
+            resource,
+            extension: "mdl".into(),
+            family: "Models".into(),
+            layer: "Vanilla".into(),
+            origin: "KeyTable:test.key(test.bif)".into(),
+            file_path: None,
+        }
+    }
+
+    #[test]
+    fn authored_area_sources_are_validated_and_encoded_in_memory() {
+        let root = temporary_directory("authored-area");
+        let are = root.join("start.are.json");
+        let git = root.join("start.git.json");
+        fs::write(&are, r#"{"__data_type":"ARE "}"#).expect("write ARE JSON");
+        fs::write(&git, r#"{"__data_type":"GIT "}"#).expect("write GIT JSON");
+        let sources = authored_area_overlay_sources(&ViewerAuthoredAreaRequest {
+            resref: "start".into(),
+            are,
+            git,
+            gic: None,
+        })
+        .expect("encode authored area");
+        assert_eq!(sources.len(), 2);
+        assert_eq!(sources[0].0, "start.are");
+        assert_eq!(sources[1].0, "start.git");
+        assert_eq!(
+            read_gff_root(&mut Cursor::new(&sources[0].1))
+                .expect("decode ARE")
+                .file_type,
+            "ARE "
+        );
+        fs::remove_dir_all(root).expect("remove temporary directory");
+    }
+
+    #[test]
+    fn source_json_resources_use_compound_names_and_override_binary_build_outputs() {
+        let root = temporary_directory("source-json");
+        fs::write(root.join("creature.utc.json"), r#"{"__data_type":"UTC "}"#)
+            .expect("write UTC JSON");
+        let resources = gff_json_resources(&root).expect("collect GFF JSON");
+        assert_eq!(resources.len(), 1);
+        assert_eq!(resources[0].0, "creature.utc");
+        fs::write(root.join("creature.utc"), &resources[0].1).expect("write binary UTC");
+        let with_binary = gff_json_resources(&root).expect("prefer authored JSON");
+        assert_eq!(with_binary.len(), 1);
+        assert_eq!(with_binary[0].0, "creature.utc");
+        fs::remove_dir_all(root).expect("remove temporary directory");
+    }
+
+    #[test]
+    fn resource_families_cover_supported_editor_types() {
+        assert_eq!(resource_family("mdl"), "Models");
+        assert_eq!(resource_family("dds"), "Textures");
+        assert_eq!(resource_family("nss"), "Scripts");
+        assert_eq!(resource_family("utc"), "Blueprints");
+        assert_eq!(resource_family("2da"), "Tables");
+        assert_eq!(resource_family("are"), "Areas & Modules");
+        assert_eq!(resource_family("dlg"), "Dialogs & UI");
+        assert_eq!(resource_family("hak"), "Archives");
+    }
+
+    #[test]
+    fn large_name_catalogs_are_partitioned_without_losing_parent_filters() {
+        let resources = (0..201)
+            .map(|index| entry(format!("c_{index:03}.mdl")))
+            .collect::<Vec<_>>();
+        let references = resources.iter().collect::<Vec<_>>();
+        let root = name_catalog(&references, "");
+        assert_eq!(root.len(), 1);
+        assert_eq!(root[0].kind, "prefix");
+        assert_eq!(root[0].prefix.as_deref(), Some("c"));
+        assert_eq!(root[0].count, 201);
+
+        let leaves = name_catalog(&references, "c_000");
+        assert_eq!(leaves.len(), 1);
+        assert_eq!(leaves[0].resource.as_deref(), Some("c_000.mdl"));
+        assert_eq!(leaves[0].layer.as_deref(), Some("Vanilla"));
+        assert_eq!(leaves[0].family.as_deref(), Some("Models"));
+        assert_eq!(leaves[0].extension.as_deref(), Some("mdl"));
+    }
+
+    #[test]
+    fn package_source_uses_ifo_areas_and_preserves_authored_paths() {
+        let root = temporary_directory("package-source");
+        fs::create_dir_all(root.join("areas")).expect("create areas directory");
+        fs::create_dir_all(root.join("dialogs")).expect("create dialogs directory");
+        fs::create_dir_all(root.join("code/shared")).expect("create code directory");
+        fs::write(
+            root.join(PROJECT_MANIFEST_FILENAME),
+            "[project]\nname = \"source-test\"\nkind = \"mod\"\n\n[source]\npath = \".\"\n",
+        )
+        .expect("write manifest");
+        fs::write(
+            root.join("module.ifo.json"),
+            r#"{
+  "__data_type": "IFO ",
+  "Mod_Area_list": {
+    "type": "list",
+    "value": [
+      { "__struct_id": 6, "Area_Name": { "type": "resref", "value": "start" } },
+      { "__struct_id": 6, "Area_Name": { "type": "resref", "value": "missing" } }
+    ]
+  }
+}"#,
+        )
+        .expect("write module IFO");
+        fs::write(root.join("areas/start.are.json"), "{}").expect("write area");
+        let mut git = nwnrs_types::gff::GffRoot::new("GIT ");
+        let mut placeable = nwnrs_types::gff::GffStruct::new(9);
+        placeable
+            .put_value(
+                "Tag",
+                nwnrs_types::gff::GffValue::CExoString("test_chest".into()),
+            )
+            .expect("write placeable tag");
+        placeable
+            .put_value(
+                "TemplateResRef",
+                nwnrs_types::gff::GffValue::ResRef("plc_chest1".into()),
+            )
+            .expect("write placeable template");
+        placeable
+            .put_value("X", nwnrs_types::gff::GffValue::Float(4.0))
+            .expect("write placeable x");
+        placeable
+            .put_value("Y", nwnrs_types::gff::GffValue::Float(5.0))
+            .expect("write placeable y");
+        git.put_value(
+            "Placeable List",
+            nwnrs_types::gff::GffValue::List(vec![placeable]),
+        )
+        .expect("write placeable list");
+        let mut git_file = fs::File::create(root.join("areas/start.git")).expect("create git");
+        write_gff_root(&mut git_file, &git).expect("write git");
+        fs::write(root.join("areas/orphan.gic.json"), "{}").expect("write orphan gic");
+        fs::write(root.join("dialogs/intro.dlg.json"), "{}").expect("write dialog");
+        fs::write(root.join("code/main.nss"), "void main() {}\n").expect("write script");
+        fs::write(root.join("code/shared/types.nss"), "// include\n").expect("write include");
+        fs::write(root.join("nwscript.nss"), "// langspec\n").expect("write langspec");
+
+        let result = inspect_package_source(&root.join(PROJECT_MANIFEST_FILENAME))
+            .expect("inspect package source");
+        assert_eq!(result.areas.len(), 3);
+        assert_eq!(result.areas[0].resref, "start");
+        assert!(result.areas[0].registered);
+        assert_eq!(result.areas[0].missing, vec!["GIC"]);
+        assert_eq!(result.areas[0].objects.len(), 1);
+        assert_eq!(
+            result.areas[0].objects[0].kind,
+            nwnrs_renderer::RenderInstanceKind::Placeable
+        );
+        assert_eq!(result.areas[0].objects[0].label, "test_chest");
+        assert_eq!(result.areas[0].objects[0].position, [4.0, 5.0, 0.0]);
+        assert!(result.areas[0].object_error.is_none());
+        assert_eq!(result.areas[1].resref, "missing");
+        assert!(result.areas[1].registered);
+        assert_eq!(result.areas[1].missing, vec!["ARE", "GIT", "GIC"]);
+        assert_eq!(result.areas[2].resref, "orphan");
+        assert!(!result.areas[2].registered);
+        assert_eq!(result.dialogs[0].relative_path, "dialogs/intro.dlg.json");
+        assert_eq!(result.dialogs[0].kind, "dlgJson");
+        assert_eq!(
+            result
+                .code
+                .iter()
+                .map(|file| file.relative_path.as_str())
+                .collect::<Vec<_>>(),
+            vec!["code/main.nss", "code/shared/types.nss"]
+        );
+        assert!(
+            result
+                .code
+                .iter()
+                .all(|file| file.relative_path != "nwscript.nss")
+        );
+
+        fs::remove_dir_all(root).expect("remove temporary directory");
+    }
 }

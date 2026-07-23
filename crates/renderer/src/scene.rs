@@ -180,12 +180,17 @@ pub enum RenderInstanceKind {
 pub struct RenderInstance {
     /// Stable instance id.
     pub id:                    usize,
+    /// Stable authored GIT object identity shared by every visual component
+    /// produced for the same logical object.
+    pub object_key:            Option<String>,
     /// Display label.
     pub label:                 String,
     /// Instance category.
     pub kind:                  RenderInstanceKind,
     /// Index into [`RenderScene::models`], when the instance has a model.
     pub model:                 Option<usize>,
+    /// Exact source resource for this rendered component, when it has one.
+    pub resource:              Option<String>,
     /// Position in Aurora world coordinates.
     pub position:              [f32; 3],
     /// Rotation axis and angle in radians.
@@ -197,6 +202,28 @@ pub struct RenderInstance {
     /// Tile main/source light colors in `main1`, `main2`, `source1`,
     /// `source2` order.
     pub light_color_overrides: [Option<[f32; 3]>; 4],
+}
+
+/// One logical authored object from an area's GIT resource.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RenderAreaObject {
+    /// Stable identity used across the sidebar, viewer, and scene reloads.
+    pub key:                 String,
+    /// Best available user-facing label.
+    pub label:               String,
+    /// Authored object category.
+    pub kind:                RenderInstanceKind,
+    /// Zero-based index within the corresponding GIT list.
+    pub source_index:        usize,
+    /// Authored instance tag.
+    pub tag:                 Option<String>,
+    /// Referenced blueprint resource name without its extension.
+    pub template_resref:     Option<String>,
+    /// Authored world-space position.
+    pub position:            [f32; 3],
+    /// Authored axis-angle rotation.
+    pub rotation_axis_angle: [f32; 4],
 }
 
 /// One resolved model tree retained by the shared Rust scene runtime.
