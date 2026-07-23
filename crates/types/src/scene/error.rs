@@ -7,6 +7,8 @@ pub enum SceneError {
     Io(io::Error),
     /// A requested resource could not be resolved.
     MissingResource(String),
+    /// The caller cancelled scene assembly.
+    Cancelled,
     /// An NWN resource payload could not be interpreted.
     InvalidResource(String),
     /// Scene assembly failed.
@@ -31,6 +33,12 @@ impl SceneError {
     pub fn scene(message: impl Into<String>) -> Self {
         Self::Scene(message.into())
     }
+
+    /// Creates a cancellation error.
+    #[must_use]
+    pub const fn cancelled() -> Self {
+        Self::Cancelled
+    }
 }
 
 impl fmt::Display for SceneError {
@@ -38,6 +46,7 @@ impl fmt::Display for SceneError {
         match self {
             Self::Io(error) => error.fmt(f),
             Self::MissingResource(resource) => write!(f, "missing resource: {resource}"),
+            Self::Cancelled => f.write_str("scene assembly cancelled"),
             Self::InvalidResource(message) | Self::Scene(message) => f.write_str(message),
         }
     }

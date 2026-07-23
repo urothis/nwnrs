@@ -1,5 +1,6 @@
 {
     "recommendations": [
-        "nwnrs.nwnrs"
+        "nwnrs.nwnrs",
+        "ms-vscode.vscode-typescript-next"
     ]
 }

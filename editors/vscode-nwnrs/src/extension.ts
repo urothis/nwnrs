@@ -1,12 +1,17 @@
-'use strict';
-
-const fs = require('node:fs');
-const path = require('node:path');
-const vscode = require('vscode');
-const { LanguageWorkerClient } = require('./language-worker-client');
-const { ResourceCustomEditorProvider } = require('./resource-custom-editor');
-const { NwnrsSidebarController } = require('./sidebar');
-const {
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import * as vscode from 'vscode';
+import { LanguageWorkerClient } from './language-worker-client';
+import { ResourceCustomEditorProvider } from './resource-custom-editor';
+import { NwnrsSidebarController } from './sidebar';
+import type {
+  NativeCheckDiagnostic,
+  NativeDefinition,
+  NativeDocumentSymbol,
+  NativeLanguageResponseMap,
+  NativeReference,
+} from './native-types';
+import {
   buildCheckRequest,
   buildDefinitionRequest,
   buildDocumentSymbolsRequest,
@@ -17,7 +22,74 @@ const {
   nativeBindingPath,
   resolveConfiguredPath,
   selectHoverDefinition,
-} = require('./compiler');
+  type NativeCheckRequest,
+  type NativeDefinitionRequest,
+  type NativeDocumentSymbolsRequest,
+  type SourceOverlay,
+} from './compiler';
+
+interface CompilerConfiguration {
+  readonly includeDirectories: string[];
+  readonly langspecPath: string;
+  readonly rootPath: string;
+  readonly userPath: string;
+  readonly language: string;
+  readonly loadOvr: boolean;
+  readonly maxIncludeDepth: number;
+  readonly maxDiagnosticsPerFile: number;
+  readonly noEntrypointCheck: boolean;
+}
+
+interface WorkspaceRootCandidate {
+  readonly root: string;
+  readonly sourceUri: vscode.Uri;
+}
+
+interface CompilerRunRequest {
+  readonly key: string;
+  readonly targets: readonly string[];
+  readonly cwd: string;
+  readonly sourceUri: vscode.Uri;
+  readonly recurse: boolean;
+  readonly overlays: readonly SourceOverlay[];
+  readonly revealFailure: boolean;
+  readonly force: boolean;
+}
+
+interface ResolvedSymbol {
+  readonly definitions: readonly NativeDefinition[];
+  readonly wordRange: vscode.Range;
+  readonly request: NativeDefinitionRequest;
+}
+
+interface ResolvedReferences {
+  readonly records: readonly NativeReference[];
+  readonly wordRange: vscode.Range;
+  readonly request: NativeDefinitionRequest;
+  readonly requests: readonly NativeDefinitionRequest[];
+  readonly symbol: string;
+}
+
+interface DiagnosticRunEntry {
+  readonly uri: vscode.Uri;
+  readonly diagnostics: vscode.Diagnostic[];
+}
+
+interface IncludedSource {
+  readonly path: string;
+  readonly uri: string | null;
+  readonly resource: string | null;
+  readonly range: vscode.Range;
+  readonly includeName: string;
+}
+
+interface UriOwner {
+  readonly uri: vscode.Uri;
+}
+
+type NwnrsCallHierarchyItem = vscode.CallHierarchyItem & {
+  readonly _nwnrsRequest?: NativeDefinitionRequest;
+};
 
 const DIAGNOSTIC_OWNER = 'nwnrs';
 const SEMANTIC_TOKEN_TYPES = [
@@ -30,7 +102,30 @@ const SEMANTIC_LEGEND = new vscode.SemanticTokensLegend(
 );
 
 class CompilerController {
-  constructor(context) {
+  public readonly output: vscode.OutputChannel;
+  private readonly context: vscode.ExtensionContext;
+  private readonly diagnostics: vscode.DiagnosticCollection;
+  private readonly manifestDiagnostics: vscode.DiagnosticCollection;
+  private readonly status: vscode.StatusBarItem;
+  private readonly languageWorker: LanguageWorkerClient;
+  private sequence: number;
+  private changeEpoch: number;
+  private readonly activeRuns: Map<string, {
+    cancellation: vscode.CancellationTokenSource;
+    sequence: number;
+    fingerprint: string;
+  }>;
+  private readonly runDiagnostics: Map<string, Map<string, DiagnosticRunEntry>>;
+  private readonly timers: Map<string, NodeJS.Timeout>;
+  private readonly manifestTimers: Map<string, NodeJS.Timeout>;
+  private readonly manifestChecks: Map<string, unknown>;
+  private readonly virtualDocumentRequests: Map<string, NativeDocumentSymbolsRequest>;
+  private readonly physicalDocumentRequests: Map<string, NativeDocumentSymbolsRequest[]>;
+  private readonly virtualDocuments: Map<string, string>;
+  private readonly externalWatchers: Map<string, vscode.FileSystemWatcher[]>;
+  private readonly watchRootRequests: Set<string>;
+
+  public constructor(context: vscode.ExtensionContext) {
     this.context = context;
     this.diagnostics = vscode.languages.createDiagnosticCollection(DIAGNOSTIC_OWNER);
     this.manifestDiagnostics = vscode.languages.createDiagnosticCollection('nwnrs nwpkg');
@@ -332,7 +427,6 @@ class CompilerController {
     const configuration = this.compilerConfiguration(representative, projectRoot);
     const request = buildDocumentSymbolsRequest(representative.fsPath, {
       projectRoot,
-      includeDirectories: configuration.includeDirectories,
       overlays: this.sourceOverlays(projectRoot),
       ...configuration,
     });
@@ -342,7 +436,7 @@ class CompilerController {
     this.status.tooltip = `Reindexing ${path.basename(projectRoot)}`;
     this.languageWorker.invalidate(projectRoot);
     this.physicalDocumentRequests.clear();
-    let progressCancellation;
+    let progressCancellation: vscode.CancellationToken | undefined;
     try {
       const index = await vscode.window.withProgress({
         location: vscode.ProgressLocation.Notification,
@@ -434,7 +528,7 @@ class CompilerController {
       this.status.tooltip = String(error);
       this.output.appendLine(`nwnrs language-service restart failure: ${String(error)}`);
       void vscode.window.showErrorMessage(`nwnrs language service restart failed: ${String(error)}`);
-      if (!this.languageWorker.worker) {
+      if (!this.languageWorker.isRunning) {
         return;
       }
       this.status.text = previousText;
@@ -464,17 +558,17 @@ class CompilerController {
     this.output.appendLine('[clear] Diagnostics cleared');
   }
 
-  isNwScriptDocument(document) {
+  isNwScriptDocument(document: vscode.TextDocument): boolean {
     return document.uri.scheme === 'file'
       && (document.languageId === 'nwscript' || isNssPath(document.uri.fsPath));
   }
 
-  isNwpkgDocument(document) {
+  isNwpkgDocument(document: vscode.TextDocument): boolean {
     return document.uri.scheme === 'file'
       && (document.languageId === 'nwpkg' || path.basename(document.uri.fsPath) === 'nwpkg.toml');
   }
 
-  scheduleManifest(document) {
+  scheduleManifest(document: vscode.TextDocument): void {
     const key = document.uri.toString();
     const previous = this.manifestTimers.get(key);
     if (previous) {
@@ -488,7 +582,7 @@ class CompilerController {
     }, delay));
   }
 
-  async checkManifest(document) {
+  async checkManifest(document: vscode.TextDocument): Promise<void> {
     const key = document.uri.toString();
     const sequence = ++this.sequence;
     this.manifestChecks.set(key, sequence);
@@ -526,11 +620,11 @@ class CompilerController {
     }
   }
 
-  documentKey(document) {
+  documentKey(document: vscode.TextDocument): string {
     return `file:${document.uri.toString()}`;
   }
 
-  invalidateChecks(document) {
+  invalidateChecks(document?: UriOwner): void {
     this.changeEpoch += 1;
     if (!document || path.basename(document.uri?.fsPath || '') === 'nwpkg.toml') {
       this.physicalDocumentRequests.clear();
@@ -548,7 +642,7 @@ class CompilerController {
       vscode.workspace.createFileSystemWatcher('**/nwpkg.toml'),
     ];
     for (const watcher of watchers) {
-      const changed = (uri) => this.handleWorkspaceFileChange(uri);
+      const changed = (uri: vscode.Uri): void => this.handleWorkspaceFileChange(uri);
       this.context.subscriptions.push(
         watcher,
         watcher.onDidCreate(changed),
@@ -558,7 +652,7 @@ class CompilerController {
     }
   }
 
-  handleWorkspaceFileChange(uri) {
+  handleWorkspaceFileChange(uri: vscode.Uri): void {
     if (this.ignoredWorkspacePath(uri.fsPath)) {
       return;
     }
@@ -579,7 +673,7 @@ class CompilerController {
     }
   }
 
-  ignoredWorkspacePath(filePath) {
+  ignoredWorkspacePath(filePath: string): boolean {
     return filePath.split(path.sep).some((segment) =>
       segment === '.git' || segment === 'node_modules' || segment === 'target');
   }
@@ -594,7 +688,10 @@ class CompilerController {
     this.watchRootRequests.clear();
   }
 
-  async ensureExternalWatchRoots(inputs, includeDirectories) {
+  async ensureExternalWatchRoots(
+    inputs: readonly string[],
+    includeDirectories: readonly string[],
+  ): Promise<void> {
     const requestKey = JSON.stringify({ inputs, includeDirectories });
     if (this.watchRootRequests.has(requestKey)) {
       return;
@@ -617,7 +714,7 @@ class CompilerController {
           new vscode.RelativePattern(root, '**/nwpkg.toml'),
         );
         for (const watcher of [sourceWatcher, manifestWatcher]) {
-          const changed = (uri) => this.handleWorkspaceFileChange(uri);
+          const changed = (uri: vscode.Uri): void => this.handleWorkspaceFileChange(uri);
           watcher.onDidCreate(changed, undefined, this.context.subscriptions);
           watcher.onDidChange(changed, undefined, this.context.subscriptions);
           watcher.onDidDelete(changed, undefined, this.context.subscriptions);
@@ -631,14 +728,14 @@ class CompilerController {
     }
   }
 
-  rootIsInsideWorkspace(root) {
+  rootIsInsideWorkspace(root: string): boolean {
     return (vscode.workspace.workspaceFolders || []).some((folder) => {
       const relative = path.relative(folder.uri.fsPath, root);
       return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
     });
   }
 
-  scheduleDocument(document) {
+  scheduleDocument(document: vscode.TextDocument): void {
     if (!this.isNwScriptDocument(document)) {
       return;
     }
@@ -656,7 +753,7 @@ class CompilerController {
     this.timers.set(key, timer);
   }
 
-  async checkDocument(document, revealFailure) {
+  async checkDocument(document: vscode.TextDocument, revealFailure: boolean): Promise<void> {
     if (!this.isNwScriptDocument(document)) {
       return;
     }
@@ -724,8 +821,14 @@ class CompilerController {
     });
   }
 
-  async deduplicateWorkspaceRoots(candidates) {
-    const unique = [...new Map(candidates.map((candidate) => [candidate.root, candidate])).values()];
+  async deduplicateWorkspaceRoots(
+    candidates: readonly WorkspaceRootCandidate[],
+  ): Promise<WorkspaceRootCandidate[]> {
+    const unique: WorkspaceRootCandidate[] = [
+      ...new Map<string, WorkspaceRootCandidate>(
+        candidates.map((candidate) => [candidate.root, candidate]),
+      ).values(),
+    ];
     if (unique.length < 2) {
       return unique;
     }
@@ -752,13 +855,13 @@ class CompilerController {
     }
   }
 
-  sourceOverlays(_root) {
+  sourceOverlays(_root: string | null | undefined): SourceOverlay[] {
     return vscode.workspace.textDocuments
       .filter((document) => this.isNwScriptDocument(document) && document.isDirty)
       .map((document) => ({ path: document.uri.fsPath, contents: document.getText() }));
   }
 
-  compilerConfiguration(sourceUri, cwd) {
+  compilerConfiguration(sourceUri: vscode.Uri, cwd: string): CompilerConfiguration {
     const config = vscode.workspace.getConfiguration('nwnrs', sourceUri);
     const workspaceFolder = vscode.workspace.getWorkspaceFolder(sourceUri)?.uri.fsPath || cwd;
     const context = {
@@ -784,8 +887,12 @@ class CompilerController {
     };
   }
 
-  async invokeNative(method, request, cancellationToken) {
-    return this.languageWorker.request(
+  async invokeNative<K extends keyof NativeLanguageResponseMap>(
+    method: K,
+    request: unknown,
+    cancellationToken?: vscode.CancellationToken,
+  ): Promise<NativeLanguageResponseMap[K]> {
+    return this.languageWorker.requestTyped(
       method,
       request,
       cancellationToken,
@@ -793,23 +900,32 @@ class CompilerController {
     );
   }
 
-  languageSessionKey(request) {
-    if (request.path && path.basename(request.path) === 'nwpkg.toml') {
-      return path.dirname(path.resolve(request.path));
+  languageSessionKey(request: unknown): string {
+    const requestPath = recordString(request, 'path');
+    if (requestPath && path.basename(requestPath) === 'nwpkg.toml') {
+      return path.dirname(path.resolve(requestPath));
     }
-    if (request.project_root) {
-      return path.resolve(request.project_root);
+    const projectRoot = recordString(request, 'project_root');
+    if (projectRoot) {
+      return path.resolve(projectRoot);
     }
-    if (request.source_path) {
-      return findProjectRoot(request.source_path);
+    const sourcePath = recordString(request, 'source_path');
+    if (sourcePath) {
+      return findProjectRoot(sourcePath);
     }
-    if (Array.isArray(request.paths) && request.paths.length === 1) {
-      return findProjectRoot(request.paths[0]);
+    const paths = recordStringArray(request, 'paths');
+    if (paths?.length === 1 && paths[0]) {
+      return findProjectRoot(paths[0]);
     }
     return '__workspace__';
   }
 
-  async resolveSymbol(document, position, cancellationToken, operation) {
+  async resolveSymbol(
+    document: vscode.TextDocument,
+    position: vscode.Position,
+    cancellationToken: vscode.CancellationToken,
+    operation: string,
+  ): Promise<ResolvedSymbol | undefined> {
     const wordRange = document.getWordRangeAtPosition(
       position,
       /[A-Za-z_][A-Za-z0-9_]*/u,
@@ -819,36 +935,33 @@ class CompilerController {
     }
     const symbol = document.getText(wordRange);
     const qualifier = this.symbolQualifier(document, wordRange);
-    let request;
+    let request: NativeDefinitionRequest;
     if (document.uri.scheme === 'nwnrs-game') {
       const context = this.virtualDocumentRequests.get(document.uri.toString());
       if (!context) {
         return undefined;
       }
-      request = {
-        ...context,
+      request = definitionRequestFromSourceContext(
+        context,
         symbol,
         qualifier,
-        overlays: this.sourceOverlays(context.project_root),
-      };
-      delete request.resource;
+        this.sourceOverlays(context.project_root),
+      );
     } else {
       const sourcePath = document.uri.fsPath;
       const origin = this.physicalDocumentRequests.get(path.resolve(sourcePath))?.[0];
       if (origin) {
-        request = {
-          ...origin,
-          source_path: sourcePath,
+        request = definitionRequestFromSourceContext(
+          { ...origin, source_path: sourcePath },
           symbol,
           qualifier,
-          overlays: this.sourceOverlays(origin.project_root),
-        };
+          this.sourceOverlays(origin.project_root),
+        );
       } else {
         const projectRoot = findProjectRoot(sourcePath);
         const configuration = this.compilerConfiguration(document.uri, projectRoot);
         request = buildDefinitionRequest(sourcePath, symbol, {
           projectRoot,
-          includeDirectories: configuration.includeDirectories,
           qualifier,
           overlays: this.sourceOverlays(projectRoot),
           ...configuration,
@@ -873,7 +986,10 @@ class CompilerController {
     }
   }
 
-  rememberVirtualDocuments(definitions, request) {
+  rememberVirtualDocuments(
+    definitions: readonly NativeDefinition[],
+    request: NativeDefinitionRequest,
+  ): void {
     const reusableRequest = { ...request, overlays: [] };
     for (const definition of definitions) {
       if (!definition.uri && path.isAbsolute(definition.path)) {
@@ -885,34 +1001,41 @@ class CompilerController {
       if (typeof definition.uri === 'string'
           && definition.uri.startsWith('nwnrs-game:')
           && typeof definition.resource === 'string') {
-        this.virtualDocumentRequests.set(definition.uri, {
-          ...reusableRequest,
-          resource: definition.resource,
-        });
+        this.virtualDocumentRequests.set(
+          definition.uri,
+          sourceContextFromRequest(reusableRequest, definition.path, definition.resource),
+        );
       }
     }
   }
 
-  rememberPhysicalDocument(sourcePath, request) {
+  rememberPhysicalDocument(
+    sourcePath: string,
+    request: NativeDefinitionRequest | NativeDocumentSymbolsRequest,
+  ): void {
+    const sourceContext = sourceContextFromRequest(request, sourcePath);
     const key = path.resolve(sourcePath);
     const contexts = [...(this.physicalDocumentRequests.get(key) || [])];
     const owningRoot = findProjectRoot(sourcePath);
-    const contextKey = path.resolve(request.project_root || owningRoot);
+    const contextKey = path.resolve(sourceContext.project_root || owningRoot);
     const existing = contexts.findIndex((context) =>
       path.resolve(context.project_root || owningRoot) === contextKey);
     if (existing >= 0) {
       contexts.splice(existing, 1);
     }
-    contexts.push(request);
+    contexts.push(sourceContext);
     contexts.sort((left, right) => {
-      const score = (context) => context.project_root
+      const score = (context: NativeDocumentSymbolsRequest): number => context.project_root
         && path.resolve(context.project_root) !== path.resolve(owningRoot) ? 1 : 0;
       return score(right) - score(left);
     });
     this.physicalDocumentRequests.set(key, contexts);
   }
 
-  async provideVirtualSource(uri, cancellationToken) {
+  async provideVirtualSource(
+    uri: vscode.Uri,
+    cancellationToken: vscode.CancellationToken,
+  ): Promise<string> {
     const key = uri.toString();
     const cached = this.virtualDocuments.get(key);
     if (cached !== undefined) {
@@ -930,7 +1053,10 @@ class CompilerController {
     return response.contents;
   }
 
-  async provideDocumentSymbols(document, cancellationToken) {
+  async provideDocumentSymbols(
+    document: vscode.TextDocument,
+    cancellationToken: vscode.CancellationToken,
+  ): Promise<vscode.DocumentSymbol[]> {
     let request;
     if (document.uri.scheme === 'nwnrs-game') {
       const context = this.virtualDocumentRequests.get(document.uri.toString());
@@ -947,7 +1073,6 @@ class CompilerController {
       const configuration = this.compilerConfiguration(document.uri, projectRoot);
       request = buildDocumentSymbolsRequest(sourcePath, {
         projectRoot,
-        includeDirectories: configuration.includeDirectories,
         overlays: this.sourceOverlays(projectRoot),
         ...configuration,
       });
@@ -973,7 +1098,12 @@ class CompilerController {
     return records.map((record) => documentSymbol(record));
   }
 
-  async provideCodeActions(document, _range, actionContext, cancellationToken) {
+  async provideCodeActions(
+    document: vscode.TextDocument,
+    _range: vscode.Range,
+    actionContext: vscode.CodeActionContext,
+    cancellationToken: vscode.CancellationToken,
+  ): Promise<vscode.CodeAction[]> {
     const actions = [];
     for (const diagnostic of actionContext.diagnostics) {
       if (diagnostic.source !== DIAGNOSTIC_OWNER) {
@@ -992,15 +1122,15 @@ class CompilerController {
       }
       if (diagnostic.code === -622) {
         const match = diagnostic.message.match(/undefined identifier\s+"([A-Za-z_][A-Za-z0-9_]*)"/u);
-        if (!match) {
+        const missingSymbol = match?.[1];
+        if (!missingSymbol) {
           continue;
         }
         const sourcePath = document.uri.fsPath;
         const projectRoot = findProjectRoot(sourcePath);
         const configuration = this.compilerConfiguration(document.uri, projectRoot);
-        const request = buildDefinitionRequest(sourcePath, match[1], {
+        const request = buildDefinitionRequest(sourcePath, missingSymbol, {
           projectRoot,
-          includeDirectories: configuration.includeDirectories,
           overlays: this.sourceOverlays(projectRoot),
           ...configuration,
         });
@@ -1040,7 +1170,10 @@ class CompilerController {
     return actions;
   }
 
-  async semanticDocument(document, cancellationToken) {
+  async semanticDocument(
+    document: vscode.TextDocument,
+    cancellationToken: vscode.CancellationToken,
+  ) {
     let request;
     if (document.uri.scheme === 'nwnrs-game') {
       const context = this.virtualDocumentRequests.get(document.uri.toString());
@@ -1057,7 +1190,6 @@ class CompilerController {
       const configuration = this.compilerConfiguration(document.uri, projectRoot);
       request = buildDocumentSymbolsRequest(sourcePath, {
         projectRoot,
-        includeDirectories: configuration.includeDirectories,
         overlays: this.sourceOverlays(projectRoot),
         ...configuration,
       });
@@ -1068,7 +1200,10 @@ class CompilerController {
       : { tokens: [], hints: [] };
   }
 
-  async provideSemanticTokens(document, cancellationToken) {
+  async provideSemanticTokens(
+    document: vscode.TextDocument,
+    cancellationToken: vscode.CancellationToken,
+  ): Promise<vscode.SemanticTokens> {
     try {
       const response = await this.semanticDocument(document, cancellationToken);
       const builder = new vscode.SemanticTokensBuilder(SEMANTIC_LEGEND);
@@ -1103,10 +1238,14 @@ class CompilerController {
     }
   }
 
-  async provideInlayHints(document, range, cancellationToken) {
+  async provideInlayHints(
+    document: vscode.TextDocument,
+    range: vscode.Range,
+    cancellationToken: vscode.CancellationToken,
+  ): Promise<vscode.InlayHint[]> {
     const config = vscode.workspace.getConfiguration('nwnrs.inlayHints', document.uri);
     const enumValues = config.get('enumValues', true);
-    const parameterNames = config.get('parameterNames', 'literals');
+    const parameterNames = config.get<string>('parameterNames', 'literals');
     if (!enumValues && parameterNames === 'off') {
       return [];
     }
@@ -1136,14 +1275,18 @@ class CompilerController {
     }
   }
 
-  symbolQualifier(document, wordRange) {
+  symbolQualifier(document: vscode.TextDocument, wordRange: vscode.Range): string | null {
     const line = document.lineAt(wordRange.start.line).text;
     const prefix = line.slice(0, wordRange.start.character);
     const match = prefix.match(/((?:[A-Za-z_][A-Za-z0-9_]*::)+)$/u);
-    return match ? match[1].slice(0, -2) : undefined;
+    return match?.[1] ? match[1].slice(0, -2) : null;
   }
 
-  async provideDefinition(document, position, cancellationToken) {
+  async provideDefinition(
+    document: vscode.TextDocument,
+    position: vscode.Position,
+    cancellationToken: vscode.CancellationToken,
+  ): Promise<vscode.Definition | undefined> {
     const included = await this.resolveIncludedSource(document, position, cancellationToken);
     if (included) {
       return new vscode.Location(
@@ -1188,7 +1331,11 @@ class CompilerController {
     });
   }
 
-  async provideHover(document, position, cancellationToken) {
+  async provideHover(
+    document: vscode.TextDocument,
+    position: vscode.Position,
+    cancellationToken: vscode.CancellationToken,
+  ): Promise<vscode.Hover | undefined> {
     const included = await this.resolveIncludedSource(document, position, cancellationToken);
     if (included) {
       const source = included.uri ? 'packed read-only game source' : 'editable source';
@@ -1235,91 +1382,94 @@ class CompilerController {
     return contents.length > 0 ? new vscode.Hover(contents, resolved.wordRange) : undefined;
   }
 
-  async resolveIncludedSource(document, position, cancellationToken) {
+  async resolveIncludedSource(
+    document: vscode.TextDocument,
+    position: vscode.Position,
+    cancellationToken: vscode.CancellationToken,
+  ): Promise<IncludedSource | undefined> {
     const line = document.lineAt(position.line).text;
     const match = line.match(/^\s*#include\s+"([^"\r\n]+)"/u);
     if (!match) {
       return undefined;
     }
-    const valueStart = line.indexOf(match[1]);
+    const includeName = match[1];
+    if (!includeName) return undefined;
+    const valueStart = line.indexOf(includeName);
     const range = new vscode.Range(
       position.line,
       valueStart,
       position.line,
-      valueStart + match[1].length,
+      valueStart + includeName.length,
     );
     if (!range.contains(position)) {
       return undefined;
     }
-    let request;
+    let request: NativeDefinitionRequest;
     if (document.uri.scheme === 'nwnrs-game') {
       const context = this.virtualDocumentRequests.get(document.uri.toString());
       if (!context) {
         return undefined;
       }
-      request = { ...context, symbol: '', qualifier: null, overlays: [] };
-      delete request.resource;
+      request = definitionRequestFromSourceContext(context, '', null, []);
     } else {
       const sourcePath = document.uri.fsPath;
       const projectRoot = findProjectRoot(sourcePath);
       const configuration = this.compilerConfiguration(document.uri, projectRoot);
       request = buildDefinitionRequest(sourcePath, '', {
         projectRoot,
-        includeDirectories: configuration.includeDirectories,
         overlays: this.sourceOverlays(projectRoot),
         ...configuration,
       });
     }
     const source = await this.invokeNative('resolveSource', {
       ...request,
-      resource: match[1],
+      resource: includeName,
     }, cancellationToken);
     if (!source) {
       return undefined;
     }
     if (source.uri && source.resource) {
-      this.virtualDocumentRequests.set(source.uri, {
-        ...request,
-        overlays: [],
-        resource: source.resource,
-      });
+      this.virtualDocumentRequests.set(
+        source.uri,
+        sourceContextFromRequest(request, source.path, source.resource),
+      );
     }
-    return { ...source, range, includeName: match[1] };
+    return { ...source, range, includeName };
   }
 
-  async resolveReferences(document, position, cancellationToken) {
+  async resolveReferences(
+    document: vscode.TextDocument,
+    position: vscode.Position,
+    cancellationToken: vscode.CancellationToken,
+  ): Promise<ResolvedReferences | undefined> {
     const wordRange = document.getWordRangeAtPosition(position, /[A-Za-z_][A-Za-z0-9_]*/u);
     if (!wordRange) {
       return undefined;
     }
     const symbol = document.getText(wordRange);
     const qualifier = this.symbolQualifier(document, wordRange);
-    let requests;
+    let requests: NativeDefinitionRequest[];
     if (document.uri.scheme === 'nwnrs-game') {
       const context = this.virtualDocumentRequests.get(document.uri.toString());
       if (!context) {
         return undefined;
       }
-      const request = { ...context, symbol, qualifier, overlays: [] };
-      delete request.resource;
-      requests = [request];
+      requests = [definitionRequestFromSourceContext(context, symbol, qualifier, [])];
     } else {
       const sourcePath = document.uri.fsPath;
       const origins = this.physicalDocumentRequests.get(path.resolve(sourcePath));
       if (origins?.length) {
-        requests = origins.map((origin) => ({
-          ...origin,
-          source_path: sourcePath,
+        requests = origins.map((origin) => definitionRequestFromSourceContext(
+          { ...origin, source_path: sourcePath },
           symbol,
           qualifier,
-          overlays: this.sourceOverlays(origin.project_root),
-        }));
+          this.sourceOverlays(origin.project_root),
+        ));
       } else {
         const projectRoot = findProjectRoot(sourcePath);
         const configuration = this.compilerConfiguration(document.uri, projectRoot);
         requests = [buildDefinitionRequest(sourcePath, symbol, {
           projectRoot,
-          includeDirectories: configuration.includeDirectories,
           qualifier,
           overlays: this.sourceOverlays(projectRoot),
           ...configuration,
@@ -1336,16 +1486,22 @@ class CompilerController {
       cancellationToken,
     )));
     const request = requests[0];
-    const records = [];
-    const seen = new Set();
-    const recordContexts = new Map();
+    if (!request) {
+      return undefined;
+    }
+    const records: NativeReference[] = [];
+    const seen = new Set<string>();
+    const recordContexts = new Map<string, NativeDefinitionRequest>();
     for (const [index, response] of responses.entries()) {
       for (const record of Array.isArray(response) ? response : []) {
         const key = `${record.uri || path.resolve(record.path)}:${record.range?.start_line}:${record.range?.start_column}`;
         if (!seen.has(key)) {
           seen.add(key);
           records.push(record);
-          recordContexts.set(key, requests[index]);
+          const recordRequest = requests[index];
+          if (recordRequest) {
+            recordContexts.set(key, recordRequest);
+          }
         }
       }
     }
@@ -1353,11 +1509,10 @@ class CompilerController {
       const key = `${record.uri || path.resolve(record.path)}:${record.range?.start_line}:${record.range?.start_column}`;
       const recordRequest = recordContexts.get(key) || request;
       if (record.uri && record.resource) {
-        this.virtualDocumentRequests.set(record.uri, {
-          ...recordRequest,
-          overlays: [],
-          resource: record.resource,
-        });
+        this.virtualDocumentRequests.set(
+          record.uri,
+          sourceContextFromRequest(recordRequest, record.path, record.resource),
+        );
       }
       if (!record.uri && path.isAbsolute(record.path)) {
         this.rememberPhysicalDocument(record.path, {
@@ -1370,7 +1525,12 @@ class CompilerController {
     return { records, wordRange, request, requests, symbol };
   }
 
-  async provideReferences(document, position, referenceContext, cancellationToken) {
+  async provideReferences(
+    document: vscode.TextDocument,
+    position: vscode.Position,
+    referenceContext: vscode.ReferenceContext,
+    cancellationToken: vscode.CancellationToken,
+  ): Promise<vscode.Location[]> {
     try {
       const resolved = await this.resolveReferences(document, position, cancellationToken);
       if (!resolved) {
@@ -1387,7 +1547,11 @@ class CompilerController {
     }
   }
 
-  async prepareRename(document, position, cancellationToken) {
+  async prepareRename(
+    document: vscode.TextDocument,
+    position: vscode.Position,
+    cancellationToken: vscode.CancellationToken,
+  ): Promise<{ range: vscode.Range; placeholder: string }> {
     const resolved = await this.resolveReferences(document, position, cancellationToken);
     if (!resolved || resolved.records.length === 0) {
       throw new Error('The symbol at this position cannot be renamed.');
@@ -1398,7 +1562,12 @@ class CompilerController {
     return { range: resolved.wordRange, placeholder: resolved.symbol };
   }
 
-  async provideRenameEdits(document, position, newName, cancellationToken) {
+  async provideRenameEdits(
+    document: vscode.TextDocument,
+    position: vscode.Position,
+    newName: string,
+    cancellationToken: vscode.CancellationToken,
+  ): Promise<vscode.WorkspaceEdit> {
     if (!/^[A-Za-z_][A-Za-z0-9_]*$/u.test(newName)) {
       throw new Error(`${JSON.stringify(newName)} is not a valid NWScript identifier.`);
     }
@@ -1434,7 +1603,11 @@ class CompilerController {
     return edit;
   }
 
-  async renameCollisions(resolved, collisions, cancellationToken) {
+  async renameCollisions(
+    resolved: ResolvedReferences,
+    collisions: readonly NativeDefinition[],
+    cancellationToken: vscode.CancellationToken,
+  ): Promise<readonly NativeDefinition[]> {
     const local = resolved.records.find((record) => record.container && record.is_declaration)
       || resolved.records.find((record) => record.container);
     if (!local) {
@@ -1445,11 +1618,13 @@ class CompilerController {
     const configuration = this.compilerConfiguration(vscode.Uri.file(sourcePath), projectRoot);
     const request = buildDocumentSymbolsRequest(sourcePath, {
       projectRoot,
-      includeDirectories: configuration.includeDirectories,
       overlays: this.sourceOverlays(projectRoot),
       ...configuration,
     });
     const symbols = await this.invokeNative('listDocumentSymbols', request, cancellationToken);
+    if (!local.container) {
+      return collisions.filter((collision) => path.resolve(collision.path) === path.resolve(sourcePath));
+    }
     const container = findDocumentSymbol(symbols, local.container, 'function');
     if (!container) {
       return collisions.filter((collision) => path.resolve(collision.path) === path.resolve(sourcePath));
@@ -1461,13 +1636,16 @@ class CompilerController {
       && collision.start_line - 1 <= range.endLine);
   }
 
-  async provideWorkspaceSymbols(search, cancellationToken) {
+  async provideWorkspaceSymbols(
+    search: string,
+    cancellationToken: vscode.CancellationToken,
+  ): Promise<vscode.SymbolInformation[]> {
     const files = await vscode.workspace.findFiles(
       '**/*.nss',
       '**/{.git,node_modules,target}/**',
     );
-    const results = [];
-    const projects = new Map();
+    const results: vscode.SymbolInformation[] = [];
+    const projects = new Map<string, vscode.Uri>();
     for (const uri of files) {
       const projectRoot = findProjectRoot(uri.fsPath);
       if (!projects.has(projectRoot)) {
@@ -1481,7 +1659,6 @@ class CompilerController {
       const configuration = this.compilerConfiguration(representative, projectRoot);
       const request = buildDocumentSymbolsRequest(representative.fsPath, {
         projectRoot,
-        includeDirectories: configuration.includeDirectories,
         overlays: this.sourceOverlays(projectRoot),
         ...configuration,
       });
@@ -1513,9 +1690,16 @@ class CompilerController {
     return results;
   }
 
-  async prepareCallHierarchy(document, position, cancellationToken) {
+  async prepareCallHierarchy(
+    document: vscode.TextDocument,
+    position: vscode.Position,
+    cancellationToken: vscode.CancellationToken,
+  ): Promise<vscode.CallHierarchyItem[]> {
     const resolved = await this.resolveSymbol(document, position, cancellationToken, 'call hierarchy');
-    const definition = resolved?.definitions.find((candidate) =>
+    if (!resolved) {
+      return [];
+    }
+    const definition = resolved.definitions.find((candidate) =>
       candidate.kind === 'function' || candidate.kind === 'builtinFunction');
     if (!definition || definition.uri) {
       return [];
@@ -1527,7 +1711,10 @@ class CompilerController {
     })];
   }
 
-  async provideIncomingCalls(item, cancellationToken) {
+  async provideIncomingCalls(
+    item: NwnrsCallHierarchyItem,
+    cancellationToken: vscode.CancellationToken,
+  ): Promise<vscode.CallHierarchyIncomingCall[]> {
     const request = item._nwnrsRequest;
     if (!request) {
       return [];
@@ -1572,7 +1759,10 @@ class CompilerController {
     return incoming;
   }
 
-  async provideOutgoingCalls(item, cancellationToken) {
+  async provideOutgoingCalls(
+    item: NwnrsCallHierarchyItem,
+    cancellationToken: vscode.CancellationToken,
+  ): Promise<vscode.CallHierarchyOutgoingCall[]> {
     const request = item._nwnrsRequest;
     if (!request) {
       return [];
@@ -1608,7 +1798,10 @@ class CompilerController {
     });
   }
 
-  async runCompiler(request, cancellationToken) {
+  async runCompiler(
+    request: CompilerRunRequest,
+    cancellationToken?: vscode.CancellationToken,
+  ): Promise<void> {
     const configuration = this.compilerConfiguration(request.sourceUri, request.cwd);
     void this.ensureExternalWatchRoots(request.targets, configuration.includeDirectories);
     const checkRequest = buildCheckRequest(request.targets, {
@@ -1689,8 +1882,11 @@ class CompilerController {
       : 'NWScript check passed';
   }
 
-  async mapDiagnostics(records, request) {
-    const mapped = new Map();
+  async mapDiagnostics(
+    records: readonly NativeCheckDiagnostic[],
+    request: CompilerRunRequest,
+  ): Promise<Map<string, DiagnosticRunEntry>> {
+    const mapped = new Map<string, DiagnosticRunEntry>();
     for (const record of records) {
       const uri = await this.resolveDiagnosticUri(record, request);
       const range = diagnosticRange(record);
@@ -1705,7 +1901,7 @@ class CompilerController {
         severity(record.severity),
       );
       diagnostic.source = DIAGNOSTIC_OWNER;
-      if (Number.isInteger(record.code)) {
+      if (record.code !== null && Number.isInteger(record.code)) {
         diagnostic.code = record.code;
       }
       const key = uri.toString();
@@ -1716,7 +1912,10 @@ class CompilerController {
     return mapped;
   }
 
-  async resolveDiagnosticUri(record, request) {
+  async resolveDiagnosticUri(
+    record: NativeCheckDiagnostic,
+    request: CompilerRunRequest,
+  ): Promise<vscode.Uri> {
     const raw = String(record.file || record.input || request.sourceUri.fsPath);
     if (path.isAbsolute(raw)) {
       return vscode.Uri.file(raw);
@@ -1753,7 +1952,11 @@ class CompilerController {
     }
   }
 
-  reportLaunchFailure(request, message, reveal) {
+  reportLaunchFailure(
+    request: CompilerRunRequest,
+    message: string,
+    reveal: boolean,
+  ): void {
     this.output.appendLine(`nwnrs compiler failure: ${message}`);
     this.status.text = '$(warning) nwnrs';
     this.status.tooltip = message;
@@ -1774,7 +1977,67 @@ class CompilerController {
   }
 }
 
-function severity(value) {
+function recordString(value: unknown, key: string): string | undefined {
+  if (typeof value !== 'object' || value === null) {
+    return undefined;
+  }
+  const field = (value as Record<string, unknown>)[key];
+  return typeof field === 'string' ? field : undefined;
+}
+
+function recordStringArray(value: unknown, key: string): string[] | undefined {
+  if (typeof value !== 'object' || value === null) {
+    return undefined;
+  }
+  const field = (value as Record<string, unknown>)[key];
+  return Array.isArray(field) && field.every((entry) => typeof entry === 'string')
+    ? field
+    : undefined;
+}
+
+function sourceContextFromRequest(
+  request: NativeDefinitionRequest | NativeDocumentSymbolsRequest,
+  sourcePath: string = request.source_path,
+  resource: string | null = 'resource' in request ? request.resource : null,
+): NativeDocumentSymbolsRequest {
+  return {
+    source_path: sourcePath,
+    resource,
+    project_root: request.project_root,
+    include_dirs: [...request.include_dirs],
+    overlays: [...request.overlays],
+    langspec: request.langspec,
+    max_include_depth: request.max_include_depth,
+    root: request.root,
+    user: request.user,
+    language: request.language,
+    load_ovr: request.load_ovr,
+  };
+}
+
+function definitionRequestFromSourceContext(
+  context: NativeDocumentSymbolsRequest,
+  symbol: string,
+  qualifier: string | null,
+  overlays: readonly SourceOverlay[],
+): NativeDefinitionRequest {
+  return {
+    source_path: context.source_path,
+    symbol,
+    qualifier,
+    project_root: context.project_root,
+    include_dirs: [...context.include_dirs],
+    overlays: [...overlays],
+    langspec: context.langspec,
+    max_include_depth: context.max_include_depth,
+    root: context.root,
+    user: context.user,
+    language: context.language,
+    load_ovr: context.load_ovr,
+  };
+}
+
+function severity(value: string): vscode.DiagnosticSeverity {
   switch (value) {
     case 'warning':
       return vscode.DiagnosticSeverity.Warning;
@@ -1787,13 +2050,13 @@ function severity(value) {
   }
 }
 
-const NWPKG_SECTIONS = {
+const NWPKG_SECTIONS: Readonly<Record<string, string>> = {
   project: 'Project identity and output kind.',
   source: 'Source directory for authored package contents.',
   dependencies: 'Local include-package dependencies keyed by package name.',
 };
 
-const NWPKG_FIELDS = {
+const NWPKG_FIELDS: Readonly<Record<string, string>> = {
   'project.name': 'Stable project name used in package metadata and diagnostics.',
   'project.kind': 'Package layout and output resource type.',
   'source.path': 'Source directory, resolved relative to this nwpkg.toml.',
@@ -1806,11 +2069,14 @@ const NWPKG_KINDS = [
   'tlk', 'utc', 'utd', 'ute', 'uti', 'utm', 'utp', 'uts', 'utt', 'utw',
 ];
 
-function escapeRegExp(value) {
+function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
 }
 
-function includeInsertion(document, includeName) {
+function includeInsertion(
+  document: vscode.TextDocument,
+  includeName: string,
+): { readonly position: vscode.Position; readonly text: string } {
   let lastInclude = -1;
   for (let line = 0; line < document.lineCount; line += 1) {
     if (/^\s*#include\s+"[^"]+"/u.test(document.lineAt(line).text)) {
@@ -1829,22 +2095,25 @@ function includeInsertion(document, includeName) {
   };
 }
 
-function nwpkgSection(document, line) {
+function nwpkgSection(document: vscode.TextDocument, line: number): string {
   for (let index = line; index >= 0; index -= 1) {
     const match = document.lineAt(index).text.match(/^\s*\[([^\]]+)\]\s*(?:#.*)?$/u);
-    if (match) {
+    if (match?.[1]) {
       return match[1];
     }
   }
   return '';
 }
 
-function nwpkgCompletions(document, position) {
+function nwpkgCompletions(
+  document: vscode.TextDocument,
+  position: vscode.Position,
+): vscode.CompletionItem[] {
   const line = document.lineAt(position.line).text;
   const prefix = line.slice(0, position.character);
   const section = nwpkgSection(document, position.line);
   const pathValue = prefix.match(/^\s*(?:[A-Za-z0-9_-]+\s*=\s*\{\s*)?path\s*=\s*"([^"\r\n]*)$/u);
-  if (pathValue && (section === 'source' || section === 'dependencies')) {
+  if (pathValue?.[1] !== undefined && (section === 'source' || section === 'dependencies')) {
     return nwpkgPathCompletions(document, position, pathValue[1]);
   }
   if (/^\s*\[[A-Za-z]*$/u.test(prefix)) {
@@ -1865,7 +2134,7 @@ function nwpkgCompletions(document, position) {
       return item;
     });
   }
-  const fields = section === 'project'
+  const fields: readonly (readonly [string, string])[] = section === 'project'
     ? [['name', '"${1:project}"'], ['kind', '"${1:mod}"']]
     : section === 'source'
       ? [['path', '"${1:.}"']]
@@ -1884,12 +2153,16 @@ function nwpkgCompletions(document, position) {
   });
 }
 
-function nwpkgPathCompletions(document, position, value) {
+function nwpkgPathCompletions(
+  document: vscode.TextDocument,
+  position: vscode.Position,
+  value: string,
+): vscode.CompletionItem[] {
   const slash = Math.max(value.lastIndexOf('/'), value.lastIndexOf(path.sep));
   const directoryPart = slash >= 0 ? value.slice(0, slash + 1) : '';
   const namePart = slash >= 0 ? value.slice(slash + 1) : value;
   const directory = path.resolve(path.dirname(document.uri.fsPath), directoryPart || '.');
-  let entries;
+  let entries: fs.Dirent[];
   try {
     entries = fs.readdirSync(directory, { withFileTypes: true });
   } catch {
@@ -1913,35 +2186,57 @@ function nwpkgPathCompletions(document, position, value) {
     });
 }
 
-function nwpkgHover(document, position) {
+function nwpkgHover(
+  document: vscode.TextDocument,
+  position: vscode.Position,
+): vscode.Hover | undefined {
   const line = document.lineAt(position.line).text;
   const sectionMatch = line.match(/^\s*\[([^\]]+)\]/u);
-  if (sectionMatch && NWPKG_SECTIONS[sectionMatch[1]]) {
-    return new vscode.Hover(NWPKG_SECTIONS[sectionMatch[1]]);
+  const sectionName = sectionMatch?.[1];
+  if (sectionName) {
+    const documentation = NWPKG_SECTIONS[sectionName];
+    if (documentation) {
+      return new vscode.Hover(documentation);
+    }
   }
   const keyMatch = line.match(/^\s*([A-Za-z0-9_-]+)\s*=/u);
   if (!keyMatch) {
     return undefined;
   }
   const section = nwpkgSection(document, position.line);
-  const schemaKey = section === 'dependencies' ? 'dependencies.path' : `${section}.${keyMatch[1]}`;
+  const key = keyMatch[1];
+  if (!key) {
+    return undefined;
+  }
+  const schemaKey = section === 'dependencies' ? 'dependencies.path' : `${section}.${key}`;
   const documentation = NWPKG_FIELDS[schemaKey];
   return documentation ? new vscode.Hover(documentation) : undefined;
 }
 
-function nwpkgDefinition(document, position) {
+function nwpkgDefinition(
+  document: vscode.TextDocument,
+  position: vscode.Position,
+): vscode.Location | undefined {
   const line = document.lineAt(position.line).text;
   const section = nwpkgSection(document, position.line);
   const quotedValues = [...line.matchAll(/"([^"\r\n]+)"/gu)];
   const value = quotedValues.find((match) => {
-    const start = match.index + 1;
-    const end = start + match[1].length;
+    const matchedValue = match[1];
+    if (matchedValue === undefined) {
+      return false;
+    }
+    const start = (match.index ?? 0) + 1;
+    const end = start + matchedValue.length;
     return position.character >= start && position.character <= end;
   });
   if (!value || (section !== 'source' && section !== 'dependencies')) {
     return undefined;
   }
-  const resolved = path.resolve(path.dirname(document.uri.fsPath), value[1]);
+  const matchedValue = value[1];
+  if (!matchedValue) {
+    return undefined;
+  }
+  const resolved = path.resolve(path.dirname(document.uri.fsPath), matchedValue);
   if (!fs.existsSync(resolved)) {
     return undefined;
   }
@@ -1954,20 +2249,21 @@ function nwpkgDefinition(document, position) {
   return new vscode.Location(vscode.Uri.file(target), new vscode.Position(0, 0));
 }
 
-function nwpkgDocumentSymbols(document) {
-  const symbols = [];
-  let current;
+function nwpkgDocumentSymbols(document: vscode.TextDocument): vscode.DocumentSymbol[] {
+  const symbols: vscode.DocumentSymbol[] = [];
+  let current: vscode.DocumentSymbol | undefined;
   for (let line = 0; line < document.lineCount; line += 1) {
     const text = document.lineAt(line).text;
     const section = text.match(/^\s*\[([^\]]+)\]/u);
-    if (section) {
-      const start = text.indexOf(section[1]);
+    const sectionName = section?.[1];
+    if (sectionName) {
+      const start = text.indexOf(sectionName);
       current = new vscode.DocumentSymbol(
-        section[1],
+        sectionName,
         'manifest section',
         vscode.SymbolKind.Namespace,
         document.lineAt(line).range,
-        new vscode.Range(line, start, line, start + section[1].length),
+        new vscode.Range(line, start, line, start + sectionName.length),
       );
       current.children = [];
       symbols.push(current);
@@ -1977,13 +2273,17 @@ function nwpkgDocumentSymbols(document) {
     if (!field) {
       continue;
     }
-    const start = text.indexOf(field[1]);
+    const fieldName = field[1];
+    if (!fieldName) {
+      continue;
+    }
+    const start = text.indexOf(fieldName);
     const symbol = new vscode.DocumentSymbol(
-      field[1],
+      fieldName,
       text.slice(text.indexOf('=') + 1).trim(),
       vscode.SymbolKind.Property,
       document.lineAt(line).range,
-      new vscode.Range(line, start, line, start + field[1].length),
+      new vscode.Range(line, start, line, start + fieldName.length),
     );
     if (current) {
       current.children.push(symbol);
@@ -1995,9 +2295,9 @@ function nwpkgDocumentSymbols(document) {
   return symbols;
 }
 
-function documentSymbol(record) {
-  const full = diagnosticRange(record.range || {});
-  const selection = diagnosticRange(record.selection_range || record.range || {});
+function documentSymbol(record: NativeDocumentSymbol): vscode.DocumentSymbol {
+  const full = diagnosticRange(record.range);
+  const selection = diagnosticRange(record.selection_range);
   const symbol = new vscode.DocumentSymbol(
     String(record.name || ''),
     typeof record.detail === 'string' ? record.detail : '',
@@ -2010,21 +2310,22 @@ function documentSymbol(record) {
       selection.endColumn,
     ),
   );
-  symbol.children = Array.isArray(record.children)
-    ? record.children.map((child) => documentSymbol(child))
-    : [];
+  symbol.children = record.children.map((child) => documentSymbol(child));
   return symbol;
 }
 
-function referenceLocation(record) {
-  const range = diagnosticRange(record.range || {});
+function referenceLocation(record: NativeReference): vscode.Location {
+  const range = diagnosticRange(record.range);
   return new vscode.Location(
     record.uri ? vscode.Uri.parse(record.uri) : vscode.Uri.file(record.path),
     new vscode.Range(range.startLine, range.startColumn, range.endLine, range.endColumn),
   );
 }
 
-function definitionMatchesReference(definition, reference) {
+function definitionMatchesReference(
+  definition: NativeDefinition,
+  reference: NativeReference,
+): boolean {
   const sameSource = definition.uri && reference.uri
     ? definition.uri === reference.uri
     : path.resolve(definition.path) === path.resolve(reference.path);
@@ -2033,7 +2334,10 @@ function definitionMatchesReference(definition, reference) {
     && definition.start_column === reference.range?.start_column;
 }
 
-function callHierarchyItem(definition, request) {
+function callHierarchyItem(
+  definition: NativeDefinition,
+  request: NativeDefinitionRequest,
+): NwnrsCallHierarchyItem {
   const range = diagnosticRange(definition);
   const selection = new vscode.Range(
     range.startLine,
@@ -2049,14 +2353,19 @@ function callHierarchyItem(definition, request) {
     selection,
     selection,
   );
-  item._nwnrsRequest = request;
-  return item;
+  return Object.assign(item, { _nwnrsRequest: request });
 }
 
-function appendWorkspaceSymbols(results, records, uri, search, container) {
+function appendWorkspaceSymbols(
+  results: vscode.SymbolInformation[],
+  records: readonly NativeDocumentSymbol[],
+  uri: vscode.Uri,
+  search: string,
+  container: string,
+): void {
   const normalizedSearch = search.trim().toLocaleLowerCase();
-  for (const record of Array.isArray(records) ? records : []) {
-    const range = diagnosticRange(record.selection_range || record.range || {});
+  for (const record of records) {
+    const range = diagnosticRange(record.selection_range);
     if (!normalizedSearch || String(record.name).toLocaleLowerCase().includes(normalizedSearch)) {
       results.push(new vscode.SymbolInformation(
         record.name,
@@ -2072,8 +2381,12 @@ function appendWorkspaceSymbols(results, records, uri, search, container) {
   }
 }
 
-function findDocumentSymbol(records, name, kind) {
-  for (const record of Array.isArray(records) ? records : []) {
+function findDocumentSymbol(
+  records: readonly NativeDocumentSymbol[],
+  name: string,
+  kind: string,
+): NativeDocumentSymbol | undefined {
+  for (const record of records) {
     if (record.name === name && record.kind === kind) {
       return record;
     }
@@ -2085,7 +2398,7 @@ function findDocumentSymbol(records, name, kind) {
   return undefined;
 }
 
-function documentSymbolKind(kind) {
+function documentSymbolKind(kind: string): vscode.SymbolKind {
   switch (kind) {
     case 'function':
       return vscode.SymbolKind.Function;
@@ -2110,7 +2423,7 @@ function documentSymbolKind(kind) {
   }
 }
 
-function activate(context) {
+export function activate(context: vscode.ExtensionContext): void {
   const controller = new CompilerController(context);
   controller.register();
   const resourceEditors = new ResourceCustomEditorProvider(context, controller.output);
@@ -2125,6 +2438,6 @@ function activate(context) {
   sidebar.register();
 }
 
-function deactivate() {}
+export function deactivate(): void {}
 
-module.exports = { activate, deactivate };
+export { CompilerController };

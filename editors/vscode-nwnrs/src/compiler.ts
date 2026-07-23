@@ -1,15 +1,101 @@
-'use strict';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import type { NativeDefinition } from './native-types';
 
-const fs = require('node:fs');
-const path = require('node:path');
+export const PROJECT_MANIFEST = 'nwpkg.toml';
 
-const PROJECT_MANIFEST = 'nwpkg.toml';
+export interface PathVariableContext {
+  readonly workspaceFolder?: string;
+  readonly projectRoot?: string;
+  readonly fileDirname?: string;
+}
 
-function isNssPath(filePath) {
+export interface SourceOverlay {
+  readonly path: string;
+  readonly contents: string;
+}
+
+export interface CompilerRequestOptions {
+  readonly noEntrypointCheck?: boolean;
+  readonly langspecPath?: string | null;
+  readonly includeDirectories?: readonly string[];
+  readonly overlays?: readonly SourceOverlay[];
+  readonly maxIncludeDepth?: number;
+  readonly maxDiagnosticsPerFile?: number;
+  readonly recurse?: boolean;
+  readonly rootPath?: string | null;
+  readonly userPath?: string | null;
+  readonly language?: string;
+  readonly loadOvr?: boolean;
+  readonly qualifier?: string | null;
+  readonly projectRoot?: string | null;
+  readonly resource?: string | null;
+}
+
+export interface NativeCheckRequest {
+  readonly paths: string[];
+  readonly no_entrypoint_check: boolean;
+  readonly langspec: string | null;
+  readonly include_dirs: string[];
+  readonly overlays: SourceOverlay[];
+  readonly max_include_depth: number;
+  readonly max_diagnostics_per_input: number;
+  readonly recurse: boolean;
+  readonly root: string | null;
+  readonly user: string | null;
+  readonly language: string;
+  readonly load_ovr: boolean;
+}
+
+export interface NativeDefinitionRequest {
+  readonly source_path: string;
+  readonly symbol: string;
+  readonly qualifier: string | null;
+  readonly project_root: string | null;
+  readonly include_dirs: string[];
+  readonly overlays: SourceOverlay[];
+  readonly langspec: string | null;
+  readonly max_include_depth: number;
+  readonly root: string | null;
+  readonly user: string | null;
+  readonly language: string;
+  readonly load_ovr: boolean;
+}
+
+export interface NativeDocumentSymbolsRequest {
+  readonly source_path: string;
+  readonly resource: string | null;
+  readonly project_root: string | null;
+  readonly include_dirs: string[];
+  readonly overlays: SourceOverlay[];
+  readonly langspec: string | null;
+  readonly max_include_depth: number;
+  readonly root: string | null;
+  readonly user: string | null;
+  readonly language: string;
+  readonly load_ovr: boolean;
+}
+
+export interface NativeDiagnosticRecord {
+  readonly start_line?: number | null;
+  readonly start_column?: number | null;
+  readonly end_line?: number | null;
+  readonly end_column?: number | null;
+}
+
+interface DocumentationEntry {
+  description: string;
+}
+
+interface DocumentationParameter extends DocumentationEntry {
+  name: string;
+}
+
+export function isNssPath(filePath: string): boolean {
   return path.extname(filePath).toLowerCase() === '.nss';
 }
 
-function findProjectRoot(filePath) {
+export function findProjectRoot(filePath: string): string {
   const resolved = path.resolve(filePath);
   let current;
   try {
@@ -30,7 +116,7 @@ function findProjectRoot(filePath) {
   }
 }
 
-function expandPathVariables(value, context) {
+export function expandPathVariables(value: string | undefined, context: PathVariableContext): string {
   if (!value) {
     return '';
   }
@@ -40,7 +126,11 @@ function expandPathVariables(value, context) {
     .replaceAll('${fileDirname}', context.fileDirname || '');
 }
 
-function resolveConfiguredPath(value, context, baseDirectory) {
+export function resolveConfiguredPath(
+  value: string | undefined,
+  context: PathVariableContext,
+  baseDirectory: string,
+): string {
   const expanded = expandPathVariables(value, context);
   if (!expanded || path.isAbsolute(expanded)) {
     return expanded;
@@ -48,7 +138,10 @@ function resolveConfiguredPath(value, context, baseDirectory) {
   return path.resolve(baseDirectory, expanded);
 }
 
-function buildCheckRequest(targets, options = {}) {
+export function buildCheckRequest(
+  targets: readonly string[],
+  options: CompilerRequestOptions = {},
+): NativeCheckRequest {
   return {
     paths: [...targets],
     no_entrypoint_check: options.noEntrypointCheck !== false,
@@ -65,7 +158,11 @@ function buildCheckRequest(targets, options = {}) {
   };
 }
 
-function buildDefinitionRequest(sourcePath, symbol, options = {}) {
+export function buildDefinitionRequest(
+  sourcePath: string,
+  symbol: string,
+  options: CompilerRequestOptions = {},
+): NativeDefinitionRequest {
   return {
     source_path: sourcePath,
     symbol,
@@ -82,7 +179,10 @@ function buildDefinitionRequest(sourcePath, symbol, options = {}) {
   };
 }
 
-function buildDocumentSymbolsRequest(sourcePath, options = {}) {
+export function buildDocumentSymbolsRequest(
+  sourcePath: string,
+  options: CompilerRequestOptions = {},
+): NativeDocumentSymbolsRequest {
   return {
     source_path: sourcePath,
     resource: options.resource || null,
@@ -98,7 +198,9 @@ function buildDocumentSymbolsRequest(sourcePath, options = {}) {
   };
 }
 
-function selectHoverDefinition(definitions) {
+export function selectHoverDefinition(
+  definitions: readonly NativeDefinition[] | unknown,
+): NativeDefinition | undefined {
   if (!Array.isArray(definitions) || definitions.length === 0) {
     return undefined;
   }
@@ -109,16 +211,16 @@ function selectHoverDefinition(definitions) {
     || definitions[0];
 }
 
-function formatHoverDocumentation(documentation) {
+export function formatHoverDocumentation(documentation: string | null | undefined): string {
   if (!documentation) {
     return '';
   }
-  const description = [];
-  const parameters = [];
-  const returns = [];
-  const notes = [];
+  const description: string[] = [];
+  const parameters: DocumentationParameter[] = [];
+  const returns: DocumentationEntry[] = [];
+  const notes: DocumentationEntry[] = [];
   let privateApi = false;
-  let continuation;
+  let continuation: DocumentationEntry | undefined;
 
   for (const sourceLine of documentation.split(/\r?\n/u)) {
     const line = sourceLine.trim();
@@ -129,23 +231,26 @@ function formatHoverDocumentation(documentation) {
       || line.match(/^([Rr]eturn(?:s| value)?(?:\s+value)?[^:]*(?::\s*)?.*)$/u);
     const note = line.match(/^(?:Notes?|NB)\s*:?\s*(.*)$/iu);
     if (parameter) {
-      const entry = { name: parameter[1], description: parameter[2] };
+      const entry = { name: parameter[1] ?? '', description: parameter[2] ?? '' };
       parameters.push(entry);
       continuation = entry;
     } else if (vanillaParameter) {
-      const entry = { name: vanillaParameter[1], description: vanillaParameter[2] };
+      const entry = {
+        name: vanillaParameter[1] ?? '',
+        description: vanillaParameter[2] ?? '',
+      };
       parameters.push(entry);
       continuation = entry;
     } else if (returnValue) {
-      const entry = { description: returnValue[1] };
+      const entry = { description: returnValue[1] ?? '' };
       returns.push(entry);
       continuation = entry;
     } else if (vanillaReturn) {
-      const entry = { description: vanillaReturn[1] };
+      const entry = { description: vanillaReturn[1] ?? '' };
       returns.push(entry);
       continuation = entry;
     } else if (note) {
-      const entry = { description: note[1] };
+      const entry = { description: note[1] ?? '' };
       notes.push(entry);
       continuation = entry;
     } else if (line === '@private') {
@@ -181,7 +286,11 @@ function formatHoverDocumentation(documentation) {
   return sections.join('\n\n');
 }
 
-function nativeBindingPath(extensionPath, platform = process.platform, architecture = process.arch) {
+export function nativeBindingPath(
+  extensionPath: string,
+  platform: NodeJS.Platform = process.platform,
+  architecture = process.arch,
+): string {
   if (platform !== 'darwin' || architecture !== 'arm64') {
     throw new Error(
       `the bundled nwnrs compiler does not yet support ${platform}-${architecture}; `
@@ -191,7 +300,12 @@ function nativeBindingPath(extensionPath, platform = process.platform, architect
   return path.join(extensionPath, 'native', 'nwnrs-vscode.darwin-arm64.node');
 }
 
-function diagnosticRange(record) {
+export function diagnosticRange(record: NativeDiagnosticRecord): {
+  startLine: number;
+  startColumn: number;
+  endLine: number;
+  endColumn: number;
+} {
   const startLine = positiveInteger(record.start_line, 1) - 1;
   const startColumn = positiveInteger(record.start_column, 1) - 1;
   const endLine = Math.max(startLine, positiveInteger(record.end_line, startLine + 1) - 1);
@@ -202,21 +316,6 @@ function diagnosticRange(record) {
   return { startLine, startColumn, endLine, endColumn };
 }
 
-function positiveInteger(value, fallback) {
-  return Number.isInteger(value) && value > 0 ? value : fallback;
+function positiveInteger(value: unknown, fallback: number): number {
+  return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : fallback;
 }
-
-module.exports = {
-  PROJECT_MANIFEST,
-  buildCheckRequest,
-  buildDefinitionRequest,
-  buildDocumentSymbolsRequest,
-  diagnosticRange,
-  expandPathVariables,
-  findProjectRoot,
-  formatHoverDocumentation,
-  isNssPath,
-  nativeBindingPath,
-  resolveConfiguredPath,
-  selectHoverDefinition,
-};

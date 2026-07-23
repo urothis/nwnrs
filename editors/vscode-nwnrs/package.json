@@ -8,11 +8,11 @@
   "icon": "images/icon.png",
   "repository": {
     "type": "git",
-    "url": "https://github.com/urothis/nwnrs.git",
+    "url": "git+https://github.com/urothis/nwnrs.git",
     "directory": "editors/vscode-nwnrs"
   },
   "engines": {
-    "vscode": "^1.85.0"
+    "vscode": "^1.125.0"
   },
   "categories": [
     "Programming Languages",
@@ -27,17 +27,8 @@
   "extensionKind": [
     "workspace"
   ],
-  "main": "./src/extension.js",
+  "main": "./dist/src/extension.js",
   "activationEvents": [
-    "onLanguage:nwscript",
-    "onLanguage:nwpkg",
-    "onCommand:nwnrs.checkCurrentFile",
-    "onCommand:nwnrs.checkWorkspace",
-    "onCommand:nwnrs.showStatusMenu",
-    "onCommand:nwnrs.showCompilerOutput",
-    "onCustomEditor:nwnrs.resourceEditor",
-    "onView:nwnrs.packages",
-    "onView:nwnrs.resources",
     "workspaceContains:**/*.nss"
   ],
   "contributes": {
@@ -82,43 +73,117 @@
         "viewType": "nwnrs.resourceEditor",
         "displayName": "nwnrs Resource Editor",
         "selector": [
-          { "filenamePattern": "*.2da" },
-          { "filenamePattern": "*.tlk" },
-          { "filenamePattern": "*.dds" },
-          { "filenamePattern": "*.tga" },
-          { "filenamePattern": "*.plt" },
-          { "filenamePattern": "*.gff" },
-          { "filenamePattern": "*.utc" },
-          { "filenamePattern": "*.utd" },
-          { "filenamePattern": "*.ute" },
-          { "filenamePattern": "*.uti" },
-          { "filenamePattern": "*.utm" },
-          { "filenamePattern": "*.utp" },
-          { "filenamePattern": "*.uts" },
-          { "filenamePattern": "*.utt" },
-          { "filenamePattern": "*.utw" },
-          { "filenamePattern": "*.git" },
-          { "filenamePattern": "*.are" },
-          { "filenamePattern": "*.gic" },
-          { "filenamePattern": "*.ifo" },
-          { "filenamePattern": "*.fac" },
-          { "filenamePattern": "*.dlg" },
-          { "filenamePattern": "*.dlg.json" },
-          { "filenamePattern": "*.itp" },
-          { "filenamePattern": "*.bic" },
-          { "filenamePattern": "*.jrl" },
-          { "filenamePattern": "*.gui" },
-          { "filenamePattern": "*.erf" },
-          { "filenamePattern": "*.hak" },
-          { "filenamePattern": "*.mod" },
-          { "filenamePattern": "*.nwm" },
-          { "filenamePattern": "*.key" },
-          { "filenamePattern": "*.ncs" },
-          { "filenamePattern": "*.ndb" },
-          { "filenamePattern": "*.mdl" },
-          { "filenamePattern": "*.wok" },
-          { "filenamePattern": "*.dwk" },
-          { "filenamePattern": "*.pwk" }
+          {
+            "filenamePattern": "*.2da"
+          },
+          {
+            "filenamePattern": "*.tlk"
+          },
+          {
+            "filenamePattern": "*.dds"
+          },
+          {
+            "filenamePattern": "*.tga"
+          },
+          {
+            "filenamePattern": "*.plt"
+          },
+          {
+            "filenamePattern": "*.gff"
+          },
+          {
+            "filenamePattern": "*.utc"
+          },
+          {
+            "filenamePattern": "*.utd"
+          },
+          {
+            "filenamePattern": "*.ute"
+          },
+          {
+            "filenamePattern": "*.uti"
+          },
+          {
+            "filenamePattern": "*.utm"
+          },
+          {
+            "filenamePattern": "*.utp"
+          },
+          {
+            "filenamePattern": "*.uts"
+          },
+          {
+            "filenamePattern": "*.utt"
+          },
+          {
+            "filenamePattern": "*.utw"
+          },
+          {
+            "filenamePattern": "*.git"
+          },
+          {
+            "filenamePattern": "*.are"
+          },
+          {
+            "filenamePattern": "*.gic"
+          },
+          {
+            "filenamePattern": "*.ifo"
+          },
+          {
+            "filenamePattern": "*.fac"
+          },
+          {
+            "filenamePattern": "*.dlg"
+          },
+          {
+            "filenamePattern": "*.dlg.json"
+          },
+          {
+            "filenamePattern": "*.itp"
+          },
+          {
+            "filenamePattern": "*.bic"
+          },
+          {
+            "filenamePattern": "*.jrl"
+          },
+          {
+            "filenamePattern": "*.gui"
+          },
+          {
+            "filenamePattern": "*.erf"
+          },
+          {
+            "filenamePattern": "*.hak"
+          },
+          {
+            "filenamePattern": "*.mod"
+          },
+          {
+            "filenamePattern": "*.nwm"
+          },
+          {
+            "filenamePattern": "*.key"
+          },
+          {
+            "filenamePattern": "*.ncs"
+          },
+          {
+            "filenamePattern": "*.ndb"
+          },
+          {
+            "filenamePattern": "*.mdl"
+          },
+          {
+            "filenamePattern": "*.wok"
+          },
+          {
+            "filenamePattern": "*.dwk"
+          },
+          {
+            "filenamePattern": "*.pwk"
+          }
         ],
         "priority": "default"
       }
@@ -137,11 +202,13 @@
         {
           "id": "nwnrs.packages",
           "name": "Packages",
+          "icon": "$(package)",
           "visibility": "visible"
         },
         {
           "id": "nwnrs.resources",
           "name": "Resources",
+          "icon": "$(files)",
           "visibility": "collapsed"
         }
       ]
@@ -335,22 +402,42 @@
       {
         "language": "nwscript",
         "scopes": {
-          "function": ["entity.name.function.nwscript"],
-          "parameter": ["variable.parameter.nwscript"],
-          "variable": ["variable.other.readwrite.nwscript"],
-          "property": ["variable.other.property.nwscript"],
-          "type": ["storage.type.nwscript"],
-          "enum": ["entity.name.type.enum.nwscript"],
-          "enumMember": ["constant.other.enum.nwscript"],
-          "macro": ["entity.name.function.preprocessor.nwscript"]
+          "function": [
+            "entity.name.function.nwscript"
+          ],
+          "parameter": [
+            "variable.parameter.nwscript"
+          ],
+          "variable": [
+            "variable.other.readwrite.nwscript"
+          ],
+          "property": [
+            "variable.other.property.nwscript"
+          ],
+          "type": [
+            "storage.type.nwscript"
+          ],
+          "enum": [
+            "entity.name.type.enum.nwscript"
+          ],
+          "enumMember": [
+            "constant.other.enum.nwscript"
+          ],
+          "macro": [
+            "entity.name.function.preprocessor.nwscript"
+          ]
         }
       }
     ]
   },
   "scripts": {
-    "build-native": "node scripts/build-native.js",
+    "clean": "rimraf dist",
+    "build": "npm run clean && tsc -p tsconfig.build.json && node dist/scripts/sync-resource-capabilities.js --check && tsc -p tsconfig.webview.json",
+    "build-native": "npm run build && node dist/scripts/build-native.js",
     "vscode:prepublish": "npm run build-native && npm run check && npm test",
-    "check": "node --check src/compiler.js && node --check src/compiler-worker.js && node --check src/worker-client.js && node --check src/language-worker-client.js && node --check src/resource-editor-worker.js && node --check src/resource-editor-worker-client.js && node --check src/viewer-worker.js && node --check src/viewer-worker-client.js && node --check src/resource-editor-view.js && node --check src/resource-custom-editor.js && node --check src/sidebar.js && node --check media/resource-editor.js && node --check src/extension.js",
-    "test": "node --test test/*.test.js"
+    "check": "tsc -p tsconfig.build.json && node dist/scripts/sync-resource-capabilities.js --check && tsc -p tsconfig.json --noEmit",
+    "package": "vsce package --no-dependencies",
+    "sync:capabilities": "tsc -p tsconfig.build.json && node dist/scripts/sync-resource-capabilities.js --write",
+    "test": "npm run build && node --test test/*.test.ts"
   }
 }

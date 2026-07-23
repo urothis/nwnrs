@@ -26,7 +26,8 @@ use crate::scene::{
 
 /// Stateful scene assembler over one layered NWN resource view.
 pub struct SceneLoader<'a> {
-    resman: &'a mut ResMan,
+    resman:    &'a mut ResMan,
+    cancelled: Option<&'a dyn Fn() -> bool>,
 }
 
 /// Builds the stable logical-object catalog shared by area packets and editor
@@ -194,6 +195,24 @@ impl<'a> SceneLoader<'a> {
     pub fn new(resman: &'a mut ResMan) -> Self {
         Self {
             resman,
+            cancelled: None,
+        }
+    }
+
+    /// Creates a scene loader that cooperatively stops between resource and
+    /// model assembly steps when `cancelled` returns true.
+    pub fn with_cancellation(resman: &'a mut ResMan, cancelled: &'a dyn Fn() -> bool) -> Self {
+        Self {
+            resman,
+            cancelled: Some(cancelled),
+        }
+    }
+
+    fn check_cancelled(&self) -> SceneResult<()> {
+        if self.cancelled.is_some_and(|cancelled| cancelled()) {
+            Err(SceneError::cancelled())
+        } else {
+            Ok(())
         }
     }
 
@@ -205,6 +224,7 @@ impl<'a> SceneLoader<'a> {
     /// Returns [`SceneError`] when the root resource is missing or invalid.
     #[instrument(level = "debug", skip_all, err, fields(resource = %resource))]
     pub fn load_model(&mut self, resource: &ResolvedResRef) -> SceneResult<SceneDocument> {
+        self.check_cancelled()?;
         let kind =
             ModelResourceKind::from_res_type(resource.base().res_type()).ok_or_else(|| {
                 SceneError::invalid(format!("{} is not a model-shaped resource", resource))
@@ -228,6 +248,7 @@ impl<'a> SceneLoader<'a> {
                 &NwnAppearanceOverrides::default(),
             )
             .map_err(|error| SceneError::scene(error.to_string()))?;
+            self.check_cancelled()?;
             self.record_composed_dependencies(root_id, &composed, &mut dependencies);
             (SceneSource::Model, SceneModel::Composed(composed))
         } else {
@@ -236,6 +257,7 @@ impl<'a> SceneLoader<'a> {
                 .map_err(|error| SceneError::invalid(format!("read {resource}: {error}")))?;
             let scene = parse_scene_resource_auto(kind, resource.base().res_ref(), &bytes)
                 .map_err(|error| SceneError::invalid(format!("parse {resource}: {error}")))?;
+            self.check_cancelled()?;
             let source = match kind {
                 ModelResourceKind::Model => SceneSource::Model,
                 ModelResourceKind::Walkmesh => SceneSource::Walkmesh,
@@ -267,6 +289,7 @@ impl<'a> SceneLoader<'a> {
                 (ModelResourceKind::DoorWalkmesh, "dwk"),
                 (ModelResourceKind::PlaceableWalkmesh, "pwk"),
             ] {
+                self.check_cancelled()?;
                 let filename = format!("{}.{extension}", resource.base().res_ref());
                 let Ok(resolved) = ResolvedResRef::from_filename(&filename) else {
                     continue;
@@ -308,9 +331,11 @@ impl<'a> SceneLoader<'a> {
             }
         }
         let mut diagnostics = Vec::new();
-        self.append_emitter_chunk_models(&mut models, &mut dependencies, &mut diagnostics);
+        self.append_emitter_chunk_models(&mut models, &mut dependencies, &mut diagnostics)?;
+        self.check_cancelled()?;
         let (model_assets, textures, shaders) =
             resolve_model_assets(self.resman, &models, &mut dependencies, &mut diagnostics)?;
+        self.check_cancelled()?;
         Ok(SceneDocument {
             name: resource.base().res_ref().to_string(),
             source,
@@ -336,6 +361,7 @@ impl<'a> SceneLoader<'a> {
     /// blueprint or any required appearance dependency is invalid.
     #[instrument(level = "debug", skip_all, err, fields(resource = %resource))]
     pub fn load_blueprint(&mut self, resource: &ResolvedResRef) -> SceneResult<SceneDocument> {
+        self.check_cancelled()?;
         let kind =
             NwnBlueprintKind::from_res_type(resource.base().res_type()).ok_or_else(|| {
                 SceneError::invalid(format!("{} is not a visual blueprint", resource))
@@ -360,6 +386,7 @@ impl<'a> SceneLoader<'a> {
         let mut model_indices = std::collections::BTreeMap::new();
         let mut diagnostics = Vec::new();
         for composed in visual.models {
+            self.check_cancelled()?;
             let model_id = self.record_resolved(
                 &mut dependencies,
                 &format!("{}.mdl", composed.model_name),
@@ -397,9 +424,11 @@ impl<'a> SceneLoader<'a> {
                 &mut diagnostics,
             );
         }
-        self.append_emitter_chunk_models(&mut models, &mut dependencies, &mut diagnostics);
+        self.append_emitter_chunk_models(&mut models, &mut dependencies, &mut diagnostics)?;
+        self.check_cancelled()?;
         let (model_assets, textures, shaders) =
             resolve_model_assets(self.resman, &models, &mut dependencies, &mut diagnostics)?;
+        self.check_cancelled()?;
         Ok(SceneDocument {
             name: resource.base().res_ref().to_string(),
             source: source_for_blueprint(kind),
@@ -425,6 +454,7 @@ impl<'a> SceneLoader<'a> {
     /// invalid.
     #[instrument(level = "debug", skip_all, err, fields(area_name))]
     pub fn load_area(&mut self, area_name: &str) -> SceneResult<SceneDocument> {
+        self.check_cancelled()?;
         let area = AreFile::from_resman(self.resman, area_name, CachePolicy::Use)
             .map_err(|error| SceneError::invalid(error.to_string()))?;
         let git = GitFile::from_resman(self.resman, area_name, CachePolicy::Use)
@@ -463,6 +493,7 @@ impl<'a> SceneLoader<'a> {
         let mut model_indices = std::collections::BTreeMap::<String, usize>::new();
         let mut instances = Vec::new();
         for tile in &area.tiles {
+            self.check_cancelled()?;
             let Some(tile_id) = tile.tile_id.and_then(|id| u32::try_from(id).ok()) else {
                 diagnostics.push(SceneDiagnostic {
                     severity: SceneDiagnosticSeverity::Error,
@@ -678,6 +709,7 @@ impl<'a> SceneLoader<'a> {
             &mut dependencies,
             &mut diagnostics,
         )?;
+        self.check_cancelled()?;
         append_git_overlays(&git, &area_objects, &mut instances)?;
         self.append_skybox(
             &area,
@@ -689,9 +721,11 @@ impl<'a> SceneLoader<'a> {
             &mut diagnostics,
         );
 
-        self.append_emitter_chunk_models(&mut models, &mut dependencies, &mut diagnostics);
+        self.append_emitter_chunk_models(&mut models, &mut dependencies, &mut diagnostics)?;
+        self.check_cancelled()?;
         let (model_assets, textures, shaders) =
             resolve_model_assets(self.resman, &models, &mut dependencies, &mut diagnostics)?;
+        self.check_cancelled()?;
 
         Ok(SceneDocument {
             name: area_name.to_string(),
@@ -737,6 +771,7 @@ impl<'a> SceneLoader<'a> {
         module_name: &str,
         selected_area: Option<&str>,
     ) -> SceneResult<SceneDocument> {
+        self.check_cancelled()?;
         let info = ModuleInfo::from_resman(self.resman, module_name, CachePolicy::Use)
             .map_err(|error| SceneError::invalid(error.to_string()))?;
         let entry_area = selected_area
@@ -754,6 +789,7 @@ impl<'a> SceneLoader<'a> {
             )));
         }
         let mut scene = self.load_area(&entry_area)?;
+        self.check_cancelled()?;
         let module_id = self.record_resolved(
             &mut scene.dependencies,
             &format!("{module_name}.ifo"),
@@ -787,6 +823,7 @@ impl<'a> SceneLoader<'a> {
         diagnostics: &mut Vec<SceneDiagnostic>,
     ) -> SceneResult<()> {
         for (index, creature) in git.creatures.iter().enumerate() {
+            self.check_cancelled()?;
             self.append_blueprint_instance(
                 NwnBlueprintKind::Creature,
                 area_object_key(area_objects, SceneInstanceKind::Creature, index)?,
@@ -800,9 +837,10 @@ impl<'a> SceneLoader<'a> {
                 instances,
                 dependencies,
                 diagnostics,
-            );
+            )?;
         }
         for (index, door) in git.doors.iter().enumerate() {
+            self.check_cancelled()?;
             self.append_blueprint_instance(
                 NwnBlueprintKind::Door,
                 area_object_key(area_objects, SceneInstanceKind::Door, index)?,
@@ -816,9 +854,10 @@ impl<'a> SceneLoader<'a> {
                 instances,
                 dependencies,
                 diagnostics,
-            );
+            )?;
         }
         for (index, placeable) in git.placeables.iter().enumerate() {
+            self.check_cancelled()?;
             self.append_blueprint_instance(
                 NwnBlueprintKind::Placeable,
                 area_object_key(area_objects, SceneInstanceKind::Placeable, index)?,
@@ -832,7 +871,7 @@ impl<'a> SceneLoader<'a> {
                 instances,
                 dependencies,
                 diagnostics,
-            );
+            )?;
         }
         Ok(())
     }
@@ -1033,7 +1072,8 @@ impl<'a> SceneLoader<'a> {
         instances: &mut Vec<SceneInstance>,
         dependencies: &mut DependencyGraph,
         diagnostics: &mut Vec<SceneDiagnostic>,
-    ) {
+    ) -> SceneResult<()> {
+        self.check_cancelled()?;
         let blueprint_id = template.map(|name| {
             let filename = format!("{name}.{}", kind.extension());
             let id = self.record_resolved(dependencies, &filename, DependencyKind::Blueprint);
@@ -1055,10 +1095,11 @@ impl<'a> SceneLoader<'a> {
                     message:  format!("could not resolve {label} visual: {error}"),
                     resource: template.map(|name| format!("{name}.{}", kind.extension())),
                 });
-                return;
+                return Ok(());
             }
         };
         for composed in visual.models {
+            self.check_cancelled()?;
             let model_name = composed.model_name.clone();
             let model_id = self.record_resolved(
                 dependencies,
@@ -1106,6 +1147,7 @@ impl<'a> SceneLoader<'a> {
                 diagnostics,
             );
         }
+        Ok(())
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1256,12 +1298,14 @@ impl<'a> SceneLoader<'a> {
         models: &mut Vec<SceneModel>,
         dependencies: &mut DependencyGraph,
         diagnostics: &mut Vec<SceneDiagnostic>,
-    ) {
+    ) -> SceneResult<()> {
         let mut source_index = 0;
         while let Some(source) = models.get(source_index) {
+            self.check_cancelled()?;
             let references = emitter_chunk_references(source);
             source_index += 1;
             for (parent, chunk_name) in references {
+                self.check_cancelled()?;
                 if models
                     .iter()
                     .any(|model| model_tree_contains_name(model, &chunk_name))
@@ -1310,6 +1354,7 @@ impl<'a> SceneLoader<'a> {
                 }
             }
         }
+        Ok(())
     }
 
     fn record_resolved(

@@ -5,45 +5,110 @@ const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
 const vm = require('node:vm');
-const { ResourceEditorWorkerClient } = require('../src/resource-editor-worker-client');
+const { ResourceEditorWorkerClient } = require('../dist/src/resource-editor-worker-client');
+const { ViewerWorkerClient } = require('../dist/src/viewer-worker-client');
 
 const extensionRoot = path.resolve(__dirname, '..');
 const repositoryRoot = path.resolve(extensionRoot, '..', '..');
 const bindingPath = path.join(extensionRoot, 'native', 'nwnrs-vscode.darwin-arm64.node');
 const rendererSource = fs.readFileSync(
-  path.join(extensionRoot, 'media', 'resource-editor.js'),
+  path.join(extensionRoot, 'dist', 'media', 'resource-editor.js'),
   'utf8',
 );
 const rendererStyle = fs.readFileSync(
   path.join(extensionRoot, 'media', 'resource-editor.css'),
   'utf8',
 );
+const installedAcceptanceResources = [
+  ['cloakmodel.2da', '2da'],
+  ['quickchat.gff', 'gff'],
+  ['voiceset.gff', 'gff'],
+] as const;
+
+interface TestContext {
+  skip(message?: string): void;
+}
+
+interface TestElement {
+  readonly id: string;
+  innerHTML: string;
+  textContent: string;
+  value: string;
+  readonly dataset: Record<string, string>;
+  type: string;
+  hidden: boolean;
+  scrollTop: number;
+  clientWidth: number;
+  readonly style: { setProperty(name: string, value: string): void };
+  readonly classList: {
+    add(...names: string[]): void;
+    remove(...names: string[]): void;
+    toggle(name: string, force?: boolean): void;
+  };
+  getContext(): object;
+  querySelector(): TestElement | null;
+  querySelectorAll(): TestElement[];
+  scrollIntoView(): void;
+  setAttribute(name: string, value: string): void;
+  setPointerCapture(pointerId: number): void;
+  focus(): void;
+}
+
+type RendererMessageListener = (event: { readonly data: unknown }) => unknown;
+
+function dispatchRendererMessage(
+  listeners: ReadonlyMap<string, RendererMessageListener>,
+  data: unknown,
+): unknown {
+  const listener = listeners.get('message');
+  if (!listener) throw new Error('Renderer message listener was not registered');
+  return listener({ data });
+}
+
+function isPostedMessage(value: unknown): value is { readonly type: string } {
+  return typeof value === 'object'
+    && value !== null
+    && 'type' in value
+    && typeof value.type === 'string';
+}
 
 function createRendererHarness() {
-  const elements = new Map();
-  const listeners = new Map();
-  const posted = [];
-  let persistedState;
-  const element = (id) => {
-    if (!elements.has(id)) {
-      elements.set(id, {
-        id,
-        innerHTML: '',
-        value: '',
-        dataset: {},
-        type: '',
-        classList: { add() {}, toggle() {} },
-        getContext() { return {}; },
-      });
-    }
-    return elements.get(id);
+  const elements = new Map<string, TestElement>();
+  const listeners = new Map<string, RendererMessageListener>();
+  const posted: unknown[] = [];
+  let persistedState: unknown;
+  const element = (id: string): TestElement => {
+    const existing = elements.get(id);
+    if (existing) return existing;
+    const created: TestElement = {
+      id,
+      innerHTML: '',
+      textContent: '',
+      value: '',
+      dataset: {},
+      type: '',
+      hidden: false,
+      scrollTop: 0,
+      clientWidth: 1280,
+      style: { setProperty() {} },
+      classList: { add() {}, remove() {}, toggle() {} },
+      getContext() { return {}; },
+      querySelector() { return null; },
+      querySelectorAll() { return []; },
+      scrollIntoView() {},
+      setAttribute() {},
+      setPointerCapture() {},
+      focus() {},
+    };
+    elements.set(id, created);
+    return created;
   };
   element('app').innerHTML = '<div class="loading">Loading resource…</div>';
-  const sandbox = {
+  const sandbox: import('node:vm').Context = {
     acquireVsCodeApi: () => ({
-      postMessage: (message) => posted.push(message),
+      postMessage: (message: unknown) => posted.push(message),
       getState: () => persistedState,
-      setState: (value) => { persistedState = value; },
+      setState: (value: unknown) => { persistedState = value; },
     }),
     atob,
     btoa,
@@ -55,6 +120,7 @@ function createRendererHarness() {
     document: {
       createElement: () => element(`created-${elements.size}`),
       getElementById: element,
+      querySelector: () => null,
       querySelectorAll: () => [],
     },
     prompt: () => null,
@@ -77,18 +143,51 @@ function createRendererHarness() {
       disconnect() {}
     },
     window: {
-      addEventListener(type, listener) {
+      addEventListener(
+        type: string,
+        listener: (event: { readonly data: unknown }) => unknown,
+      ) {
         listeners.set(type, listener);
+      },
+      removeEventListener(type: string) {
+        listeners.delete(type);
       },
     },
   };
   vm.runInNewContext(rendererSource, sandbox, { filename: 'resource-editor.js' });
-  return { app: element('app'), content: element('content'), listeners, posted, sandbox, getPersistedState: () => persistedState };
+  return {
+    app: element('app'),
+    content: element('content'),
+    element,
+    listeners,
+    posted,
+    sandbox,
+    getPersistedState: () => persistedState,
+  };
+}
+
+function createViewerElements(element: (id: string) => TestElement) {
+  return {
+    status: element('test-viewer-status'),
+    animationTime: element('test-viewer-animation-time'),
+    animationEvent: element('test-viewer-animation-event'),
+    workbench: element('test-viewer-workbench'),
+    inspector: element('test-viewer-inspector'),
+    inspectorContent: element('test-viewer-inspector-content'),
+    inspectorContext: element('test-viewer-inspector-context'),
+    inspectorScope: element('test-viewer-inspector-scope'),
+    inspectorSearch: element('test-viewer-inspector-search'),
+    inspectorJump: element('test-viewer-inspector-jump'),
+    inspectorTechnical: element('test-viewer-inspector-technical'),
+    inspectorCollapse: element('test-viewer-inspector-collapse'),
+    inspectorReopen: element('test-viewer-inspector-reopen'),
+    inspectorSash: element('test-viewer-inspector-sash'),
+  };
 }
 
 function createWebGlHarness() {
   let constant = 1;
-  const values = {
+  const values: Record<PropertyKey, unknown> = {
     COMPILE_STATUS: 1,
     LINK_STATUS: 2,
     MAX_TEXTURE_SIZE: 3,
@@ -120,10 +219,16 @@ test('viewer animation tracks interpolate and matrix inversion remains stable', 
     times: { byteOffset: 0, byteLength: 8, component: 'f32', componentsPerElement: 1 },
     values: { byteOffset: 8, byteLength: 24, component: 'f32', componentsPerElement: 3 },
   };
-  assert.deepEqual(Array.from(sandbox.samplePackedTrack(binary, track, 0.25, [9, 9, 9])), [0.5, 1, 1.5]);
+  const preparedTrack = sandbox.preparePackedTrack(binary, track);
+  const sampledTrack = new Float32Array(3);
+  sandbox.samplePreparedTrackInto(preparedTrack, 0.25, [9, 9, 9], sampledTrack);
+  assert.deepEqual(Array.from(sampledTrack), [0.5, 1, 1.5]);
   const transform = sandbox.multiply4(sandbox.translation4([2, 3, 4]), sandbox.scale4([2, 4, 8]));
   const product = sandbox.multiply4(transform, sandbox.inverse4(transform));
-  assert.deepEqual(Array.from(product).map((value) => Math.round(value * 1000) / 1000), Array.from(sandbox.identity4()));
+  assert.deepEqual(
+    Array.from(product as Float32Array).map((value) => Math.round(value * 1000) / 1000),
+    Array.from(sandbox.identity4()),
+  );
   const emitter = { properties: [{ name: 'birthrate', values: [{ kind: 'float', value: 12 }] }] };
   assert.equal(sandbox.emitterProperty(emitter, 'BIRTHRATE', 0), 12);
   const emitterBinary = new Uint8Array(28);
@@ -138,7 +243,12 @@ test('viewer animation tracks interpolate and matrix inversion remains stable', 
       rowOffsets: { byteOffset: 16, byteLength: 12, component: 'u32', componentsPerElement: 1 },
     },
   }] };
-  assert.equal(sandbox.sampleEmitterValue(emitterBinary, emitterTrack, 'velocity', 0.25, 0), 2.5);
+  const preparedEmitter = sandbox.preparedEmitterTrack(
+    emitterBinary,
+    emitterTrack,
+    'velocity',
+  );
+  assert.equal(sandbox.samplePreparedEmitterValue(preparedEmitter, 0.25, 0), 2.5);
   assert.deepEqual(Array.from(sandbox.lightOverrideForNode('mainlight2', [[1, 0, 0], [0, 1, 0]], 0)), [0, 1, 0]);
   const globalLight = sandbox.globalIllumination();
   assert.deepEqual(Array.from(globalLight.environmentLight), [1, 1, 1]);
@@ -148,7 +258,9 @@ test('viewer animation tracks interpolate and matrix inversion remains stable', 
   assert.equal(areaLight.fogEnabled, true);
   assert.equal(areaLight.fogEnd, 72);
   assert.notDeepEqual(Array.from(areaLight.environmentLight), Array.from(globalLight.environmentLight));
-  assert.ok(areaLight.environmentLight.every((value) => Number.isFinite(value) && value >= 0.35 && value <= 1.15));
+  assert.ok(areaLight.environmentLight.every(
+    (value: number) => Number.isFinite(value) && value >= 0.35 && value <= 1.15,
+  ));
   assert.doesNotMatch(rendererSource, /viewer-lighting|setLighting|uKeyDirection|uFillDirection|uRimColor|keyDiffuse|fillDiffuse/u);
   assert.match(rendererSource, /vec3 lit=base\.rgb\*uEnvironmentLight\*uMaterialAmbient\+emissive/u);
   assert.notDeepEqual(Array.from(sandbox.surfaceColor(2)), Array.from(sandbox.surfaceColor(6)));
@@ -158,12 +270,13 @@ test('viewer animation tracks interpolate and matrix inversion remains stable', 
   new Float32Array(animMeshBinary.buffer, 12, 2).set([0.25, 0.75]);
   const sourceVertex = new Float32Array(19);
   sourceVertex.set([0.2, 0.4, 0.6], 16);
-  const animatedVertex = sandbox.updateAnimMesh({
+  const animMeshGpu = {
     vertices: sourceVertex,
     indices: new Uint32Array([0]),
     uvIndices: new Uint32Array([0]),
     stride: 19,
-  }, {
+  };
+  const preparedAnimMesh = sandbox.prepareAnimMeshTrack(animMeshBinary, {
     vertexFrameCount: 1,
     verticesPerFrame: 1,
     vertexSamples: { byteOffset: 0, byteLength: 12, component: 'f32', componentsPerElement: 3 },
@@ -171,14 +284,28 @@ test('viewer animation tracks interpolate and matrix inversion remains stable', 
     uvsPerFrame: 1,
     uvSamples: { byteOffset: 12, byteLength: 8, component: 'f32', componentsPerElement: 2 },
     samplePeriod: 1,
-  }, 0, 1, animMeshBinary);
+  });
+  const animatedVertex = sandbox.updatePreparedAnimMesh(
+    animMeshGpu,
+    preparedAnimMesh,
+    0,
+    1,
+    undefined,
+    0,
+    1,
+    1,
+  );
   assert.deepEqual(Array.from(animatedVertex.slice(0, 3)), [2, 4, 6]);
   assert.deepEqual(Array.from(animatedVertex.slice(6, 8)), [0.25, 0.75]);
   assert.deepEqual(
-    Array.from(animatedVertex.slice(16, 19)).map((value) => Math.round(value * 10) / 10),
+    Array.from(animatedVertex.slice(16, 19) as Float32Array)
+      .map((value) => Math.round(value * 10) / 10),
     [0.2, 0.4, 0.6],
   );
-  listeners.get('message')({ data: { type: 'snapshot', snapshot: { kind: 'unknown', path: 'done' } } });
+  dispatchRendererMessage(
+    listeners,
+    { type: 'snapshot', snapshot: { kind: 'unknown', path: 'done' } },
+  );
 });
 
 test('authored object inspections use compact searchable rows and lossless drill-down pages', () => {
@@ -384,27 +511,38 @@ test('selection geometry retains authored rotation for objects and components', 
 
 test('WASD and QE provide elapsed-time fly-camera translation', () => {
   const { sandbox } = createRendererHarness();
-  const listeners = new Map(); let changes = 0; let draws = 0;
+  interface TestKeyEvent {
+    readonly key: string;
+    preventDefault(): void;
+  }
+  const listeners = new Map<string, (event: TestKeyEvent) => void>();
+  const dispatch = (type: string, event: TestKeyEvent): void => {
+    const listener = listeners.get(type);
+    if (!listener) throw new Error(`Viewport listener ${type} was not registered`);
+    listener(event);
+  };
+  let changes = 0; let draws = 0;
   const canvas = {
-    addEventListener: (type, listener) => listeners.set(type, listener),
-    removeEventListener: (type, listener) => {
+    addEventListener: (type: string, listener: (event: TestKeyEvent) => void) =>
+      listeners.set(type, listener),
+    removeEventListener: (type: string, listener: (event: TestKeyEvent) => void) => {
       if (listeners.get(type) === listener) listeners.delete(type);
     },
     setPointerCapture() {}, focus() {},
   };
   const camera = { yaw: 0, pitch: 0, distance: 10, target: [0, 0, 0] };
-  const key = (value) => ({ key: value, preventDefault() {} });
+  const key = (value: string): TestKeyEvent => ({ key: value, preventDefault() {} });
   const controls = sandbox.bindViewportControls(canvas, camera, () => { draws += 1; }, () => { changes += 1; });
-  listeners.get('keydown')(key('w'));
+  dispatch('keydown', key('w'));
   assert.equal(controls.update(1), true);
   assert.deepEqual(camera.target.map((value) => Math.round(value * 10) / 10), [-7.5, 0, 0]);
-  listeners.get('keyup')(key('w'));
-  listeners.get('keydown')(key('d'));
+  dispatch('keyup', key('w'));
+  dispatch('keydown', key('d'));
   controls.update(1);
-  listeners.get('keyup')(key('d'));
-  listeners.get('keydown')(key('e'));
+  dispatch('keyup', key('d'));
+  dispatch('keydown', key('e'));
   controls.update(1);
-  listeners.get('keyup')(key('e'));
+  dispatch('keyup', key('e'));
   assert.deepEqual(camera.target.map((value) => Math.round(value * 10) / 10), [-7.5, 7.5, 7.5]);
   assert.equal(draws, 0, 'continuous movement is drawn by the retained viewer frame loop');
   assert.equal(changes, 3, 'camera state is persisted when each held key is released');
@@ -414,7 +552,22 @@ test('WASD and QE provide elapsed-time fly-camera translation', () => {
 
 test('packet decoder realigns legacy binary payloads before creating typed views', () => {
   const { sandbox } = createRendererHarness();
-  const manifest = { schema: 'nwnrs.scene.animation', paddingProbe: '' };
+  const manifest = {
+    schema: 'nwnrs.scene',
+    paddingProbe: '',
+    name: 'alignment-test',
+    source: 'model',
+    environment: 'studio',
+    module: null,
+    instances: [],
+    areaObjects: [],
+    models: [],
+    rootModels: [],
+    textures: [],
+    shaders: [],
+    dependencies: { nodes: [], edges: [] },
+    diagnostics: [],
+  };
   let manifestBytes = Buffer.from(JSON.stringify(manifest));
   while ((12 + manifestBytes.length) % 4 === 0) {
     manifest.paddingProbe += 'x';
@@ -437,17 +590,20 @@ test('packet decoder realigns legacy binary payloads before creating typed views
 });
 
 test('lazy animation assets retain their own binary and leave the scene catalog immutable', () => {
-  const { sandbox, posted } = createRendererHarness();
-  const gl = createWebGlHarness(); const listeners = new Map(); const lightUploads = [];
-  gl.texImage2D = (...args) => {
+  const { sandbox, posted, element } = createRendererHarness();
+  const gl = createWebGlHarness();
+  const listeners = new Map<string, (event: unknown) => void>();
+  const lightUploads: Float32Array[] = [];
+  gl.texImage2D = (...args: unknown[]) => {
     const values = args.at(-1);
     if (values instanceof Float32Array) lightUploads.push(Float32Array.from(values));
   };
   const canvas = {
     clientWidth: 640, clientHeight: 480, width: 0, height: 0,
-    getContext: (kind) => kind === 'webgl2' ? gl : null,
-    addEventListener: (type, listener) => listeners.set(type, listener),
-    removeEventListener: (type) => listeners.delete(type),
+    getContext: (kind: string) => kind === 'webgl2' ? gl : null,
+    addEventListener: (type: string, listener: (event: unknown) => void) =>
+      listeners.set(type, listener),
+    removeEventListener: (type: string) => listeners.delete(type),
   };
   const catalogAnimation = {
     name: 'walk', length: 1, transitionTime: 0, rootName: null, rootNode: 0,
@@ -476,7 +632,13 @@ test('lazy animation assets retain their own binary and leave the scene catalog 
     },
   };
   const session = sandbox.createViewerSession(scene);
-  const viewer = sandbox.createViewer(canvas, scene, { status: {}, animationTime: {}, animationEvent: {} }, 'model', session);
+  const viewer = sandbox.createViewer(
+    canvas,
+    scene,
+    createViewerElements(element),
+    'model',
+    session,
+  );
   viewer.setAnimation(0, 0);
   assert.deepEqual(structuredClone(posted.at(-1)), { type: 'loadAnimation', assetKey: 'scene:actor', modelIndex: 0, animationIndex: 0 });
 
@@ -505,20 +667,20 @@ test('lazy animation assets retain their own binary and leave the scene catalog 
   });
 
   assert.equal(model.animations[0], catalogAnimation);
-  assert.equal(model.animations[0].tracksLoaded, false);
+  assert.equal(model.animations[0]?.tracksLoaded, false);
   const retained = session.animationAssets.get('0:0');
   assert.equal(retained.binary, animationBinary);
   const runtime = sandbox.createModelRuntime(model);
   const installed = sandbox.installAnimationAsset(runtime, retained);
   sandbox.sampleModelPoseInto(runtime, model, installed, 0.5);
   assert.deepEqual(Array.from(runtime.pose.nodes[0].translation), [7.5, 0, 0]);
-  assert.equal(lightUploads.at(-1)[0], 5, 'the first post-load draw reused a stale bind pose');
+  assert.equal(lightUploads.at(-1)?.[0], 5, 'the first post-load draw reused a stale bind pose');
   viewer.dispose();
 });
 
 test('animation scope, transitions, events, Bezier timing, and chunk ordering are deterministic', () => {
   const { sandbox } = createRendererHarness();
-  const animation = (name) => ({ name, events: [], length: 1 });
+  const animation = (name: string) => ({ name, events: [], length: 1 });
   const scene = { manifest: { models: [
     { animations: [animation('idle'), animation('idle')], attachments: [{ model: 1 }] },
     { animations: [animation('idle')], attachments: [] },
@@ -526,11 +688,12 @@ test('animation scope, transitions, events, Bezier timing, and chunk ordering ar
   ] } };
   assert.deepEqual([...sandbox.animationPlaybackScope(scene, 0, 1)].map((entry) => Array.from(entry)), [[0, 1], [1, 0]]);
 
-  const events = [];
+  const events: Array<[string, number | undefined]> = [];
   assert.equal(sandbox.dispatchAnimationEvents({
     length: 1,
     events: [{ time: 0, name: 'start' }, { time: 0.5, name: 'middle' }],
-  }, -Number.EPSILON, 1.1, (event) => events.push([event.name, event.cycle])), 3);
+  }, -Number.EPSILON, 1.1, (event: PacketAnimationEvent) =>
+    events.push([event.name, event.cycle])), 3);
   assert.deepEqual(events, [['start', 0], ['middle', 0], ['start', 1]]);
 
   const binary = new Uint8Array(16);
@@ -542,22 +705,25 @@ test('animation scope, transitions, events, Bezier timing, and chunk ordering ar
   }, true);
   const sampled = new Float32Array(1);
   sandbox.samplePreparedTrackInto(bezier, 0.25, [0], sampled);
-  assert.equal(Math.round(sampled[0] * 100000) / 100000, 0.15625);
+  assert.equal(Math.round((sampled[0] ?? 0) * 100000) / 100000, 0.15625);
 
   const target = { nodes: [{ translation: new Float32Array([10, 0, 0]), rotationAxisAngle: new Float32Array([0, 1, 0, 0]), scale: new Float32Array([1, 1, 1]), color: new Float32Array([1, 1, 1]) }], materials: [] };
   const source = { nodes: [{ translation: new Float32Array([0, 0, 0]), rotationAxisAngle: new Float32Array([0, 1, 0, 0]), scale: new Float32Array([1, 1, 1]), color: new Float32Array([1, 1, 1]) }], materials: [] };
   sandbox.blendPoseInto(target, source, 0.25, { materials: [] });
-  assert.deepEqual(Array.from(target.nodes[0].translation), [2.5, 0, 0]);
+  assert.deepEqual(Array.from(target.nodes[0]?.translation ?? []), [2.5, 0, 0]);
 
-  const drawBody = rendererSource.match(/function draw\(\) \{[\s\S]*?\n  function drawModel/u)?.[0] || '';
+  const drawBody = rendererSource.match(
+    /function draw\(\) \{[\s\S]*?\n\s+function drawModel/u,
+  )?.[0] || '';
   assert.ok(drawBody.indexOf('drawModel(instance.model') < drawBody.indexOf('drawChunkBatches(viewProjection'));
 });
 
 test('texture upload scopes vertical row flipping to color pixels', () => {
   const { sandbox } = createRendererHarness();
-  const pixelStoreCalls = [];
+  const pixelStoreCalls: Array<[unknown, unknown]> = [];
   const gl = createWebGlHarness();
-  gl.pixelStorei = (parameter, value) => pixelStoreCalls.push([parameter, value]);
+  gl.pixelStorei = (parameter: unknown, value: unknown) =>
+    pixelStoreCalls.push([parameter, value]);
   const binary = new Uint8Array([255, 0, 0, 255]);
   const texture = {
     width: 1,
@@ -575,10 +741,10 @@ test('texture upload scopes vertical row flipping to color pixels', () => {
 
 test('texture upload keeps authored compressed mip chains on the GPU', () => {
   const { sandbox } = createRendererHarness();
-  const uploads = []; const generated = [];
+  const uploads: unknown[][] = []; const generated: unknown[][] = [];
   const gl = createWebGlHarness();
-  gl.compressedTexImage2D = (...args) => uploads.push(args);
-  gl.generateMipmap = (...args) => generated.push(args);
+  gl.compressedTexImage2D = (...args: unknown[]) => uploads.push(args);
+  gl.generateMipmap = (...args: unknown[]) => generated.push(args);
   const s3tc = {
     COMPRESSED_RGBA_S3TC_DXT1_EXT: 0x83f1,
     COMPRESSED_RGBA_S3TC_DXT5_EXT: 0x83f3,
@@ -598,8 +764,11 @@ test('texture upload keeps authored compressed mip chains on the GPU', () => {
   sandbox.createTexture(gl, texture, binary, s3tc);
 
   assert.equal(uploads.length, 2);
-  assert.equal(uploads[0][2], s3tc.COMPRESSED_RGBA_S3TC_DXT1_EXT);
-  assert.deepEqual(uploads.map((entry) => [entry[1], entry[3], entry[4], entry[6].byteLength]), [
+  assert.equal(uploads[0]?.[2], s3tc.COMPRESSED_RGBA_S3TC_DXT1_EXT);
+  assert.deepEqual(uploads.map((entry) => {
+    const data = entry[6];
+    return [entry[1], entry[3], entry[4], data instanceof Uint8Array ? data.byteLength : undefined];
+  }), [
     [0, 8, 8, 32],
     [1, 4, 4, 8],
   ]);
@@ -622,17 +791,18 @@ test('viewer batches chunk transforms and compiles feature-specific shader paths
 });
 
 test('viewer creates, draws, and disposes a directly opened standalone scene', () => {
-  const { sandbox } = createRendererHarness();
+  const { sandbox, element } = createRendererHarness();
   const gl = createWebGlHarness();
-  const listeners = new Map();
+  const listeners = new Map<string, (event: unknown) => void>();
   const canvas = {
     clientWidth: 800,
     clientHeight: 600,
     width: 0,
     height: 0,
-    getContext: (kind) => kind === 'webgl2' ? gl : null,
-    addEventListener: (type, listener) => listeners.set(type, listener),
-    removeEventListener: (type) => listeners.delete(type),
+    getContext: (kind: string) => kind === 'webgl2' ? gl : null,
+    addEventListener: (type: string, listener: (event: unknown) => void) =>
+      listeners.set(type, listener),
+    removeEventListener: (type: string) => listeners.delete(type),
   };
   const scene = {
     binary: new Uint8Array(),
@@ -648,10 +818,7 @@ test('viewer creates, draws, and disposes a directly opened standalone scene', (
       module: null,
     },
   };
-  const elements = {
-    status: { textContent: '' },
-    animationTime: { textContent: '' },
-  };
+  const elements = createViewerElements(element);
   const viewer = sandbox.createViewer(canvas, scene, elements);
   assert.equal(elements.status.textContent, '0 models · 0 textures · 0 instances');
   assert.equal(typeof viewer.setAnimation, 'function');
@@ -666,7 +833,7 @@ test('viewer creates, draws, and disposes a directly opened standalone scene', (
 
 test('installed start area completes a full renderer draw with every resolved emitter', {
   skip: !fs.existsSync(bindingPath) && 'run npm run build-native first',
-}, async (context) => {
+}, async (context: TestContext) => {
   const moduleRoot = path.join(repositoryRoot, 'module');
   if (!fs.existsSync(path.join(moduleRoot, 'start.are.json'))) {
     context.skip('repository authored-area fixture is unavailable');
@@ -701,15 +868,15 @@ test('installed start area completes a full renderer draw with every resolved em
     }
     throw error;
   }
-  const { sandbox } = createRendererHarness();
+  const { sandbox, element } = createRendererHarness();
   const scene = sandbox.decodeScenePacket(packet);
   const gl = createWebGlHarness();
   const canvas = {
     clientWidth: 800, clientHeight: 600, width: 0, height: 0,
-    getContext: (kind) => kind === 'webgl2' ? gl : null,
+    getContext: (kind: string) => kind === 'webgl2' ? gl : null,
     addEventListener() {}, removeEventListener() {},
   };
-  const elements = { status: { textContent: '' }, animationTime: { textContent: '' } };
+  const elements = createViewerElements(element);
   const viewer = sandbox.createViewer(canvas, scene, elements);
   assert.match(elements.status.textContent, /models/u);
   assert.doesNotThrow(() => viewer.dispose());
@@ -724,7 +891,7 @@ test('viewer chrome uses a resizable single-context inspector with responsive pr
         name: 'cat', animations: [{ name: 'idle' }], nodes: [], meshes: [], materials: [],
         resolvedMaterials: [], nodeTextures: [],
       }],
-      textures: [], shaders: [], instances: [], diagnostics: [], environment: null,
+      textures: [], shaders: [], instances: [], diagnostics: [], environment: 'studio',
       dependencies: {
         nodes: [{ id: 1, resource: 'cat.tga', kind: 'texture', state: 'resolved', origin: '/game/cat.tga' }],
         edges: [{ to: 1, relationship: 'diffuse' }],
@@ -807,25 +974,41 @@ test('selected-object pages avoid duplicate summaries and drill into rendered co
 
 test('NCS workbench renders structured navigation without editable or export controls', () => {
   const { sandbox, listeners, content } = createRendererHarness();
-  listeners.get('message')({ data: { type: 'snapshot', snapshot: {
+  dispatchRendererMessage(listeners, { type: 'snapshot', snapshot: {
     path: '/virtual/demo.ncs', kind: 'ncs', revision: 0, data: {
+      primary: 'ncs',
       hasNcs: true, hasNdb: true, hasLangspec: true,
-      header: { fileSize: 23, codeSize: 10, instructionCount: 3 },
-      summary: { variables: 0, lineMappings: 1, structEntries: [], variableEntries: [] },
+      header: {
+        format: 'NCS V1.0',
+        fileSize: 23,
+        declaredSize: 23,
+        codeSize: 10,
+        instructionCount: 1,
+      },
+      summary: {
+        files: 1,
+        structs: 0,
+        functions: 1,
+        variables: 0,
+        lineMappings: 1,
+        structEntries: [],
+        variableEntries: [],
+      },
       sourceFiles: [{ name: 'demo', isRoot: true, available: true }],
       functions: [{
         index: 0, name: 'main', start: 0, end: 10, returnType: 'v', arguments: [], synthetic: false,
         blocks: [{ id: 'f0b0', start: 0, end: 10, instructionIndices: [0], successors: [], calls: [] }],
       }],
       instructions: [{
-        index: 0, offset: 0, localOffset: 0, size: 2, label: null, opcode: 'RET',
-        opcodeInternal: 'RET', auxcode: null, auxcodeInternal: 'NONE', operand: '', rawHex: '20 00',
-        jumpTarget: null, successors: [], functionIndex: 0,
+        index: 0, offset: 0, localOffset: 0, size: 2, label: '', opcode: 'RET',
+        opcodeInternal: 'RET', auxcode: 'NONE', auxcodeInternal: 'NONE', operand: '',
+        action: null, rawHex: '20 00', jumpTarget: null, callTarget: null, successors: [],
+        functionIndex: 0,
         source: { file: 'demo', line: 1, text: 'void main() {}', available: true },
       }],
       diagnostics: [],
     },
-  } } });
+  } });
   assert.match(content.innerHTML, /ncs-workbench/u);
   assert.match(content.innerHTML, /Control Flow/u);
   assert.match(content.innerHTML, /Functions/u);
@@ -833,50 +1016,84 @@ test('NCS workbench renders structured navigation without editable or export con
   assert.match(sandbox.scriptDebugOutline({ functions: [], sourceFiles: [], summary: {} }), /No function information/u);
 });
 
-test('all root acceptance resources open through the worker and render their custom view', {
+test('authoritative installed resources open through the worker and render their custom view', {
   skip: !fs.existsSync(bindingPath) && 'run npm run build-native first',
-}, async () => {
-  const fixtures = [
-    ['cloakmodel.2da', '2da'],
-    ['nwnrs.mod', 'erf'],
-    ['quickchat.gff', 'gff'],
-    ['voiceset.gff', 'gff'],
-  ];
-  for (const [name] of fixtures) {
-    assert.equal(fs.existsSync(path.join(repositoryRoot, name)), true, `${name} is missing`);
-  }
-
-  const client = new ResourceEditorWorkerClient(
-    path.join(extensionRoot, 'src', 'resource-editor-worker.js'),
+}, async (context: TestContext) => {
+  const resourceClient = new ResourceEditorWorkerClient(
+    path.join(extensionRoot, 'dist', 'src', 'resource-editor-worker.js'),
     bindingPath,
     { appendLine() {} },
   );
+  const viewerClient = new ViewerWorkerClient(
+    path.join(extensionRoot, 'dist', 'src', 'viewer-worker.js'),
+    bindingPath,
+    { appendLine() {} },
+  );
+  const moduleRoot = path.join(repositoryRoot, 'module');
+  const request = {
+    session_key: path.join(moduleRoot, 'nwpkg.toml'),
+    path: path.join(moduleRoot, '.nwnrs-resource-catalog'),
+    project_root: moduleRoot,
+    area: null,
+    root: null,
+    user: null,
+    language: 'english',
+    load_ovr: false,
+    archives: [],
+    include_project_resources: true,
+  };
   try {
-    for (const [index, [name, expectedKind]] of fixtures.entries()) {
-      const documentId = `root-acceptance-${index}`;
-      const snapshot = await client.request('openDocument', {
-        documentId,
-        path: path.join(repositoryRoot, name),
-      });
-      assert.equal(snapshot.kind, expectedKind, name);
+    for (const [index, [name, expectedKind]] of installedAcceptanceResources.entries()) {
+      const resourceRequest = { ...request, path: path.join(moduleRoot, name) };
+      const resolved = await viewerClient.resolveResource(resourceRequest);
+      assert.equal(resolved.resource, name);
+      assert.equal(resolved.file_path, null);
+      assert.match(resolved.origin, /KeyTable:/u, name);
+      const contents: Uint8Array = await viewerClient.readResource(resourceRequest);
+      const documentId = `installed-acceptance-${index}`;
+      let opened = false;
+      try {
+        const snapshot = await resourceClient.request('openDocumentBytes', {
+          documentId,
+          path: `/${name}`,
+          contents: Buffer.from(contents).toString('base64'),
+        });
+        opened = true;
+        assert.equal(snapshot.kind, expectedKind, name);
 
-      const harness = createRendererHarness();
-      assert.equal(harness.posted.length, 1, name);
-      assert.equal(harness.posted[0].type, 'ready', name);
-      assert.doesNotThrow(
-        () => harness.listeners.get('message')({ data: { type: 'snapshot', snapshot } }),
-        name,
-      );
-      assert.match(harness.app.innerHTML, /class="shell"/u, name);
-      assert.ok(harness.content.innerHTML.length > 0, name);
-      assert.equal(
-        harness.posted.some((message) => message.type === 'showError'),
-        false,
-        name,
-      );
-      await client.request('closeDocument', { documentId });
+        const harness = createRendererHarness();
+        assert.equal(harness.posted.length, 1, name);
+        const readyMessage = harness.posted[0];
+        assert.ok(isPostedMessage(readyMessage), name);
+        assert.equal(isPostedMessage(readyMessage) ? readyMessage.type : undefined, 'ready', name);
+        assert.doesNotThrow(
+          () => dispatchRendererMessage(
+            harness.listeners,
+            { type: 'snapshot', snapshot },
+          ),
+          name,
+        );
+        assert.match(harness.app.innerHTML, /class="shell"/u, name);
+        assert.ok(harness.content.innerHTML.length > 0, name);
+        assert.equal(
+          harness.posted.some(
+            (message) => isPostedMessage(message) && message.type === 'showError',
+          ),
+          false,
+          name,
+        );
+      } finally {
+        if (opened) await resourceClient.request('closeDocument', { documentId });
+      }
     }
+  } catch (error) {
+    if (/installation|root|language directory/iu.test(String(error))) {
+      context.skip('Neverwinter Nights installation was not discovered');
+      return;
+    }
+    throw error;
   } finally {
-    client.dispose();
+    resourceClient.dispose();
+    viewerClient.dispose();
   }
 });

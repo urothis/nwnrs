@@ -16,7 +16,13 @@ const {
   isNssPath,
   nativeBindingPath,
   selectHoverDefinition,
-} = require('../src/compiler');
+}: typeof import('../src/compiler') = require('../dist/src/compiler');
+
+function required<Value>(value: Value | null | undefined, label: string): Value {
+  assert.ok(value, label);
+  if (value == null) throw new Error(label);
+  return value;
+}
 
 test('recognizes NSS paths case-insensitively', () => {
   assert.equal(isNssPath('/module/startup.nss'), true);
@@ -243,18 +249,32 @@ test('expands workspace, project, and file path variables', () => {
 });
 
 test('grammar covers compiler extensions without advertising unsupported directives', () => {
-  const grammar = JSON.parse(fs.readFileSync(
+  const grammar: {
+    repository: Record<string, {
+      patterns: Array<{ match: string; name?: string; patterns?: Array<{ match: string }> }>;
+    }>;
+  } = JSON.parse(fs.readFileSync(
     path.join(__dirname, '..', 'syntaxes', 'nwscript.tmLanguage.json'),
     'utf8',
   ));
-  const preprocessor = new RegExp(grammar.repository.preprocessor.patterns[0].match, 'u');
-  const macroPatterns = grammar.repository.macros.patterns.map((entry) => new RegExp(entry.match, 'u'));
+  const preprocessorEntry = required(
+    grammar.repository.preprocessor?.patterns[0],
+    'Preprocessor grammar is missing',
+  );
+  const macroEntries = required(grammar.repository.macros?.patterns, 'Macro grammar is missing');
+  const typeEntries = required(grammar.repository.types?.patterns, 'Type grammar is missing');
+  const attributeEntry = required(
+    grammar.repository.compilerAttributes?.patterns[0]?.patterns?.[0],
+    'Compiler attribute grammar is missing',
+  );
+  const preprocessor = new RegExp(preprocessorEntry.match, 'u');
+  const macroPatterns = macroEntries.map((entry) => new RegExp(entry.match, 'u'));
   const typePattern = new RegExp(
-    grammar.repository.types.patterns.find((entry) => entry.name === 'storage.type.nwscript').match,
+    typeEntries.find((entry) => entry.name === 'storage.type.nwscript')?.match ?? '',
     'u',
   );
   const attributePattern = new RegExp(
-    grammar.repository.compilerAttributes.patterns[0].patterns[0].match,
+    attributeEntry.match,
     'u',
   );
 

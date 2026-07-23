@@ -1,11 +1,17 @@
-'use strict';
+import { spawnSync } from 'node:child_process';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 
-const { spawnSync } = require('node:child_process');
-const fs = require('node:fs');
-const path = require('node:path');
-
-const extensionRoot = path.resolve(__dirname, '..');
+const extensionRoot = path.resolve(__dirname, '..', '..');
 const repositoryRoot = path.resolve(extensionRoot, '..', '..');
+const extensionManifest = path.join(extensionRoot, 'package.json');
+const workspaceManifest = path.join(repositoryRoot, 'Cargo.toml');
+
+if (!fs.existsSync(extensionManifest) || !fs.existsSync(workspaceManifest)) {
+  throw new Error(
+    `native compiler packaging resolved an invalid repository layout from ${__dirname}`,
+  );
+}
 
 if (process.platform !== 'darwin' || process.arch !== 'arm64') {
   throw new Error(

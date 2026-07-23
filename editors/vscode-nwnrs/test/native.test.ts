@@ -1,14 +1,24 @@
 'use strict';
 
+import type {
+  NativeAreaObject,
+  NativeCheckDiagnostic,
+  NativeDocumentSymbol,
+  NativePackageInfo,
+  NativePackageSourceArea,
+  NativePackageSourceFile,
+  NativeReference,
+  NativeResourceCatalogItem,
+} from '../src/native-types';
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
 const { Worker } = require('node:worker_threads');
-const { LanguageWorkerClient } = require('../src/language-worker-client');
-const { ResourceEditorWorkerClient } = require('../src/resource-editor-worker-client');
-const { ViewerWorkerClient } = require('../src/viewer-worker-client');
+const { LanguageWorkerClient } = require('../dist/src/language-worker-client');
+const { ResourceEditorWorkerClient } = require('../dist/src/resource-editor-worker-client');
+const { ViewerWorkerClient } = require('../dist/src/viewer-worker-client');
 
 const bindingPath = path.resolve(
   __dirname,
@@ -17,11 +27,61 @@ const bindingPath = path.resolve(
   'nwnrs-vscode.darwin-arm64.node',
 );
 
-async function resourceRequest(service, method, request) {
+interface NativeResourceService {
+  execute(method: string, request: string): Promise<string>;
+}
+
+interface TestContext {
+  skip(message?: string): void;
+}
+
+interface ViewerPacketResult {
+  readonly manifest: {
+    readonly assetKey?: string;
+    readonly name?: string;
+    readonly source?: string;
+    readonly models: Array<{ readonly animations: PacketAnimation[] }>;
+    readonly animation: PacketAnimation;
+  };
+  readonly binaryStart: number;
+}
+
+interface WorkerIndexResponse {
+  readonly documents: Array<{
+    readonly symbols: Array<{ readonly name: string }>;
+  }>;
+}
+
+function isWorkerIndexResponse(value: unknown): value is WorkerIndexResponse {
+  return typeof value === 'object'
+    && value !== null
+    && 'documents' in value
+    && Array.isArray(value.documents)
+    && value.documents.every((document) => typeof document === 'object'
+      && document !== null
+      && 'symbols' in document
+      && Array.isArray(document.symbols)
+      && document.symbols.every((symbol: unknown) => typeof symbol === 'object'
+        && symbol !== null
+        && 'name' in symbol
+        && typeof symbol.name === 'string'));
+}
+
+function required<Value>(value: Value | null | undefined, label: string): Value {
+  assert.ok(value, label);
+  if (value == null) throw new Error(label);
+  return value;
+}
+
+async function resourceRequest(
+  service: NativeResourceService,
+  method: string,
+  request: unknown,
+) {
   return JSON.parse(await service.execute(method, JSON.stringify(request)));
 }
 
-function decodeViewerPacket(packet) {
+function decodeViewerPacket(packet: Buffer): ViewerPacketResult {
   assert.equal(packet.subarray(0, 8).toString('binary'), 'NWNRS3D\0');
   const manifestLength = packet.readUInt32LE(8);
   const binaryStart = 12 + manifestLength;
@@ -32,21 +92,35 @@ function decodeViewerPacket(packet) {
   };
 }
 
-function assertViewerPacketTypedViewsAreConstructible(packet, manifest, binaryStart) {
-  const visit = (value) => {
+function assertViewerPacketTypedViewsAreConstructible(
+  packet: Buffer,
+  manifest: unknown,
+  binaryStart: number,
+): void {
+  const visit = (value: unknown): void => {
     if (!value || typeof value !== 'object') return;
-    if (typeof value.byteOffset === 'number' && typeof value.byteLength === 'number'
+    if (!Array.isArray(value)
+        && 'byteOffset' in value
+        && 'byteLength' in value
+        && 'component' in value
+        && typeof value.byteOffset === 'number'
+        && typeof value.byteLength === 'number'
         && typeof value.component === 'string') {
+      const byteLength = value.byteLength;
       const absoluteOffset = packet.byteOffset + binaryStart + value.byteOffset;
-      assert.ok(binaryStart + value.byteOffset + value.byteLength <= packet.length);
+      const packetBuffer = packet.buffer;
+      if (!(packetBuffer instanceof ArrayBuffer)) {
+        throw new Error('Viewer packet does not own an ArrayBuffer.');
+      }
+      assert.ok(binaryStart + value.byteOffset + byteLength <= packet.length);
       if (value.component === 'u8') {
-        assert.doesNotThrow(() => new Uint8Array(packet.buffer, absoluteOffset, value.byteLength));
+        assert.doesNotThrow(() => new Uint8Array(packetBuffer, absoluteOffset, byteLength));
       } else {
         assert.equal(absoluteOffset % 4, 0, `${value.component} view starts at ${absoluteOffset}`);
-        assert.equal(value.byteLength % 4, 0, `${value.component} view has partial scalar bytes`);
+        assert.equal(byteLength % 4, 0, `${value.component} view has partial scalar bytes`);
         const View = value.component === 'f32' ? Float32Array
           : value.component === 'u32' ? Uint32Array : Int32Array;
-        assert.doesNotThrow(() => new View(packet.buffer, absoluteOffset, value.byteLength / 4));
+        assert.doesNotThrow(() => new View(packetBuffer, absoluteOffset, byteLength / 4));
       }
       return;
     }
@@ -57,7 +131,7 @@ function assertViewerPacketTypedViewsAreConstructible(packet, manifest, binarySt
 
 test('persistent resource worker opens the complete valid GFF corpus', {
   skip: !fs.existsSync(bindingPath) && 'run npm run build-native first',
-}, async (context) => {
+}, async (context: TestContext) => {
   const repositoryRoot = path.resolve(__dirname, '..', '..', '..');
   const corpusDirectory = path.join(
     repositoryRoot,
@@ -72,13 +146,13 @@ test('persistent resource worker opens the complete valid GFF corpus', {
     return;
   }
   const fixtures = fs.readdirSync(corpusDirectory)
-    .map((name) => path.join(corpusDirectory, name))
-    .filter((fixture) => fs.statSync(fixture).isFile())
+    .map((name: string) => path.join(corpusDirectory, name))
+    .filter((fixture: string) => fs.statSync(fixture).isFile())
     .sort();
   assert.ok(fixtures.length > 0, 'GFF compatibility corpus must not be empty');
 
   const client = new ResourceEditorWorkerClient(
-    path.resolve(__dirname, '..', 'src', 'resource-editor-worker.js'),
+    path.resolve(__dirname, '..', 'dist', 'src', 'resource-editor-worker.js'),
     bindingPath,
     { appendLine() {} },
   );
@@ -185,10 +259,14 @@ test('native resource editor exposes structured NCS control flow and NDB source 
   });
   assert.equal(configured.data.hasNdb, true);
   assert.equal(configured.data.sourceFiles[0].available, true);
-  const helper = configured.data.functions.find((entry) => entry.name === 'helper');
+  const helper = configured.data.functions.find(
+    (entry: { readonly name: string; readonly synthetic: boolean }) => entry.name === 'helper',
+  );
   assert.ok(helper);
   assert.equal(helper.synthetic, false);
-  const mapped = configured.data.instructions.find((entry) => entry.offset === 8);
+  const mapped = configured.data.instructions.find(
+    (entry: { readonly offset: number; readonly source: unknown }) => entry.offset === 8,
+  );
   assert.deepEqual(mapped.source, {
     file: 'helper', line: 1, text: 'void helper() { return; }', available: true,
   });
@@ -319,7 +397,9 @@ test('native custom-document lifecycle edits DLG JSON without changing its sourc
     });
     assert.equal(opened.kind, 'gff');
     assert.equal(opened.data.fileType, 'DLG ');
-    const rootField = opened.data.root.fields.find(({ label }) => label === 'EndConverAbort');
+    const rootField = opened.data.root.fields.find(
+      ({ label }: { readonly label: string }) => label === 'EndConverAbort',
+    );
     rootField.value = 'after';
     await resourceRequest(service, 'applyEdit', {
       documentId: 'dialog-json',
@@ -355,7 +435,7 @@ test('compiler worker keeps the native check off the extension thread', {
   skip: !fs.existsSync(bindingPath) && 'run npm run build-native first',
 }, async () => {
   const fixtureDirectory = path.resolve(__dirname, 'fixtures');
-  const worker = new Worker(path.resolve(__dirname, '..', 'src', 'compiler-worker.js'), {
+  const worker = new Worker(path.resolve(__dirname, '..', 'dist', 'src', 'compiler-worker.js'), {
     workerData: {
       bindingPath,
       request: {
@@ -364,13 +444,19 @@ test('compiler worker keeps the native check off the extension thread', {
       },
     },
   });
-  const result = await new Promise((resolve, reject) => {
+  const result: {
+    readonly error?: unknown;
+    readonly response: {
+      readonly summary: { readonly failed: number };
+      readonly diagnostics: Array<{ readonly code: number }>;
+    };
+  } = await new Promise((resolve, reject) => {
     worker.once('message', resolve);
     worker.once('error', reject);
   });
   assert.equal(result.error, undefined);
   assert.equal(result.response.summary.failed, 1);
-  assert.equal(result.response.diagnostics[0].code, -622);
+  assert.equal(result.response.diagnostics[0]?.code, -622);
 });
 
 test('native parser diagnostic underlines the expression instead of the closing brace', {
@@ -486,7 +572,7 @@ test('native definition lookup prefers an editable workspace langspec override',
 
 test('native definition lookup exposes the packed game fallback read-only', {
   skip: !fs.existsSync(bindingPath) && 'run npm run build-native first',
-}, (context) => {
+}, (context: TestContext) => {
   const binding = require(bindingPath);
   const repositoryRoot = path.resolve(__dirname, '..', '..', '..');
   const moduleRoot = path.join(repositoryRoot, 'module');
@@ -569,7 +655,7 @@ test('native document Outline is hierarchical, overlay-aware, and source-only', 
     + '#[nwnrs::events(module_load)]\n'
     + 'void Authored(int value) {}\n';
   try {
-    const symbols = JSON.parse(binding.listDocumentSymbols(JSON.stringify({
+    const symbols: NativeDocumentSymbol[] = JSON.parse(binding.listDocumentSymbols(JSON.stringify({
       source_path: sourcePath,
       project_root: root,
       overlays: [{ path: sourcePath, contents }],
@@ -582,16 +668,25 @@ test('native document Outline is hierarchical, overlay-aware, and source-only', 
     assert.equal(symbols.some((symbol) => symbol.name === 'IncludedOnly'), false);
     assert.equal(symbols.some((symbol) => symbol.name === 'Generated'), false);
 
-    const structure = symbols.find((symbol) => symbol.name === 'Stats');
+    const structure = required(
+      symbols.find((symbol) => symbol.name === 'Stats'),
+      'Stats outline symbol is missing',
+    );
     assert.equal(structure.kind, 'struct');
     assert.deepEqual(structure.children.map((child) => child.name), ['score', 'label']);
     assert.deepEqual(structure.children.map((child) => child.kind), ['field', 'field']);
 
-    const enumeration = symbols.find((symbol) => symbol.name === 'Mode');
+    const enumeration = required(
+      symbols.find((symbol) => symbol.name === 'Mode'),
+      'Mode outline symbol is missing',
+    );
     assert.equal(enumeration.kind, 'enum');
     assert.deepEqual(enumeration.children.map((child) => child.name), ['Ready', 'Running']);
 
-    const functionSymbol = symbols.find((symbol) => symbol.name === 'Authored');
+    const functionSymbol = required(
+      symbols.find((symbol) => symbol.name === 'Authored'),
+      'Authored outline symbol is missing',
+    );
     assert.equal(functionSymbol.kind, 'function');
     assert.equal(functionSymbol.detail, 'event: module_load · void Authored(int value)');
     assert.equal(functionSymbol.range.start_line, 9);
@@ -608,7 +703,7 @@ test('native document Outline is hierarchical, overlay-aware, and source-only', 
 
 test('native document Outline indexes a packed game script read-only', {
   skip: !fs.existsSync(bindingPath) && 'run npm run build-native first',
-}, (context) => {
+}, (context: TestContext) => {
   const binding = require(bindingPath);
   const repositoryRoot = path.resolve(__dirname, '..', '..', '..');
   const moduleRoot = path.join(repositoryRoot, 'module');
@@ -622,12 +717,15 @@ test('native document Outline indexes a packed game script read-only', {
     context.skip('Neverwinter Nights installation was not discovered');
     return;
   }
-  const symbols = JSON.parse(binding.listDocumentSymbols(JSON.stringify({
+  const symbols: NativeDocumentSymbol[] = JSON.parse(binding.listDocumentSymbols(JSON.stringify({
     source_path: request.source_path,
     project_root: moduleRoot,
     resource: definitions[0].resource,
   })));
-  const action = symbols.find((symbol) => symbol.name === 'ActionMoveToLocation');
+  const action = required(
+    symbols.find((symbol) => symbol.name === 'ActionMoveToLocation'),
+    'ActionMoveToLocation outline symbol is missing',
+  );
   assert.equal(action.kind, 'function');
   assert.match(action.detail, /^void ActionMoveToLocation\(location/u);
 });
@@ -673,7 +771,10 @@ test('native compiler checks dirty overlays and reports more than the first erro
 
   assert.equal(response.summary.failed, 1);
   assert.equal(response.diagnostics.length, 2);
-  assert.deepEqual(response.diagnostics.map((diagnostic) => diagnostic.start_line), [3, 4]);
+  assert.deepEqual(
+    response.diagnostics.map((diagnostic: NativeCheckDiagnostic) => diagnostic.start_line),
+    [3, 4],
+  );
 });
 
 test('native workspace helpers deduplicate dependencies and return watch roots', {
@@ -707,9 +808,9 @@ test('native project index includes package sources and editable dependencies', 
   })));
 
   assert.deepEqual(response.warnings, []);
-  assert.ok(response.documents.some((document) =>
+  assert.ok(response.documents.some((document: { readonly path: string }) =>
     document.path === path.join(moduleRoot, 'debug.nss')));
-  assert.ok(response.documents.some((document) =>
+  assert.ok(response.documents.some((document: { readonly path: string }) =>
     document.path === path.join(repositoryRoot, 'include', 'nwnrs', 'nwnrs.nss')));
 });
 
@@ -725,7 +826,7 @@ test('native references cross sibling scripts and preserve exact local bindings'
   fs.writeFileSync(first, '#include "shared"\nvoid First() { SharedWork(); }\n');
   fs.writeFileSync(second, '#include "shared"\nvoid Second() { SharedWork(); }\n');
   try {
-    const references = JSON.parse(binding.findReferences(JSON.stringify({
+    const references: NativeReference[] = JSON.parse(binding.findReferences(JSON.stringify({
       source_path: first,
       project_root: root,
       symbol: 'SharedWork',
@@ -791,7 +892,9 @@ test('native manifest tooling validates syntax, paths, kinds, and dependencies',
       contents: '[project]\nname = "fixture"\nkind = "unknown"\n\n[source]\npath = "missing"\n',
     })));
     assert.ok(invalid.diagnostics.length >= 1);
-    assert.ok(invalid.diagnostics.every((diagnostic) => diagnostic.start_line >= 1));
+    assert.ok(invalid.diagnostics.every(
+      (diagnostic: { readonly start_line: number }) => diagnostic.start_line >= 1,
+    ));
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -803,19 +906,31 @@ test('persistent worker isolates and invalidates indexed package sessions', {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nwnrs-worker-session-'));
   const source = path.join(root, 'main.nss');
   fs.writeFileSync(source, 'void Original() {}\n');
-  const worker = new Worker(path.resolve(__dirname, '..', 'src', 'compiler-worker.js'), {
+  const worker = new Worker(path.resolve(__dirname, '..', 'dist', 'src', 'compiler-worker.js'), {
     workerData: { bindingPath, persistent: true },
   });
   let requestId = 0;
-  const request = (method, payload, sessionKey = root) => new Promise((resolve, reject) => {
+  interface WorkerResponse {
+    readonly type: string;
+    readonly id: number;
+    readonly error?: string;
+    readonly response?: unknown;
+  }
+  const request = (
+    method: string,
+    payload: unknown,
+    sessionKey = root,
+  ): Promise<WorkerIndexResponse> => new Promise((resolve, reject) => {
     const id = ++requestId;
-    const onMessage = (message) => {
+    const onMessage = (message: WorkerResponse) => {
       if (message.type !== 'response' || message.id !== id) {
         return;
       }
       worker.off('message', onMessage);
       if (message.error) {
         reject(new Error(message.error));
+      } else if (!isWorkerIndexResponse(message.response)) {
+        reject(new Error('Worker returned a malformed project index response'));
       } else {
         resolve(message.response);
       }
@@ -826,13 +941,13 @@ test('persistent worker isolates and invalidates indexed package sessions', {
   const payload = { source_path: source, project_root: root };
   try {
     const initial = await request('indexProject', payload);
-    assert.equal(initial.documents[0].symbols[0].name, 'Original');
+    assert.equal(initial.documents[0]?.symbols[0]?.name, 'Original');
     fs.writeFileSync(source, 'void Updated() {}\n');
     const revalidated = await request('indexProject', payload);
-    assert.equal(revalidated.documents[0].symbols[0].name, 'Updated');
+    assert.equal(revalidated.documents[0]?.symbols[0]?.name, 'Updated');
     worker.postMessage({ type: 'invalidate', sessionKey: root, changedPath: source });
     const updated = await request('indexProject', payload);
-    assert.equal(updated.documents[0].symbols[0].name, 'Updated');
+    assert.equal(updated.documents[0]?.symbols[0]?.name, 'Updated');
   } finally {
     await worker.terminate();
     fs.rmSync(root, { recursive: true, force: true });
@@ -843,7 +958,7 @@ test('language worker restarts cleanly and accepts requests afterward', {
   skip: !fs.existsSync(bindingPath) && 'run npm run build-native first',
 }, async () => {
   const client = new LanguageWorkerClient(
-    path.resolve(__dirname, '..', 'src', 'compiler-worker.js'),
+    path.resolve(__dirname, '..', 'dist', 'src', 'compiler-worker.js'),
     bindingPath,
     { appendLine() {} },
   );
@@ -860,12 +975,12 @@ test('language worker restarts cleanly and accepts requests afterward', {
 
 test('viewer worker inspects nwpkg manifests and lazily catalogs winning resources', {
   skip: !fs.existsSync(bindingPath) && 'run npm run build-native first',
-}, async (context) => {
+}, async (context: TestContext) => {
   const repositoryRoot = path.resolve(__dirname, '..', '..', '..');
   const moduleRoot = path.join(repositoryRoot, 'module');
   const manifestPath = path.join(moduleRoot, 'nwpkg.toml');
   const client = new ViewerWorkerClient(
-    path.resolve(__dirname, '..', 'src', 'viewer-worker.js'),
+    path.resolve(__dirname, '..', 'dist', 'src', 'viewer-worker.js'),
     bindingPath,
     { appendLine() {} },
   );
@@ -875,16 +990,24 @@ test('viewer worker inspects nwpkg manifests and lazily catalogs winning resourc
     assert.equal(packageInfo.kind, 'mod');
     assert.equal(path.resolve(packageInfo.root), moduleRoot);
     assert.equal(path.resolve(packageInfo.sourcePath), moduleRoot);
-    assert.deepEqual(packageInfo.dependencies.map(({ name }) => name), ['nwnrs']);
+    assert.deepEqual(
+      packageInfo.dependencies.map(({ name }: { readonly name: string }) => name),
+      ['nwnrs'],
+    );
     assert.ok(packageInfo.resourcePaths.some(
-      (resourcePath) => path.resolve(resourcePath)
+      (resourcePath: string) => path.resolve(resourcePath)
         === path.join(repositoryRoot, 'include', 'nwnrs'),
     ));
     const packageSource = await client.inspectPackageSource(manifestPath);
-    assert.deepEqual(packageSource.areas.map(({ resref }) => resref), ['start']);
-    assert.deepEqual(packageSource.areas[0].missing, []);
+    assert.deepEqual(
+      packageSource.areas.map(({ resref }: NativePackageSourceArea) => resref),
+      ['start'],
+    );
+    assert.deepEqual(packageSource.areas[0]?.missing, []);
     assert.deepEqual(packageSource.dialogs, []);
-    assert.ok(packageSource.code.some(({ relativePath }) => relativePath === 'debug.nss'));
+    assert.ok(packageSource.code.some(
+      ({ relativePath }: NativePackageSourceFile) => relativePath === 'debug.nss',
+    ));
 
     const request = {
       session_key: manifestPath,
@@ -896,7 +1019,7 @@ test('viewer worker inspects nwpkg manifests and lazily catalogs winning resourc
       load_ovr: false,
       archives: [],
     };
-    let layers;
+    let layers: NativeResourceCatalogItem[];
     try {
       layers = (await client.listResources({ ...request, stage: 'layers' })).items;
     } catch (error) {
@@ -906,23 +1029,23 @@ test('viewer worker inspects nwpkg manifests and lazily catalogs winning resourc
       }
       throw error;
     }
-    assert.ok(layers.some(({ layer, count }) => layer === 'Workspace' && count > 0));
-    assert.ok(layers.some(({ layer, count }) => layer === 'Package Dependencies' && count > 0));
-    assert.ok(layers.some(({ layer, count }) => layer === 'Vanilla' && count > 1000));
+    assert.ok(layers.some(({ layer, count }: NativeResourceCatalogItem) => layer === 'Workspace' && count > 0));
+    assert.ok(layers.some(({ layer, count }: NativeResourceCatalogItem) => layer === 'Package Dependencies' && count > 0));
+    assert.ok(layers.some(({ layer, count }: NativeResourceCatalogItem) => layer === 'Vanilla' && count > 1000));
 
     const families = (await client.listResources({
       ...request,
       stage: 'families',
       layer: 'Vanilla',
     })).items;
-    assert.ok(families.some(({ family, count }) => family === 'Models' && count > 0));
+    assert.ok(families.some(({ family, count }: NativeResourceCatalogItem) => family === 'Models' && count > 0));
     const types = (await client.listResources({
       ...request,
       stage: 'types',
       layer: 'Vanilla',
       family: 'Models',
     })).items;
-    assert.ok(types.some(({ extension, count }) => extension === 'mdl' && count > 0));
+    assert.ok(types.some(({ extension, count }: NativeResourceCatalogItem) => extension === 'mdl' && count > 0));
     const names = (await client.listResources({
       ...request,
       stage: 'names',
@@ -931,7 +1054,7 @@ test('viewer worker inspects nwpkg manifests and lazily catalogs winning resourc
       extension: 'mdl',
       prefix: 'c_bodak',
     })).items;
-    assert.ok(names.some(({ resource }) => resource === 'c_bodak.mdl'));
+    assert.ok(names.some(({ resource }: NativeResourceCatalogItem) => resource === 'c_bodak.mdl'));
 
     const vanillaOnly = (await client.listResources({
       ...request,
@@ -939,38 +1062,46 @@ test('viewer worker inspects nwpkg manifests and lazily catalogs winning resourc
       include_project_resources: false,
       stage: 'layers',
     })).items;
-    assert.deepEqual(vanillaOnly.map(({ layer }) => layer), ['Vanilla']);
+    assert.deepEqual(
+      vanillaOnly.map(({ layer }: NativeResourceCatalogItem) => layer),
+      ['Vanilla'],
+    );
   } finally {
     client.dispose();
   }
 });
 
-test('persistent viewer uses authoritative resources and assembles the repository module', {
+test('persistent viewer uses authoritative resources for authored areas and standalone assets', {
   skip: !fs.existsSync(bindingPath) && 'run npm run build-native first',
-}, async (context) => {
+}, async (context: TestContext) => {
   const binding = require(bindingPath);
   const repositoryRoot = path.resolve(__dirname, '..', '..', '..');
-  const modulePath = path.join(repositoryRoot, 'nwnrs.mod');
-  if (!fs.existsSync(modulePath)) {
-    context.skip('repository module fixture is unavailable');
-    return;
-  }
+  const moduleRoot = path.join(repositoryRoot, 'module');
   const service = new binding.ViewerService();
   const request = {
-    session_key: `${repositoryRoot}/nwpkg.toml`,
-    path: path.join(repositoryRoot, 'module.ifo'),
-    project_root: repositoryRoot,
+    session_key: path.join(moduleRoot, 'nwpkg.toml'),
+    path: path.join(moduleRoot, '.nwnrs-resource-catalog'),
+    project_root: moduleRoot,
     area: null,
     root: null,
     user: null,
     language: 'english',
     load_ovr: false,
-    archives: [modulePath],
-    include_project_resources: false,
+    archives: [],
+    include_project_resources: true,
   };
-  let packet;
+  let authoredPacket: Buffer;
   try {
-    packet = Buffer.from(await service.loadScene(JSON.stringify(request)));
+    authoredPacket = Buffer.from(await service.loadScene(JSON.stringify({
+      ...request,
+      path: path.join(moduleRoot, 'start.are'),
+      authored_area: {
+        resref: 'start',
+        are: path.join(moduleRoot, 'start.are.json'),
+        git: path.join(moduleRoot, 'start.git.json'),
+        gic: path.join(moduleRoot, 'start.gic.json'),
+      },
+    })));
   } catch (error) {
     if (/installation|root|language directory/iu.test(String(error))) {
       context.skip('Neverwinter Nights installation was not discovered');
@@ -978,35 +1109,9 @@ test('persistent viewer uses authoritative resources and assembles the repositor
     }
     throw error;
   }
-  assert.equal(packet.subarray(0, 8).toString('binary'), 'NWNRS3D\0');
-  const manifestLength = packet.readUInt32LE(8);
-  const manifest = JSON.parse(packet.subarray(12, 12 + manifestLength).toString('utf8'));
-  assert.equal(manifest.module.entryArea, 'start');
-  assert.ok(manifest.instances.some((entry) => entry.kind === 'tile'));
-  assert.ok(manifest.instances.some((entry) => entry.kind === 'collision'));
-  assert.equal(
-    manifest.diagnostics.some((entry) => entry.code === 'area.tile.walkmeshMissing'),
-    false,
-  );
-  assert.deepEqual(manifest.diagnostics.filter((entry) => entry.severity === 'error'), []);
 
-  const moduleRoot = path.join(repositoryRoot, 'module');
-  const authoredPacket = Buffer.from(await service.loadScene(JSON.stringify({
-    ...request,
-    session_key: path.join(moduleRoot, 'nwpkg.toml'),
-    path: path.join(moduleRoot, 'start.are'),
-    project_root: moduleRoot,
-    archives: [],
-    include_project_resources: true,
-    authored_area: {
-      resref: 'start',
-      are: path.join(moduleRoot, 'start.are.json'),
-      git: path.join(moduleRoot, 'start.git.json'),
-      gic: path.join(moduleRoot, 'start.gic.json'),
-    },
-  })));
   const authoredManifestLength = authoredPacket.readUInt32LE(8);
-  const authoredManifest = JSON.parse(
+  const authoredManifest: ScenePacketManifest = JSON.parse(
     authoredPacket.subarray(12, 12 + authoredManifestLength).toString('utf8'),
   );
   assert.equal(authoredManifest.source, 'area');
@@ -1021,26 +1126,32 @@ test('persistent viewer uses authoritative resources and assembles the repositor
       .some((object) => object.key === instance.objectKey)));
   assert.ok(authoredManifest.instances
     .filter((instance) => instance.objectKey && instance.model != null && instance.kind !== 'collision')
-    .every((instance) => /\.mdl$/u.test(instance.resource)));
+    .every((instance) => typeof instance.resource === 'string'
+      && /\.mdl$/u.test(instance.resource)));
   assert.ok(authoredManifest.instances
     .filter((instance) => instance.objectKey && instance.kind === 'collision')
-    .every((instance) => /\.(?:dwk|pwk|wok)$/u.test(instance.resource)));
+    .every((instance) => typeof instance.resource === 'string'
+      && /\.(?:dwk|pwk|wok)$/u.test(instance.resource)));
   const selectedObject = authoredManifest.areaObjects[0];
+  if (!selectedObject) throw new Error('Authored area has no selectable object');
   const inspectionRequest = {
     sessionKey: path.join(moduleRoot, 'nwpkg.toml'),
     assetKey: authoredManifest.assetKey,
     objectKey: selectedObject.key,
   };
-  const inspection = JSON.parse(await service.inspectAreaObject(JSON.stringify(inspectionRequest)));
+  const inspection: AreaObjectInspection = JSON.parse(
+    await service.inspectAreaObject(JSON.stringify(inspectionRequest)),
+  );
   assert.equal(inspection.schema, 'nwnrs.area-object-inspection');
   assert.equal(inspection.key, selectedObject.key);
   assert.equal(inspection.kind, 'placeable');
-  assert.equal(inspection.sources[0].layer, 'instance');
-  assert.equal(inspection.sources[0].resource, 'start.git');
-  assert.ok(inspection.sources[0].data.fields.length > 30);
+  const inspectionSource = required(inspection.sources[0], 'Instance inspection source is missing');
+  assert.equal(inspectionSource.layer, 'instance');
+  assert.equal(inspectionSource.resource, 'start.git');
+  assert.ok(inspectionSource.data.fields.length > 30);
   const effectiveFields = inspection.sections.flatMap((section) => section.fields);
-  assert.ok(effectiveFields.length >= inspection.sources[0].data.fields.length);
-  assert.ok(inspection.sources[0].data.fields.every(
+  assert.ok(effectiveFields.length >= inspectionSource.data.fields.length);
+  assert.ok(inspectionSource.data.fields.every(
     (sourceField) => effectiveFields.some((field) => field.name === sourceField.name),
   ));
   assert.equal(
@@ -1055,13 +1166,17 @@ test('persistent viewer uses authoritative resources and assembles the repositor
   );
   const mistModel = authoredManifest.models.find((model) => model.name.toLowerCase() === 'tnp_gmist');
   assert.ok(mistModel, 'x3_plc_mist must resolve its installed tnp_gmist model');
+  if (!mistModel) throw new Error('Mist model was not resolved');
   const mistEmitters = mistModel.nodes
     .map((node) => node.emitter)
-    .filter(Boolean);
+    .filter((emitter): emitter is PacketEmitter => emitter !== null);
   assert.equal(mistEmitters.length, 6);
-  const emitterText = (emitter, propertyName) => emitter.properties
+  const emitterText = (emitter: PacketEmitter, propertyName: string): string | undefined => {
+    const value = emitter.properties
     .find(({ name }) => name.toLowerCase() === propertyName)
-    ?.values.find(({ kind }) => kind === 'text')?.value.toLowerCase();
+      ?.values.find(({ kind }) => kind === 'text')?.value;
+    return typeof value === 'string' ? value.toLowerCase() : undefined;
+  };
   assert.equal(
     mistEmitters.filter((emitter) => emitterText(emitter, 'render') === 'billboard_to_world_z').length,
     1,
@@ -1075,10 +1190,20 @@ test('persistent viewer uses authoritative resources and assembles the repositor
   const mistTextureBinding = mistModel.nodeTextures.find(
     ({ role, name }) => role === 'emitter' && name.toLowerCase() === 'fxpa_smoke01a',
   );
-  assert.ok(mistTextureBinding, 'mist emitter texture must have a node binding');
-  assert.ok(Number.isInteger(mistTextureBinding.texture), 'mist emitter texture must resolve');
+  const resolvedMistTexture = required(
+    mistTextureBinding,
+    'Mist emitter texture must have a node binding',
+  );
+  if (typeof resolvedMistTexture.texture !== 'number'
+      || !Number.isInteger(resolvedMistTexture.texture)) {
+    throw new Error('Mist emitter texture must resolve');
+  }
+  const mistTexture = required(
+    authoredManifest.textures[resolvedMistTexture.texture],
+    'Resolved mist emitter texture is missing',
+  );
   assert.match(
-    authoredManifest.textures[mistTextureBinding.texture].resource,
+    mistTexture.resource,
     /^fxpa_smoke01a\.(?:dds|tga|plt)$/u,
   );
   assert.deepEqual(authoredManifest.diagnostics.filter((entry) => entry.severity === 'error'), []);
@@ -1088,21 +1213,21 @@ test('persistent viewer uses authoritative resources and assembles the repositor
     path: path.join(repositoryRoot, 'c_cat.mdl'),
   })));
   const modelManifestLength = modelPacket.readUInt32LE(8);
-  const modelManifest = JSON.parse(
+  const modelManifest: ScenePacketManifest = JSON.parse(
     modelPacket.subarray(12, 12 + modelManifestLength).toString('utf8'),
   );
   assert.equal(modelManifest.source, 'model');
   assert.equal(modelManifest.environment, 'studio');
   assert.ok(modelManifest.models.length > 0);
   assert.ok(modelManifest.textures.some((entry) => /^c_cat\.(?:dds|tga|plt)$/u.test(entry.resource)));
-  assert.ok(modelManifest.models[0].resolvedMaterials.every(
+  assert.ok(modelManifest.models[0]?.resolvedMaterials.every(
     (material) => material.textures.some(
       (texture) => texture.role === 'diffuse' && texture.texture != null,
     ),
   ));
   assert.ok(modelManifest.instances.some((entry) => entry.kind === 'model'));
   assert.ok(modelManifest.assetKey);
-  assert.ok(modelManifest.models[0].animations.every(
+  assert.ok(modelManifest.models[0]?.animations.every(
     (animation) => animation.tracksLoaded === false && animation.nodeTracks.length === 0,
   ));
   const animationPacket = Buffer.from(await service.loadAnimation(JSON.stringify({
@@ -1113,7 +1238,7 @@ test('persistent viewer uses authoritative resources and assembles the repositor
   })));
   const animationManifestLength = animationPacket.readUInt32LE(8);
   assert.equal((12 + animationManifestLength) % 4, 0);
-  const animationManifest = JSON.parse(
+  const animationManifest: SceneAnimationPacketManifest = JSON.parse(
     animationPacket.subarray(12, 12 + animationManifestLength).toString('utf8'),
   );
   assert.equal(animationManifest.schema, 'nwnrs.scene.animation');
@@ -1128,7 +1253,7 @@ test('persistent viewer uses authoritative resources and assembles the repositor
   })));
   const textureManifestLength = texturePacket.readUInt32LE(8);
   assert.equal((12 + textureManifestLength) % 4, 0);
-  const textureManifest = JSON.parse(
+  const textureManifest: SceneTexturePacketManifest = JSON.parse(
     texturePacket.subarray(12, 12 + textureManifestLength).toString('utf8'),
   );
   assert.equal(textureManifest.schema, 'nwnrs.scene.texture');
@@ -1140,7 +1265,7 @@ test('persistent viewer uses authoritative resources and assembles the repositor
     assert.ok(textureManifest.mipLevels.every((mip) => mip.data.byteLength > 0));
     assert.equal(textureManifest.rgba8, null);
   } else {
-    assert.ok(textureManifest.rgba8.byteLength > 0);
+    assert.ok(required(textureManifest.rgba8, 'RGBA texture payload is missing').byteLength > 0);
   }
   const rgbaPacket = Buffer.from(await service.loadTexture(JSON.stringify({
     sessionKey: request.session_key,
@@ -1149,22 +1274,24 @@ test('persistent viewer uses authoritative resources and assembles the repositor
     preferCompressed: false,
   })));
   const rgbaManifestLength = rgbaPacket.readUInt32LE(8);
-  const rgbaManifest = JSON.parse(
+  const rgbaManifest: SceneTexturePacketManifest = JSON.parse(
     rgbaPacket.subarray(12, 12 + rgbaManifestLength).toString('utf8'),
   );
   assert.equal(rgbaManifest.compression, null);
-  assert.ok(rgbaManifest.rgba8.byteLength > 0);
+  assert.ok(required(rgbaManifest.rgba8, 'Requested RGBA payload is missing').byteLength > 0);
 
-  const walkmeshResource = manifest.dependencies.nodes.find(
+  const walkmeshResource = authoredManifest.dependencies.nodes.find(
     (entry) => entry.state === 'resolved' && entry.resource.endsWith('.wok'),
   )?.resource;
-  assert.ok(walkmeshResource, 'assembled module did not expose a resolved tile walkmesh');
+  if (!walkmeshResource) {
+    throw new Error('Authored area did not expose a resolved tile walkmesh');
+  }
   const walkmeshPacket = Buffer.from(await service.loadScene(JSON.stringify({
     ...request,
     path: path.join(repositoryRoot, walkmeshResource),
   })));
   const walkmeshManifestLength = walkmeshPacket.readUInt32LE(8);
-  const walkmeshManifest = JSON.parse(
+  const walkmeshManifest: ScenePacketManifest = JSON.parse(
     walkmeshPacket.subarray(12, 12 + walkmeshManifestLength).toString('utf8'),
   );
   assert.equal(walkmeshManifest.source, 'walkmesh');
@@ -1199,7 +1326,7 @@ test('persistent viewer uses authoritative resources and assembles the repositor
 
 test('every c_bodak animation packet exposes aligned typed tracks', {
   skip: !fs.existsSync(bindingPath) && 'run npm run build-native first',
-}, async (context) => {
+}, async (context: TestContext) => {
   const binding = require(bindingPath);
   const repositoryRoot = path.resolve(__dirname, '..', '..', '..');
   const service = new binding.ViewerService();
@@ -1224,7 +1351,10 @@ test('every c_bodak animation packet exposes aligned typed tracks', {
     throw error;
   }
   const scene = decodeViewerPacket(scenePacket);
-  const animations = scene.manifest.models[0].animations;
+  const animations = required(
+    scene.manifest.models[0],
+    'c_bodak scene has no root model',
+  ).animations;
   const walkIndex = animations.findIndex(
     (animation) => animation.name.toLowerCase() === 'walk',
   );
@@ -1250,15 +1380,18 @@ test('every c_bodak animation packet exposes aligned typed tracks', {
       animation.binaryStart,
     );
   }
-  assert.equal(animations[walkIndex].name.toLowerCase(), 'walk');
+  assert.equal(
+    required(animations[walkIndex], 'Walk animation is missing').name.toLowerCase(),
+    'walk',
+  );
 });
 
 test('viewer worker opens c_bodak KEY dependencies through transferable owned memory', {
   skip: !fs.existsSync(bindingPath) && 'run npm run build-native first',
-}, async (context) => {
+}, async (context: TestContext) => {
   const repositoryRoot = path.resolve(__dirname, '..', '..', '..');
   const client = new ViewerWorkerClient(
-    path.resolve(__dirname, '..', 'src', 'viewer-worker.js'),
+    path.resolve(__dirname, '..', 'dist', 'src', 'viewer-worker.js'),
     bindingPath,
     { appendLine() {} },
   );

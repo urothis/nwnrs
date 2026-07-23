@@ -1,0 +1,26 @@
+{
+  "name": "nwnrs-workspace",
+  "private": true,
+  "packageManager": "npm@11.11.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "workspaces": [
+    "editors/vscode-nwnrs"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "build:native": "npm run build-native --workspace=nwnrs",
+    "check": "npm run check --workspaces --if-present",
+    "clean": "npm run clean --workspaces --if-present",
+    "package:vscode": "npm exec --workspace=nwnrs -- vsce package --no-dependencies",
+    "test": "npm test --workspaces --if-present"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/vscode": "^1.125.0",
+    "@vscode/vsce": "^3.9.2",
+    "rimraf": "^6.1.3",
+    "typescript": "^7.0.2"
+  }
+}

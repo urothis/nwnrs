@@ -6,14 +6,78 @@ const Module = require('node:module');
 const path = require('node:path');
 const test = require('node:test');
 
-function loadSidebarWithoutVsCodeHost() {
+interface TestPackage {
+  readonly name?: string;
+  readonly root: string;
+  readonly manifestPath?: string;
+}
+
+interface TestResourceLayer {
+  readonly label: string;
+  readonly layer: string;
+}
+
+interface TestSourceFile {
+  readonly path: string;
+  readonly relativePath: string;
+  readonly kind: string;
+}
+
+interface TestAreaObject {
+  readonly key: string;
+  readonly kind: string;
+  readonly label: string;
+  readonly sourceIndex: number;
+  readonly tag?: string;
+  readonly templateResref?: string;
+}
+
+interface TestSourceArea {
+  readonly resref: string;
+  readonly registered: boolean;
+  readonly missing: readonly string[];
+  readonly conflicts?: readonly string[];
+  readonly files: readonly TestSourceFile[];
+  readonly objects?: readonly TestAreaObject[];
+}
+
+interface TestTreeNode {
+  readonly kind: string;
+  readonly label: string;
+  readonly layer?: string;
+  readonly children?: TestTreeNode[];
+  readonly package?: TestPackage;
+  readonly area?: TestSourceArea;
+  readonly object?: TestAreaObject;
+}
+
+interface SidebarTestModule {
+  buildSourceFileTree(files: readonly TestSourceFile[]): TestTreeNode[];
+  childResourceQuery(node: Readonly<Record<string, string>>): Readonly<Record<string, string>>;
+  owningPackage(filePath: string, packages: readonly TestPackage[]): TestPackage | undefined;
+  sourceSections(
+    source: {
+      readonly areas: readonly TestSourceArea[];
+      readonly dialogs: readonly TestSourceFile[];
+      readonly code: readonly TestSourceFile[];
+    },
+    packageInfo?: TestPackage,
+  ): TestTreeNode[];
+  sortResourceLayers(items: readonly TestResourceLayer[]): TestResourceLayer[];
+}
+
+function loadSidebarWithoutVsCodeHost(): SidebarTestModule {
   const originalLoad = Module._load;
   try {
-    Module._load = function load(request, parent, isMain) {
+    Module._load = function load(
+      request: string,
+      parent: NodeModule | null | undefined,
+      isMain: boolean,
+    ) {
       if (request === 'vscode') return {};
       return originalLoad.call(this, request, parent, isMain);
     };
-    const modulePath = require.resolve('../src/sidebar');
+    const modulePath = require.resolve('../dist/src/sidebar');
     delete require.cache[modulePath];
     return require(modulePath);
   } finally {
@@ -27,10 +91,19 @@ const {
   owningPackage,
   sourceSections,
   sortResourceLayers,
-} = loadSidebarWithoutVsCodeHost();
+}: SidebarTestModule = loadSidebarWithoutVsCodeHost();
+
+function required<Value>(value: Value | null | undefined, label: string): Value {
+  assert.ok(value, label);
+  if (value == null) throw new Error(label);
+  return value;
+}
 
 test('Source is an in-sidebar tree and never redirects to Explorer', () => {
-  const implementation = fs.readFileSync(path.resolve(__dirname, '..', 'src', 'sidebar.js'), 'utf8');
+  const implementation = fs.readFileSync(
+    path.resolve(__dirname, '..', 'dist', 'src', 'sidebar.js'),
+    'utf8',
+  );
   assert.doesNotMatch(implementation, /revealInExplorer/u);
   assert.match(implementation, /nwnrs\.sidebar\.openSourceFile/u);
 });
@@ -43,8 +116,8 @@ test('active package ownership selects the deepest nested nwpkg root', () => {
     { name: 'module', root: nested },
   ];
 
-  assert.equal(owningPackage(path.join(nested, 'src', 'main.nss'), packages).name, 'module');
-  assert.equal(owningPackage(path.join(root, 'shared', 'types.nss'), packages).name, 'root');
+  assert.equal(owningPackage(path.join(nested, 'src', 'main.nss'), packages)?.name, 'module');
+  assert.equal(owningPackage(path.join(root, 'shared', 'types.nss'), packages)?.name, 'root');
   assert.equal(owningPackage('/somewhere/else/main.nss', packages), undefined);
 });
 
@@ -91,10 +164,13 @@ test('source sections hide empty categories and preserve physical directories', 
     ],
   });
   assert.deepEqual(sections.map(({ label }) => label), ['Code']);
-  assert.equal(sections[0].children[0].label, 'code');
-  assert.equal(sections[0].children[0].children[0].label, 'shared');
-  assert.equal(sections[0].children[0].children[0].children[0].label, 'types.nss');
-  assert.equal(sections[0].children[0].children[1].label, 'main.nss');
+  const section = required(sections[0], 'Code section is missing');
+  const code = required(section.children?.[0], 'Code directory is missing');
+  const shared = required(code.children?.[0], 'Shared directory is missing');
+  assert.equal(code.label, 'code');
+  assert.equal(shared.label, 'shared');
+  assert.equal(shared.children?.[0]?.label, 'types.nss');
+  assert.equal(code.children?.[1]?.label, 'main.nss');
 });
 
 test('source areas follow IFO registration and isolate unregistered bundles', () => {
@@ -123,13 +199,18 @@ test('source areas follow IFO registration and isolate unregistered bundles', ()
     code: [],
   }, packageInfo);
   assert.deepEqual(sections.map(({ label }) => label), ['Areas', 'Dialogs']);
-  const areasFolder = sections[0].children.find(({ label }) => label === 'areas');
-  assert.equal(areasFolder.children[0].area.resref, 'start');
-  assert.equal(areasFolder.children[0].package, packageInfo);
-  assert.equal(Object.hasOwn(areasFolder.children[0], 'children'), false);
-  const unregistered = sections[0].children.find(({ kind }) => kind === 'sourceUnregistered');
+  const areaSection = required(sections[0], 'Areas section is missing');
+  const areasFolder = required(
+    areaSection.children?.find(({ label }) => label === 'areas'),
+    'Registered areas folder is missing',
+  );
+  const registeredArea = required(areasFolder.children?.[0], 'Registered area is missing');
+  assert.equal(registeredArea.area?.resref, 'start');
+  assert.equal(registeredArea.package, packageInfo);
+  assert.equal(Object.hasOwn(registeredArea, 'children'), false);
+  const unregistered = areaSection.children?.find(({ kind }) => kind === 'sourceUnregistered');
   assert.ok(unregistered);
-  assert.equal(unregistered.children[0].children[0].area.resref, 'orphan');
+  assert.equal(unregistered?.children?.[0]?.children?.[0]?.area?.resref, 'orphan');
 });
 
 test('source file trees retain compound dialog filenames', () => {
@@ -138,8 +219,8 @@ test('source file trees retain compound dialog filenames', () => {
     relativePath: 'dialogs/intro.dlg.json',
     kind: 'dlgJson',
   }]);
-  assert.equal(tree[0].label, 'dialogs');
-  assert.equal(tree[0].children[0].label, 'intro.dlg.json');
+  assert.equal(tree[0]?.label, 'dialogs');
+  assert.equal(tree[0]?.children?.[0]?.label, 'intro.dlg.json');
 });
 
 test('area sources expose only non-empty authored-object categories', () => {
@@ -159,9 +240,9 @@ test('area sources expose only non-empty authored-object categories', () => {
     dialogs: [],
     code: [],
   }, packageInfo);
-  const area = areas.children[0];
+  const area = required(areas?.children?.[0], 'Area node is missing');
   assert.equal(area.kind, 'sourceArea');
-  assert.deepEqual(area.children.map(({ label }) => label), ['Creatures', 'Placeables']);
-  assert.equal(area.children[0].children[0].object.key, 'creature:0');
-  assert.equal(area.children[1].children[0].package, packageInfo);
+  assert.deepEqual(area.children?.map(({ label }) => label), ['Creatures', 'Placeables']);
+  assert.equal(area.children?.[0]?.children?.[0]?.object?.key, 'creature:0');
+  assert.equal(area.children?.[1]?.children?.[0]?.package, packageInfo);
 });

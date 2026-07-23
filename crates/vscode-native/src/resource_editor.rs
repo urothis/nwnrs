@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     fs::{self, File, OpenOptions},
     io::{self, Cursor, Write},
     path::{Path, PathBuf},
@@ -37,6 +37,8 @@ use nwnrs_types::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+
+use crate::resource_capabilities::{is_gff_extension, resource_handler};
 
 const DEFAULT_PAGE_SIZE: usize = 200;
 const MAX_PAGE_SIZE: usize = 2_000;
@@ -554,26 +556,26 @@ impl EditorContent {
                 encoding,
             }));
         }
-        match extension.as_str() {
-            "2da" => read_twoda(&mut cursor)
+        match resource_handler(&extension) {
+            Some("2da") => read_twoda(&mut cursor)
                 .map(Self::TwoDa)
                 .map_err(display_error),
-            "tlk" => read_single_tlk(cursor, CachePolicy::Use)
+            Some("tlk") => read_single_tlk(cursor, CachePolicy::Use)
                 .map(Self::Tlk)
                 .map_err(display_error),
-            "dds" => read_dds(&mut cursor).map(Self::Dds).map_err(display_error),
-            "tga" => read_tga(&mut cursor).map(Self::Tga).map_err(display_error),
-            "plt" => read_plt(&mut cursor).map(Self::Plt).map_err(display_error),
-            "erf" | "hak" | "mod" | "nwm" => read_erf(cursor, path.display().to_string())
+            Some("dds") => read_dds(&mut cursor).map(Self::Dds).map_err(display_error),
+            Some("tga") => read_tga(&mut cursor).map(Self::Tga).map_err(display_error),
+            Some("plt") => read_plt(&mut cursor).map(Self::Plt).map_err(display_error),
+            Some("erf") => read_erf(cursor, path.display().to_string())
                 .and_then(ErfDocument::new)
                 .map(Self::Erf)
                 .map_err(display_error),
-            "key" => read_key_table_from_file(path)
+            Some("key") => read_key_table_from_file(path)
                 .and_then(KeyDocument::new)
                 .map(Self::Key)
                 .map_err(display_error),
-            "ncs" => ScriptDebugDocument::from_ncs(bytes).map(Self::ScriptDebug),
-            "ndb" => ScriptDebugDocument::from_ndb(bytes).map(Self::ScriptDebug),
+            Some("ncs") => ScriptDebugDocument::from_ncs(bytes).map(Self::ScriptDebug),
+            Some("ndb") => ScriptDebugDocument::from_ndb(bytes).map(Self::ScriptDebug),
             _ => Err(format!(
                 "unsupported nwnrs resource type: {}",
                 path.display()
@@ -804,7 +806,7 @@ impl EditorContent {
         match self {
             Self::Gff(value) => match value.encoding {
                 GffSourceEncoding::Binary => {
-                    write_gff_root(&mut cursor, &value.root).map_err(display_error)?
+                    write_gff_root(&mut cursor, &value.root).map_err(display_error)?;
                 }
                 GffSourceEncoding::Json => {
                     return gff_root_to_json_bytes(&value.root).map_err(display_error)
@@ -1013,6 +1015,9 @@ impl ScriptDebugDocument {
                 let function_index = functions
                     .iter()
                     .position(|function| *offset >= function.start && *offset < function.end);
+                let local_offset = function_index
+                    .and_then(|index| functions.get(index))
+                    .map(|function| offset.saturating_sub(function.start));
                 let next_offset = offsets.get(index + 1).copied();
                 let successors = instruction_successors(instruction.opcode, target, next_offset);
                 let source = self.source_location(*offset);
@@ -1024,7 +1029,7 @@ impl ScriptDebugDocument {
                 json!({
                     "index": index,
                     "offset": offset,
-                    "localOffset": function_index.map(|function_index| offset.saturating_sub(functions[function_index].start)),
+                    "localOffset": local_offset,
                     "size": instruction.encoded_len(),
                     "label": rendered.label,
                     "opcode": instruction.opcode.canonical_name(),
@@ -1098,8 +1103,8 @@ impl ScriptDebugDocument {
             "variableEntries": ndb.variables.iter().map(|entry| json!({
                 "name": entry.label,
                 "type": entry.ty.to_string(),
-                "start": entry.binary_start.saturating_sub(NCS_BINARY_HEADER_SIZE as u32),
-                "end": entry.binary_end.saturating_sub(NCS_BINARY_HEADER_SIZE as u32),
+                "start": ncs_code_offset_u32(entry.binary_start),
+                "end": ncs_code_offset_u32(entry.binary_end),
                 "stackLocation": entry.stack_loc,
             })).collect::<Vec<_>>(),
         })
@@ -1115,8 +1120,8 @@ impl ScriptDebugDocument {
                     .map(|(index, function)| json!({
                         "index": index,
                         "name": function.label,
-                        "start": function.binary_start.saturating_sub(NCS_BINARY_HEADER_SIZE as u32),
-                        "end": function.binary_end.saturating_sub(NCS_BINARY_HEADER_SIZE as u32),
+                        "start": ncs_code_offset_u32(function.binary_start),
+                        "end": ncs_code_offset_u32(function.binary_end),
                         "returnType": function.return_type.to_string(),
                         "arguments": function.args.iter().map(ToString::to_string).collect::<Vec<_>>(),
                         "synthetic": false,
@@ -1139,14 +1144,8 @@ impl ScriptDebugDocument {
                 .functions
                 .iter()
                 .map(|function| {
-                    let start = function
-                        .binary_start
-                        .saturating_sub(NCS_BINARY_HEADER_SIZE as u32)
-                        as usize;
-                    let end = function
-                        .binary_end
-                        .saturating_sub(NCS_BINARY_HEADER_SIZE as u32)
-                        as usize;
+                    let start = ncs_code_offset(function.binary_start);
+                    let end = ncs_code_offset(function.binary_end);
                     WorkbenchFunction {
                         name: function.label.clone(),
                         start,
@@ -1231,19 +1230,14 @@ impl ScriptDebugDocument {
             .lines
             .iter()
             .filter(|line| {
-                let start =
-                    line.binary_start
-                        .saturating_sub(NCS_BINARY_HEADER_SIZE as u32) as usize;
-                let end =
-                    line.binary_end
-                        .saturating_sub(NCS_BINARY_HEADER_SIZE as u32) as usize;
+                let start = ncs_code_offset(line.binary_start);
+                let end = ncs_code_offset(line.binary_end);
                 (start..end).contains(&offset)
             })
             .collect::<Vec<_>>();
-        if matches.len() != 1 {
+        let [line] = matches.as_slice() else {
             return None;
-        }
-        let line = matches[0];
+        };
         let file = ndb.files.get(line.file_num)?;
         let text = self
             .sources
@@ -1265,7 +1259,7 @@ impl ScriptDebugDocument {
         let id = usize::from(u16::from_be_bytes(
             instruction.extra.get(..2)?.try_into().ok()?,
         ));
-        let argument_count = instruction.extra[2];
+        let argument_count = instruction.extra.get(2).copied()?;
         let function = self.langspec.as_ref()?.functions.get(id)?;
         Some(json!({
             "id": id,
@@ -1286,6 +1280,14 @@ struct WorkbenchFunction {
     arguments:   Vec<String>,
     synthetic:   bool,
     source:      Option<Value>,
+}
+
+fn ncs_code_offset_u32(binary_offset: u32) -> u32 {
+    binary_offset.saturating_sub(u32::try_from(NCS_BINARY_HEADER_SIZE).unwrap_or(u32::MAX))
+}
+
+fn ncs_code_offset(binary_offset: u32) -> usize {
+    usize::try_from(ncs_code_offset_u32(binary_offset)).unwrap_or(usize::MAX)
 }
 
 fn instruction_offsets(instructions: &[NcsInstruction]) -> Vec<usize> {
@@ -1362,7 +1364,9 @@ fn control_flow_blocks(
         .collect::<BTreeSet<_>>();
     let mut leaders = BTreeSet::from([function.start]);
     for (row, (instruction_index, offset)) in function_rows.iter().enumerate() {
-        let instruction = &instructions[*instruction_index];
+        let Some(instruction) = instructions.get(*instruction_index) else {
+            continue;
+        };
         if let Some(target) = ncs_jump_target(instruction, **offset)
             && valid.contains(&target)
         {
@@ -1392,26 +1396,35 @@ fn control_flow_blocks(
                 .collect::<Vec<_>>();
             let last = rows.last().copied();
             let successors = last.map_or_else(Vec::new, |last| {
-                let target = ncs_jump_target(&instructions[last], offsets[last]);
+                let Some(instruction) = instructions.get(last) else {
+                    return Vec::new();
+                };
+                let Some(offset) = offsets.get(last).copied() else {
+                    return Vec::new();
+                };
+                let target = ncs_jump_target(instruction, offset);
                 let next = offsets
                     .get(last + 1)
                     .copied()
                     .filter(|offset| *offset < function.end);
-                instruction_successors(instructions[last].opcode, target, next)
+                instruction_successors(instruction.opcode, target, next)
                     .into_iter()
                     .filter(|successor| {
                         successor
                             .get("offset")
                             .and_then(Value::as_u64)
-                            .is_some_and(|offset| valid.contains(&(offset as usize)))
+                            .and_then(|offset| usize::try_from(offset).ok())
+                            .is_some_and(|offset| valid.contains(&offset))
                     })
                     .collect()
             });
             let calls = rows
                 .iter()
                 .filter_map(|index| {
-                    (instructions[*index].opcode == NcsOpcode::Jsr)
-                        .then(|| ncs_jump_target(&instructions[*index], offsets[*index]))
+                    let instruction = instructions.get(*index)?;
+                    let offset = offsets.get(*index).copied()?;
+                    (instruction.opcode == NcsOpcode::Jsr)
+                        .then(|| ncs_jump_target(instruction, offset))
                         .flatten()
                 })
                 .collect::<Vec<_>>();
@@ -1433,32 +1446,6 @@ fn hex_bytes(bytes: &[u8]) -> String {
         .map(|byte| format!("{byte:02X}"))
         .collect::<Vec<_>>()
         .join(" ")
-}
-
-fn is_gff_extension(extension: &str) -> bool {
-    matches!(
-        extension,
-        "gff"
-            | "utc"
-            | "utd"
-            | "ute"
-            | "uti"
-            | "utm"
-            | "utp"
-            | "uts"
-            | "utt"
-            | "utw"
-            | "git"
-            | "are"
-            | "gic"
-            | "ifo"
-            | "fac"
-            | "dlg"
-            | "itp"
-            | "bic"
-            | "jrl"
-            | "gui"
-    )
 }
 
 fn gff_source_encoding(path: &Path) -> Option<GffSourceEncoding> {
@@ -2402,9 +2389,11 @@ impl ErfDocument {
 }
 
 struct KeyDocument {
-    metadata: KeyTable,
-    bifs:     Vec<KeyBifEntry>,
-    entries:  Vec<ArchiveEntry>,
+    metadata:          KeyTable,
+    bifs:              Vec<KeyBifEntry>,
+    entries:           Vec<ArchiveEntry>,
+    entry_by_resource: HashMap<String, usize>,
+    bif_by_resref:     HashMap<ResRef, usize>,
 }
 
 impl KeyDocument {
@@ -2424,11 +2413,46 @@ impl KeyDocument {
             })
             .collect::<Result<Vec<_>, nwnrs_types::resman::ResManError>>()
             .map_err(nwnrs_types::key::KeyError::from)?;
-        Ok(Self {
+        let mut document = Self {
             metadata,
             bifs,
             entries,
-        })
+            entry_by_resource: HashMap::new(),
+            bif_by_resref: HashMap::new(),
+        };
+        document
+            .rebuild_indexes()
+            .map_err(nwnrs_types::key::KeyError::Message)?;
+        Ok(document)
+    }
+
+    fn rebuild_indexes(&mut self) -> EditorResult<()> {
+        let mut entry_by_resource = HashMap::with_capacity(self.entries.len());
+        for (index, entry) in self.entries.iter().enumerate() {
+            let resource = resource_name(&entry.resref);
+            if entry_by_resource.insert(resource.clone(), index).is_some() {
+                return Err(format!(
+                    "KEY contains duplicate resource identity: {resource}"
+                ));
+            }
+        }
+
+        let entry_count = self.bifs.iter().map(|bif| bif.entries.len()).sum();
+        let mut bif_by_resref = HashMap::with_capacity(entry_count);
+        for (bif_index, bif) in self.bifs.iter().enumerate() {
+            for resref in &bif.entries {
+                if let Some(previous) = bif_by_resref.insert(resref.clone(), bif_index) {
+                    return Err(format!(
+                        "KEY resource {} belongs to both BIF {previous} and BIF {bif_index}",
+                        resource_name(resref)
+                    ));
+                }
+            }
+        }
+
+        self.entry_by_resource = entry_by_resource;
+        self.bif_by_resref = bif_by_resref;
+        Ok(())
     }
 
     fn snapshot(&self, request: &Value) -> Value {
@@ -2473,10 +2497,7 @@ impl KeyDocument {
             .map(|entry| {
                 let mut value = archive_entry_json(entry);
                 if let Some(object) = value.as_object_mut() {
-                    let bif_index = self
-                        .bifs
-                        .iter()
-                        .position(|bif| bif.entries.contains(&entry.resref));
+                    let bif_index = self.bif_by_resref.get(&entry.resref).copied();
                     object.insert("bifIndex".to_string(), json!(bif_index));
                     object.insert(
                         "bif".to_string(),
@@ -2509,9 +2530,9 @@ impl KeyDocument {
     }
 
     fn read_entry(&self, resource: &str) -> EditorResult<Vec<u8>> {
-        self.entries
-            .iter()
-            .find(|entry| resource_name(&entry.resref) == resource)
+        self.entry_by_resource
+            .get(resource)
+            .and_then(|index| self.entries.get(*index))
             .ok_or_else(|| format!("KEY resource not found: {resource}"))?
             .bytes()
     }
@@ -2527,17 +2548,16 @@ impl KeyDocument {
         if requested_bif.is_some_and(|index| index >= self.bifs.len()) {
             return Err("BIF index out of range".to_string());
         }
-        let resource = edit.get("resource").and_then(Value::as_str);
-        let owning_bif = resource.and_then(|resource| {
-            self.entries
-                .iter()
-                .find(|entry| resource_name(&entry.resref) == resource)
-                .and_then(|entry| {
-                    self.bifs
-                        .iter()
-                        .position(|bif| bif.entries.contains(&entry.resref))
-                })
-        });
+        let owning_bif = edit
+            .get("resource")
+            .and_then(Value::as_str)
+            .and_then(|resource| {
+                self.entry_by_resource
+                    .get(resource)
+                    .and_then(|index| self.entries.get(*index))
+                    .and_then(|entry| self.bif_by_resref.get(&entry.resref))
+                    .copied()
+            });
         let result = apply_archive_edit(&mut self.entries, action, edit)?;
         let target_bif = requested_bif.or(owning_bif);
         self.rebuild_bif_entries(target_bif)?;
@@ -2556,24 +2576,27 @@ impl KeyDocument {
             .bifs
             .iter()
             .flat_map(|bif| bif.entries.iter().cloned())
-            .collect::<Vec<_>>();
+            .collect::<HashSet<_>>();
         let live = self
             .entries
             .iter()
             .map(|entry| entry.resref.clone())
-            .collect::<Vec<_>>();
+            .collect::<HashSet<_>>();
         for bif in &mut self.bifs {
             bif.entries.retain(|entry| live.contains(entry));
         }
+        let additions = self
+            .entries
+            .iter()
+            .map(|entry| &entry.resref)
+            .filter(|entry| !existing.contains(*entry))
+            .cloned()
+            .collect::<Vec<_>>();
         let target_bif = self
             .bifs
             .get_mut(target)
             .ok_or_else(|| "BIF index out of range".to_string())?;
-        for entry in &live {
-            if !existing.contains(entry) {
-                target_bif.entries.push(entry.clone());
-            }
-        }
+        target_bif.entries.extend(additions);
         let mut by_resref = self
             .entries
             .drain(..)
@@ -2585,7 +2608,7 @@ impl KeyDocument {
             }
         }
         self.entries.extend(by_resref.into_values());
-        Ok(())
+        self.rebuild_indexes()
     }
 
     fn write_atomic(&self, key_path: &Path) -> EditorResult<()> {
@@ -2606,7 +2629,7 @@ impl KeyDocument {
                 .as_nanos()
         ));
         fs::create_dir(&staging).map_err(display_error)?;
-        let result = (|| -> EditorResult<()> {
+        let preparation = (|| -> EditorResult<()> {
             let mut payloads = BTreeMap::new();
             for entry in &self.entries {
                 payloads.insert(entry.resref.clone(), entry.bytes()?);
@@ -2645,13 +2668,12 @@ impl KeyDocument {
                     Ok((bytes.len(), sha1_digest(bytes)))
                 },
             )
-            .map_err(display_error)?;
-            commit_key_staging(&staging, parent)
+            .map_err(display_error)
         })();
-        if result.is_err() {
-            let _ = fs::remove_dir_all(&staging);
+        if let Err(error) = preparation {
+            return discard_key_staging(&staging, error);
         }
-        result
+        commit_key_staging(&staging, parent)
     }
 
     fn backup_bytes(&self) -> EditorResult<Vec<u8>> {
@@ -2867,41 +2889,189 @@ fn algorithm_from_name(value: &str) -> EditorResult<Algorithm> {
 
 fn commit_key_staging(staging: &Path, destination: &Path) -> EditorResult<()> {
     let mut relative_files = Vec::new();
-    collect_relative_files(staging, staging, &mut relative_files)?;
+    if let Err(error) = collect_relative_files(staging, staging, &mut relative_files) {
+        return discard_key_staging(staging, error);
+    }
     let rollback = staging.join(".rollback");
-    fs::create_dir(&rollback).map_err(display_error)?;
-    let mut committed: Vec<(PathBuf, PathBuf)> = Vec::new();
+    if let Err(error) = fs::create_dir(&rollback) {
+        return discard_key_staging(
+            staging,
+            format!(
+                "failed to create KEY/BIF rollback directory {}: {error}",
+                rollback.display()
+            ),
+        );
+    }
+    let mut committed = Vec::new();
     for relative in &relative_files {
         let source = staging.join(relative);
         let target = destination.join(relative);
-        if let Some(parent) = target.parent() {
-            fs::create_dir_all(parent).map_err(display_error)?;
+        if let Some(parent) = target.parent()
+            && let Err(error) = fs::create_dir_all(parent)
+        {
+            return fail_key_commit(
+                staging,
+                &committed,
+                format!("failed to create {}: {error}", parent.display()),
+            );
         }
         let backup = rollback.join(relative);
-        if target.exists() {
-            if let Some(parent) = backup.parent() {
-                fs::create_dir_all(parent).map_err(display_error)?;
-            }
-            fs::rename(&target, &backup).map_err(|error| {
-                format!("failed to stage existing {}: {error}", target.display())
-            })?;
+        if let Some(parent) = backup.parent()
+            && let Err(error) = fs::create_dir_all(parent)
+        {
+            return fail_key_commit(
+                staging,
+                &committed,
+                format!(
+                    "failed to create rollback directory {}: {error}",
+                    parent.display()
+                ),
+            );
         }
+        match fs::symlink_metadata(&target) {
+            Ok(metadata) if !metadata.file_type().is_file() => {
+                return fail_key_commit(
+                    staging,
+                    &committed,
+                    format!(
+                        "refused to replace non-file KEY/BIF destination {}",
+                        target.display()
+                    ),
+                );
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return fail_key_commit(
+                    staging,
+                    &committed,
+                    format!("failed to inspect existing {}: {error}", target.display()),
+                );
+            }
+        }
+        let original = match fs::rename(&target, &backup) {
+            Ok(()) => Some(backup),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+            Err(error) => {
+                return fail_key_commit(
+                    staging,
+                    &committed,
+                    format!("failed to stage existing {}: {error}", target.display()),
+                );
+            }
+        };
         if let Err(error) = fs::rename(&source, &target) {
-            for (committed_target, committed_backup) in committed.into_iter().rev() {
-                let _ = fs::remove_file(&committed_target);
-                if committed_backup.exists() {
-                    let _ = fs::rename(&committed_backup, &committed_target);
-                }
-            }
-            if backup.exists() {
-                let _ = fs::rename(&backup, &target);
-            }
-            return Err(format!("failed to commit {}: {error}", target.display()));
+            committed.push(KeyCommitRecord {
+                target,
+                original,
+                installed: false,
+            });
+            return fail_key_commit(
+                staging,
+                &committed,
+                format!("failed to commit {}: {error}", source.display()),
+            );
         }
-        committed.push((target, backup));
+        committed.push(KeyCommitRecord {
+            target,
+            original,
+            installed: true,
+        });
     }
-    fs::remove_dir_all(staging).map_err(display_error)?;
-    Ok(())
+    fs::remove_dir_all(staging).map_err(|error| {
+        format!(
+            "KEY/BIF files were committed, but previous-file backups could not be removed from \
+             {}: {error}",
+            staging.display()
+        )
+    })
+}
+
+fn discard_key_staging(staging: &Path, failure: String) -> EditorResult<()> {
+    match fs::remove_dir_all(staging) {
+        Ok(()) => Err(failure),
+        Err(error) => Err(format!(
+            "{failure}. Failed to remove incomplete staging directory {}; inspect or remove it \
+             manually: {error}",
+            staging.display()
+        )),
+    }
+}
+
+struct KeyCommitRecord {
+    target:    PathBuf,
+    original:  Option<PathBuf>,
+    installed: bool,
+}
+
+fn fail_key_commit(
+    staging: &Path,
+    committed: &[KeyCommitRecord],
+    failure: String,
+) -> EditorResult<()> {
+    let rollback_errors = rollback_key_commit(committed);
+    if !rollback_errors.is_empty() {
+        return Err(format!(
+            "{failure}. Rollback was incomplete; original files and recovery data are preserved \
+             at {}. Recovery errors: {}",
+            staging.display(),
+            rollback_errors.join("; ")
+        ));
+    }
+
+    match fs::remove_dir_all(staging) {
+        Ok(()) => Err(format!("{failure}. All original files were restored.")),
+        Err(error) => Err(format!(
+            "{failure}. All original files were restored, but the staging directory could not be \
+             removed and remains at {}: {error}",
+            staging.display()
+        )),
+    }
+}
+
+fn rollback_key_commit(committed: &[KeyCommitRecord]) -> Vec<String> {
+    let mut errors = Vec::new();
+    for record in committed.iter().rev() {
+        if record.installed
+            && let Err(error) = fs::remove_file(&record.target)
+            && error.kind() != io::ErrorKind::NotFound
+        {
+            errors.push(format!(
+                "could not remove newly installed {}: {error}",
+                record.target.display()
+            ));
+            continue;
+        }
+
+        let Some(original) = &record.original else {
+            continue;
+        };
+        match fs::symlink_metadata(&record.target) {
+            Ok(_) => {
+                errors.push(format!(
+                    "refused to overwrite unexpected rollback target {}",
+                    record.target.display()
+                ));
+                continue;
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => {
+                errors.push(format!(
+                    "could not inspect rollback target {}: {error}",
+                    record.target.display()
+                ));
+                continue;
+            }
+        }
+        if let Err(error) = fs::rename(original, &record.target) {
+            errors.push(format!(
+                "could not restore {} from {}: {error}",
+                record.target.display(),
+                original.display()
+            ));
+        }
+    }
+    errors
 }
 
 fn collect_relative_files(
@@ -2997,7 +3167,8 @@ mod tests {
 
         let mut document =
             EditorDocument::open(source_path.clone(), false).expect("open dialog JSON document");
-        let mut edited = document.snapshot(&json!({})).expect("snapshot dialog")["data"].clone();
+        let snapshot = document.snapshot(&json!({})).expect("snapshot dialog");
+        let mut edited = snapshot.get("data").expect("snapshot data").clone();
         *edited
             .pointer_mut("/root/fields/0/value")
             .expect("dialog field") = json!("after");
@@ -3009,14 +3180,22 @@ mod tests {
         document.save(&json!({})).expect("save dialog JSON");
         let saved = fs::read(&source_path).expect("read saved dialog JSON");
         let saved_json: Value = serde_json::from_slice(&saved).expect("parse saved dialog JSON");
-        assert_eq!(saved_json["__data_type"], "DLG ");
-        assert_eq!(saved_json["EndConverAbort"]["value"], "after");
+        assert_eq!(
+            saved_json.get("__data_type").and_then(Value::as_str),
+            Some("DLG ")
+        );
+        assert_eq!(
+            saved_json
+                .pointer("/EndConverAbort/value")
+                .and_then(Value::as_str),
+            Some("after")
+        );
 
         document
             .save_as(&json!({ "path": binary_path }))
             .expect("save dialog as binary");
         let binary = fs::read(directory.join("conversation.dlg")).expect("read binary dialog");
-        assert_eq!(&binary[..4], b"DLG ");
+        assert_eq!(binary.get(..4), Some(b"DLG ".as_slice()));
         let reopened = EditorDocument::open(directory.join("conversation.dlg"), false)
             .expect("reopen binary dialog");
         let EditorContent::Gff(reopened) = reopened.content else {
@@ -3119,6 +3298,19 @@ mod tests {
 
         let table = read_key_table_from_file(directory.join("demo.key")).expect("read key");
         let mut document = KeyDocument::new(table).expect("create key editor");
+        assert_eq!(document.entry_by_resource.get("sample.utc"), Some(&0));
+        assert_eq!(document.bif_by_resref.get(&resource), Some(&0));
+        let snapshot = document.snapshot(&json!({}));
+        assert_eq!(
+            snapshot
+                .pointer("/entries/0/bifIndex")
+                .and_then(Value::as_u64),
+            Some(0)
+        );
+        assert_eq!(
+            snapshot.pointer("/entries/0/bif").and_then(Value::as_str),
+            Some("demo.bif")
+        );
         document
             .apply_edit(
                 "replaceEntry",
@@ -3140,6 +3332,69 @@ mod tests {
                 .read_all(CachePolicy::Bypass)
                 .expect("payload"),
             b"after"
+        );
+        fs::remove_dir_all(directory).expect("remove temporary directory");
+    }
+
+    #[test]
+    fn key_commit_rollback_restores_every_original_before_cleanup() {
+        let directory = temporary_directory("key-rollback");
+        let staging = directory.join(".staging");
+        let rollback = staging.join(".rollback");
+        fs::create_dir_all(&rollback).expect("create rollback directory");
+        let target = directory.join("demo.key");
+        let original = rollback.join("demo.key");
+        fs::write(&target, b"replacement").expect("write replacement");
+        fs::write(&original, b"original").expect("write original backup");
+
+        let result = fail_key_commit(
+            &staging,
+            &[KeyCommitRecord {
+                target:    target.clone(),
+                original:  Some(original),
+                installed: true,
+            }],
+            "injected commit failure".to_string(),
+        );
+
+        let error = result.expect_err("commit must report failure");
+        assert!(error.contains("All original files were restored"));
+        assert_eq!(
+            fs::read(&target).expect("read restored target"),
+            b"original"
+        );
+        assert!(!staging.exists());
+        fs::remove_dir_all(directory).expect("remove temporary directory");
+    }
+
+    #[test]
+    fn key_commit_rollback_preserves_recovery_data_when_restore_is_incomplete() {
+        let directory = temporary_directory("key-recovery");
+        let staging = directory.join(".staging");
+        let rollback = staging.join(".rollback");
+        fs::create_dir_all(&rollback).expect("create rollback directory");
+        let target = directory.join("demo.key");
+        fs::create_dir(&target).expect("create conflicting target directory");
+        let original = rollback.join("demo.key");
+        fs::write(&original, b"original").expect("write original backup");
+
+        let result = fail_key_commit(
+            &staging,
+            &[KeyCommitRecord {
+                target:    target.clone(),
+                original:  Some(original.clone()),
+                installed: true,
+            }],
+            "injected commit failure".to_string(),
+        );
+
+        let error = result.expect_err("commit must report rollback failure");
+        assert!(error.contains("Rollback was incomplete"));
+        assert!(error.contains(staging.to_string_lossy().as_ref()));
+        assert!(staging.exists());
+        assert_eq!(
+            fs::read(&original).expect("recovery backup must remain"),
+            b"original"
         );
         fs::remove_dir_all(directory).expect("remove temporary directory");
     }

@@ -3,6 +3,10 @@
 mod resource_editor;
 mod viewer;
 
+mod resource_capabilities {
+    include!(concat!(env!("OUT_DIR"), "/resource_capabilities.rs"));
+}
+
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},

@@ -1,10 +1,94 @@
-'use strict';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import * as vscode from 'vscode';
+import { resolveConfiguredPath } from './compiler';
+import {
+  VIEW_TYPE,
+  type ResourceCustomEditorProvider,
+} from './resource-custom-editor';
+import type { ViewerWorkerClient } from './viewer-worker-client';
+import type {
+  NativeAreaObject,
+  NativePackageDependency,
+  NativePackageInfo,
+  NativePackageSourceArea,
+  NativePackageSourceFile,
+  NativePackageSourceInfo,
+  NativeResourceCatalogItem,
+} from './native-types';
 
-const fs = require('node:fs');
-const path = require('node:path');
-const vscode = require('vscode');
-const { resolveConfiguredPath } = require('./compiler');
-const { VIEW_TYPE } = require('./resource-custom-editor');
+interface SidebarCompilerController {
+  reindexCurrentPackage(): Promise<void>;
+  restartLanguageService(): Promise<void>;
+  clearDiagnostics(): void;
+}
+
+interface ResourceRequest {
+  readonly session_key: string;
+  readonly path: string;
+  readonly project_root: string;
+  readonly area: null;
+  readonly root: string | null;
+  readonly user: string | null;
+  readonly language: string;
+  readonly load_ovr: boolean;
+  readonly archives: readonly string[];
+  readonly include_project_resources: boolean;
+}
+
+interface ResourceQuery {
+  readonly stage: string;
+  readonly layer?: string;
+  readonly family?: string;
+  readonly extension?: string;
+  readonly prefix?: string;
+}
+
+interface AreaObjectSelection {
+  readonly manifestPath: string;
+  readonly resref: string;
+  readonly objectKey?: string;
+}
+
+interface SidebarTreeNode {
+  kind: string;
+  label: string;
+  package?: NativePackageInfo;
+  packageRoot?: string;
+  dependencies?: readonly NativePackageDependency[];
+  file?: NativePackageSourceFile;
+  area?: NativePackageSourceArea;
+  object?: NativeAreaObject;
+  objectKind?: string;
+  section?: string;
+  resource?: string;
+  origin?: string;
+  filePath?: string;
+  layer?: string;
+  family?: string;
+  extension?: string;
+  prefix?: string;
+  error?: string;
+  count?: number;
+  description?: string;
+  tooltip?: string;
+  icon?: string;
+  uri?: vscode.Uri;
+  command?: string;
+  children?: SidebarTreeNode[];
+  loadedChildren?: SidebarTreeNode[];
+  parent?: SidebarTreeNode;
+}
+
+interface DirectoryEntry {
+  readonly directory: string;
+  readonly node: SidebarTreeNode;
+}
+
+interface DirectoryBranch {
+  readonly directories: Map<string, DirectoryBranch>;
+  readonly leaves: SidebarTreeNode[];
+}
 
 const PINNED_PACKAGE_KEY = 'nwnrs.sidebar.pinnedPackage';
 const RESOURCE_LAYER_ORDER = [
@@ -15,8 +99,40 @@ const RESOURCE_LAYER_ORDER = [
   'Vanilla',
 ];
 
-class NwnrsSidebarController {
-  constructor(context, output, viewerWorker, resourceEditors, compilerController) {
+export class NwnrsSidebarController {
+  public readonly context: vscode.ExtensionContext;
+  public readonly output: vscode.OutputChannel;
+  public readonly viewerWorker: ViewerWorkerClient;
+  public readonly resourceEditors: ResourceCustomEditorProvider;
+  public readonly compilerController: SidebarCompilerController;
+  public packages: NativePackageInfo[];
+  public packageByRoot: Map<string, NativePackageInfo>;
+  public activePackage?: NativePackageInfo;
+  public pinnedRoot?: string;
+  private packageRefresh?: Promise<void>;
+  private packageRefreshRequested: boolean;
+  private packageRefreshTimer?: NodeJS.Timeout;
+  private resourceGeneration: number;
+  private resourceQueries: Map<string, Promise<readonly NativeResourceCatalogItem[]>>;
+  private sourceGeneration: number;
+  private sourceQueries: Map<string, Promise<NativePackageSourceInfo>>;
+  private resourceWatchers: vscode.Disposable[];
+  private resourceRefreshTimer?: NodeJS.Timeout;
+  private changedResourceSessions?: Set<string>;
+  public readonly packageEmitter: vscode.EventEmitter<void>;
+  public readonly resourceEmitter: vscode.EventEmitter<void>;
+  private readonly packageProvider: PackageTreeProvider;
+  private readonly resourceProvider: ResourceTreeProvider;
+  private packageView?: vscode.TreeView<SidebarTreeNode>;
+  private resourceView?: vscode.TreeView<SidebarTreeNode>;
+
+  public constructor(
+    context: vscode.ExtensionContext,
+    output: vscode.OutputChannel,
+    viewerWorker: ViewerWorkerClient,
+    resourceEditors: ResourceCustomEditorProvider,
+    compilerController: SidebarCompilerController,
+  ) {
     this.context = context;
     this.output = output;
     this.viewerWorker = viewerWorker;
@@ -40,7 +156,7 @@ class NwnrsSidebarController {
     this.resourceProvider = new ResourceTreeProvider(this);
   }
 
-  register() {
+  register(): void {
     const manifestWatcher = vscode.workspace.createFileSystemWatcher('**/nwpkg.toml');
     const manifestChanged = () => this.schedulePackageRefresh();
     this.packageView = vscode.window.createTreeView('nwnrs.packages', {
@@ -58,15 +174,17 @@ class NwnrsSidebarController {
       this.packageView,
       this.resourceView,
       vscode.commands.registerCommand('nwnrs.sidebar.refreshPackages', () => this.refreshPackages()),
-      vscode.commands.registerCommand('nwnrs.sidebar.selectPackage', (root) => this.pinPackage(root)),
+      vscode.commands.registerCommand('nwnrs.sidebar.selectPackage', (root: string) =>
+        this.pinPackage(root)),
       vscode.commands.registerCommand('nwnrs.sidebar.unpinPackage', () => this.unpinPackage()),
       vscode.commands.registerCommand('nwnrs.sidebar.refreshResources', () => this.refreshResources()),
-      vscode.commands.registerCommand('nwnrs.sidebar.openResource', (node) => this.openResource(node)),
-      vscode.commands.registerCommand('nwnrs.sidebar.openSourceFile', (node) =>
+      vscode.commands.registerCommand('nwnrs.sidebar.openResource', (node: SidebarTreeNode) =>
+        this.openResource(node)),
+      vscode.commands.registerCommand('nwnrs.sidebar.openSourceFile', (node: SidebarTreeNode) =>
         this.openSourceFile(node)),
-      vscode.commands.registerCommand('nwnrs.sidebar.openSourceArea', (node) =>
+      vscode.commands.registerCommand('nwnrs.sidebar.openSourceArea', (node: SidebarTreeNode) =>
         this.openSourceArea(node)),
-      vscode.commands.registerCommand('nwnrs.sidebar.openSourceAreaObject', (node) =>
+      vscode.commands.registerCommand('nwnrs.sidebar.openSourceAreaObject', (node: SidebarTreeNode) =>
         this.openSourceArea(node)),
       vscode.commands.registerCommand('nwnrs.reindexCurrentPackage', () =>
         this.compilerController.reindexCurrentPackage()),
@@ -90,20 +208,20 @@ class NwnrsSidebarController {
       manifestWatcher.onDidCreate(manifestChanged),
       manifestWatcher.onDidChange(manifestChanged),
       manifestWatcher.onDidDelete(manifestChanged),
-      this.resourceEditors.onDidSelectAreaObject((selection) => {
+      this.resourceEditors.onDidSelectAreaObject((selection: AreaObjectSelection) => {
         void this.revealAreaObject(selection);
       }),
     );
     void this.refreshPackages();
   }
 
-  dispose() {
+  dispose(): void {
     clearTimeout(this.packageRefreshTimer);
     clearTimeout(this.resourceRefreshTimer);
     this.disposeResourceWatchers();
   }
 
-  schedulePackageRefresh() {
+  schedulePackageRefresh(): void {
     clearTimeout(this.packageRefreshTimer);
     this.packageRefreshTimer = setTimeout(() => {
       this.packageRefreshTimer = undefined;
@@ -111,7 +229,7 @@ class NwnrsSidebarController {
     }, 150);
   }
 
-  async refreshPackages() {
+  async refreshPackages(): Promise<void> {
     if (this.packageRefresh) {
       this.packageRefreshRequested = true;
       return this.packageRefresh;
@@ -132,8 +250,9 @@ class NwnrsSidebarController {
         this.packageEmitter.fire();
       } while (this.packageRefreshRequested);
     })().catch((error) => {
-      this.output.appendLine(`nwnrs package discovery failed: ${error.message || error}`);
-      void vscode.window.showErrorMessage(`nwnrs package discovery failed: ${error.message || error}`);
+      const message = errorMessage(error);
+      this.output.appendLine(`nwnrs package discovery failed: ${message}`);
+      void vscode.window.showErrorMessage(`nwnrs package discovery failed: ${message}`);
     }).finally(() => {
       if (this.packageRefresh === refresh) this.packageRefresh = undefined;
     });
@@ -141,7 +260,7 @@ class NwnrsSidebarController {
     return refresh;
   }
 
-  async discoverPackages() {
+  async discoverPackages(): Promise<NativePackageInfo[]> {
     const uris = await vscode.workspace.findFiles(
       '**/nwpkg.toml',
       '**/{.git,node_modules,target}/**',
@@ -149,26 +268,30 @@ class NwnrsSidebarController {
     const results = await Promise.allSettled(
       uris.map((uri) => this.viewerWorker.inspectPackage(uri.fsPath)),
     );
-    const packages = [];
+    const packages: NativePackageInfo[] = [];
     for (let index = 0; index < results.length; index += 1) {
       const result = results[index];
+      const uri = uris[index];
+      if (!result || !uri) {
+        continue;
+      }
       if (result.status === 'fulfilled') {
         packages.push(result.value);
       } else {
         this.output.appendLine(
-          `Could not inspect ${uris[index].fsPath}: ${result.reason?.message || result.reason}`,
+          `Could not inspect ${uri.fsPath}: ${errorMessage(result.reason)}`,
         );
       }
     }
     return packages.sort(comparePackages);
   }
 
-  async ensurePackages() {
+  async ensurePackages(): Promise<NativePackageInfo[]> {
     if (this.packageRefresh) await this.packageRefresh;
     return this.packages;
   }
 
-  async pinPackage(root) {
+  async pinPackage(root: string): Promise<void> {
     const selected = this.packageByRoot.get(normalizePath(root));
     if (!selected) {
       void vscode.window.showWarningMessage('That nwnrs package is no longer in this workspace.');
@@ -179,18 +302,18 @@ class NwnrsSidebarController {
     await this.setActivePackage(selected);
   }
 
-  async unpinPackage() {
+  async unpinPackage(): Promise<void> {
     this.pinnedRoot = undefined;
     await this.context.workspaceState.update(PINNED_PACKAGE_KEY, undefined);
     await this.selectEffectivePackage();
     this.packageEmitter.fire();
   }
 
-  followActiveEditor() {
+  followActiveEditor(): void {
     if (!this.pinnedRoot) void this.selectEffectivePackage();
   }
 
-  async selectEffectivePackage() {
+  async selectEffectivePackage(): Promise<void> {
     const pinned = this.pinnedRoot
       ? this.packageByRoot.get(normalizePath(this.pinnedRoot))
       : undefined;
@@ -201,7 +324,7 @@ class NwnrsSidebarController {
     await this.setActivePackage(selected);
   }
 
-  async setActivePackage(selected) {
+  async setActivePackage(selected: NativePackageInfo | undefined): Promise<void> {
     if (normalizePath(selected?.root) === normalizePath(this.activePackage?.root)) {
       await this.updateContexts();
       return;
@@ -213,7 +336,7 @@ class NwnrsSidebarController {
     this.resourceEmitter.fire();
   }
 
-  async updateContexts() {
+  async updateContexts(): Promise<void> {
     if (this.packageView) {
       this.packageView.description = this.activePackage
         ? `${this.activePackage.name}${this.pinnedRoot ? ' • pinned' : ''}`
@@ -229,31 +352,34 @@ class NwnrsSidebarController {
     ]);
   }
 
-  clearResourceCache() {
+  clearResourceCache(): void {
     this.resourceGeneration += 1;
     this.resourceQueries.clear();
   }
 
-  clearSourceCache() {
+  clearSourceCache(): void {
     this.sourceGeneration += 1;
     this.sourceQueries.clear();
     this.packageProvider?.clearCache();
   }
 
-  refreshResources() {
+  refreshResources(): void {
     this.viewerWorker.invalidate(this.activePackage?.manifestPath);
     this.clearResourceCache();
     this.resourceEmitter.fire();
   }
 
-  scheduleResourceRefresh(sessionKey) {
+  scheduleResourceRefresh(sessionKey: string): void {
     if (!this.changedResourceSessions) this.changedResourceSessions = new Set();
     this.changedResourceSessions.add(sessionKey);
     clearTimeout(this.resourceRefreshTimer);
     this.resourceRefreshTimer = setTimeout(() => {
       this.resourceRefreshTimer = undefined;
-      for (const key of this.changedResourceSessions) this.viewerWorker.invalidate(key);
-      this.changedResourceSessions.clear();
+      const changedSessions = this.changedResourceSessions;
+      if (changedSessions) {
+        for (const key of changedSessions) this.viewerWorker.invalidate(key);
+        changedSessions.clear();
+      }
       this.clearResourceCache();
       this.clearSourceCache();
       this.packageEmitter.fire();
@@ -261,14 +387,14 @@ class NwnrsSidebarController {
     }, 150);
   }
 
-  disposeResourceWatchers() {
+  disposeResourceWatchers(): void {
     for (const watcher of this.resourceWatchers) watcher.dispose();
     this.resourceWatchers = [];
   }
 
-  rebuildResourceWatchers() {
+  rebuildResourceWatchers(): void {
     this.disposeResourceWatchers();
-    const watched = new Set();
+    const watched = new Set<string>();
     for (const packageInfo of this.packages) {
       const roots = packageInfo.resourcePaths || [packageInfo.sourcePath];
       for (const root of roots) {
@@ -287,7 +413,7 @@ class NwnrsSidebarController {
     }
   }
 
-  resourceRequest(packageInfo = this.activePackage) {
+  resourceRequest(packageInfo: NativePackageInfo | undefined = this.activePackage): ResourceRequest {
     const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath
       || this.context.extensionPath;
     const projectRoot = packageInfo?.root || workspaceRoot;
@@ -314,7 +440,7 @@ class NwnrsSidebarController {
     };
   }
 
-  async listResources(query) {
+  async listResources(query: ResourceQuery): Promise<readonly NativeResourceCatalogItem[]> {
     const request = this.resourceRequest();
     const cacheKey = `${this.resourceGeneration}:${request.session_key}:${JSON.stringify(query)}`;
     let pending = this.resourceQueries.get(cacheKey);
@@ -330,7 +456,7 @@ class NwnrsSidebarController {
     return pending;
   }
 
-  async packageSource(packageInfo) {
+  async packageSource(packageInfo: NativePackageInfo): Promise<NativePackageSourceInfo> {
     const key = `${this.sourceGeneration}:${packageInfo.manifestPath}`;
     let pending = this.sourceQueries.get(key);
     if (!pending) {
@@ -357,27 +483,30 @@ class NwnrsSidebarController {
     return pending;
   }
 
-  async openSourceFile(node) {
-    if (!node?.file?.path) return;
-    const uri = vscode.Uri.file(node.file.path);
+  async openSourceFile(node: SidebarTreeNode): Promise<void> {
+    const file = node.file;
+    if (!file?.path) return;
+    const uri = vscode.Uri.file(file.path);
     try {
-      if (node.file.kind === 'dlg' || node.file.kind === 'dlgJson') {
+      if (file.kind === 'dlg' || file.kind === 'dlgJson') {
         await vscode.commands.executeCommand('vscode.openWith', uri, VIEW_TYPE);
       } else {
         await vscode.commands.executeCommand('vscode.open', uri);
       }
     } catch (error) {
-      this.output.appendLine(`Could not open ${node.file.path}: ${error.message || error}`);
+      const message = errorMessage(error);
+      this.output.appendLine(`Could not open ${file.path}: ${message}`);
       void vscode.window.showErrorMessage(
-        `Could not open ${path.basename(node.file.path)}: ${error.message || error}`,
+        `Could not open ${path.basename(file.path)}: ${message}`,
       );
     }
   }
 
-  async openSourceArea(node) {
-    if (!node?.area) return;
-    const conflicts = node.area.conflicts || [];
-    const missingRequired = (node.area.missing || [])
+  async openSourceArea(node: SidebarTreeNode): Promise<void> {
+    const area = node.area;
+    if (!area) return;
+    const conflicts = area.conflicts || [];
+    const missingRequired = (area.missing || [])
       .filter((kind) => kind === 'ARE' || kind === 'GIT');
     if (conflicts.length || missingRequired.length) {
       const problems = [
@@ -385,57 +514,63 @@ class NwnrsSidebarController {
         missingRequired.length ? `missing ${missingRequired.join(', ')}` : '',
       ].filter(Boolean).join('; ');
       void vscode.window.showErrorMessage(
-        `Cannot render area ${node.area.resref}: ${problems}.`,
+        `Cannot render area ${area.resref}: ${problems}.`,
       );
       return;
     }
     try {
       await this.resourceEditors.openAuthoredArea(
         this.resourceRequest(node.package),
-        node.area,
+        area,
         node.object?.key,
       );
     } catch (error) {
+      const message = errorMessage(error);
       this.output.appendLine(
-        `Could not render area ${node.area.resref}: ${error.message || error}`,
+        `Could not render area ${area.resref}: ${message}`,
       );
       void vscode.window.showErrorMessage(
-        `Could not render area ${node.area.resref}: ${error.message || error}`,
+        `Could not render area ${area.resref}: ${message}`,
       );
     }
   }
 
-  async revealAreaObject(selection) {
+  async revealAreaObject(selection: AreaObjectSelection): Promise<void> {
     if (!selection?.objectKey || !this.packageView) return;
     try {
       const node = await this.packageProvider.findAreaObject(selection);
       if (node) await this.packageView.reveal(node, { select: true, focus: false, expand: true });
     } catch (error) {
-      this.output.appendLine(`Could not reveal selected area object: ${error.message || error}`);
+      this.output.appendLine(`Could not reveal selected area object: ${errorMessage(error)}`);
     }
   }
 
-  async openResource(node) {
+  async openResource(node: SidebarTreeNode): Promise<void> {
     if (!node?.resource) return;
     try {
       await this.resourceEditors.openResolvedResource(this.resourceRequest(), node.resource);
     } catch (error) {
-      this.output.appendLine(`Could not open ${node.resource}: ${error.message || error}`);
-      void vscode.window.showErrorMessage(`Could not open ${node.resource}: ${error.message || error}`);
+      const message = errorMessage(error);
+      this.output.appendLine(`Could not open ${node.resource}: ${message}`);
+      void vscode.window.showErrorMessage(`Could not open ${node.resource}: ${message}`);
     }
   }
 }
 
-class PackageTreeProvider {
-  constructor(controller) {
+class PackageTreeProvider implements vscode.TreeDataProvider<SidebarTreeNode> {
+  private readonly controller: NwnrsSidebarController;
+  public readonly onDidChangeTreeData: vscode.Event<void>;
+  private readonly packageNodes: Map<string, SidebarTreeNode>;
+
+  constructor(controller: NwnrsSidebarController) {
     this.controller = controller;
     this.onDidChangeTreeData = controller.packageEmitter.event;
     this.packageNodes = new Map();
   }
 
-  getTreeItem(node) {
+  getTreeItem(node: SidebarTreeNode): vscode.TreeItem {
     const state = vscode.TreeItemCollapsibleState;
-    if (node.kind === 'package') {
+    if (node.kind === 'package' && node.package) {
       const selected = normalizePath(node.package.root)
         === normalizePath(this.controller.activePackage?.root);
       const item = new vscode.TreeItem(
@@ -455,15 +590,16 @@ class PackageTreeProvider {
       return item;
     }
     if (node.kind === 'dependencyGroup') {
+      const dependencies = node.dependencies || [];
       const item = new vscode.TreeItem(
         'Dependencies',
-        node.dependencies.length ? state.Collapsed : state.None,
+        dependencies.length ? state.Collapsed : state.None,
       );
-      item.description = String(node.dependencies.length);
+      item.description = String(dependencies.length);
       item.iconPath = new vscode.ThemeIcon('references');
       return item;
     }
-    if (node.kind === 'sourceRoot') {
+    if (node.kind === 'sourceRoot' && node.package) {
       const item = new vscode.TreeItem('Source', state.Collapsed);
       item.description = relativeDisplay(node.package.root, node.package.sourcePath);
       item.tooltip = node.package.sourcePath;
@@ -488,7 +624,7 @@ class PackageTreeProvider {
       item.iconPath = new vscode.ThemeIcon('warning');
       return item;
     }
-    if (node.kind === 'sourceArea') {
+    if (node.kind === 'sourceArea' && node.area) {
       const item = new vscode.TreeItem(
         node.area.resref,
         node.children?.length ? state.Collapsed : state.None,
@@ -522,11 +658,11 @@ class PackageTreeProvider {
     }
     if (node.kind === 'sourceAreaObjectGroup') {
       const item = new vscode.TreeItem(node.label, state.Collapsed);
-      item.description = formatCount(node.children.length);
+      item.description = formatCount(node.children?.length);
       item.iconPath = new vscode.ThemeIcon(areaObjectIcon(node.objectKind));
       return item;
     }
-    if (node.kind === 'sourceAreaObject') {
+    if (node.kind === 'sourceAreaObject' && node.object) {
       const item = new vscode.TreeItem(node.object.label, state.None);
       const metadata = [node.object.tag, node.object.templateResref].filter(Boolean);
       item.description = metadata.join(' · ') || undefined;
@@ -545,7 +681,7 @@ class PackageTreeProvider {
       };
       return item;
     }
-    if (node.kind === 'sourceFile') {
+    if (node.kind === 'sourceFile' && node.file) {
       const item = new vscode.TreeItem(node.label, state.None);
       item.resourceUri = vscode.Uri.file(node.file.path);
       item.tooltip = node.file.path;
@@ -561,19 +697,19 @@ class PackageTreeProvider {
     const item = new vscode.TreeItem(node.label, state.None);
     item.description = node.description;
     item.tooltip = node.tooltip;
-    item.iconPath = new vscode.ThemeIcon(node.icon);
-    if (node.uri) {
+    item.iconPath = new vscode.ThemeIcon(node.icon || 'file');
+    if (node.uri && node.command) {
       item.resourceUri = node.uri;
       item.command = { command: node.command, title: node.label, arguments: [node.uri] };
     }
     return item;
   }
 
-  clearCache() {
+  clearCache(): void {
     this.packageNodes.clear();
   }
 
-  async getChildren(node) {
+  async getChildren(node?: SidebarTreeNode): Promise<SidebarTreeNode[]> {
     await this.controller.ensurePackages();
     if (!node) {
       const current = new Set(this.controller.packages.map((packageInfo) => packageInfo.manifestPath));
@@ -581,7 +717,7 @@ class PackageTreeProvider {
       return this.controller.packages.map((packageInfo) => {
         let packageNode = this.packageNodes.get(packageInfo.manifestPath);
         if (!packageNode || packageNode.package !== packageInfo) {
-          packageNode = { kind: 'package', package: packageInfo };
+          packageNode = { kind: 'package', label: packageInfo.name, package: packageInfo };
           this.packageNodes.set(packageInfo.manifestPath, packageNode);
         }
         return packageNode;
@@ -590,7 +726,8 @@ class PackageTreeProvider {
     if (node.kind === 'package') {
       if (node.loadedChildren) return node.loadedChildren;
       const packageInfo = node.package;
-      const children = [{
+      if (!packageInfo) return [];
+      const children: SidebarTreeNode[] = [{
         kind: 'file',
         label: 'Manifest',
         description: path.basename(packageInfo.manifestPath),
@@ -602,11 +739,13 @@ class PackageTreeProvider {
       if (packageInfo.sourcePath) {
         children.push({
           kind: 'sourceRoot',
+          label: 'Source',
           package: packageInfo,
         });
       }
       children.push({
         kind: 'dependencyGroup',
+        label: 'Dependencies',
         packageRoot: packageInfo.root,
         dependencies: packageInfo.dependencies || [],
       });
@@ -616,12 +755,14 @@ class PackageTreeProvider {
     if (node.kind === 'sourceRoot') {
       if (node.loadedChildren) return node.loadedChildren;
       try {
-        const catalog = await this.controller.packageSource(node.package);
-        node.loadedChildren = attachParents(sourceSections(catalog, node.package), node);
+        const packageInfo = node.package;
+        if (!packageInfo) return [];
+        const catalog = await this.controller.packageSource(packageInfo);
+        node.loadedChildren = attachParents(sourceSections(catalog, packageInfo), node);
         return node.loadedChildren;
       } catch (error) {
         this.controller.output.appendLine(
-          `Could not inspect ${node.package.sourcePath}: ${error.message || error}`,
+          `Could not inspect ${node.package?.sourcePath || node.label}: ${errorMessage(error)}`,
         );
         return [];
       }
@@ -632,7 +773,7 @@ class PackageTreeProvider {
       return attachParents(node.children || [], node);
     }
     if (node.kind === 'dependencyGroup') {
-      return node.dependencies.map((dependency) => ({
+      return (node.dependencies || []).map((dependency) => ({
         kind: 'file',
         label: dependency.name,
         description: relativeDisplay(node.packageRoot, dependency.root),
@@ -645,13 +786,14 @@ class PackageTreeProvider {
     return [];
   }
 
-  getParent(node) {
+  getParent(node: SidebarTreeNode): SidebarTreeNode | undefined {
     return node?.parent;
   }
 
-  async findAreaObject(selection) {
+  async findAreaObject(selection: AreaObjectSelection): Promise<SidebarTreeNode | undefined> {
     const packages = await this.getChildren();
-    const packageNode = packages.find((node) => normalizePath(node.package.manifestPath)
+    const packageNode = packages.find((node) => node.package
+      && normalizePath(node.package.manifestPath)
       === normalizePath(selection.manifestPath));
     if (!packageNode) return undefined;
     const packageChildren = await this.getChildren(packageNode);
@@ -659,24 +801,27 @@ class PackageTreeProvider {
     if (!sourceRoot) return undefined;
     const roots = await this.getChildren(sourceRoot);
     return findTreeNode(roots, (node) => node.kind === 'sourceAreaObject'
-      && node.area.resref.toLowerCase() === String(selection.resref).toLowerCase()
-      && node.object.key === selection.objectKey);
+      && node.area?.resref.toLowerCase() === selection.resref.toLowerCase()
+      && node.object?.key === selection.objectKey);
   }
 }
 
-class ResourceTreeProvider {
-  constructor(controller) {
+class ResourceTreeProvider implements vscode.TreeDataProvider<SidebarTreeNode> {
+  private readonly controller: NwnrsSidebarController;
+  public readonly onDidChangeTreeData: vscode.Event<void>;
+
+  constructor(controller: NwnrsSidebarController) {
     this.controller = controller;
     this.onDidChangeTreeData = controller.resourceEmitter.event;
   }
 
-  getTreeItem(node) {
+  getTreeItem(node: SidebarTreeNode): vscode.TreeItem {
     const expandable = node.kind !== 'resource' && node.kind !== 'error';
     const item = new vscode.TreeItem(
       node.label,
       expandable ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.None,
     );
-    if (node.count > 1 || expandable) item.description = formatCount(node.count);
+    if ((node.count || 0) > 1 || expandable) item.description = formatCount(node.count);
     item.contextValue = `nwnrsResource.${node.kind}`;
     item.iconPath = new vscode.ThemeIcon(resourceIcon(node));
     if (node.kind === 'error') {
@@ -698,7 +843,7 @@ class ResourceTreeProvider {
     return item;
   }
 
-  async getChildren(node) {
+  async getChildren(node?: SidebarTreeNode): Promise<SidebarTreeNode[]> {
     try {
       if (!node) {
         await this.controller.ensurePackages();
@@ -718,24 +863,28 @@ class ResourceTreeProvider {
         extension: item.extension || node.extension,
       }));
     } catch (error) {
-      this.controller.output.appendLine(`Could not list nwnrs resources: ${error.message || error}`);
+      const message = errorMessage(error);
+      this.controller.output.appendLine(`Could not list nwnrs resources: ${message}`);
       return [{
         kind: 'error',
         label: 'Resources unavailable',
         count: 0,
-        error: error.message || String(error),
+        error: message,
       }];
     }
   }
 }
 
-function comparePackages(left, right) {
+function comparePackages(left: NativePackageInfo, right: NativePackageInfo): number {
   return left.name.localeCompare(right.name, undefined, { sensitivity: 'base' })
     || left.root.localeCompare(right.root);
 }
 
-function sourceSections(catalog, packageInfo) {
-  const sections = [];
+function sourceSections(
+  catalog: NativePackageSourceInfo,
+  packageInfo: NativePackageInfo,
+): SidebarTreeNode[] {
+  const sections: SidebarTreeNode[] = [];
   if (catalog.areas?.length) {
     const registered = catalog.areas.filter((area) => area.registered);
     const unregistered = catalog.areas.filter((area) => !area.registered);
@@ -743,6 +892,7 @@ function sourceSections(catalog, packageInfo) {
     if (unregistered.length) {
       children.push({
         kind: 'sourceUnregistered',
+        label: 'Unregistered Areas',
         count: unregistered.length,
         children: buildAreaPathTree(unregistered, packageInfo),
       });
@@ -776,7 +926,10 @@ function sourceSections(catalog, packageInfo) {
   return sections;
 }
 
-function buildAreaPathTree(areas, packageInfo) {
+function buildAreaPathTree(
+  areas: readonly NativePackageSourceArea[],
+  packageInfo: NativePackageInfo,
+): SidebarTreeNode[] {
   const entries = areas.map((area) => {
     const baseDirectory = commonDirectory(
       area.files.map((file) => path.posix.dirname(normalizeRelativePath(file.relativePath))),
@@ -805,10 +958,13 @@ const AREA_OBJECT_GROUPS = [
   ['store', 'Stores'],
   ['trigger', 'Triggers'],
   ['waypoint', 'Waypoints'],
-];
+] as const;
 
-function areaObjectGroups(area, packageInfo) {
-  return AREA_OBJECT_GROUPS.map(([objectKind, label]) => {
+function areaObjectGroups(
+  area: NativePackageSourceArea,
+  packageInfo: NativePackageInfo,
+): SidebarTreeNode[] {
+  return AREA_OBJECT_GROUPS.map(([objectKind, label]): SidebarTreeNode => {
     const objects = (area.objects || []).filter((object) => object.kind === objectKind);
     return {
       kind: 'sourceAreaObjectGroup',
@@ -816,17 +972,18 @@ function areaObjectGroups(area, packageInfo) {
       label,
       children: objects.map((object) => ({
         kind: 'sourceAreaObject',
+        label: object.label,
         objectKind,
         object,
         area,
         package: packageInfo,
       })),
     };
-  }).filter((group) => group.children.length);
+  }).filter((group) => (group.children?.length || 0) > 0);
 }
 
-function areaObjectIcon(kind) {
-  return ({
+function areaObjectIcon(kind: string | undefined): string {
+  const icons: Readonly<Record<string, string>> = {
     creature: 'person',
     door: 'layout-sidebar-left',
     placeable: 'symbol-object',
@@ -835,10 +992,14 @@ function areaObjectIcon(kind) {
     store: 'store',
     trigger: 'symbol-event',
     waypoint: 'location',
-  })[kind] || 'symbol-object';
+  };
+  return kind ? icons[kind] || 'symbol-object' : 'symbol-object';
 }
 
-function attachParents(children, parent) {
+function attachParents(
+  children: SidebarTreeNode[],
+  parent: SidebarTreeNode,
+): SidebarTreeNode[] {
   for (const child of children) {
     child.parent = parent;
     if (child.children) attachParents(child.children, child);
@@ -846,16 +1007,22 @@ function attachParents(children, parent) {
   return children;
 }
 
-function findTreeNode(nodes, predicate) {
+function findTreeNode(
+  nodes: readonly SidebarTreeNode[],
+  predicate: (node: SidebarTreeNode) => boolean,
+): SidebarTreeNode | undefined {
   for (const node of nodes) {
     if (predicate(node)) return node;
-    const match = findTreeNode(node.children || [], predicate);
+    const match: SidebarTreeNode | undefined = findTreeNode(node.children || [], predicate);
     if (match) return match;
   }
   return undefined;
 }
 
-function buildSourceFileTree(files, baseDirectory = '') {
+function buildSourceFileTree(
+  files: readonly NativePackageSourceFile[],
+  baseDirectory = '',
+): SidebarTreeNode[] {
   const normalizedBase = normalizeRelativePath(baseDirectory);
   const entries = files.map((file) => {
     const relative = normalizeRelativePath(file.relativePath);
@@ -874,20 +1041,22 @@ function buildSourceFileTree(files, baseDirectory = '') {
   return buildDirectoryNodes(entries);
 }
 
-function buildDirectoryNodes(entries) {
-  const root = { directories: new Map(), leaves: [] };
+function buildDirectoryNodes(entries: readonly DirectoryEntry[]): SidebarTreeNode[] {
+  const root: DirectoryBranch = { directories: new Map(), leaves: [] };
   for (const entry of entries) {
     let current = root;
     const segments = normalizeRelativePath(entry.directory).split('/').filter(Boolean);
     for (const segment of segments) {
-      if (!current.directories.has(segment)) {
-        current.directories.set(segment, { directories: new Map(), leaves: [] });
+      let next = current.directories.get(segment);
+      if (!next) {
+        next = { directories: new Map(), leaves: [] };
+        current.directories.set(segment, next);
       }
-      current = current.directories.get(segment);
+      current = next;
     }
     current.leaves.push(entry.node);
   }
-  const materialize = (branch) => [
+  const materialize = (branch: DirectoryBranch): SidebarTreeNode[] => [
     ...[...branch.directories.entries()]
       .sort(([left], [right]) => left.localeCompare(right, undefined, { sensitivity: 'base' }))
       .map(([label, child]) => ({
@@ -901,41 +1070,44 @@ function buildDirectoryNodes(entries) {
   return materialize(root);
 }
 
-function commonDirectory(directories) {
+function commonDirectory(directories: readonly string[]): string {
   if (directories.length === 0) return '';
   const split = directories.map((directory) =>
     normalizeRelativePath(directory === '.' ? '' : directory).split('/').filter(Boolean));
   const shared = [];
-  for (let index = 0; index < split[0].length; index += 1) {
-    const segment = split[0][index];
+  const first = split[0];
+  if (!first) return '';
+  for (let index = 0; index < first.length; index += 1) {
+    const segment = first[index];
+    if (segment === undefined) break;
     if (!split.every((parts) => parts[index] === segment)) break;
     shared.push(segment);
   }
   return shared.join('/');
 }
 
-function normalizeRelativePath(value) {
+function normalizeRelativePath(value: string): string {
   return String(value || '').replaceAll('\\', '/').replace(/^\.\//u, '').replace(/\/$/u, '');
 }
 
-function sourceSectionIcon(section) {
+function sourceSectionIcon(section: string | undefined): string {
   if (section === 'areas') return 'map';
   if (section === 'dialogs') return 'comment-discussion';
   return 'code';
 }
 
-function sourceFileIcon(kind) {
+function sourceFileIcon(kind: string): string {
   if (kind === 'nss') return 'code';
   if (kind === 'dlg' || kind === 'dlgJson') return 'comment-discussion';
   return 'file';
 }
 
-function sourceFileDescription(kind) {
+function sourceFileDescription(kind: string): string {
   if (kind === 'dlgJson') return 'DLG JSON';
   return kind.toUpperCase();
 }
 
-function normalizePath(value) {
+function normalizePath(value: string | undefined): string {
   if (!value) return '';
   let normalized = path.resolve(value);
   try {
@@ -946,26 +1118,31 @@ function normalizePath(value) {
   return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
 }
 
-function pathContains(root, candidate) {
+function pathContains(root: string | undefined, candidate: string | undefined): boolean {
   if (!root || !candidate) return false;
   const relative = path.relative(normalizePath(root), normalizePath(candidate));
   return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
 }
 
-function owningPackage(filePath, packages) {
+function owningPackage(
+  filePath: string | undefined,
+  packages: readonly NativePackageInfo[],
+): NativePackageInfo | undefined {
   if (!filePath) return undefined;
   return packages
     .filter((packageInfo) => pathContains(packageInfo.root, filePath))
     .sort((left, right) => normalizePath(right.root).length - normalizePath(left.root).length)[0];
 }
 
-function relativeDisplay(root, target) {
+function relativeDisplay(root: string | undefined, target: string | undefined): string {
   if (!root || !target) return target || '';
   const relative = path.relative(root, target);
   return relative && !relative.startsWith('..') ? relative : target;
 }
 
-function sortResourceLayers(items) {
+function sortResourceLayers(
+  items: readonly NativeResourceCatalogItem[],
+): NativeResourceCatalogItem[] {
   return [...items].sort((left, right) => {
     const leftIndex = RESOURCE_LAYER_ORDER.indexOf(left.layer || left.label);
     const rightIndex = RESOURCE_LAYER_ORDER.indexOf(right.layer || right.label);
@@ -975,14 +1152,14 @@ function sortResourceLayers(items) {
   });
 }
 
-function resourceNode(item) {
+function resourceNode(item: NativeResourceCatalogItem): SidebarTreeNode {
   return {
     ...item,
     filePath: item.filePath,
   };
 }
 
-function childResourceQuery(node) {
+function childResourceQuery(node: SidebarTreeNode): ResourceQuery | undefined {
   const shared = {
     layer: node.layer,
     family: node.family,
@@ -997,7 +1174,7 @@ function childResourceQuery(node) {
   }
 }
 
-function resourceIcon(node) {
+function resourceIcon(node: SidebarTreeNode): string {
   switch (node.kind) {
     case 'layer': return node.layer === 'Vanilla' ? 'library' : 'layers';
     case 'family': return 'folder';
@@ -1008,12 +1185,15 @@ function resourceIcon(node) {
   }
 }
 
-function formatCount(count) {
+function formatCount(count: number | undefined): string {
   return Number(count || 0).toLocaleString();
 }
 
-module.exports = {
-  NwnrsSidebarController,
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+export {
   buildSourceFileTree,
   childResourceQuery,
   owningPackage,

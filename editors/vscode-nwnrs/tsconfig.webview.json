@@ -1,0 +1,20 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "declaration": false,
+    "inlineSources": true,
+    "module": "ES2022",
+    "moduleDetection": "legacy",
+    "moduleResolution": "Bundler",
+    "noEmit": false,
+    "outDir": "dist/media",
+    "resolveJsonModule": false,
+    "rootDir": "media",
+    "sourceMap": true,
+    "types": []
+  },
+  "include": [
+    "media/**/*.ts",
+    "types/webview.d.ts"
+  ]
+}

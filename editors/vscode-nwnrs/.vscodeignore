@@ -1,5 +1,14 @@
 .gitignore
 .vscode/**
 scripts/**
+dist/scripts/**
 test/**
 **/*.test.js
+src/**
+types/**
+media/*.ts
+tsconfig*.json
+package-lock.json
+**/*.test.ts
+**/*.map
+*.vsix

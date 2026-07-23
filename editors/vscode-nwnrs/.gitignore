@@ -1,3 +1,5 @@
 native/*.node
 *.vsix
+dist/
+node_modules/
 /LICENSE

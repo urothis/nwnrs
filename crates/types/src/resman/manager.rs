@@ -98,8 +98,9 @@ use crate::resman::prelude::*;
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub struct ResMan {
-    containers: Vec<Arc<dyn ResContainer>>,
-    cache:      Option<WeightedLru<ResRef, Res>>,
+    containers:           Vec<Arc<dyn ResContainer>>,
+    cache:                Option<WeightedLru<ResRef, Res>>,
+    cache_capacity_bytes: usize,
 }
 
 impl fmt::Debug for ResMan {
@@ -120,9 +121,25 @@ impl ResMan {
     #[must_use]
     pub fn new(cache_size_mb: usize) -> Self {
         Self {
-            containers: Vec::new(),
-            cache:      (cache_size_mb > 0)
+            containers:           Vec::new(),
+            cache:                (cache_size_mb > 0)
                 .then(|| WeightedLru::new(cache_size_mb * 1024 * 1024, 1)),
+            cache_capacity_bytes: cache_size_mb * 1024 * 1024,
+        }
+    }
+
+    /// Creates an independent lookup view over the same immutable resource
+    /// containers.
+    ///
+    /// The returned manager owns a fresh cache, so temporary overlays and
+    /// expensive traversal cannot block or invalidate the source manager.
+    #[must_use]
+    pub fn fork(&self) -> Self {
+        Self {
+            containers:           self.containers.clone(),
+            cache:                (self.cache_capacity_bytes > 0)
+                .then(|| WeightedLru::new(self.cache_capacity_bytes, 1)),
+            cache_capacity_bytes: self.cache_capacity_bytes,
         }
     }
 

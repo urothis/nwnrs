@@ -6,14 +6,59 @@ const Module = require('node:module');
 const path = require('node:path');
 const test = require('node:test');
 
+type UnknownRecord = Record<string, unknown>;
+
+interface ScriptDebugConfiguration {
+  readonly ndb?: string;
+  readonly langspec?: string;
+  readonly sources?: Readonly<Record<string, string>>;
+}
+
+interface ScriptDebugSnapshot {
+  readonly kind: string;
+  readonly data: {
+    readonly sourceFiles: Array<{ readonly name: string; readonly available: boolean }>;
+    readonly diagnostics: string[];
+  };
+}
+
+interface ScriptDebugDocument {
+  readonly uri: { readonly path: string };
+  snapshot: ScriptDebugSnapshot;
+  request(method: string, configuration: ScriptDebugConfiguration): Promise<ScriptDebugSnapshot>;
+}
+
+interface ViewerDocument {
+  viewer: boolean;
+  uri: { readonly fsPath?: string; toString(): string };
+  parent?: unknown;
+  resource?: string;
+  viewerContents?: Uint8Array;
+  scenePacket?: Uint8Array;
+  scenePacketPromise?: Promise<unknown>;
+  sceneGeneration?: number;
+  viewerDependencyResources?: Set<string>;
+  viewerDependencyOrigins?: Set<string>;
+}
+
+interface AreaInspectionRequest {
+  readonly sessionKey: string;
+  readonly assetKey: string;
+  readonly objectKey: string;
+}
+
 function loadResourceEditorWithoutVsCodeHost() {
   const originalLoad = Module._load;
   try {
-    Module._load = function load(request, parent, isMain) {
+    Module._load = function load(
+      request: string,
+      parent: NodeModule | null | undefined,
+      isMain: boolean,
+    ) {
       if (request === 'vscode') return {};
       return originalLoad.call(this, request, parent, isMain);
     };
-    return require('../src/resource-custom-editor');
+    return require('../dist/src/resource-custom-editor');
   } finally {
     Module._load = originalLoad;
   }
@@ -23,7 +68,7 @@ function loadProviderWithoutVsCodeHost() {
   return loadResourceEditorWithoutVsCodeHost().ResourceCustomEditorProvider;
 }
 
-function scenePacket(manifest = {}) {
+function scenePacket(manifest: UnknownRecord = {}): Buffer {
   const json = Buffer.from(JSON.stringify({ dependencies: { nodes: [] }, ...manifest }));
   const packet = Buffer.alloc(12 + json.length);
   packet.write('NWNRS3D\0', 0, 'binary');
@@ -31,6 +76,18 @@ function scenePacket(manifest = {}) {
   json.copy(packet, 12);
   return packet;
 }
+
+test('webview renderer and stylesheet are inside the declared local resource roots', () => {
+  const { RESOURCE_EDITOR_WEBVIEW_ASSETS: assets } = loadResourceEditorWithoutVsCodeHost();
+  assert.deepEqual(assets.roots, [['media'], ['dist', 'media']]);
+  for (const asset of [assets.script, assets.style]) {
+    assert.ok(
+      assets.roots.some((root: readonly string[]) =>
+        root.every((segment, index) => asset[index] === segment)),
+      `${asset.join('/')} is outside the webview local resource roots`,
+    );
+  }
+});
 
 test('resource browser opens only supported packed formats while allowing physical files', () => {
   const ResourceCustomEditorProvider = loadProviderWithoutVsCodeHost();
@@ -47,20 +104,20 @@ test('resource browser opens only supported packed formats while allowing physic
 test('NCS workbench enrichment resolves matching debug, language, and source resources', async () => {
   const ResourceCustomEditorProvider = loadProviderWithoutVsCodeHost();
   const provider = Object.create(ResourceCustomEditorProvider.prototype);
-  const requestedResources = [];
-  const configurations = [];
-  provider.readScriptDebugResource = async (_document, resource) => {
+  const requestedResources: string[] = [];
+  const configurations: ScriptDebugConfiguration[] = [];
+  provider.readScriptDebugResource = async (_document: unknown, resource: string) => {
     requestedResources.push(resource);
     return Buffer.from(resource);
   };
-  let snapshot = {
+  let snapshot: ScriptDebugSnapshot = {
     kind: 'ncs',
     data: { sourceFiles: [], diagnostics: [] },
   };
-  const document = {
+  const document: ScriptDebugDocument = {
     uri: { path: '/virtual/demo.ncs' },
     snapshot,
-    async request(method, configuration) {
+    async request(method: string, configuration: ScriptDebugConfiguration) {
       assert.equal(method, 'configureScriptDebug');
       configurations.push(configuration);
       if (configuration.ndb) snapshot = {
@@ -79,16 +136,16 @@ test('NCS workbench enrichment resolves matching debug, language, and source res
   assert.ok(configurations.some((configuration) => configuration.ndb));
   assert.ok(configurations.some((configuration) => configuration.langspec));
   assert.ok(configurations.some((configuration) => configuration.sources?.demo));
-  assert.equal(document.snapshot.data.sourceFiles[0].available, true);
+  assert.equal(document.snapshot.data.sourceFiles[0]?.available, true);
 });
 
 test('provider handles the webview ready message with the owning view', async () => {
   const ResourceCustomEditorProvider = loadProviderWithoutVsCodeHost();
   const provider = Object.create(ResourceCustomEditorProvider.prototype);
-  const logged = [];
-  const posted = [];
-  provider.output = { appendLine: (message) => logged.push(message) };
-  provider.postSnapshot = async (document, view) => {
+  const logged: string[] = [];
+  const posted: Array<{ document: unknown; view: unknown }> = [];
+  provider.output = { appendLine: (message: string) => logged.push(message) };
+  provider.postSnapshot = async (document: unknown, view: unknown) => {
     posted.push({ document, view });
   };
   const document = { snapshot: { kind: 'gff' } };
@@ -103,17 +160,17 @@ test('provider handles the webview ready message with the owning view', async ()
 test('area inspection requests use the cached scene identity and return only to the requesting view', async () => {
   const ResourceCustomEditorProvider = loadProviderWithoutVsCodeHost();
   const provider = Object.create(ResourceCustomEditorProvider.prototype);
-  const requests = []; const posted = [];
-  provider.output = { appendLine: (message) => assert.fail(message) };
+  const requests: AreaInspectionRequest[] = []; const posted: unknown[] = [];
+  provider.output = { appendLine: (message: string) => assert.fail(message) };
   provider.viewerRequest = () => ({ session_key: '/workspace/nwpkg.toml' });
   provider.viewerWorker = {
-    inspectAreaObject: async (request) => {
+    inspectAreaObject: async (request: AreaInspectionRequest) => {
       requests.push(request);
       return { schema: 'nwnrs.area-object-inspection', key: request.objectKey };
     },
   };
   const document = { viewer: true, sceneGeneration: 3 };
-  const view = { ready: true, webview: { postMessage: async (message) => posted.push(message) } };
+  const view = { ready: true, webview: { postMessage: async (message: unknown) => posted.push(message) } };
 
   await provider.handleMessage(document, view, {
     type: 'inspectAreaObject', assetKey: 'scene-key', objectKey: 'placeable:7',
@@ -139,7 +196,7 @@ test('automatic viewer refresh reloads changed archives and replaces cached entr
     dirty: false,
     uri: { scheme: 'file', fsPath: archivePath, toString: () => archivePath },
     async revert() { reverted += 1; },
-    async readEntryBytes(resource) {
+    async readEntryBytes(resource: string) {
       assert.equal(resource, 'cat.mdl');
       return Uint8Array.from([4, 5, 6]);
     },
@@ -152,12 +209,12 @@ test('automatic viewer refresh reloads changed archives and replaces cached entr
     scenePacket: Buffer.from([9]),
     uri: { toString: () => 'nwnrs-resource:/cat.mdl' },
   };
-  const broadcasts = [];
-  provider.documents = new Map([['parent', parent], ['viewer', viewer]]);
+  const broadcasts: unknown[] = [];
+  provider.documents = new Map<string, unknown>([['parent', parent], ['viewer', viewer]]);
   provider.viewerWorker = { invalidate: () => { invalidated += 1; } };
   provider.viewerRequest = () => ({ session_key: '/workspace/nwpkg.toml', project_root: '/workspace' });
-  provider.output = { appendLine: (message) => assert.fail(message) };
-  provider.broadcast = async (document) => { broadcasts.push(document); };
+  provider.output = { appendLine: (message: string) => assert.fail(message) };
+  provider.broadcast = async (document: unknown) => { broadcasts.push(document); };
 
   await provider.refreshViewerDocuments(new Set([archivePath]));
 
@@ -171,15 +228,21 @@ test('automatic viewer refresh reloads changed archives and replaces cached entr
 test('concurrent scene posts share one generation-safe worker request', async () => {
   const ResourceCustomEditorProvider = loadProviderWithoutVsCodeHost();
   const provider = Object.create(ResourceCustomEditorProvider.prototype);
-  let loads = 0; let completeLoad;
+  let loads = 0;
+  let completeLoad: ((packet: Buffer) => void) | undefined;
   provider.viewerWorker = {
     loadScene: async () => {
       loads += 1;
-      return new Promise((resolve) => { completeLoad = resolve; });
+      return new Promise<Buffer>((resolve) => { completeLoad = resolve; });
     },
   };
   provider.viewerRequest = () => ({ session_key: '/workspace/nwpkg.toml' });
-  const document = {
+  const document: {
+    scenePacket: Uint8Array | undefined;
+    scenePacketPromise: Promise<unknown> | undefined;
+    sceneGeneration: number;
+    viewerContents: Uint8Array | undefined;
+  } = {
     scenePacket: undefined,
     scenePacketPromise: undefined,
     sceneGeneration: 0,
@@ -189,6 +252,7 @@ test('concurrent scene posts share one generation-safe worker request', async ()
   const first = provider.scenePacket(document);
   const second = provider.scenePacket(document);
   assert.equal(loads, 1);
+  if (!completeLoad) throw new Error('Scene load resolver was not captured');
   completeLoad(scenePacket());
 
   assert.deepEqual(Array.from(await first), Array.from(scenePacket()));
@@ -264,7 +328,7 @@ test('virtual binary and text resources rehydrate from their self-contained URI 
   provider.viewerTextResources = new Map();
   let reads = 0;
   provider.viewerWorker = {
-    readResource: async (request) => {
+    readResource: async (request: { readonly session_key: string }) => {
       reads += 1;
       assert.equal(request.session_key, '/workspace/nwpkg.toml');
       return Uint8Array.from([110, 119, 110, 114, 115]);
@@ -342,20 +406,27 @@ test('authored areas become one in-memory ARE/GIT/GIC viewer request', () => {
 test('viewport area selection is retained and emitted for sidebar reveal', async () => {
   const ResourceCustomEditorProvider = loadProviderWithoutVsCodeHost();
   const provider = Object.create(ResourceCustomEditorProvider.prototype);
-  const emitted = [];
-  provider.output = { appendLine: (message) => assert.fail(message) };
-  provider._onDidSelectAreaObject = { fire: (selection) => emitted.push(selection) };
+  const emitted: unknown[] = [];
+  provider.output = { appendLine: (message: string) => assert.fail(message) };
+  provider._onDidSelectAreaObject = { fire: (selection: unknown) => emitted.push(selection) };
   provider.viewerRequest = () => ({
     session_key: '/workspace/nwpkg.toml',
     authored_area: { resref: 'start' },
   });
   const currentView = { ready: true, webview: { postMessage: async () => {} } };
-  const otherMessages = [];
-  const document = {
+  const otherMessages: unknown[] = [];
+  const document: {
+    viewerRequestOverride: { readonly authored_area: { readonly resref: string } };
+    views: Set<{
+      readonly ready: boolean;
+      readonly webview: { postMessage(message: unknown): Promise<unknown> };
+    }>;
+    selectedAreaObjectKey?: string;
+  } = {
     viewerRequestOverride: { authored_area: { resref: 'start' } },
     views: new Set([
       currentView,
-      { ready: true, webview: { postMessage: async (message) => otherMessages.push(message) } },
+      { ready: true, webview: { postMessage: async (message: unknown) => otherMessages.push(message) } },
     ]),
   };
 
@@ -380,7 +451,7 @@ test('viewer refresh targets only scenes whose source or dependency changed', as
   const provider = Object.create(ResourceCustomEditorProvider.prototype);
   const root = path.resolve('/workspace');
   const changed = path.join(root, 'textures', 'cat.dds');
-  const makeViewer = (name, dependency) => ({
+  const makeViewer = (name: string, dependency: string): ViewerDocument => ({
     viewer: true,
     uri: { fsPath: path.join(root, `${name}.mdl`), toString: () => name },
     viewerDependencyResources: new Set([dependency]),
@@ -390,10 +461,10 @@ test('viewer refresh targets only scenes whose source or dependency changed', as
   const dog = makeViewer('dog', 'dog.dds');
   provider.documents = new Map([['cat', cat], ['dog', dog]]);
   provider.viewerRequest = () => ({ session_key: path.join(root, 'nwpkg.toml'), project_root: root });
-  const invalidated = []; const broadcasts = [];
-  provider.viewerWorker = { invalidate: (session) => invalidated.push(session) };
-  provider.broadcast = async (document) => broadcasts.push(document);
-  provider.output = { appendLine: (message) => assert.fail(message) };
+  const invalidated: string[] = []; const broadcasts: unknown[] = [];
+  provider.viewerWorker = { invalidate: (session: string) => invalidated.push(session) };
+  provider.broadcast = async (document: unknown) => broadcasts.push(document);
+  provider.output = { appendLine: (message: string) => assert.fail(message) };
 
   await provider.refreshViewerDocuments(new Set([changed]));
 
@@ -415,7 +486,10 @@ test('viewer refresh recognizes compound JSON dependency source names outside th
 });
 
 test('hidden custom editors release their webview context', () => {
-  const source = fs.readFileSync(path.resolve(__dirname, '..', 'src', 'resource-custom-editor.js'), 'utf8');
+  const source = fs.readFileSync(
+    path.resolve(__dirname, '..', 'dist', 'src', 'resource-custom-editor.js'),
+    'utf8',
+  );
   assert.match(source, /retainContextWhenHidden: false/u);
   assert.doesNotMatch(source, /retainContextWhenHidden: true/u);
 });
@@ -429,7 +503,7 @@ test('lazy viewer cache misses transparently rehydrate the scene', async () => {
   };
   provider.viewerRequest = () => ({ session_key: '/workspace/nwpkg.toml' });
   provider.recoverViewerScene = async () => { recovered += 1; };
-  provider.output = { appendLine: (message) => assert.fail(message) };
+  provider.output = { appendLine: (message: string) => assert.fail(message) };
   const document = { viewer: true, sceneGeneration: 4 };
   const view = { ready: true, webview: { postMessage: async () => {} } };
 

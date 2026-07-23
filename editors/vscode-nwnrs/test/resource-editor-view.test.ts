@@ -2,19 +2,66 @@
 
 const assert = require('node:assert/strict');
 const test = require('node:test');
+
+interface TestDisposable {
+  dispose(): void;
+}
+
+interface TestWebview {
+  messageSubscriptionDisposed?: boolean;
+  onDidReceiveMessage(listener: (message: unknown) => unknown): TestDisposable;
+  postMessage?(message: unknown): Promise<boolean>;
+}
+
+interface TestPanel {
+  readonly webview: TestWebview;
+  listenerSubscriptionDisposed?: boolean;
+  onDidDispose(listener: () => void): TestDisposable;
+}
+
+interface TestView {
+  readonly webview: TestWebview;
+  ready: boolean;
+  dispose?: () => void;
+}
+
+interface TestDocument {
+  readonly snapshot?: unknown;
+  readonly views: Set<TestView>;
+}
+
 const {
   attachResourceEditorView,
   postResourceSnapshot,
-} = require('../src/resource-editor-view');
+}: {
+  attachResourceEditorView(
+    document: TestDocument,
+    panel: TestPanel,
+    onMessage: (message: unknown, view: TestView) => unknown,
+  ): TestView;
+  postResourceSnapshot(
+    document: { readonly snapshot: unknown },
+    view: TestView,
+  ): Promise<boolean>;
+} = require('../dist/src/resource-editor-view');
 
 test('custom-editor view disposal never reads an already disposed panel', () => {
-  const views = new Set();
-  const webview = {};
+  const views = new Set<TestView>();
+  const webview: TestWebview = {
+    onDidReceiveMessage(listener) {
+      messageListener = listener;
+      return {
+        dispose() {
+          webview.messageSubscriptionDisposed = true;
+        },
+      };
+    },
+  };
   let panelDisposed = false;
   let panelWebviewReads = 0;
-  let disposeListener;
-  let messageListener;
-  const panel = {
+  let disposeListener: (() => void) | undefined;
+  let messageListener: ((message: unknown) => unknown) | undefined;
+  const panel: TestPanel = {
     get webview() {
       panelWebviewReads += 1;
       if (panelDisposed) throw new Error('Webview is disposed');
@@ -30,16 +77,7 @@ test('custom-editor view disposal never reads an already disposed panel', () => 
     },
   };
 
-  webview.onDidReceiveMessage = (listener) => {
-    messageListener = listener;
-    return {
-      dispose() {
-        webview.messageSubscriptionDisposed = true;
-      },
-    };
-  };
-
-  let received;
+  let received: { message: unknown; owningView: TestView } | undefined;
   const view = attachResourceEditorView({ views }, panel, (message, owningView) => {
     received = { message, owningView };
   });
@@ -48,31 +86,38 @@ test('custom-editor view disposal never reads an already disposed panel', () => 
   assert.equal(views.has(view), true);
   assert.equal(panelWebviewReads, 1);
 
-  messageListener({ type: 'ready' });
+  assert.ok(messageListener);
+  const receiveMessage = messageListener;
+  if (!receiveMessage) throw new Error('Message listener was not registered');
+  receiveMessage({ type: 'ready' });
   assert.equal(view.ready, true);
-  assert.deepEqual(received.message, { type: 'ready' });
-  assert.equal(received.owningView, view);
+  assert.deepEqual(received?.message, { type: 'ready' });
+  assert.equal(received?.owningView, view);
 
   panelDisposed = true;
-  assert.doesNotThrow(() => disposeListener());
+  assert.ok(disposeListener);
+  const disposePanel = disposeListener;
+  if (!disposePanel) throw new Error('Dispose listener was not registered');
+  assert.doesNotThrow(disposePanel);
   assert.equal(panelWebviewReads, 1);
   assert.equal(views.size, 0);
   assert.equal(view.ready, false);
   assert.equal(webview.messageSubscriptionDisposed, true);
   assert.equal(panel.listenerSubscriptionDisposed, true);
 
-  assert.doesNotThrow(() => view.dispose());
+  assert.ok(view.dispose);
+  assert.doesNotThrow(() => view.dispose?.());
 });
 
 test('custom-editor view cleans up if panel disposal registration fails', () => {
-  const views = new Set();
+  const views = new Set<TestView>();
   let messageSubscriptionDisposed = false;
-  const webview = {
+  const webview: TestWebview = {
     onDidReceiveMessage() {
       return { dispose: () => { messageSubscriptionDisposed = true; } };
     },
   };
-  const panel = {
+  const panel: TestPanel = {
     webview,
     onDidDispose() {
       throw new Error('panel registration failed');
@@ -88,11 +133,14 @@ test('custom-editor view cleans up if panel disposal registration fails', () => 
 });
 
 test('resource snapshots are delivered only after the webview ready handshake', async () => {
-  const posted = [];
-  const view = {
+  const posted: unknown[] = [];
+  const view: TestView = {
     ready: false,
     webview: {
-      async postMessage(message) {
+      onDidReceiveMessage() {
+        return { dispose() {} };
+      },
+      async postMessage(message: unknown) {
         posted.push(message);
         return true;
       },
