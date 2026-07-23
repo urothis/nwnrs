@@ -100,6 +100,36 @@ test('provider handles the webview ready message with the owning view', async ()
   assert.deepEqual(logged, []);
 });
 
+test('area inspection requests use the cached scene identity and return only to the requesting view', async () => {
+  const ResourceCustomEditorProvider = loadProviderWithoutVsCodeHost();
+  const provider = Object.create(ResourceCustomEditorProvider.prototype);
+  const requests = []; const posted = [];
+  provider.output = { appendLine: (message) => assert.fail(message) };
+  provider.viewerRequest = () => ({ session_key: '/workspace/nwpkg.toml' });
+  provider.viewerWorker = {
+    inspectAreaObject: async (request) => {
+      requests.push(request);
+      return { schema: 'nwnrs.area-object-inspection', key: request.objectKey };
+    },
+  };
+  const document = { viewer: true, sceneGeneration: 3 };
+  const view = { ready: true, webview: { postMessage: async (message) => posted.push(message) } };
+
+  await provider.handleMessage(document, view, {
+    type: 'inspectAreaObject', assetKey: 'scene-key', objectKey: 'placeable:7',
+  });
+
+  assert.deepEqual(requests, [{
+    sessionKey: '/workspace/nwpkg.toml', assetKey: 'scene-key', objectKey: 'placeable:7',
+  }]);
+  assert.deepEqual(posted, [{
+    type: 'areaObjectInspection',
+    assetKey: 'scene-key',
+    objectKey: 'placeable:7',
+    inspection: { schema: 'nwnrs.area-object-inspection', key: 'placeable:7' },
+  }]);
+});
+
 test('automatic viewer refresh reloads changed archives and replaces cached entry bytes', async () => {
   const ResourceCustomEditorProvider = loadProviderWithoutVsCodeHost();
   const provider = Object.create(ResourceCustomEditorProvider.prototype);

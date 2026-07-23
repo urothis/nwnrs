@@ -31,6 +31,10 @@ class ViewerWorkerClient extends WorkerClient {
     return this.request('loadTexture', request, cancellationToken);
   }
 
+  inspectAreaObject(request, cancellationToken) {
+    return this.request('inspectAreaObject', request, cancellationToken);
+  }
+
   readResource(request, cancellationToken) {
     return this.request('readResource', request, cancellationToken);
   }

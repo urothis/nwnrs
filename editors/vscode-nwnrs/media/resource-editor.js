@@ -40,6 +40,10 @@ window.addEventListener('message', (event) => {
       viewer?.applyAnimation(decodeScenePacket(event.data.packet));
     } else if (event.data?.type === 'textureAsset') {
       viewer?.applyTexture(decodeScenePacket(event.data.packet));
+    } else if (event.data?.type === 'areaObjectInspection') {
+      viewer?.applyInspection(event.data.assetKey, event.data.objectKey, event.data.inspection);
+    } else if (event.data?.type === 'areaObjectInspectionError') {
+      viewer?.applyInspectionError(event.data.assetKey, event.data.objectKey, event.data.message);
     }
   } catch (error) {
     reportFatalError(error);
@@ -109,7 +113,14 @@ function decodeScenePacket(packetValue) {
 }
 
 function createViewerSession(scene) {
-  return { scene, animationAssets: new Map(), textureAssets: new Map() };
+  return {
+    scene,
+    animationAssets: new Map(),
+    textureAssets: new Map(),
+    inspectionAssets: new Map(),
+    inspectionErrors: new Map(),
+    requestedInspections: new Set(),
+  };
 }
 
 function renderViewer(session, initialObjectKey) {
@@ -122,6 +133,9 @@ function renderViewer(session, initialObjectKey) {
   const animations = viewerAnimations(scene);
   const animationInSelectedData = (scene.manifest.areaObjects || []).length > 0;
   const savedViewer = vscode.getState?.()?.viewer;
+  const savedInspector = savedViewer?.scene === viewerStateKey(scene) ? savedViewer.inspector : undefined;
+  const inspectorWidth = validInspectorWidth(savedInspector?.width) ? savedInspector.width : 460;
+  const inspectorCollapsed = savedInspector?.collapsed === true;
   const savedIndex = savedViewer?.scene === viewerStateKey(scene)
     ? savedAnimationIndex(animations, savedViewer)
     : -1;
@@ -132,39 +146,50 @@ function renderViewer(session, initialObjectKey) {
       ${scene.manifest.module ? `<label>Area <select id="viewer-area">${scene.manifest.module.areas.map((area) => `<option ${area.toLowerCase() === scene.manifest.module.entryArea.toLowerCase() ? 'selected' : ''}>${escapeHtml(area)}</option>`).join('')}</select></label>` : ''}
       ${animationInSelectedData ? '' : animationControl(animations, savedIndex)}
     </header>
-    <div class="viewer-body"><div class="viewer-viewport"><canvas id="viewer-canvas" tabindex="0" aria-label="Interactive nwnrs 3D viewport. Use W A S D to fly and Q E to descend or ascend."></canvas>
-      <aside class="viewer-overlay-stack" aria-label="Scene information">${sceneDisclosure(scene)}${dependenciesDisclosure(scene)}${selectedDataDisclosure(scene)}</aside>
-      <div id="viewer-status" class="viewer-status" role="status"></div>
-    </div></div>
+    <div id="viewer-workbench" class="viewer-workbench" style="--viewer-inspector-width:${inspectorWidth}px" data-inspector-collapsed="${inspectorCollapsed}">
+      <div class="viewer-viewport"><canvas id="viewer-canvas" tabindex="0" aria-label="Interactive nwnrs 3D viewport. Use W A S D to fly and Q E to descend or ascend."></canvas>
+        <div id="viewer-status" class="viewer-status" role="status"></div>
+        <button id="viewer-inspector-reopen" class="viewer-inspector-reopen secondary" title="Open inspector" aria-label="Open inspector">Inspector</button>
+      </div>
+      <div id="viewer-inspector-sash" class="viewer-inspector-sash" role="separator" aria-label="Resize inspector" aria-orientation="vertical" aria-valuemin="340" aria-valuemax="720" aria-valuenow="${inspectorWidth}" tabindex="0"></div>
+      <aside id="viewer-inspector" class="viewer-inspector" aria-label="Scene inspector">
+        <header class="viewer-inspector-header">
+          <div class="viewer-inspector-toolbar">
+            <label class="viewer-inspector-scope-label"><span class="sr-only">Inspector scope</span><select id="viewer-inspector-scope"><option value="selection">Selected Object</option><option value="scene">Scene</option><option value="dependencies">Dependencies</option></select></label>
+            <button id="viewer-inspector-technical" class="secondary icon-button" title="Toggle technical field names" aria-pressed="${savedInspector?.technicalNames === true}">{ }</button>
+            <button id="viewer-inspector-collapse" class="secondary icon-button" title="Collapse inspector" aria-label="Collapse inspector">›</button>
+          </div>
+          <div id="viewer-inspector-context" class="viewer-inspector-context"></div>
+          <div class="viewer-inspector-navigation">
+            <input id="viewer-inspector-search" type="search" placeholder="Search properties…" aria-label="Search inspector" value="${escapeAttribute(savedInspector?.query || '')}">
+            <select id="viewer-inspector-jump" aria-label="Jump to section" hidden><option value="">Jump to section…</option></select>
+          </div>
+        </header>
+        <div id="viewer-inspector-content" class="viewer-inspector-content"></div>
+      </aside>
+    </div>
   </section>`;
   viewer = createViewer(document.getElementById('viewer-canvas'), scene, {
     status: document.getElementById('viewer-status'),
     animationTime: document.getElementById('viewer-animation-time'),
     animationEvent: document.getElementById('viewer-animation-event'),
-    selectedData: document.getElementById('viewer-selected-data'),
-    selectedDataSummary: document.getElementById('viewer-selected-data-summary'),
-    selectedDataContent: document.getElementById('viewer-selected-data-content'),
+    workbench: document.getElementById('viewer-workbench'),
+    inspector: document.getElementById('viewer-inspector'),
+    inspectorContent: document.getElementById('viewer-inspector-content'),
+    inspectorContext: document.getElementById('viewer-inspector-context'),
+    inspectorScope: document.getElementById('viewer-inspector-scope'),
+    inspectorSearch: document.getElementById('viewer-inspector-search'),
+    inspectorJump: document.getElementById('viewer-inspector-jump'),
+    inspectorTechnical: document.getElementById('viewer-inspector-technical'),
+    inspectorCollapse: document.getElementById('viewer-inspector-collapse'),
+    inspectorReopen: document.getElementById('viewer-inspector-reopen'),
+    inspectorSash: document.getElementById('viewer-inspector-sash'),
   }, initialMode, session, initialObjectKey, animations, savedIndex, animationInSelectedData);
-  bindLazyDisclosure('viewer-scene-data', () => sceneDisclosureContent(scene));
-  bindLazyDisclosure('viewer-dependencies', () => dependenciesDisclosureContent(scene), () => {
-    document.querySelectorAll('.dependency:not(:disabled)').forEach((button) => {
-      button.onclick = () => vscode.postMessage({ type: 'openDependency', resource: button.dataset.resource });
-    });
-  });
   const area = document.getElementById('viewer-area');
   if (area) area.onchange = () => {
     viewer.dispose();
     app.innerHTML = '<div class="loading">Loading area…</div>';
     vscode.postMessage({ type: 'selectArea', area: area.value });
-  };
-}
-
-function bindLazyDisclosure(id, renderContent, afterRender) {
-  const disclosure = document.getElementById(id);
-  disclosure.ontoggle = () => {
-    if (!disclosure.open || disclosure.dataset.loaded === 'true') return;
-    disclosure.querySelector('.viewer-disclosure-content').innerHTML = renderContent();
-    disclosure.dataset.loaded = 'true'; afterRender?.();
   };
 }
 
@@ -238,79 +263,225 @@ function validViewerCamera(camera) {
     && Array.isArray(camera.target) && camera.target.length === 3 && camera.target.every(Number.isFinite);
 }
 
-function sceneDisclosure(scene) {
-  return `<details id="viewer-scene-data" class="viewer-disclosure"><summary><span>Scene Data</span><small>${scene.manifest.models.length} models · ${scene.manifest.textures.length} textures</small></summary><div class="viewer-disclosure-content"></div></details>`;
+function validInspectorWidth(width) {
+  return Number.isFinite(width) && width >= 340 && width <= 720;
 }
 
-function sceneDisclosureContent(scene) {
+function sceneInspectorContent(scene, query = '', openSections = new Set(), useDefaultSections = true) {
   const environment = scene.manifest.environment?.nwn; const diagnostics = scene.manifest.diagnostics;
   const collisionCount = scene.manifest.instances.filter((entry) => entry.kind === 'collision').length;
-  const modelDetails = scene.manifest.models.map((model) => `<details class="viewer-nested-details"><summary>${escapeHtml(model.name)} · ${model.nodes.length} nodes · ${model.meshes.length} meshes · ${model.materials.length} materials</summary>
+  const matchingModels = scene.manifest.models.filter((entry) => inspectorMatches(query, entry.name, entry.nodes, entry.materials));
+  const modelDetails = matchingModels.map((model) => `<details class="viewer-nested-details"><summary>${escapeHtml(model.name)} · ${model.nodes.length} nodes · ${model.meshes.length} meshes · ${model.materials.length} materials</summary>
     <div class="viewer-detail-section"><strong>Nodes</strong>${model.nodes.map((node) => `<div class="node-row" style="padding-left:${Math.max(0, nodeDepth(model, node) * 10)}px"><span>${escapeHtml(node.name)}</span><small>${escapeHtml(node.kind)}</small></div>`).join('') || '<div class="muted">No nodes</div>'}</div>
-    <div class="viewer-detail-section"><strong>Materials</strong>${model.resolvedMaterials.map((material) => `<div class="inspector-card"><strong>Material ${material.materialIndex}</strong><div>${escapeHtml(material.renderHint || 'default')}</div>${material.textures.map((texture) => `<div>${escapeHtml(texture.role)}: ${escapeHtml(texture.name)} ${texture.texture == null ? '⚠' : ''}</div>`).join('')}${material.mtr ? `<div>MTR: ${escapeHtml(material.mtr.resource)}</div>` : ''}</div>`).join('') || '<div class="muted">No materials</div>'}${model.nodeTextures.map((texture) => `<div class="inspector-card"><strong>${escapeHtml(texture.role)}</strong><div>${escapeHtml(texture.name)} ${texture.texture == null ? '⚠' : ''}</div></div>`).join('')}</div>
+    <div class="viewer-detail-section"><strong>Materials</strong>${model.resolvedMaterials.map((material) => `<div class="inspector-list-row"><strong>Material ${material.materialIndex}</strong><span>${escapeHtml(material.renderHint || 'default')}</span><small>${material.textures.map((texture) => `${texture.role}: ${texture.name}${texture.texture == null ? ' ⚠' : ''}`).map(escapeHtml).join(' · ')}</small>${material.mtr ? `<small>MTR: ${escapeHtml(material.mtr.resource)}</small>` : ''}</div>`).join('') || '<div class="muted">No materials</div>'}${model.nodeTextures.map((texture) => `<div class="inspector-list-row"><strong>${escapeHtml(texture.role)}</strong><span>${escapeHtml(texture.name)} ${texture.texture == null ? '⚠' : ''}</span></div>`).join('')}</div>
   </details>`).join('');
-  const shaders = scene.manifest.shaders.map((shader) => `<details class="viewer-nested-details"><summary>${escapeHtml(shader.resource)} · ${escapeHtml(shader.stage)}</summary><pre>${escapeHtml(shader.source)}</pre></details>`).join('');
-  return `<dl><dt>Source</dt><dd>${escapeHtml(scene.manifest.source)}</dd><dt>Models</dt><dd>${scene.manifest.models.length}</dd><dt>Textures</dt><dd>${scene.manifest.textures.length}</dd><dt>Collision</dt><dd>${collisionCount}</dd><dt>Diagnostics</dt><dd>${diagnostics.length}</dd>${environment ? `<dt>Time</dt><dd>${environment.isNight ? 'Night' : 'Day'}</dd><dt>Fog clip</dt><dd>${environment.fogClipDistance ?? 'unset'}</dd><dt>Skybox</dt><dd>${escapeHtml(environment.skybox ?? 'unset')}</dd><dt>Weather</dt><dd>rain ${environment.chanceRain ?? 0}% · snow ${environment.chanceSnow ?? 0}% · lightning ${environment.chanceLightning ?? 0}%</dd>` : ''}</dl>
-    ${modelDetails}${shaders}${diagnostics.map((entry) => `<div class="diagnostic ${escapeAttribute(entry.severity)}"><strong>${escapeHtml(entry.code)}</strong><br>${escapeHtml(entry.message)}</div>`).join('')}
-  `;
+  const matchingShaders = scene.manifest.shaders.filter((entry) => inspectorMatches(query, entry.resource, entry.stage, entry.source));
+  const shaders = matchingShaders.map((shader) => `<details class="viewer-nested-details"><summary>${escapeHtml(shader.resource)} · ${escapeHtml(shader.stage)}</summary><pre>${escapeHtml(shader.source)}</pre></details>`).join('');
+  const matchingDiagnostics = diagnostics.filter((entry) => inspectorMatches(query, entry.code, entry.message));
+  const overviewEntries = [
+    ['Source', scene.manifest.source], ['Models', scene.manifest.models.length],
+    ['Textures', scene.manifest.textures.length], ['Collision', collisionCount],
+    ['Diagnostics', diagnostics.length],
+    ...(environment ? [
+      ['Time', environment.isNight ? 'Night' : 'Day'],
+      ['Fog clip', environment.fogClipDistance ?? 'unset'],
+      ['Skybox', environment.skybox ?? 'unset'],
+      ['Weather', `rain ${environment.chanceRain ?? 0}% · snow ${environment.chanceSnow ?? 0}% · lightning ${environment.chanceLightning ?? 0}%`],
+    ] : []),
+  ].filter(([label, value]) => inspectorMatches(query, label, value));
+  const overview = overviewEntries.length ? `<div class="inspection-property-grid">${overviewEntries.map(([label, value]) => compactPropertyRow(label, value)).join('')}</div>` : '';
+  const sections = [
+    overview ? inspectorSection('scene-overview', 'Overview', overviewEntries.length, overview, openSections.has('scene-overview') || (useDefaultSections && openSections.size === 0)) : '',
+    modelDetails ? inspectorSection('scene-models', 'Models', matchingModels.length, modelDetails, openSections.has('scene-models')) : '',
+    shaders ? inspectorSection('scene-shaders', 'Shaders', matchingShaders.length, shaders, openSections.has('scene-shaders')) : '',
+    matchingDiagnostics.length ? inspectorSection('scene-diagnostics', 'Diagnostics', matchingDiagnostics.length, matchingDiagnostics.map((entry) => `<div class="diagnostic ${escapeAttribute(entry.severity)}"><strong>${escapeHtml(entry.code)}</strong><br>${escapeHtml(entry.message)}</div>`).join(''), openSections.has('scene-diagnostics')) : '',
+  ].join('');
+  return sections || '<div class="empty inspector-empty">No scene data matches this search.</div>';
 }
 
-function dependenciesDisclosure(scene) {
-  const count = scene.manifest.dependencies.nodes.length;
-  return `<details id="viewer-dependencies" class="viewer-disclosure"><summary><span>Dependencies</span><small>${count}</small></summary><div class="viewer-disclosure-content"></div></details>`;
-}
-
-function dependenciesDisclosureContent(scene) {
+function dependenciesInspectorContent(scene, query = '') {
   const incoming = new Map();
   for (const edge of scene.manifest.dependencies.edges) { const relationships = incoming.get(edge.to) || []; relationships.push(edge.relationship); incoming.set(edge.to, relationships); }
-  const nodes = scene.manifest.dependencies.nodes;
-  return nodes.map((node) => `<button class="dependency ${node.state}" data-resource="${escapeAttribute(node.resource)}" ${node.state === 'resolved' ? '' : 'disabled'}><span>${escapeHtml(node.resource)}</span><small>${escapeHtml(node.kind)} · ${escapeHtml(node.state)}${incoming.get(node.id)?.length ? ` · ${escapeHtml(incoming.get(node.id).join(', '))}` : ''}</small>${node.origin ? `<small>${escapeHtml(node.origin)}</small>` : ''}${node.message ? `<small>${escapeHtml(node.message)}</small>` : ''}</button>`).join('') || '<div class="muted">No dependencies</div>';
+  const nodes = scene.manifest.dependencies.nodes.filter((node) => inspectorMatches(query, node.resource, node.kind, node.state, node.origin, node.message, incoming.get(node.id)));
+  return `<div class="inspector-resource-list">${nodes.map((node) => `<button class="dependency inspector-resource-row ${node.state}" data-resource="${escapeAttribute(node.resource)}" ${node.state === 'resolved' ? '' : 'disabled'}><span>${escapeHtml(node.resource)}</span><small>${escapeHtml(node.kind)} · ${escapeHtml(node.state)}${incoming.get(node.id)?.length ? ` · ${escapeHtml(incoming.get(node.id).join(', '))}` : ''}</small>${node.origin ? `<small>${escapeHtml(node.origin)}</small>` : ''}${node.message ? `<small>${escapeHtml(node.message)}</small>` : ''}</button>`).join('') || '<div class="empty inspector-empty">No dependencies match this search.</div>'}</div>`;
 }
 
-function selectedDataDisclosure(scene) {
-  if (!(scene.manifest.areaObjects || []).length) return '';
-  return '<details id="viewer-selected-data" class="viewer-disclosure" hidden><summary><span>Selected Data</span><small id="viewer-selected-data-summary"></small></summary><div id="viewer-selected-data-content" class="viewer-disclosure-content"></div></details>';
+function inspectorMatches(query, ...values) {
+  const normalized = String(query || '').trim().toLocaleLowerCase();
+  if (!normalized) return true;
+  return values.some((value) => JSON.stringify(value ?? '').toLocaleLowerCase().includes(normalized));
 }
 
-function selectedDataDisclosureContent(scene, objectKey, selectedComponentId, animations = [], selectedAnimationIndex = -1) {
-  const object = (scene.manifest.areaObjects || []).find((candidate) => candidate.key === objectKey);
-  if (!object) return '';
-  const instances = (scene.manifest.instances || [])
-    .map((instance, index) => ({ instance, id: Number.isInteger(instance.id) ? instance.id : index }))
-    .filter(({ instance }) => instance.objectKey === object.key);
-  const vector = (values, digits = 3) => (values || []).map((value) => Number(value).toFixed(digits)).join(', ');
-  const rotation = object.rotationAxisAngle || [0, 0, 1, 0];
-  const angle = Number(rotation[3]) || 0;
-  const models = [...new Set(instances
-    .map(({ instance }) => Number.isInteger(instance.model) ? scene.manifest.models[instance.model]?.name : undefined)
-    .filter(Boolean))];
-  const components = instances.map(({ instance, id }) => {
-    const modelName = Number.isInteger(instance.model) ? scene.manifest.models[instance.model]?.name : undefined;
-    return `<div class="selected-component${id === selectedComponentId ? ' selected' : ''}" data-component-id="${id}"><button class="component-select" data-component-id="${id}" aria-label="Select ${escapeAttribute(instance.label || instance.kind)}"><strong>${escapeHtml(instance.label || instance.kind)}</strong><span>${escapeHtml(instance.kind)}${modelName ? ` · ${escapeHtml(modelName)}` : ''}</span>${instance.resource ? `<small>${escapeHtml(instance.resource)}</small>` : ''}<small>position ${escapeHtml(vector(instance.position))}</small><small>scale ${escapeHtml(vector(instance.scale))}</small></button>${instance.resource ? `<button class="component-open" data-resource="${escapeAttribute(instance.resource)}" title="Open ${escapeAttribute(instance.resource)}">Open Resource</button>` : ''}</div>`;
+function compactPropertyRow(label, value, detail = '') {
+  return `<div class="inspection-property-row"><span>${escapeHtml(label)}</span><strong>${escapeHtml(String(value))}</strong>${detail ? `<small>${escapeHtml(detail)}</small>` : ''}</div>`;
+}
+
+function inspectorSection(id, label, count, content, open = false) {
+  return `<details class="inspector-section" data-section-id="${escapeAttribute(id)}" ${open ? 'open' : ''}><summary><span>${escapeHtml(label)}</span><small>${count}</small></summary><div class="inspector-section-content">${content}</div></details>`;
+}
+
+function inspectionContent(state, options = {}) {
+  if (!state || state.status === 'loading') return '<div class="inspection-status muted">Loading authored data…</div>';
+  if (state.status === 'error') return `<div class="diagnostic error"><strong>Authored data could not be loaded</strong><br>${escapeHtml(state.message)}</div>`;
+  const inspection = state.data;
+  const query = options.query || '';
+  const route = options.route || { page: 'object' };
+  const technicalNames = options.technicalNames === true;
+  const openSections = options.openSections || new Set();
+  if (route.page === 'references') return inspectionReferencesPage(inspection, query);
+  if (route.page === 'raw-sources') return inspectionRawSourcesPage(inspection, query);
+  if (route.page === 'raw-source') return inspectionRawSourcePage(inspection, route, query, technicalNames);
+  if (route.page === 'components') return inspectionComponentsPage(options.scene, options.objectKey, options.selectedComponentId, query);
+  if (route.page === 'field') return inspectionFieldPage(inspection, route, query, technicalNames, openSections, options.useDefaultSections !== false);
+  const sections = (inspection.sections || []).map((section, sectionIndex) => {
+    const fields = section.fields.filter((field) => inspectionFieldMatches(field, query));
+    if (!fields.length && query) return '';
+    const rows = fields.map((field) => inspectionFieldRow(field, {
+      page: 'field', root: 'section', rootIndex: sectionIndex, trail: [{ kind: 'field', index: section.fields.indexOf(field) }],
+    }, technicalNames)).join('');
+    const id = `inspection-${section.id || sectionIndex}`;
+    return inspectorSection(id, section.label, fields.length, `<div class="inspection-property-grid">${rows}</div>`, openSections.has(id) || (options.useDefaultSections !== false && openSections.size === 0 && section.defaultOpen));
   }).join('');
-  return `${animationControl(animations, selectedAnimationIndex)}<dl>
-    <dt>Label</dt><dd>${escapeHtml(object.label)}</dd>
-    <dt>Type</dt><dd>${escapeHtml(object.kind)}</dd>
-    <dt>GIT index</dt><dd>${object.sourceIndex}</dd>
-    <dt>Key</dt><dd>${escapeHtml(object.key)}</dd>
-    <dt>Tag</dt><dd>${escapeHtml(object.tag || 'unset')}</dd>
-    <dt>Blueprint</dt><dd>${escapeHtml(object.templateResref || 'unset')}</dd>
-    <dt>Position</dt><dd>${escapeHtml(vector(object.position))}</dd>
-    <dt>Rotation axis</dt><dd>${escapeHtml(vector(rotation.slice(0, 3)))}</dd>
-    <dt>Rotation angle</dt><dd>${angle.toFixed(3)} rad · ${(angle * 180 / Math.PI).toFixed(1)}°</dd>
-    <dt>Components</dt><dd>${instances.length}</dd>
-    <dt>Models</dt><dd>${escapeHtml(models.join(', ') || 'none')}</dd>
-  </dl><details class="viewer-nested-details selected-components"><summary>Rendered Components · ${instances.length}</summary><div class="viewer-detail-section">${components || '<div class="muted">No rendered components</div>'}</div></details>`;
+  const navigation = `<div class="inspector-navigation-list">
+    ${inspectorNavigationRow('Referenced Resources', `${inspection.references?.length || 0} resources`, { page: 'references' })}
+    ${inspectorNavigationRow('Raw GFF Sources', `${inspection.sources?.length || 0} sources`, { page: 'raw-sources' })}
+    ${inspectorNavigationRow('Rendered Components', `${options.componentCount || 0} components`, { page: 'components' })}
+  </div>`;
+  const diagnostics = (inspection.diagnostics || []).filter((message) => inspectorMatches(query, message)).map((message) => `<div class="diagnostic warning">${escapeHtml(message)}</div>`).join('');
+  return `<div class="inspection-data">${sections || '<div class="empty inspector-empty">No authored properties match this search.</div>'}${navigation}${diagnostics}</div>`;
 }
 
-function updateSelectedDataPanel(elements, scene, objectKey, selectedComponentId, animations, selectedAnimationIndex) {
-  if (!elements.selectedData) return;
-  const object = (scene.manifest.areaObjects || []).find((candidate) => candidate.key === objectKey);
-  elements.selectedData.hidden = !object;
-  elements.selectedDataSummary.textContent = object?.label || '';
-  elements.selectedDataContent.innerHTML = object
-    ? selectedDataDisclosureContent(scene, objectKey, selectedComponentId, animations, selectedAnimationIndex)
-    : '';
+function inspectionFieldMatches(field, query) {
+  return inspectorMatches(query, field.name, field.label, field.display, field.text, field.value64, field.resource, field.lookup, field.localized)
+    || (field.fields || []).some((entry) => inspectionFieldMatches(entry, query))
+    || (field.entries || []).some((entry) => (entry.fields || []).some((child) => inspectionFieldMatches(child, query)));
+}
+
+function inspectionFieldRow(field, route, technicalNames) {
+  const resource = field.resource;
+  const lookup = field.lookup;
+  const provenance = field.provenance || {};
+  const sourceBadge = provenance.layer === 'instance' ? 'GIT' : provenance.resource?.split('.').pop()?.toUpperCase() || 'SOURCE';
+  const sourceDetail = [provenance.layer, provenance.resource, provenance.origin].filter(Boolean).join(' · ');
+  const display = lookup?.label ? `${lookup.label} · row ${lookup.row}` : field.display || 'unset';
+  const value = resource
+    ? `<button class="inspection-value-link inspection-resource-open" data-resource="${escapeAttribute(resource.resource)}" ${resource.resolved ? '' : 'disabled'}>${escapeHtml(display)}</button>`
+    : longInspectorValue(display);
+  return `<div class="inspection-property-row inspection-field-row"><div class="inspection-property-label"><span>${escapeHtml(field.label)}</span>${technicalNames ? `<code>${escapeHtml(field.name)}</code>` : ''}</div><div class="inspection-property-value">${value}</div><span class="inspection-source-badge" tabindex="0" title="${escapeAttribute(sourceDetail || 'Unknown source')}">${escapeHtml(sourceBadge)}</span><button class="inspection-row-more" data-inspector-route="${routeAttribute(route)}" title="Inspect ${escapeAttribute(field.label)}" aria-label="Inspect ${escapeAttribute(field.label)}">›</button></div>`;
+}
+
+function longInspectorValue(value) {
+  const text = String(value ?? 'unset');
+  if (text.length <= 180 && !text.includes('\n')) return escapeHtml(text);
+  const preview = `${text.replace(/\s+/gu, ' ').slice(0, 150)}…`;
+  return `<details class="inspection-long-value"><summary>${escapeHtml(preview)}</summary><div>${escapeHtml(text)}</div></details>`;
+}
+
+function inspectorNavigationRow(label, detail, route) {
+  return `<button class="inspector-navigation-row" data-inspector-route="${routeAttribute(route)}"><span>${escapeHtml(label)}</span><small>${escapeHtml(detail)}</small><b aria-hidden="true">›</b></button>`;
+}
+
+function routeAttribute(route) {
+  return escapeAttribute(JSON.stringify(route));
+}
+
+function inspectionReferencesPage(inspection, query) {
+  const references = (inspection.references || []).filter((entry) => inspectorMatches(query, entry.resource, entry.origin, entry.resolved));
+  return `<div class="inspector-resource-list">${references.map((reference) => `<button class="dependency inspector-resource-row inspection-resource-open ${reference.resolved ? 'resolved' : 'missing'}" data-resource="${escapeAttribute(reference.resource)}" ${reference.resolved ? '' : 'disabled'}><span>${escapeHtml(reference.resource)}</span><small>${reference.resolved ? escapeHtml(reference.origin || 'resolved') : 'missing'}</small></button>`).join('') || '<div class="empty inspector-empty">No references match this search.</div>'}</div>`;
+}
+
+function inspectionRawSourcesPage(inspection, query) {
+  const sources = (inspection.sources || []).map((source, index) => ({ source, index })).filter(({ source }) => inspectorMatches(query, source.layer, source.resource, source.origin, source.data));
+  return `<div class="inspector-navigation-list">${sources.map(({ source, index }) => inspectorNavigationRow(`${source.layer} · ${source.resource}`, `${source.data?.fields?.length || 0} fields · ${source.origin || 'unknown origin'}`, { page: 'raw-source', sourceIndex: index })).join('') || '<div class="empty inspector-empty">No raw sources match this search.</div>'}</div>`;
+}
+
+function inspectionRawSourcePage(inspection, route, query, technicalNames) {
+  const source = inspection.sources?.[route.sourceIndex];
+  if (!source) return '<div class="diagnostic error">The selected raw source no longer exists.</div>';
+  const fields = (source.data?.fields || []).map((field, index) => ({ field, index })).filter(({ field }) => inspectionFieldMatches(field, query));
+  return `<div class="inspector-source-origin">${escapeHtml(source.origin || 'unknown origin')} · struct ${source.data?.id ?? 'unknown'}</div><div class="inspection-property-grid">${fields.map(({ field, index }) => inspectionFieldRow(field, { page: 'field', root: 'source', rootIndex: route.sourceIndex, trail: [{ kind: 'field', index }] }, technicalNames)).join('') || '<div class="empty inspector-empty">No raw fields match this search.</div>'}</div>`;
+}
+
+function inspectionComponentsPage(scene, objectKey, selectedComponentId, query) {
+  const instances = (scene?.manifest.instances || []).map((instance, index) => ({ instance, id: Number.isInteger(instance.id) ? instance.id : index })).filter(({ instance }) => instance.objectKey === objectKey && inspectorMatches(query, instance));
+  const vector = (values) => (values || []).map((value) => Number(value).toFixed(3)).join(', ');
+  return `<div class="selected-components">${instances.map(({ instance, id }) => {
+    const modelName = Number.isInteger(instance.model) ? scene.manifest.models[instance.model]?.name : undefined;
+    return `<div class="selected-component${id === selectedComponentId ? ' selected' : ''}" data-component-id="${id}"><button class="component-select" data-component-id="${id}" aria-label="Select ${escapeAttribute(instance.label || instance.kind)}"><strong>${escapeHtml(instance.label || instance.kind)}</strong><span>${escapeHtml(instance.kind)}${modelName ? ` · ${escapeHtml(modelName)}` : ''}</span>${instance.resource ? `<small>${escapeHtml(instance.resource)}</small>` : ''}<small>position ${escapeHtml(vector(instance.position))} · scale ${escapeHtml(vector(instance.scale))}</small></button>${instance.resource ? `<button class="component-open" data-resource="${escapeAttribute(instance.resource)}" title="Open ${escapeAttribute(instance.resource)}">Open Resource</button>` : ''}</div>`;
+  }).join('') || '<div class="empty inspector-empty">No rendered components match this search.</div>'}</div>`;
+}
+
+function inspectionRouteNode(inspection, route) {
+  let node = route.root === 'source'
+    ? inspection.sources?.[route.rootIndex]?.data
+    : { fields: inspection.sections?.[route.rootIndex]?.fields || [] };
+  const breadcrumbs = [];
+  for (const token of route.trail || []) {
+    if (token.kind === 'field') {
+      node = node?.fields?.[token.index];
+      if (!node) break;
+      breadcrumbs.push(node.label || node.name);
+    } else if (token.kind === 'entry') {
+      node = node?.entries?.[token.index];
+      if (!node) break;
+      breadcrumbs.push(`Entry ${token.index + 1}`);
+    }
+  }
+  return { node, breadcrumbs };
+}
+
+function inspectionFieldPage(inspection, route, query, technicalNames, openSections = new Set(), useDefaultSections = true) {
+  const { node: field } = inspectionRouteNode(inspection, route);
+  if (!field) return '<div class="diagnostic error">The selected field no longer exists.</div>';
+  const isStructure = field.name == null && Array.isArray(field.fields);
+  const provenance = field.provenance || {};
+  const metadata = `<div class="inspection-property-grid inspection-field-metadata">
+    ${compactPropertyRow('GFF name', field.name || 'structure')}${compactPropertyRow('Type', field.kind || 'struct')}${field.structId != null ? compactPropertyRow('Struct ID', field.structId) : ''}
+    ${field.text != null ? compactPropertyRow('Stored value', field.text) : ''}${compactPropertyRow('Source layer', provenance.layer || 'unknown')}${compactPropertyRow('Source resource', provenance.resource || 'unknown')}${compactPropertyRow('Origin', provenance.origin || 'unknown')}
+    ${field.lookup ? `${compactPropertyRow('2DA', field.lookup.resource)}${compactPropertyRow('2DA row', field.lookup.row, field.lookup.label || '')}` : ''}
+    ${field.localized ? `${compactPropertyRow('String reference', field.localized.strRef ?? 'none')}${compactPropertyRow('Resolved from', field.localized.source || 'unresolved')}${compactPropertyRow('Language', field.localized.languageId ?? 'unset', field.localized.gender || '')}` : ''}
+  </div>`;
+  const resource = field.resource ? `<button class="inspection-resource-open" data-resource="${escapeAttribute(field.resource.resource)}" ${field.resource.resolved ? '' : 'disabled'}>${field.resource.resolved ? 'Open' : 'Missing'} ${escapeHtml(field.resource.resource)}</button>` : '';
+  const localized = (field.localized?.entries || []).filter((entry) => inspectorMatches(query, entry.id, entry.text)).map((entry) => `<div class="inspector-list-row"><small>language/gender id ${entry.id}</small><span>${escapeHtml(entry.text)}</span></div>`).join('');
+  const childFields = (field.fields || []).map((child, index) => ({ child, index })).filter(({ child }) => inspectionFieldMatches(child, query)).map(({ child, index }) => inspectionFieldRow(child, { ...route, trail: [...route.trail, { kind: 'field', index }] }, technicalNames)).join('');
+  const entries = (field.entries || []).map((entry, index) => ({ entry, index })).filter(({ entry }) => inspectorMatches(query, entry)).map(({ entry, index }) => inspectorNavigationRow(`Entry ${index + 1}`, `struct ${entry.id} · ${entry.fields.length} fields`, { ...route, trail: [...route.trail, { kind: 'entry', index }] })).join('');
+  const opaque = field.value64 != null ? `<details class="inspection-opaque-value"><summary>Opaque payload · ${escapeHtml(field.display)}</summary><code>${escapeHtml(field.value64)}</code></details>` : '';
+  const sectionOpen = (id) => openSections.has(id) || (useDefaultSections && openSections.size === 0);
+  return `<div class="inspection-field-page">${isStructure ? '' : `<div class="inspection-field-primary">${longInspectorValue(field.display || 'unset')}${resource}</div>`}${metadata}${localized ? inspectorSection('localized-values', 'Inline Localized Values', field.localized.entries.length, localized, sectionOpen('localized-values')) : ''}${childFields ? inspectorSection('nested-fields', 'Nested Fields', field.fields.length, `<div class="inspection-property-grid">${childFields}</div>`, sectionOpen('nested-fields')) : ''}${entries ? inspectorSection('list-entries', 'List Entries', field.entries.length, `<div class="inspector-navigation-list">${entries}</div>`, sectionOpen('list-entries')) : ''}${opaque}</div>`;
+}
+
+function blueprintResourceForObject(object) {
+  if (!object?.templateResref) return undefined;
+  const extensions = {
+    creature: 'utc', door: 'utd', placeable: 'utp', item: 'uti', store: 'utm',
+    encounter: 'ute', sound: 'uts', waypoint: 'utw', trigger: 'utt',
+  };
+  const extension = extensions[object.kind];
+  return extension ? `${object.templateResref}.${extension}` : undefined;
+}
+
+function inspectorRouteTitle(inspection, route) {
+  if (!route || route.page === 'object') return 'Authored Data';
+  if (route.page === 'references') return 'Referenced Resources';
+  if (route.page === 'raw-sources') return 'Raw GFF Sources';
+  if (route.page === 'raw-source') return inspection.sources?.[route.sourceIndex]?.resource || 'Raw GFF Source';
+  if (route.page === 'components') return 'Rendered Components';
+  if (route.page === 'field') {
+    const resolved = inspectionRouteNode(inspection, route);
+    return resolved.breadcrumbs.join(' › ') || 'Field';
+  }
+  return 'Authored Data';
+}
+
+function parentInspectorRoute(route) {
+  if (route?.page === 'raw-source') return { page: 'raw-sources' };
+  if (route?.page === 'field' && route.trail?.length > 1) return { ...route, trail: route.trail.slice(0, -1) };
+  if (route?.page === 'field' && route.root === 'source') return { page: 'raw-source', sourceIndex: route.rootIndex };
+  return { page: 'object' };
+}
+
+function boundedStateEntries(entries, limit = 32) {
+  return Object.fromEntries([...entries].slice(-limit));
 }
 
 function createViewer(
@@ -469,6 +640,9 @@ function createViewer(
   const ribbonUniforms = uniformLocations(gl, ribbonProgram, ['uViewProjection', 'uTexture', 'uHasTexture']);
   const gpuTextures = new Array(scene.manifest.textures.length);
   const requestedTextures = new Set(); const requestedAnimations = new Set();
+  session.inspectionAssets ||= new Map();
+  session.inspectionErrors ||= new Map();
+  session.requestedInspections ||= new Set();
   const maxTextureSize = gl.getParameter(gl.MAX_TEXTURE_SIZE);
   const s3tc = gl.getExtension('WEBGL_compressed_texture_s3tc') || gl.getExtension('WEBKIT_WEBGL_compressed_texture_s3tc');
   const pointLightTexture = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, pointLightTexture);
@@ -516,6 +690,19 @@ function createViewer(
   let selectedComponentId = componentInstances.get(savedComponentId)?.objectKey === selectedObjectKey
     ? savedComponentId
     : undefined;
+  const savedInspector = savedViewer?.scene === stateKey ? savedViewer.inspector || {} : {};
+  let inspectorScope = selectedObjectKey && savedInspector.scope === 'selection'
+    ? 'selection'
+    : ['scene', 'dependencies'].includes(savedInspector.scope) ? savedInspector.scope : selectedObjectKey ? 'selection' : 'scene';
+  let inspectorQuery = typeof savedInspector.query === 'string' ? savedInspector.query : '';
+  let inspectorTechnicalNames = savedInspector.technicalNames === true;
+  let inspectorCollapsed = savedInspector.collapsed === true;
+  let inspectorWidth = validInspectorWidth(savedInspector.width) ? savedInspector.width : 460;
+  const inspectorRoutes = new Map(Object.entries(savedInspector.routes || {}));
+  const inspectorScrollPositions = new Map(Object.entries(savedInspector.scrollPositions || {}).map(([key, value]) => [key, Number(value) || 0]));
+  const inspectorOpenSections = new Map(Object.entries(savedInspector.openSections || {}).map(([key, value]) => [key, new Set(Array.isArray(value) ? value : [])]));
+  const inspectorTouchedSections = new Set(Array.isArray(savedInspector.touchedSections) ? savedInspector.touchedSections : []);
+  let inspectorRoute = selectedObjectKey ? inspectorRoutes.get(selectedObjectKey) || { page: 'object' } : { page: 'object' };
   let hoveredComponentId;
   let selectionGpu;
   const modelRuntime = scene.manifest.models.map((entry) => createModelRuntime(entry));
@@ -565,6 +752,37 @@ function createViewer(
     vscode.postMessage({ type: 'loadAnimation', assetKey: scene.manifest.assetKey, modelIndex, animationIndex });
   }
 
+  function requestInspection(objectKey) {
+    if (!objectKey || !scene.manifest.assetKey || session.inspectionAssets.has(objectKey)
+        || session.requestedInspections.has(objectKey)) return;
+    session.inspectionErrors.delete(objectKey);
+    session.requestedInspections.add(objectKey);
+    vscode.postMessage({
+      type: 'inspectAreaObject',
+      assetKey: scene.manifest.assetKey,
+      objectKey,
+    });
+  }
+
+  function applyInspection(assetKey, objectKey, inspection) {
+    if (assetKey !== scene.manifest.assetKey) return;
+    if (inspection?.schema !== 'nwnrs.area-object-inspection' || inspection.key !== objectKey) {
+      applyInspectionError(assetKey, objectKey, 'The native service returned an invalid authored-data payload.');
+      return;
+    }
+    session.requestedInspections.delete(objectKey);
+    session.inspectionErrors.delete(objectKey);
+    session.inspectionAssets.set(objectKey, inspection);
+    if (selectedObjectKey === objectKey) refreshInspector(true);
+  }
+
+  function applyInspectionError(assetKey, objectKey, message) {
+    if (assetKey !== scene.manifest.assetKey) return;
+    session.requestedInspections.delete(objectKey);
+    session.inspectionErrors.set(objectKey, String(message || 'Unknown inspection error'));
+    if (selectedObjectKey === objectKey) refreshInspector(true);
+  }
+
   function applyTexture(asset) {
     if (asset.manifest.schema !== 'nwnrs.scene.texture') throw new Error(`Unexpected texture asset schema ${asset.manifest.schema}`);
     const index = asset.manifest.textureIndex;
@@ -595,6 +813,10 @@ function createViewer(
   const resizeObserver = new ResizeObserver(() => draw());
   resizeObserver.observe(canvas);
   const persistState = (animationSelection) => {
+    if (elements.inspectorContent) {
+      const key = inspectorViewKey(); const value = elements.inspectorContent.scrollTop;
+      inspectorScrollPositions.delete(key); inspectorScrollPositions.set(key, value);
+    }
     const previous = vscode.getState?.() || {};
     vscode.setState?.({ ...previous, viewer: {
       scene: stateKey,
@@ -602,6 +824,17 @@ function createViewer(
       animationSelection: animationSelection === undefined ? previous.viewer?.animationSelection : animationSelection,
       selectedObjectKey: selectedObjectKey || null,
       selectedComponentId: Number.isInteger(selectedComponentId) ? selectedComponentId : null,
+      inspector: {
+        width: inspectorWidth,
+        collapsed: inspectorCollapsed,
+        scope: inspectorScope,
+        query: inspectorQuery,
+        technicalNames: inspectorTechnicalNames,
+        routes: boundedStateEntries(inspectorRoutes),
+        scrollPositions: boundedStateEntries(inspectorScrollPositions),
+        openSections: boundedStateEntries(new Map([...inspectorOpenSections].map(([key, value]) => [key, [...value]]))),
+        touchedSections: [...inspectorTouchedSections].slice(-32),
+      },
     } });
   };
   const cameraControls = bindViewportControls(
@@ -993,18 +1226,185 @@ function createViewer(
     };
   }
 
-  function refreshSelectedDataPanel() {
-    updateSelectedDataPanel(
-      elements,
-      scene,
-      selectedObjectKey,
-      selectedComponentId,
-      animationInSelectedData ? animations : undefined,
-      selectedAnimationIndex,
-    );
+  let inspectorSearchTimer;
+
+  function inspectorViewKey() {
+    const routeKey = inspectorScope === 'selection' ? JSON.stringify(inspectorRoute) : 'root';
+    return `${inspectorScope}:${selectedObjectKey || 'none'}:${routeKey}`;
+  }
+
+  function inspectorSectionStateKey() {
+    return `${inspectorScope}:${selectedObjectKey || 'none'}:${inspectorRoute.page}`;
+  }
+
+  function rememberInspectorScroll() {
+    if (elements.inspectorContent) {
+      const key = inspectorViewKey(); const value = elements.inspectorContent.scrollTop;
+      inspectorScrollPositions.delete(key); inspectorScrollPositions.set(key, value);
+    }
+  }
+
+  function setInspectorRoute(route) {
+    rememberInspectorScroll();
+    inspectorRoute = route || { page: 'object' };
+    if (selectedObjectKey) { inspectorRoutes.delete(selectedObjectKey); inspectorRoutes.set(selectedObjectKey, inspectorRoute); }
+    refreshInspector(false);
+    persistState(undefined);
+  }
+
+  function currentInspectionState() {
+    const inspection = session.inspectionAssets.get(selectedObjectKey);
+    const inspectionError = session.inspectionErrors.get(selectedObjectKey);
+    return inspection
+      ? { status: 'ready', data: inspection }
+      : inspectionError ? { status: 'error', message: inspectionError }
+        : selectedObjectKey ? { status: 'loading' } : undefined;
+  }
+
+  function refreshInspector(preserveScroll = true) {
+    if (!elements.inspectorContent) return;
+    const previousScroll = preserveScroll ? elements.inspectorContent.scrollTop : inspectorScrollPositions.get(inspectorViewKey()) || 0;
+    const object = authoredObjects.get(selectedObjectKey);
+    const inspectionState = currentInspectionState();
+    const inspection = inspectionState?.status === 'ready' ? inspectionState.data : undefined;
+    const selectionOption = elements.inspectorScope?.querySelector('option[value="selection"]');
+    if (selectionOption) selectionOption.disabled = !object;
+    if (!object && inspectorScope === 'selection') inspectorScope = 'scene';
+    elements.inspectorScope.value = inspectorScope;
+    elements.inspectorSearch.value = inspectorQuery;
+    elements.inspectorTechnical.setAttribute('aria-pressed', String(inspectorTechnicalNames));
+    elements.workbench.dataset.inspectorCollapsed = String(inspectorCollapsed);
+    elements.workbench.style.setProperty('--viewer-inspector-width', `${inspectorWidth}px`);
+
+    if (inspectorScope === 'selection' && object) {
+      const pageTitle = inspection ? inspectorRouteTitle(inspection, inspectorRoute) : 'Authored Data';
+      const nested = inspectorRoute.page !== 'object';
+      const blueprint = blueprintResourceForObject(object);
+      elements.inspectorContext.innerHTML = `${nested ? `<div class="viewer-inspector-breadcrumb"><button class="secondary inspector-back" title="Back" aria-label="Back">‹</button><span>${escapeHtml(object.label)} › ${escapeHtml(pageTitle)}</span></div>` : ''}<div class="viewer-inspector-object"><div><strong>${escapeHtml(nested ? pageTitle : object.label)}</strong><small>${escapeHtml(object.kind)} · ${escapeHtml(object.key)}</small>${!nested && blueprint ? `<button class="inspection-value-link inspection-resource-open" data-resource="${escapeAttribute(blueprint)}">${escapeHtml(blueprint)}</button>` : ''}</div><div class="viewer-inspector-object-actions">${!nested ? `<button class="secondary inspector-frame-object" title="Frame selected object">Frame</button>${animationInSelectedData ? animationControl(animations, selectedAnimationIndex) : ''}` : ''}</div></div>`;
+      const componentCount = [...componentInstances.values()].filter((entry) => entry.objectKey === selectedObjectKey).length;
+      const sectionKey = inspectorSectionStateKey();
+      const openSections = inspectorOpenSections.get(sectionKey) || new Set();
+      elements.inspectorContent.innerHTML = inspectionContent(inspectionState, {
+        route: inspectorRoute,
+        query: inspectorQuery,
+        technicalNames: inspectorTechnicalNames,
+        openSections,
+        useDefaultSections: !inspectorTouchedSections.has(sectionKey),
+        scene,
+        objectKey: selectedObjectKey,
+        selectedComponentId,
+        componentCount,
+      });
+    } else if (inspectorScope === 'dependencies') {
+      elements.inspectorContext.innerHTML = `<div class="viewer-inspector-object"><div><strong>Dependencies</strong><small>${scene.manifest.dependencies.nodes.length} resources · resolution order preserved</small></div></div>`;
+      elements.inspectorContent.innerHTML = dependenciesInspectorContent(scene, inspectorQuery);
+    } else {
+      const sectionKey = inspectorSectionStateKey();
+      elements.inspectorContext.innerHTML = `<div class="viewer-inspector-object"><div><strong>${escapeHtml(scene.manifest.name || 'Scene')}</strong><small>${escapeHtml(scene.manifest.source)} · ${scene.manifest.models.length} models · ${scene.manifest.textures.length} textures</small></div></div>`;
+      elements.inspectorContent.innerHTML = sceneInspectorContent(scene, inspectorQuery, inspectorOpenSections.get(sectionKey) || new Set(), !inspectorTouchedSections.has(sectionKey));
+    }
+
+    bindInspectorInteractions();
     bindSelectedComponentInteractions();
     if (animationInSelectedData) bindAnimationControl();
+    configureInspectorJump();
+    requestAnimationFrame(() => { if (!disposed && elements.inspectorContent) elements.inspectorContent.scrollTop = previousScroll; });
+    if (object) requestInspection(selectedObjectKey);
   }
+
+  function configureInspectorJump() {
+    const sections = [...elements.inspectorContent.querySelectorAll('.inspector-section')];
+    elements.inspectorJump.hidden = sections.length < 2;
+    elements.inspectorJump.innerHTML = `<option value="">Jump to section…</option>${sections.map((section) => `<option value="${escapeAttribute(section.dataset.sectionId)}">${escapeHtml(section.querySelector('summary span')?.textContent || section.dataset.sectionId)}</option>`).join('')}`;
+    elements.inspectorJump.value = '';
+  }
+
+  function bindInspectorInteractions() {
+    document.querySelectorAll('.inspection-resource-open:not(:disabled), .dependency:not(:disabled)').forEach((button) => {
+      button.onclick = (event) => { event.stopPropagation(); vscode.postMessage({ type: 'openDependency', resource: button.dataset.resource }); };
+    });
+    document.querySelectorAll('[data-inspector-route]').forEach((button) => {
+      button.onclick = () => {
+        try { setInspectorRoute(JSON.parse(button.dataset.inspectorRoute)); } catch { /* invalid routes are inert */ }
+      };
+    });
+    document.querySelector('.inspector-back')?.addEventListener('click', () => setInspectorRoute(parentInspectorRoute(inspectorRoute)));
+    document.querySelector('.inspector-frame-object')?.addEventListener('click', () => {
+      const selectedBounds = boundsCatalog.objects.get(selectedObjectKey);
+      if (selectedBounds) { frameBounds(camera, selectedBounds); draw(); persistState(undefined); }
+    });
+    const sectionKey = inspectorSectionStateKey();
+    document.querySelectorAll('.inspector-section').forEach((details) => {
+      details.ontoggle = () => {
+        const open = inspectorOpenSections.get(sectionKey) || new Set();
+        if (details.open) open.add(details.dataset.sectionId); else open.delete(details.dataset.sectionId);
+        inspectorOpenSections.set(sectionKey, open); inspectorTouchedSections.add(sectionKey); persistState(undefined);
+      };
+    });
+  }
+
+  function bindInspectorChrome() {
+    if (!elements.inspectorScope || !elements.inspectorSearch || !elements.inspectorContent) return;
+    elements.inspectorScope.onchange = () => {
+      rememberInspectorScroll();
+      inspectorScope = elements.inspectorScope.value;
+      if (inspectorScope === 'selection' && !selectedObjectKey) inspectorScope = 'scene';
+      refreshInspector(false); persistState(undefined);
+    };
+    elements.inspectorSearch.oninput = () => {
+      inspectorQuery = elements.inspectorSearch.value;
+      clearTimeout(inspectorSearchTimer);
+      inspectorSearchTimer = setTimeout(() => { refreshInspector(false); persistState(undefined); }, 100);
+    };
+    elements.inspectorJump.onchange = () => {
+      const section = [...elements.inspectorContent.querySelectorAll('[data-section-id]')]
+        .find((entry) => entry.dataset.sectionId === elements.inspectorJump.value);
+      if (section) { section.open = true; section.scrollIntoView({ block: 'start', behavior: 'smooth' }); }
+      elements.inspectorJump.value = '';
+    };
+    elements.inspectorTechnical.onclick = () => {
+      inspectorTechnicalNames = !inspectorTechnicalNames;
+      refreshInspector(true); persistState(undefined);
+    };
+    elements.inspectorCollapse.onclick = () => {
+      inspectorCollapsed = true; elements.workbench.dataset.inspectorCollapsed = 'true'; persistState(undefined); draw();
+    };
+    elements.inspectorReopen.onclick = () => {
+      inspectorCollapsed = false; elements.workbench.dataset.inspectorCollapsed = 'false'; persistState(undefined); draw();
+    };
+    let resizeStart;
+    elements.inspectorSash.onpointerdown = (event) => {
+      resizeStart = { x: event.clientX, width: inspectorWidth };
+      elements.inspectorSash.setPointerCapture?.(event.pointerId);
+      elements.workbench.classList.add('resizing-inspector');
+      event.preventDefault();
+    };
+    elements.inspectorSash.onpointermove = (event) => {
+      if (!resizeStart) return;
+      const maximum = Math.max(340, Math.min(720, elements.workbench.clientWidth - 320));
+      inspectorWidth = Math.max(340, Math.min(maximum, resizeStart.width + resizeStart.x - event.clientX));
+      elements.workbench.style.setProperty('--viewer-inspector-width', `${inspectorWidth}px`); elements.inspectorSash.setAttribute('aria-valuenow', String(Math.round(inspectorWidth))); draw();
+    };
+    const finishResize = () => {
+      if (!resizeStart) return;
+      resizeStart = undefined; elements.workbench.classList.remove('resizing-inspector'); persistState(undefined); draw();
+    };
+    elements.inspectorSash.onpointerup = finishResize;
+    elements.inspectorSash.onpointercancel = finishResize;
+    elements.inspectorSash.onkeydown = (event) => {
+      if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+      inspectorWidth = Math.max(340, Math.min(720, inspectorWidth + (event.key === 'ArrowLeft' ? 16 : -16)));
+      elements.workbench.style.setProperty('--viewer-inspector-width', `${inspectorWidth}px`); elements.inspectorSash.setAttribute('aria-valuenow', String(Math.round(inspectorWidth))); persistState(undefined); draw(); event.preventDefault();
+    };
+  }
+
+  const inspectorShortcut = (event) => {
+    const tagName = event.target?.tagName?.toLowerCase();
+    if (event.key === '/' && !event.metaKey && !event.ctrlKey && !event.altKey && !['input', 'textarea', 'select'].includes(tagName)) {
+      inspectorCollapsed = false; elements.workbench.dataset.inspectorCollapsed = 'false'; elements.inspectorSearch.focus(); event.preventDefault();
+    }
+  };
+  if (elements.inspectorSearch && elements.workbench) window.addEventListener('keydown', inspectorShortcut);
 
   function updateSelectedComponentClasses() {
     document.querySelectorAll('.selected-component').forEach((row) => {
@@ -1025,10 +1425,15 @@ function createViewer(
   }
 
   function selectObject(objectKey, frame = true, notify = false) {
+    rememberInspectorScroll();
     const nextKey = authoredObjects.has(objectKey) ? objectKey : undefined;
     selectedObjectKey = nextKey;
     selectedComponentId = undefined; hoveredComponentId = undefined;
-    refreshSelectionGpu(); refreshSelectedDataPanel();
+    if (selectedObjectKey) {
+      inspectorScope = 'selection';
+      inspectorRoute = inspectorRoutes.get(selectedObjectKey) || { page: 'object' };
+    } else if (inspectorScope === 'selection') inspectorScope = 'scene';
+    refreshSelectionGpu(); refreshInspector(false);
     const selectedBounds = boundsCatalog.objects.get(selectedObjectKey);
     if (frame && selectedBounds) frameBounds(camera, selectedBounds);
     persistState(undefined);
@@ -1264,7 +1669,8 @@ function createViewer(
     clearTimeout(displayedEventTimer);
     displayedEventTimer = setTimeout(() => { if (!disposed && elements.animationEvent) elements.animationEvent.textContent = ''; }, 1200);
   }
-  refreshSelectedDataPanel();
+  bindInspectorChrome();
+  refreshInspector(false);
   if (!animationInSelectedData) bindAnimationControl();
   if (selectedAnimationIndex >= 0) {
     const initialAnimation = animations[selectedAnimationIndex];
@@ -1284,8 +1690,10 @@ function createViewer(
     setAnimation,
     applyAnimation,
     applyTexture,
+    applyInspection,
+    applyInspectionError,
     selectObject,
-    dispose() { disposed = true; clearTimeout(displayedEventTimer); cancelAnimationFrame(animationFrame); cameraControls.dispose(); resizeObserver.disconnect(); canvas.removeEventListener('webglcontextlost', contextLost); canvas.removeEventListener('webglcontextrestored', contextRestored); for (const gpu of primitiveCache.values()) { gl.deleteBuffer(gpu.buffer); gl.deleteVertexArray(gpu.vao); gl.deleteTexture(gpu.boneTexture); } for (const runtime of modelRuntime) gl.deleteBuffer(runtime.chunkBatch.buffer); for (const entry of instanceRuntime) { if (entry.overlay) { gl.deleteBuffer(entry.overlay.buffer); gl.deleteVertexArray(entry.overlay.vao); } } destroyOverlayGpu(gl, selectionGpu); gl.deleteBuffer(spriteGpu.cornerBuffer); gl.deleteBuffer(spriteGpu.instanceBuffer); gl.deleteVertexArray(spriteGpu.vao); gl.deleteBuffer(ribbonGpu.buffer); gl.deleteVertexArray(ribbonGpu.vao); gpuTextures.forEach((texture) => gl.deleteTexture(texture)); gl.deleteTexture(pointLightTexture); gl.deleteProgram(program); gl.deleteProgram(lineProgram); gl.deleteProgram(spriteProgram); gl.deleteProgram(ribbonProgram); },
+    dispose() { disposed = true; clearTimeout(displayedEventTimer); clearTimeout(inspectorSearchTimer); window.removeEventListener?.('keydown', inspectorShortcut); cancelAnimationFrame(animationFrame); cameraControls.dispose(); resizeObserver.disconnect(); canvas.removeEventListener('webglcontextlost', contextLost); canvas.removeEventListener('webglcontextrestored', contextRestored); for (const gpu of primitiveCache.values()) { gl.deleteBuffer(gpu.buffer); gl.deleteVertexArray(gpu.vao); gl.deleteTexture(gpu.boneTexture); } for (const runtime of modelRuntime) gl.deleteBuffer(runtime.chunkBatch.buffer); for (const entry of instanceRuntime) { if (entry.overlay) { gl.deleteBuffer(entry.overlay.buffer); gl.deleteVertexArray(entry.overlay.vao); } } destroyOverlayGpu(gl, selectionGpu); gl.deleteBuffer(spriteGpu.cornerBuffer); gl.deleteBuffer(spriteGpu.instanceBuffer); gl.deleteVertexArray(spriteGpu.vao); gl.deleteBuffer(ribbonGpu.buffer); gl.deleteVertexArray(ribbonGpu.vao); gpuTextures.forEach((texture) => gl.deleteTexture(texture)); gl.deleteTexture(pointLightTexture); gl.deleteProgram(program); gl.deleteProgram(lineProgram); gl.deleteProgram(spriteProgram); gl.deleteProgram(ribbonProgram); },
   };
 }
 

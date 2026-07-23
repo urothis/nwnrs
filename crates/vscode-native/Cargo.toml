@@ -15,7 +15,6 @@ napi-derive = "3"
 nwnrs = { path = "../nwnrs", default-features = false, features = ["tooling"] }
 nwnrs-nwscript = { path = "../nwscript" }
 nwnrs-nwpkg = { path = "../nwpkg" }
-nwnrs-renderer = { path = "../renderer" }
 nwnrs-types = { path = "../types" }
 base64.workspace = true
 serde.workspace = true

@@ -10,11 +10,10 @@ use nwnrs_types::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    DependencyGraph, ModelScene, RenderDiagnostic, RenderEnvironment, RenderInstance,
-    RenderMaterialAssets, RenderModelAssets, RenderModule, RenderNodeTexture, RenderScene,
-    RenderShaderSource, RenderTexture, RenderTextureCompression, RenderTextureKind, RendererError,
-    RendererResult, SceneSource,
+use crate::scene::{
+    DependencyGraph, SceneDiagnostic, SceneDocument, SceneEnvironment, SceneError, SceneInstance,
+    SceneMaterialAssets, SceneModel, SceneModelAssets, SceneModule, SceneNodeTexture, SceneResult,
+    SceneShaderSource, SceneSource, SceneTexture, SceneTextureCompression, SceneTextureKind,
 };
 
 const PACKET_MAGIC: &[u8; 8] = b"NWNRS3D\0";
@@ -69,7 +68,7 @@ pub struct PacketUvSet {
     pub coordinates: BufferView,
 }
 
-/// One renderer-ready primitive and its source-preserving side streams.
+/// One frontend-ready primitive and its source-preserving side streams.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PacketPrimitive {
@@ -111,7 +110,7 @@ pub struct PacketPrimitive {
     pub material:              Option<usize>,
 }
 
-/// One renderer-ready mesh.
+/// One frontend-ready mesh.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PacketMesh {
@@ -454,9 +453,9 @@ pub struct PacketModel {
     /// Materials.
     pub materials:             Vec<PacketMaterial>,
     /// Effective MTR/TXI/texture resolution aligned with `materials`.
-    pub resolved_materials:    Vec<RenderMaterialAssets>,
+    pub resolved_materials:    Vec<SceneMaterialAssets>,
     /// Resolved emitter and lens-flare textures.
-    pub node_textures:         Vec<RenderNodeTexture>,
+    pub node_textures:         Vec<SceneNodeTexture>,
     /// Animation catalog.
     pub animations:            Vec<PacketAnimation>,
     /// Hidden geometry node names.
@@ -474,13 +473,13 @@ pub struct PacketTexture {
     /// Container provenance.
     pub origin:      String,
     /// Original texture storage kind.
-    pub kind:        RenderTextureKind,
+    pub kind:        SceneTextureKind,
     /// Pixel width.
     pub width:       u32,
     /// Pixel height.
     pub height:      u32,
     /// Authored GPU compression, when available.
-    pub compression: Option<RenderTextureCompression>,
+    pub compression: Option<SceneTextureCompression>,
     /// Number of authored mip levels.
     pub mip_count:   usize,
     /// Packed top-left-origin RGBA8 pixels.
@@ -501,25 +500,25 @@ pub struct ScenePacketManifest {
     /// Source category.
     pub source:       SceneSource,
     /// Viewer environment.
-    pub environment:  RenderEnvironment,
+    pub environment:  SceneEnvironment,
     /// Module area catalog for IFO-backed scenes.
-    pub module:       Option<RenderModule>,
+    pub module:       Option<SceneModule>,
     /// Scene instances.
-    pub instances:    Vec<RenderInstance>,
+    pub instances:    Vec<SceneInstance>,
     /// Logical authored GIT objects for area navigation and selection.
-    pub area_objects: Vec<crate::RenderAreaObject>,
+    pub area_objects: Vec<crate::scene::SceneAreaObject>,
     /// Packed model assets.
     pub models:       Vec<PacketModel>,
-    /// Packed-model index for each top-level [`RenderScene`] model.
+    /// Packed-model index for each top-level [`SceneDocument`] model.
     pub root_models:  Vec<usize>,
     /// Decoded textures referenced by resolved model materials.
     pub textures:     Vec<PacketTexture>,
     /// Resolved custom shader sources.
-    pub shaders:      Vec<RenderShaderSource>,
+    pub shaders:      Vec<SceneShaderSource>,
     /// Dependency graph.
     pub dependencies: DependencyGraph,
     /// Diagnostics.
-    pub diagnostics:  Vec<RenderDiagnostic>,
+    pub diagnostics:  Vec<SceneDiagnostic>,
 }
 
 /// A compact scene manifest plus its packed numeric payload.
@@ -532,29 +531,29 @@ pub struct ScenePacket {
 }
 
 impl ScenePacket {
-    /// Builds a packed scene from the shared renderer-neutral document.
+    /// Builds a packed scene from the shared frontend-neutral document.
     ///
     /// # Errors
     ///
-    /// Returns [`RendererError`] when a stream cannot be represented.
-    pub fn from_scene(scene: &RenderScene) -> RendererResult<Self> {
+    /// Returns [`SceneError`] when a stream cannot be represented.
+    pub fn from_scene(scene: &SceneDocument) -> SceneResult<Self> {
         Self::from_scene_with_payloads(scene, true, true)
     }
 
     /// Builds the initial scene catalog without animation tracks or pixels.
     /// Geometry remains immediately renderable while large optional assets are
     /// fetched independently by the frontend when they become visible.
-    pub fn catalog_from_scene(scene: &RenderScene) -> RendererResult<Self> {
+    pub fn catalog_from_scene(scene: &SceneDocument) -> SceneResult<Self> {
         Self::from_scene_with_payloads(scene, false, false)
     }
 
     fn from_scene_with_payloads(
-        scene: &RenderScene,
+        scene: &SceneDocument,
         include_animation_tracks: bool,
         include_texture_pixels: bool,
-    ) -> RendererResult<Self> {
+    ) -> SceneResult<Self> {
         if scene.models.len() != scene.model_assets.len() {
-            return Err(RendererError::scene(format!(
+            return Err(SceneError::scene(format!(
                 "model asset tree count {} does not match model count {}",
                 scene.model_assets.len(),
                 scene.models.len()
@@ -565,13 +564,13 @@ impl ScenePacket {
         let mut root_models = Vec::with_capacity(scene.models.len());
         for (model, assets) in scene.models.iter().zip(&scene.model_assets) {
             let root_model = match model {
-                ModelScene::Composed(composed) => builder.pack_composed(
+                SceneModel::Composed(composed) => builder.pack_composed(
                     composed,
                     assets,
                     &mut models,
                     include_animation_tracks,
                 )?,
-                ModelScene::Auxiliary(auxiliary) => {
+                SceneModel::Auxiliary(auxiliary) => {
                     let index = models.len();
                     models.push(builder.pack_scene(
                         auxiliary,
@@ -613,7 +612,7 @@ impl ScenePacket {
                         .transpose()?,
                 })
             })
-            .collect::<RendererResult<Vec<_>>>()?;
+            .collect::<SceneResult<Vec<_>>>()?;
         Ok(Self {
             manifest: ScenePacketManifest {
                 schema: "nwnrs.scene".into(),
@@ -623,10 +622,9 @@ impl ScenePacket {
                 environment: scene.environment.clone(),
                 module: scene.module.clone(),
                 instances,
-                area_objects: scene
-                    .area
-                    .as_ref()
-                    .map_or_else(Vec::new, |area| crate::area_object_catalog(&area.instances)),
+                area_objects: scene.area.as_ref().map_or_else(Vec::new, |area| {
+                    crate::scene::area_object_catalog(&area.instances)
+                }),
                 models,
                 root_models,
                 textures,
@@ -640,15 +638,15 @@ impl ScenePacket {
 
     /// Packs one animation selected from the flattened packet-model catalog.
     pub fn animation_from_scene(
-        scene: &RenderScene,
+        scene: &SceneDocument,
         model_index: usize,
         animation_index: usize,
-    ) -> RendererResult<SceneAnimationPacket> {
+    ) -> SceneResult<SceneAnimationPacket> {
         let model = flattened_model_scene(scene, model_index).ok_or_else(|| {
-            RendererError::invalid(format!("scene model index {model_index} is out of range"))
+            SceneError::invalid(format!("scene model index {model_index} is out of range"))
         })?;
         let animation = model.animations.get(animation_index).ok_or_else(|| {
-            RendererError::invalid(format!(
+            SceneError::invalid(format!(
                 "animation index {animation_index} is out of range for {}",
                 model.name
             ))
@@ -669,12 +667,12 @@ impl ScenePacket {
 
     /// Packs one decoded texture independently from the scene catalog.
     pub fn texture_from_scene(
-        scene: &RenderScene,
+        scene: &SceneDocument,
         texture_index: usize,
         prefer_compressed: bool,
-    ) -> RendererResult<SceneTexturePacket> {
+    ) -> SceneResult<SceneTexturePacket> {
         let texture = scene.textures.get(texture_index).ok_or_else(|| {
-            RendererError::invalid(format!(
+            SceneError::invalid(format!(
                 "scene texture index {texture_index} is out of range"
             ))
         })?;
@@ -694,7 +692,7 @@ impl ScenePacket {
                             data:   builder.push_u8(mip.data.iter().copied(), 1)?,
                         })
                     })
-                    .collect::<RendererResult<Vec<_>>>()?;
+                    .collect::<SceneResult<Vec<_>>>()?;
                 (Some(compressed.compression), levels, None)
             } else {
                 (
@@ -736,8 +734,8 @@ impl ScenePacket {
     ///
     /// # Errors
     ///
-    /// Returns [`RendererError`] when serialization or size conversion fails.
-    pub fn encode(&self) -> RendererResult<Vec<u8>> {
+    /// Returns [`SceneError`] when serialization or size conversion fails.
+    pub fn encode(&self) -> SceneResult<Vec<u8>> {
         encode_packet(&self.manifest, &self.binary)
     }
 
@@ -745,30 +743,30 @@ impl ScenePacket {
     ///
     /// # Errors
     ///
-    /// Returns [`RendererError`] when the packet is truncated or malformed.
-    pub fn decode(bytes: &[u8]) -> RendererResult<Self> {
+    /// Returns [`SceneError`] when the packet is truncated or malformed.
+    pub fn decode(bytes: &[u8]) -> SceneResult<Self> {
         if bytes.get(..PACKET_MAGIC.len()) != Some(PACKET_MAGIC) {
-            return Err(RendererError::invalid("invalid nwnrs scene packet magic"));
+            return Err(SceneError::invalid("invalid nwnrs scene packet magic"));
         }
         let length_start = PACKET_MAGIC.len();
         let length_end = length_start + 4;
         let length_bytes: [u8; 4] = bytes
             .get(length_start..length_end)
             .and_then(|slice| slice.try_into().ok())
-            .ok_or_else(|| RendererError::invalid("truncated scene packet header"))?;
+            .ok_or_else(|| SceneError::invalid("truncated scene packet header"))?;
         let manifest_length = usize::try_from(u32::from_le_bytes(length_bytes))
-            .map_err(|error| RendererError::invalid(format!("scene manifest length: {error}")))?;
+            .map_err(|error| SceneError::invalid(format!("scene manifest length: {error}")))?;
         let manifest_end = length_end
             .checked_add(manifest_length)
-            .ok_or_else(|| RendererError::invalid("scene manifest length overflow"))?;
+            .ok_or_else(|| SceneError::invalid("scene manifest length overflow"))?;
         let manifest_bytes = bytes
             .get(length_end..manifest_end)
-            .ok_or_else(|| RendererError::invalid("truncated scene packet manifest"))?;
+            .ok_or_else(|| SceneError::invalid("truncated scene packet manifest"))?;
         let manifest = serde_json::from_slice(manifest_bytes)
-            .map_err(|error| RendererError::invalid(format!("decode scene manifest: {error}")))?;
+            .map_err(|error| SceneError::invalid(format!("decode scene manifest: {error}")))?;
         let binary = bytes
             .get(manifest_end..)
-            .ok_or_else(|| RendererError::invalid("truncated scene packet payload"))?
+            .ok_or_else(|| SceneError::invalid("truncated scene packet payload"))?
             .to_vec();
         Ok(Self {
             manifest,
@@ -805,7 +803,7 @@ pub struct SceneAnimationPacket {
 
 impl SceneAnimationPacket {
     /// Encodes the payload with the shared binary packet envelope.
-    pub fn encode(&self) -> RendererResult<Vec<u8>> {
+    pub fn encode(&self) -> SceneResult<Vec<u8>> {
         encode_packet(&self.manifest, &self.binary)
     }
 }
@@ -824,13 +822,13 @@ pub struct SceneTexturePacketManifest {
     /// Resolved resource identity.
     pub resource:      String,
     /// Original resource storage kind.
-    pub kind:          RenderTextureKind,
+    pub kind:          SceneTextureKind,
     /// Pixel width.
     pub width:         u32,
     /// Pixel height.
     pub height:        u32,
     /// GPU compression used by authored mip blocks.
-    pub compression:   Option<RenderTextureCompression>,
+    pub compression:   Option<SceneTextureCompression>,
     /// Authored compressed mip chain.
     pub mip_levels:    Vec<PacketTextureMip>,
     /// Packed RGBA8 fallback pixels.
@@ -860,14 +858,14 @@ pub struct SceneTexturePacket {
 
 impl SceneTexturePacket {
     /// Encodes the payload with the shared binary packet envelope.
-    pub fn encode(&self) -> RendererResult<Vec<u8>> {
+    pub fn encode(&self) -> SceneResult<Vec<u8>> {
         encode_packet(&self.manifest, &self.binary)
     }
 }
 
-fn encode_packet(manifest: &impl Serialize, binary: &[u8]) -> RendererResult<Vec<u8>> {
+fn encode_packet(manifest: &impl Serialize, binary: &[u8]) -> SceneResult<Vec<u8>> {
     let mut manifest = serde_json::to_vec(manifest)
-        .map_err(|error| RendererError::scene(format!("encode packet manifest: {error}")))?;
+        .map_err(|error| SceneError::scene(format!("encode packet manifest: {error}")))?;
     // BufferView offsets are relative to the binary segment and every typed
     // view is four-byte aligned within that segment. Keep the segment itself
     // aligned in the complete packet as well so JavaScript can construct
@@ -877,13 +875,13 @@ fn encode_packet(manifest: &impl Serialize, binary: &[u8]) -> RendererResult<Vec
         manifest.push(b' ');
     }
     let manifest_len = u32::try_from(manifest.len())
-        .map_err(|error| RendererError::scene(format!("packet manifest is too large: {error}")))?;
+        .map_err(|error| SceneError::scene(format!("packet manifest is too large: {error}")))?;
     let capacity = PACKET_MAGIC
         .len()
         .checked_add(4)
         .and_then(|length| length.checked_add(manifest.len()))
         .and_then(|length| length.checked_add(binary.len()))
-        .ok_or_else(|| RendererError::scene("packet length overflow"))?;
+        .ok_or_else(|| SceneError::scene("packet length overflow"))?;
     let mut packet = Vec::with_capacity(capacity);
     packet.extend_from_slice(PACKET_MAGIC);
     packet.extend_from_slice(&manifest_len.to_le_bytes());
@@ -901,12 +899,12 @@ impl PacketBuilder {
     fn pack_composed(
         &mut self,
         composed: &NwnComposedScene,
-        assets: &RenderModelAssets,
+        assets: &SceneModelAssets,
         target: &mut Vec<PacketModel>,
         include_animation_tracks: bool,
-    ) -> RendererResult<usize> {
+    ) -> SceneResult<usize> {
         if composed.attachments.len() != assets.attachments.len() {
-            return Err(RendererError::scene(format!(
+            return Err(SceneError::scene(format!(
                 "attachment asset count for {} does not match its composed scene",
                 composed.model_name
             )));
@@ -935,7 +933,7 @@ impl PacketBuilder {
         }
         target
             .get_mut(model_index)
-            .ok_or_else(|| RendererError::scene("packed model index disappeared"))?
+            .ok_or_else(|| SceneError::scene("packed model index disappeared"))?
             .attachments = attachments;
         Ok(model_index)
     }
@@ -943,10 +941,10 @@ impl PacketBuilder {
     fn pack_attachment(
         &mut self,
         attachment: &NwnSceneAttachment,
-        assets: &RenderModelAssets,
+        assets: &SceneModelAssets,
         target: &mut Vec<PacketModel>,
         include_animation_tracks: bool,
-    ) -> RendererResult<usize> {
+    ) -> SceneResult<usize> {
         self.pack_composed(&attachment.scene, assets, target, include_animation_tracks)
     }
 
@@ -954,10 +952,10 @@ impl PacketBuilder {
         &mut self,
         scene: &NwnScene,
         hidden_geometry_nodes: Vec<String>,
-        resolved_materials: Vec<RenderMaterialAssets>,
-        node_textures: Vec<RenderNodeTexture>,
+        resolved_materials: Vec<SceneMaterialAssets>,
+        node_textures: Vec<SceneNodeTexture>,
         include_animation_tracks: bool,
-    ) -> RendererResult<PacketModel> {
+    ) -> SceneResult<PacketModel> {
         Ok(PacketModel {
             name: scene.name.clone(),
             supermodel: scene.supermodel.clone(),
@@ -979,10 +977,10 @@ impl PacketBuilder {
                             .primitives
                             .iter()
                             .map(|primitive| self.pack_primitive(primitive))
-                            .collect::<RendererResult<Vec<_>>>()?,
+                            .collect::<SceneResult<Vec<_>>>()?,
                     })
                 })
-                .collect::<RendererResult<Vec<_>>>()?,
+                .collect::<SceneResult<Vec<_>>>()?,
             materials: scene.materials.iter().map(pack_material).collect(),
             resolved_materials,
             node_textures,
@@ -1012,7 +1010,7 @@ impl PacketBuilder {
                         })
                     }
                 })
-                .collect::<RendererResult<Vec<_>>>()?,
+                .collect::<SceneResult<Vec<_>>>()?,
             hidden_geometry_nodes,
             attachments: Vec::new(),
         })
@@ -1021,7 +1019,7 @@ impl PacketBuilder {
     fn pack_animation(
         &mut self,
         animation: &nwnrs_types::mdl::NwnAnimation,
-    ) -> RendererResult<PacketAnimation> {
+    ) -> SceneResult<PacketAnimation> {
         Ok(PacketAnimation {
             name:            animation.name.clone(),
             length:          animation.length,
@@ -1041,14 +1039,14 @@ impl PacketBuilder {
                 .node_tracks
                 .iter()
                 .map(|track| self.pack_animation_track(track))
-                .collect::<RendererResult<Vec<_>>>()?,
+                .collect::<SceneResult<Vec<_>>>()?,
         })
     }
 
     fn pack_animation_track(
         &mut self,
         track: &NwnNodeAnimationTrack,
-    ) -> RendererResult<PacketNodeAnimationTrack> {
+    ) -> SceneResult<PacketNodeAnimationTrack> {
         Ok(PacketNodeAnimationTrack {
             target_name:             track.target_name.clone(),
             target_node:             track.target_node,
@@ -1069,7 +1067,7 @@ impl PacketBuilder {
                 .emitter_controllers
                 .iter()
                 .map(|controller| self.pack_emitter_track(controller))
-                .collect::<RendererResult<Vec<_>>>()?,
+                .collect::<SceneResult<Vec<_>>>()?,
             animmesh:                track
                 .animmesh
                 .as_ref()
@@ -1080,21 +1078,21 @@ impl PacketBuilder {
         })
     }
 
-    fn pack_scalar_keys(&mut self, keys: &[ScalarKey]) -> RendererResult<PacketKeyTrack> {
+    fn pack_scalar_keys(&mut self, keys: &[ScalarKey]) -> SceneResult<PacketKeyTrack> {
         Ok(PacketKeyTrack {
             times:  self.push_f32(keys.iter().map(|key| key.time))?,
             values: self.push_f32(keys.iter().map(|key| key.value))?,
         })
     }
 
-    fn pack_vec3_keys(&mut self, keys: &[Vec3Key]) -> RendererResult<PacketKeyTrack> {
+    fn pack_vec3_keys(&mut self, keys: &[Vec3Key]) -> SceneResult<PacketKeyTrack> {
         Ok(PacketKeyTrack {
             times:  self.push_f32(keys.iter().map(|key| key.time))?,
             values: self.push_f32_rows(keys.iter().map(|key| key.value.as_slice()), 3)?,
         })
     }
 
-    fn pack_vec4_keys(&mut self, keys: &[Vec4Key]) -> RendererResult<PacketKeyTrack> {
+    fn pack_vec4_keys(&mut self, keys: &[Vec4Key]) -> SceneResult<PacketKeyTrack> {
         Ok(PacketKeyTrack {
             times:  self.push_f32(keys.iter().map(|key| key.time))?,
             values: self.push_f32_rows(keys.iter().map(|key| key.value.as_slice()), 4)?,
@@ -1104,7 +1102,7 @@ impl PacketBuilder {
     fn pack_emitter_track(
         &mut self,
         track: &NwnEmitterControllerTrack,
-    ) -> RendererResult<PacketEmitterTrack> {
+    ) -> SceneResult<PacketEmitterTrack> {
         let rows = track
             .keys
             .iter()
@@ -1121,7 +1119,7 @@ impl PacketBuilder {
     fn pack_animmesh_track(
         &mut self,
         track: &NwnAnimMeshTrack,
-    ) -> RendererResult<PacketAnimMeshTrack> {
+    ) -> SceneResult<PacketAnimMeshTrack> {
         let vertices_per_frame = track
             .vertex_samples
             .first()
@@ -1139,7 +1137,7 @@ impl PacketBuilder {
                 .iter()
                 .any(|sample| sample.values.len() != uvs_per_frame)
         {
-            return Err(RendererError::scene(
+            return Err(SceneError::scene(
                 "animmesh frames have inconsistent sample widths",
             ));
         }
@@ -1166,7 +1164,7 @@ impl PacketBuilder {
         })
     }
 
-    fn pack_primitive(&mut self, primitive: &NwnPrimitive) -> RendererResult<PacketPrimitive> {
+    fn pack_primitive(&mut self, primitive: &NwnPrimitive) -> SceneResult<PacketPrimitive> {
         let positions =
             self.push_f32_rows(primitive.positions.iter().map(|value| value.as_slice()), 3)?;
         let indices = self.push_u32_rows(
@@ -1196,7 +1194,7 @@ impl PacketBuilder {
                         .push_f32_rows(uv.coordinates.iter().map(|value| value.as_slice()), 2)?,
                 })
             })
-            .collect::<RendererResult<Vec<_>>>()?;
+            .collect::<SceneResult<Vec<_>>>()?;
         let normals = (!primitive.normals.is_empty())
             .then(|| self.push_f32_rows(primitive.normals.iter().map(|value| value.as_slice()), 3))
             .transpose()?;
@@ -1217,7 +1215,7 @@ impl PacketBuilder {
                     index
                 } else {
                     let index = u32::try_from(bones.len()).map_err(|error| {
-                        RendererError::scene(format!("skin bone table is too large: {error}"))
+                        SceneError::scene(format!("skin bone table is too large: {error}"))
                     })?;
                     bones.push(influence.bone.clone());
                     bone_lookup.insert(key, index);
@@ -1227,7 +1225,7 @@ impl PacketBuilder {
                 weights.push(influence.weight);
             }
             row_offsets.push(u32::try_from(weights.len()).map_err(|error| {
-                RendererError::scene(format!("skin influence table is too large: {error}"))
+                SceneError::scene(format!("skin influence table is too large: {error}"))
             })?);
         }
 
@@ -1253,14 +1251,14 @@ impl PacketBuilder {
         })
     }
 
-    fn push_ragged_f32(&mut self, rows: &[Vec<f32>]) -> RendererResult<RaggedBuffer> {
+    fn push_ragged_f32(&mut self, rows: &[Vec<f32>]) -> SceneResult<RaggedBuffer> {
         let mut values = Vec::new();
         let mut offsets = Vec::with_capacity(rows.len() + 1);
         offsets.push(0_u32);
         for row in rows {
             values.extend_from_slice(row);
             offsets.push(u32::try_from(values.len()).map_err(|error| {
-                RendererError::scene(format!("ragged numeric stream is too large: {error}"))
+                SceneError::scene(format!("ragged numeric stream is too large: {error}"))
             })?);
         }
         Ok(RaggedBuffer {
@@ -1273,10 +1271,10 @@ impl PacketBuilder {
         &mut self,
         rows: impl Iterator<Item = &'b [f32]>,
         components: usize,
-    ) -> RendererResult<BufferView> {
+    ) -> SceneResult<BufferView> {
         let values = rows.flatten().copied().collect::<Vec<_>>();
         if components == 0 || values.len() % components != 0 {
-            return Err(RendererError::scene("invalid packed f32 row width"));
+            return Err(SceneError::scene("invalid packed f32 row width"));
         }
         self.push_typed(
             values.len() / components,
@@ -1290,10 +1288,10 @@ impl PacketBuilder {
         &mut self,
         rows: impl Iterator<Item = &'b [u32]>,
         components: usize,
-    ) -> RendererResult<BufferView> {
+    ) -> SceneResult<BufferView> {
         let values = rows.flatten().copied().collect::<Vec<_>>();
         if components == 0 || values.len() % components != 0 {
-            return Err(RendererError::scene("invalid packed u32 row width"));
+            return Err(SceneError::scene("invalid packed u32 row width"));
         }
         self.push_typed(
             values.len() / components,
@@ -1303,7 +1301,7 @@ impl PacketBuilder {
         )
     }
 
-    fn push_f32(&mut self, values: impl IntoIterator<Item = f32>) -> RendererResult<BufferView> {
+    fn push_f32(&mut self, values: impl IntoIterator<Item = f32>) -> SceneResult<BufferView> {
         let values = values.into_iter().collect::<Vec<_>>();
         self.push_typed(
             values.len(),
@@ -1313,7 +1311,7 @@ impl PacketBuilder {
         )
     }
 
-    fn push_u32(&mut self, values: impl IntoIterator<Item = u32>) -> RendererResult<BufferView> {
+    fn push_u32(&mut self, values: impl IntoIterator<Item = u32>) -> SceneResult<BufferView> {
         let values = values.into_iter().collect::<Vec<_>>();
         self.push_typed(
             values.len(),
@@ -1323,7 +1321,7 @@ impl PacketBuilder {
         )
     }
 
-    fn push_i32(&mut self, values: impl IntoIterator<Item = i32>) -> RendererResult<BufferView> {
+    fn push_i32(&mut self, values: impl IntoIterator<Item = i32>) -> SceneResult<BufferView> {
         let values = values.into_iter().collect::<Vec<_>>();
         self.push_typed(
             values.len(),
@@ -1337,10 +1335,10 @@ impl PacketBuilder {
         &mut self,
         values: impl IntoIterator<Item = u8>,
         components: usize,
-    ) -> RendererResult<BufferView> {
+    ) -> SceneResult<BufferView> {
         let values = values.into_iter().collect::<Vec<_>>();
         if components == 0 || values.len() % components != 0 {
-            return Err(RendererError::scene("invalid packed u8 row width"));
+            return Err(SceneError::scene("invalid packed u8 row width"));
         }
         self.push_typed(
             values.len() / components,
@@ -1356,7 +1354,7 @@ impl PacketBuilder {
         components_per_element: usize,
         component: BufferComponent,
         bytes: impl IntoIterator<Item = u8>,
-    ) -> RendererResult<BufferView> {
+    ) -> SceneResult<BufferView> {
         while !self.binary.len().is_multiple_of(4) {
             self.binary.push(0);
         }
@@ -1366,7 +1364,7 @@ impl PacketBuilder {
             .binary
             .len()
             .checked_sub(byte_offset)
-            .ok_or_else(|| RendererError::scene("packed buffer length underflow"))?;
+            .ok_or_else(|| SceneError::scene("packed buffer length underflow"))?;
         Ok(BufferView {
             byte_offset,
             byte_length,
@@ -1485,7 +1483,7 @@ fn pack_material(material: &NwnMaterial) -> PacketMaterial {
     }
 }
 
-fn flattened_model_scene(scene: &RenderScene, target: usize) -> Option<&NwnScene> {
+fn flattened_model_scene(scene: &SceneDocument, target: usize) -> Option<&NwnScene> {
     fn visit_composed<'a>(
         composed: &'a NwnComposedScene,
         target: usize,
@@ -1506,12 +1504,12 @@ fn flattened_model_scene(scene: &RenderScene, target: usize) -> Option<&NwnScene
     let mut cursor = 0;
     for model in &scene.models {
         match model {
-            ModelScene::Composed(composed) => {
+            SceneModel::Composed(composed) => {
                 if let Some(scene) = visit_composed(composed, target, &mut cursor) {
                     return Some(scene);
                 }
             }
-            ModelScene::Auxiliary(scene) => {
+            SceneModel::Auxiliary(scene) => {
                 if cursor == target {
                     return Some(scene);
                 }
@@ -1522,16 +1520,17 @@ fn flattened_model_scene(scene: &RenderScene, target: usize) -> Option<&NwnScene
     None
 }
 
-fn decoded_texture_rgba8(texture: &RenderTexture) -> RendererResult<Vec<u8>> {
+fn decoded_texture_rgba8(texture: &SceneTexture) -> SceneResult<Vec<u8>> {
     if !texture.rgba8.is_empty() {
         return Ok(texture.rgba8.clone());
     }
     let compressed = texture.compressed.as_ref().ok_or_else(|| {
-        RendererError::scene(format!("{} has no texture pixel payload", texture.resource))
+        SceneError::scene(format!("{} has no texture pixel payload", texture.resource))
     })?;
-    let mip = compressed.mip_levels.first().ok_or_else(|| {
-        RendererError::scene(format!("{} has no DDS mip levels", texture.resource))
-    })?;
+    let mip = compressed
+        .mip_levels
+        .first()
+        .ok_or_else(|| SceneError::scene(format!("{} has no DDS mip levels", texture.resource)))?;
     DdsMipLevel {
         level:  0,
         width:  mip.width,
@@ -1539,10 +1538,10 @@ fn decoded_texture_rgba8(texture: &RenderTexture) -> RendererResult<Vec<u8>> {
         data:   mip.data.clone(),
     }
     .decode_rgba8(match compressed.compression {
-        RenderTextureCompression::Dxt1 => DdsFormat::Dxt1,
-        RenderTextureCompression::Dxt5 => DdsFormat::Dxt5,
+        SceneTextureCompression::Dxt1 => DdsFormat::Dxt1,
+        SceneTextureCompression::Dxt5 => DdsFormat::Dxt5,
     })
-    .map_err(|error| RendererError::scene(format!("decode {}: {error}", texture.resource)))
+    .map_err(|error| SceneError::scene(format!("decode {}: {error}", texture.resource)))
 }
 
 fn node_kind_name(kind: &NodeKind) -> String {
@@ -1567,9 +1566,9 @@ fn node_kind_name(kind: &NodeKind) -> String {
 mod tests {
     use nwnrs_types::mdl::{ModelResourceKind, parse_scene_resource_auto};
 
-    use crate::{
-        DependencyGraph, ModelScene, RenderEnvironment, RenderInstance, RenderInstanceKind,
-        RenderScene, ScenePacket, SceneSource,
+    use crate::scene::{
+        DependencyGraph, SceneDocument, SceneEnvironment, SceneInstance, SceneInstanceKind,
+        SceneModel, ScenePacket, SceneSource,
     };
 
     #[test]
@@ -1580,11 +1579,11 @@ mod tests {
             b"newmodel triangle\nsetsupermodel triangle null\nbeginmodelgeom triangle\nnode trimesh triangle\n parent null\n verts 3\n  0 0 0\n  1 0 0\n  0 1 0\n faces 1\n  0 1 2 0 0 1 2 0\nendnode\nendmodelgeom triangle\nnewanim pulse triangle\n length 1\n node dummy triangle\n  parent null\n  positionkey 2\n   0 0 0 0\n   1 1 2 3\n  alphakey 2\n   0 1\n   1 0.5\n endnode\ndoneanim pulse triangle\ndonemodel triangle\n",
         )
         .unwrap_or_else(|error| panic!("parse model: {error}"));
-        let scene = RenderScene {
+        let scene = SceneDocument {
             name:         "triangle".into(),
             source:       SceneSource::Model,
-            models:       vec![ModelScene::Auxiliary(model)],
-            model_assets: vec![crate::RenderModelAssets {
+            models:       vec![SceneModel::Auxiliary(model)],
+            model_assets: vec![crate::scene::SceneModelAssets {
                 model_name:    "triangle".into(),
                 materials:     Vec::new(),
                 node_textures: Vec::new(),
@@ -1592,11 +1591,11 @@ mod tests {
             }],
             textures:     Vec::new(),
             shaders:      Vec::new(),
-            instances:    vec![RenderInstance {
+            instances:    vec![SceneInstance {
                 id:                    0,
                 object_key:            None,
                 label:                 "triangle".into(),
-                kind:                  RenderInstanceKind::Model,
+                kind:                  SceneInstanceKind::Model,
                 model:                 Some(0),
                 resource:              Some("triangle.mdl".into()),
                 position:              [0.0; 3],
@@ -1607,7 +1606,7 @@ mod tests {
             }],
             area:         None,
             module:       None,
-            environment:  RenderEnvironment::Studio,
+            environment:  SceneEnvironment::Studio,
             dependencies: DependencyGraph::default(),
             diagnostics:  Vec::new(),
         };
@@ -1677,21 +1676,21 @@ mod tests {
     #[test]
     fn compressed_texture_packet_preserves_authored_bottom_first_rows() {
         let authored = vec![0, 1, 2, 3, 9, 8, 7, 6];
-        let scene = RenderScene {
+        let scene = SceneDocument {
             name:         "texture".into(),
             source:       SceneSource::Model,
             models:       Vec::new(),
             model_assets: Vec::new(),
-            textures:     vec![crate::RenderTexture {
+            textures:     vec![crate::scene::SceneTexture {
                 resource:   "texture.dds".into(),
                 origin:     "test".into(),
-                kind:       crate::RenderTextureKind::Dds,
+                kind:       crate::scene::SceneTextureKind::Dds,
                 width:      4,
                 height:     4,
                 rgba8:      Vec::new(),
-                compressed: Some(crate::RenderCompressedTexture {
-                    compression: crate::RenderTextureCompression::Dxt1,
-                    mip_levels:  vec![crate::RenderTextureMip {
+                compressed: Some(crate::scene::SceneCompressedTexture {
+                    compression: crate::scene::SceneTextureCompression::Dxt1,
+                    mip_levels:  vec![crate::scene::SceneTextureMip {
                         width:  4,
                         height: 4,
                         data:   authored.clone(),
@@ -1702,7 +1701,7 @@ mod tests {
             instances:    Vec::new(),
             area:         None,
             module:       None,
-            environment:  RenderEnvironment::Studio,
+            environment:  SceneEnvironment::Studio,
             dependencies: DependencyGraph::default(),
             diagnostics:  Vec::new(),
         };

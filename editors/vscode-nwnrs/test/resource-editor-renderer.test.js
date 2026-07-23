@@ -14,6 +14,10 @@ const rendererSource = fs.readFileSync(
   path.join(extensionRoot, 'media', 'resource-editor.js'),
   'utf8',
 );
+const rendererStyle = fs.readFileSync(
+  path.join(extensionRoot, 'media', 'resource-editor.css'),
+  'utf8',
+);
 
 function createRendererHarness() {
   const elements = new Map();
@@ -175,6 +179,68 @@ test('viewer animation tracks interpolate and matrix inversion remains stable', 
     [0.2, 0.4, 0.6],
   );
   listeners.get('message')({ data: { type: 'snapshot', snapshot: { kind: 'unknown', path: 'done' } } });
+});
+
+test('authored object inspections use compact searchable rows and lossless drill-down pages', () => {
+  const { sandbox } = createRendererHarness();
+  const inspection = {
+    schema: 'nwnrs.area-object-inspection',
+    key: 'placeable:0',
+    sections: [{
+      id: 'identity',
+      label: 'Identity & Text',
+      defaultOpen: true,
+      fields: [{
+        name: 'Description',
+        label: 'Description',
+        kind: 'cexolocstring',
+        display: '<script>bad()</script>',
+        localized: {
+          strRef: 42,
+          source: 'dialog.tlk',
+          languageId: 0,
+          gender: 'male',
+          entries: [{ id: 0, text: 'Inline <English>' }],
+        },
+        provenance: { layer: 'instance', resource: 'start.git', origin: 'module.mod' },
+        resource: { resource: 'inspect_me.dlg', resolved: true, origin: 'module.mod' },
+      }, {
+        name: 'Opaque',
+        label: 'Opaque',
+        kind: 'void',
+        display: '3 bytes',
+        value64: 'AP8Q',
+        provenance: { layer: 'instance', resource: 'start.git', origin: 'module.mod' },
+      }],
+    }],
+    sources: [{ layer: 'instance', resource: 'start.git', origin: 'module.mod', data: { id: 1, fields: [] } }],
+    references: [{ resource: 'inspect_me.dlg', resolved: true, origin: 'module.mod' }],
+    diagnostics: [],
+  };
+  const shell = sandbox.inspectionContent({ status: 'ready', data: inspection });
+  assert.match(shell, /data-section-id="inspection-identity"/u);
+  assert.match(shell, /&lt;script&gt;bad\(\)&lt;\/script&gt;/u);
+  assert.match(shell, /inspection-property-row inspection-field-row/u);
+  assert.match(shell, /title="instance · start\.git · module\.mod">GIT/u);
+  assert.match(shell, /data-resource="inspect_me\.dlg"/u);
+  assert.doesNotMatch(shell, /AP8Q/u, 'opaque bytes belong to the explicit field drill-down page');
+  assert.doesNotMatch(shell, /Inline &lt;English&gt;/u, 'localized variants belong to field drill-down');
+
+  const descriptionRoute = { page: 'field', root: 'section', rootIndex: 0, trail: [{ kind: 'field', index: 0 }] };
+  const description = sandbox.inspectionContent({ status: 'ready', data: inspection }, { route: descriptionRoute, technicalNames: true });
+  assert.match(description, /GFF name/u);
+  assert.match(description, /Description/u);
+  assert.match(description, /String reference/u);
+  assert.match(description, /dialog\.tlk/u);
+  assert.match(description, /Inline Localized Values/u);
+  assert.match(description, /Inline &lt;English&gt;/u);
+  assert.match(description, /module\.mod/u);
+
+  const opaqueRoute = { page: 'field', root: 'section', rootIndex: 0, trail: [{ kind: 'field', index: 1 }] };
+  assert.match(sandbox.inspectionContent({ status: 'ready', data: inspection }, { route: opaqueRoute }), /AP8Q/u);
+  const filtered = sandbox.inspectionContent({ status: 'ready', data: inspection }, { query: 'opaque' });
+  assert.match(filtered, /Opaque/u);
+  assert.doesNotMatch(filtered, /Inspect Description/u);
 });
 
 test('Aurora emitter curves, extents, and linked ribbons preserve engine semantics', () => {
@@ -649,7 +715,7 @@ test('installed start area completes a full renderer draw with every resolved em
   assert.doesNotThrow(() => viewer.dispose());
 });
 
-test('viewer chrome uses an animation selector and collapsed in-viewport disclosures', () => {
+test('viewer chrome uses a resizable single-context inspector with responsive presentation', () => {
   const { sandbox } = createRendererHarness();
   const scene = {
     manifest: {
@@ -668,19 +734,43 @@ test('viewer chrome uses an animation selector and collapsed in-viewport disclos
   const animations = sandbox.viewerAnimations(scene);
   assert.equal(animations.length, 1);
   assert.equal(animations[0].name, 'idle');
-  assert.match(sandbox.sceneDisclosure(scene), /^<details id="viewer-scene-data" class="viewer-disclosure">/u);
-  assert.match(sandbox.dependenciesDisclosure(scene), /<span>Dependencies<\/span><small>1<\/small>/u);
-  assert.doesNotMatch(sandbox.dependenciesDisclosure(scene), /cat\.tga/u);
-  assert.match(sandbox.dependenciesDisclosureContent(scene), /cat\.tga/u);
-  assert.match(sandbox.sceneDisclosureContent(scene), /<dt>Source<\/dt>/u);
-  assert.doesNotMatch(sandbox.sceneDisclosure(scene), /^<details[^>]+ open/u);
-  assert.doesNotMatch(sandbox.dependenciesDisclosure(scene), /^<details[^>]+ open/u);
-  assert.doesNotMatch(rendererSource, /viewer-modes|viewer-mode|viewer-inspector|viewer-fit|viewer-reload|reloadScene/u);
+  assert.match(sandbox.sceneInspectorContent(scene), /Overview/u);
+  assert.match(sandbox.sceneInspectorContent(scene), /Source/u);
+  assert.match(sandbox.dependenciesInspectorContent(scene), /cat\.tga/u);
+  assert.doesNotMatch(sandbox.dependenciesInspectorContent(scene, 'missing-value'), /cat\.tga/u);
+  assert.doesNotMatch(rendererSource, /viewer-overlay-stack|viewer-disclosure/u);
+  assert.match(rendererSource, /id="viewer-inspector-scope"/u);
+  assert.match(rendererSource, /id="viewer-inspector-sash"/u);
+  assert.match(rendererSource, /id="viewer-inspector-search"/u);
+  assert.match(rendererSource, /data-inspector-collapsed/u);
   assert.match(rendererSource, /id="viewer-animation"/u);
-  assert.match(rendererSource, /viewer-overlay-stack/u);
+  assert.match(rendererStyle, /grid-template-columns: minmax\(320px, 1fr\) 5px var\(--viewer-inspector-width\)/u);
+  assert.match(rendererStyle, /@media \(max-width: 760px\)/u);
+  assert.match(rendererStyle, /position: absolute; z-index: 6/u);
 });
 
-test('Selected Data follows the logical area selection and exposes every scene field', () => {
+test('inspector navigation and persisted-state helpers retain bounded, meaningful state', () => {
+  const { sandbox } = createRendererHarness();
+  assert.equal(sandbox.validInspectorWidth(340), true);
+  assert.equal(sandbox.validInspectorWidth(720), true);
+  assert.equal(sandbox.validInspectorWidth(339), false);
+  assert.equal(sandbox.validInspectorWidth(Number.NaN), false);
+  assert.deepEqual(
+    { ...sandbox.parentInspectorRoute({ page: 'field', root: 'source', rootIndex: 2, trail: [{ kind: 'field', index: 4 }] }) },
+    { page: 'raw-source', sourceIndex: 2 },
+  );
+  assert.deepEqual(
+    { ...sandbox.parentInspectorRoute({ page: 'raw-source', sourceIndex: 2 }) },
+    { page: 'raw-sources' },
+  );
+  const state = new Map(Array.from({ length: 40 }, (_, index) => [`object:${index}`, index]));
+  const bounded = sandbox.boundedStateEntries(state);
+  assert.equal(Object.keys(bounded).length, 32);
+  assert.equal(bounded['object:0'], undefined);
+  assert.equal(bounded['object:39'], 39);
+});
+
+test('selected-object pages avoid duplicate summaries and drill into rendered components', () => {
   const { sandbox } = createRendererHarness();
   const scene = {
     manifest: {
@@ -701,40 +791,18 @@ test('Selected Data follows the logical area selection and exposes every scene f
       }],
     },
   };
-  assert.match(sandbox.selectedDataDisclosure(scene), /Selected Data/u);
-  assert.match(sandbox.selectedDataDisclosure(scene), /hidden/u);
-  assert.doesNotMatch(sandbox.selectedDataDisclosure(scene), /Select an area object|Nothing selected/u);
-  const content = sandbox.selectedDataDisclosureContent(scene, 'placeable:2');
-  assert.match(content, /MIST_TAG/u);
-  assert.match(content, /x3_plc_mist/u);
-  assert.match(content, /tnp_gmist/u);
+  assert.equal(sandbox.blueprintResourceForObject(scene.manifest.areaObjects[0]), 'x3_plc_mist.utp');
+  const content = sandbox.inspectionComponentsPage(scene, 'placeable:2', 8, '');
   assert.match(content, /tnp_gmist\.mdl/u);
   assert.match(content, /tnp_gmist\.pwk/u);
-  assert.match(content, /Rendered Components · 2/u);
-  assert.match(content, /id="viewer-animation"/u);
-  assert.match(content, /class="viewer-animation-row"/u);
-  assert.doesNotMatch(content, /<details[^>]+open/u);
   assert.match(content, /data-component-id="8"/u);
+  assert.match(content, /selected-component selected/u);
   assert.match(content, /component-select/u);
   assert.match(content, /component-open/u);
-  assert.match(content, /1\.571 rad · 90\.0°/u);
   assert.match(content, /Mist visual/u);
   assert.match(content, /Mist collision/u);
-
-  const elements = {
-    selectedData: { hidden: true },
-    selectedDataSummary: { textContent: '' },
-    selectedDataContent: { innerHTML: '' },
-  };
-  sandbox.updateSelectedDataPanel(elements, scene, 'placeable:2');
-  assert.equal(elements.selectedData.hidden, false);
-  assert.equal(elements.selectedDataSummary.textContent, 'Mist');
-  assert.match(elements.selectedDataContent.innerHTML, /GIT index/u);
-  sandbox.updateSelectedDataPanel(elements, scene, undefined);
-  assert.equal(elements.selectedData.hidden, true);
-  assert.equal(elements.selectedDataSummary.textContent, '');
-  assert.equal(elements.selectedDataContent.innerHTML, '');
-  assert.equal(sandbox.selectedDataDisclosure({ manifest: { areaObjects: [] } }), '');
+  assert.doesNotMatch(content, /GIT index|Rotation angle|Blueprint/u);
+  assert.match(sandbox.animationControl([{ label: 'walk' }]), /id="viewer-animation"/u);
 });
 
 test('NCS workbench renders structured navigation without editable or export controls', () => {

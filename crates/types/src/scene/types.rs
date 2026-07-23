@@ -5,7 +5,7 @@ use nwnrs_types::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::DependencyGraph;
+use crate::scene::DependencyGraph;
 
 /// Original resource category used to assemble a scene.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -33,10 +33,10 @@ pub enum SceneSource {
     Module,
 }
 
-/// Severity of a renderer diagnostic.
+/// Severity of a scene diagnostic.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub enum RenderDiagnosticSeverity {
+pub enum SceneDiagnosticSeverity {
     /// Informational note.
     Information,
     /// Degraded but still renderable scene.
@@ -48,9 +48,9 @@ pub enum RenderDiagnosticSeverity {
 /// A resource-aware scene diagnostic.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct RenderDiagnostic {
+pub struct SceneDiagnostic {
     /// Diagnostic severity.
-    pub severity: RenderDiagnosticSeverity,
+    pub severity: SceneDiagnosticSeverity,
     /// Stable machine-readable diagnostic code.
     pub code:     String,
     /// Human-readable description.
@@ -62,17 +62,17 @@ pub struct RenderDiagnostic {
 /// Viewer environment policy.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub enum RenderEnvironment {
+pub enum SceneEnvironment {
     /// Neutral studio lighting and background.
     Studio,
     /// Area-authored NWN lighting and weather data.
-    Nwn(AreEnvironmentView),
+    Nwn(SceneAreaEnvironment),
 }
 
 /// Serializable ARE environment projection consumed by frontends.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct AreEnvironmentView {
+pub struct SceneAreaEnvironment {
     /// Whether the day/night cycle is active.
     pub day_night_cycle:    Option<bool>,
     /// Whether night lighting is selected.
@@ -115,7 +115,7 @@ pub struct AreEnvironmentView {
     pub chance_lightning:   Option<i32>,
 }
 
-impl From<&AreEnvironment> for AreEnvironmentView {
+impl From<&AreEnvironment> for SceneAreaEnvironment {
     fn from(value: &AreEnvironment) -> Self {
         Self {
             day_night_cycle:    value.day_night_cycle,
@@ -145,7 +145,7 @@ impl From<&AreEnvironment> for AreEnvironmentView {
 /// Kind of one positioned render instance.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub enum RenderInstanceKind {
+pub enum SceneInstanceKind {
     /// Standalone model.
     Model,
     /// Area tile.
@@ -177,7 +177,7 @@ pub enum RenderInstanceKind {
 /// One model or overlay positioned in scene space.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct RenderInstance {
+pub struct SceneInstance {
     /// Stable instance id.
     pub id:                    usize,
     /// Stable authored GIT object identity shared by every visual component
@@ -186,8 +186,8 @@ pub struct RenderInstance {
     /// Display label.
     pub label:                 String,
     /// Instance category.
-    pub kind:                  RenderInstanceKind,
-    /// Index into [`RenderScene::models`], when the instance has a model.
+    pub kind:                  SceneInstanceKind,
+    /// Index into [`SceneDocument::models`], when the instance has a model.
     pub model:                 Option<usize>,
     /// Exact source resource for this rendered component, when it has one.
     pub resource:              Option<String>,
@@ -207,13 +207,13 @@ pub struct RenderInstance {
 /// One logical authored object from an area's GIT resource.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct RenderAreaObject {
+pub struct SceneAreaObject {
     /// Stable identity used across the sidebar, viewer, and scene reloads.
     pub key:                 String,
     /// Best available user-facing label.
     pub label:               String,
     /// Authored object category.
-    pub kind:                RenderInstanceKind,
+    pub kind:                SceneInstanceKind,
     /// Zero-based index within the corresponding GIT list.
     pub source_index:        usize,
     /// Authored instance tag.
@@ -228,7 +228,7 @@ pub struct RenderAreaObject {
 
 /// One resolved model tree retained by the shared Rust scene runtime.
 #[derive(Debug, Clone, PartialEq)]
-pub enum ModelScene {
+pub enum SceneModel {
     /// A normal model plus recursively resolved attachments and supermodels.
     Composed(NwnComposedScene),
     /// Standalone auxiliary walkmesh scene.
@@ -238,7 +238,7 @@ pub enum ModelScene {
 /// Decoded texture storage kind.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub enum RenderTextureKind {
+pub enum SceneTextureKind {
     /// NWN compact DDS.
     Dds,
     /// Truevision TGA.
@@ -250,7 +250,7 @@ pub enum RenderTextureKind {
 /// GPU compression used by an authored texture payload.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub enum RenderTextureCompression {
+pub enum SceneTextureCompression {
     /// BC1 / DXT1 blocks.
     Dxt1,
     /// BC3 / DXT5 blocks.
@@ -259,7 +259,7 @@ pub enum RenderTextureCompression {
 
 /// One authored compressed mip level.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RenderTextureMip {
+pub struct SceneTextureMip {
     /// Pixel width.
     pub width:  u32,
     /// Pixel height.
@@ -270,22 +270,22 @@ pub struct RenderTextureMip {
 
 /// Authored compressed texture retained without RGBA expansion.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RenderCompressedTexture {
+pub struct SceneCompressedTexture {
     /// Block compression algorithm.
-    pub compression: RenderTextureCompression,
+    pub compression: SceneTextureCompression,
     /// Complete authored mip chain.
-    pub mip_levels:  Vec<RenderTextureMip>,
+    pub mip_levels:  Vec<SceneTextureMip>,
 }
 
 /// One GPU-ready texture retained by the Rust scene service.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RenderTexture {
+pub struct SceneTexture {
     /// Fully resolved resource name.
     pub resource:   String,
     /// Container provenance.
     pub origin:     String,
     /// Source storage kind.
-    pub kind:       RenderTextureKind,
+    pub kind:       SceneTextureKind,
     /// Pixel width.
     pub width:      u32,
     /// Pixel height.
@@ -293,13 +293,13 @@ pub struct RenderTexture {
     /// Top-left-origin RGBA8 pixels for uncompressed resources.
     pub rgba8:      Vec<u8>,
     /// Authored DDS blocks retained without eager RGBA expansion.
-    pub compressed: Option<RenderCompressedTexture>,
+    pub compressed: Option<SceneCompressedTexture>,
 }
 
 /// One TXI directive retained for material inspection and renderer behavior.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct RenderTxiDirective {
+pub struct SceneTxiDirective {
     /// Directive name.
     pub name:          String,
     /// Inline arguments.
@@ -311,7 +311,7 @@ pub struct RenderTxiDirective {
 /// One MTR parameter row.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct RenderMtrParameter {
+pub struct SceneMtrParameter {
     /// Parameter name.
     pub name:       String,
     /// Authored type token.
@@ -323,13 +323,13 @@ pub struct RenderMtrParameter {
 /// Resolved MTR metadata for a scene material.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct RenderMtr {
+pub struct SceneMtr {
     /// Resolved material resource.
     pub resource:        String,
     /// MTR render hint.
     pub render_hint:     Option<String>,
     /// Named parameters.
-    pub parameters:      Vec<RenderMtrParameter>,
+    pub parameters:      Vec<SceneMtrParameter>,
     /// Custom vertex shader resource.
     pub vertex_shader:   Option<String>,
     /// Custom geometry shader resource.
@@ -341,23 +341,23 @@ pub struct RenderMtr {
 /// One effective material texture slot.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct RenderMaterialTexture {
+pub struct SceneMaterialTexture {
     /// Renderer-neutral role label.
     pub role:       String,
     /// `mdl` or `mtr` source.
     pub source:     String,
     /// Effective authored texture token.
     pub name:       String,
-    /// Index into [`RenderScene::textures`].
+    /// Index into [`SceneDocument::textures`].
     pub texture:    Option<usize>,
     /// Parsed TXI directive stream.
-    pub directives: Vec<RenderTxiDirective>,
+    pub directives: Vec<SceneTxiDirective>,
 }
 
 /// Resolved assets for one scene material.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct RenderMaterialAssets {
+pub struct SceneMaterialAssets {
     /// Material index in the model scene.
     pub material_index: usize,
     /// Source node index.
@@ -365,45 +365,45 @@ pub struct RenderMaterialAssets {
     /// Effective render hint.
     pub render_hint:    Option<String>,
     /// Resolved MTR metadata.
-    pub mtr:            Option<RenderMtr>,
+    pub mtr:            Option<SceneMtr>,
     /// Effective texture slots.
-    pub textures:       Vec<RenderMaterialTexture>,
+    pub textures:       Vec<SceneMaterialTexture>,
 }
 
 /// Asset resolution tree corresponding to one model and its attachments.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct RenderModelAssets {
+pub struct SceneModelAssets {
     /// Model name.
     pub model_name:    String,
     /// Resolved materials for this model.
-    pub materials:     Vec<RenderMaterialAssets>,
+    pub materials:     Vec<SceneMaterialAssets>,
     /// Textures referenced by light flares and particle emitters.
-    pub node_textures: Vec<RenderNodeTexture>,
+    pub node_textures: Vec<SceneNodeTexture>,
     /// Asset trees for reference-model attachments.
-    pub attachments:   Vec<RenderModelAssets>,
+    pub attachments:   Vec<SceneModelAssets>,
 }
 
 /// One resolved texture owned by a non-mesh scene node.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct RenderNodeTexture {
+pub struct SceneNodeTexture {
     /// Owning scene node index.
     pub node_index: usize,
     /// Semantic usage such as `emitter` or `flare:0`.
     pub role:       String,
     /// Authored texture token.
     pub name:       String,
-    /// Index into [`RenderScene::textures`].
+    /// Index into [`SceneDocument::textures`].
     pub texture:    Option<usize>,
     /// Parsed TXI directives.
-    pub directives: Vec<RenderTxiDirective>,
+    pub directives: Vec<SceneTxiDirective>,
 }
 
 /// Custom shader stage.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub enum RenderShaderStage {
+pub enum SceneShaderStage {
     /// Vertex stage.
     Vertex,
     /// Geometry stage.
@@ -415,20 +415,20 @@ pub enum RenderShaderStage {
 /// Resolved custom shader source retained for inspection and translation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct RenderShaderSource {
+pub struct SceneShaderSource {
     /// Resolved SHD resource.
     pub resource: String,
     /// Container provenance.
     pub origin:   String,
     /// Shader stage selected by the MTR.
-    pub stage:    RenderShaderStage,
+    pub stage:    SceneShaderStage,
     /// UTF-8 source text.
     pub source:   String,
 }
 
 /// Complete parsed area inputs retained for inspection and future editing.
 #[derive(Debug, Clone, PartialEq)]
-pub struct AreaScene {
+pub struct SceneArea {
     /// ARE definition.
     pub area:      AreFile,
     /// GIT instances.
@@ -441,7 +441,7 @@ pub struct AreaScene {
 /// selector.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct RenderModule {
+pub struct SceneModule {
     /// Areas declared by the IFO in authored order.
     pub areas:           Vec<String>,
     /// Initially selected entry area.
@@ -458,29 +458,29 @@ pub struct RenderModule {
 
 /// Renderer-neutral document shared by every frontend.
 #[derive(Debug, Clone, PartialEq)]
-pub struct RenderScene {
+pub struct SceneDocument {
     /// Scene name.
     pub name:         String,
     /// Source resource category.
     pub source:       SceneSource,
     /// Resolved model assets.
-    pub models:       Vec<ModelScene>,
+    pub models:       Vec<SceneModel>,
     /// Resolved material tree aligned with [`Self::models`].
-    pub model_assets: Vec<RenderModelAssets>,
+    pub model_assets: Vec<SceneModelAssets>,
     /// Deduplicated decoded textures referenced by model materials.
-    pub textures:     Vec<RenderTexture>,
+    pub textures:     Vec<SceneTexture>,
     /// Deduplicated custom shader sources.
-    pub shaders:      Vec<RenderShaderSource>,
+    pub shaders:      Vec<SceneShaderSource>,
     /// Positioned model and overlay instances.
-    pub instances:    Vec<RenderInstance>,
+    pub instances:    Vec<SceneInstance>,
     /// Parsed area source data for area scenes.
-    pub area:         Option<AreaScene>,
+    pub area:         Option<SceneArea>,
     /// Module catalog when the scene was opened through an IFO.
-    pub module:       Option<RenderModule>,
+    pub module:       Option<SceneModule>,
     /// Active environment policy.
-    pub environment:  RenderEnvironment,
+    pub environment:  SceneEnvironment,
     /// Complete resource dependency graph.
     pub dependencies: DependencyGraph,
     /// Non-fatal and fatal scene diagnostics.
-    pub diagnostics:  Vec<RenderDiagnostic>,
+    pub diagnostics:  Vec<SceneDiagnostic>,
 }

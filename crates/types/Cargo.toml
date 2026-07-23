@@ -30,6 +30,7 @@ default = [
     "nwsync",
     "plt",
     "resman",
+    "scene",
     "set",
     "ssf",
     "streamext",
@@ -93,6 +94,21 @@ resman = [
     "lru",
     "dep:indexmap",
     "dep:serde",
+]
+scene = [
+    "dds",
+    "gff",
+    "mdl",
+    "mtr",
+    "plt",
+    "resman",
+    "set",
+    "tga",
+    "twoda",
+    "txi",
+    "dep:base64",
+    "dep:serde",
+    "dep:serde_json",
 ]
 set = ["resman"]
 ssf = ["io", "localization", "dep:serde"]

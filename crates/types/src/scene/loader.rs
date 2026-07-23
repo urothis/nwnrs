@@ -17,10 +17,10 @@ use nwnrs_types::{
 };
 use tracing::instrument;
 
-use crate::{
-    AreEnvironmentView, AreaScene, DependencyGraph, DependencyKind, DependencyState, ModelScene,
-    RenderAreaObject, RenderDiagnostic, RenderDiagnosticSeverity, RenderEnvironment,
-    RenderInstance, RenderInstanceKind, RenderModule, RenderScene, RendererError, RendererResult,
+use crate::scene::{
+    DependencyGraph, DependencyKind, DependencyState, SceneArea, SceneAreaEnvironment,
+    SceneAreaObject, SceneDiagnostic, SceneDiagnosticSeverity, SceneDocument, SceneEnvironment,
+    SceneError, SceneInstance, SceneInstanceKind, SceneModel, SceneModule, SceneResult,
     SceneSource, assets::resolve_model_assets,
 };
 
@@ -32,12 +32,12 @@ pub struct SceneLoader<'a> {
 /// Builds the stable logical-object catalog shared by area packets and editor
 /// navigation. Authored list indices remain category-local, matching GIT.
 #[must_use]
-pub fn area_object_catalog(git: &GitFile) -> Vec<RenderAreaObject> {
+pub fn area_object_catalog(git: &GitFile) -> Vec<SceneAreaObject> {
     let mut result = Vec::new();
     for (index, value) in git.creatures.iter().enumerate() {
         push_area_object(
             &mut result,
-            RenderInstanceKind::Creature,
+            SceneInstanceKind::Creature,
             index,
             value.localized_name.as_ref(),
             value.tag.as_deref(),
@@ -48,7 +48,7 @@ pub fn area_object_catalog(git: &GitFile) -> Vec<RenderAreaObject> {
     for (index, value) in git.doors.iter().enumerate() {
         push_area_object(
             &mut result,
-            RenderInstanceKind::Door,
+            SceneInstanceKind::Door,
             index,
             value.localized_name.as_ref(),
             value.tag.as_deref(),
@@ -59,7 +59,7 @@ pub fn area_object_catalog(git: &GitFile) -> Vec<RenderAreaObject> {
     for (index, value) in git.placeables.iter().enumerate() {
         push_area_object(
             &mut result,
-            RenderInstanceKind::Placeable,
+            SceneInstanceKind::Placeable,
             index,
             value.localized_name.as_ref(),
             value.tag.as_deref(),
@@ -70,7 +70,7 @@ pub fn area_object_catalog(git: &GitFile) -> Vec<RenderAreaObject> {
     for (index, value) in git.encounters.iter().enumerate() {
         push_area_object(
             &mut result,
-            RenderInstanceKind::Encounter,
+            SceneInstanceKind::Encounter,
             index,
             value.localized_name.as_ref(),
             value.tag.as_deref(),
@@ -81,7 +81,7 @@ pub fn area_object_catalog(git: &GitFile) -> Vec<RenderAreaObject> {
     for (index, value) in git.sounds.iter().enumerate() {
         push_area_object(
             &mut result,
-            RenderInstanceKind::Sound,
+            SceneInstanceKind::Sound,
             index,
             value.localized_name.as_ref(),
             value.tag.as_deref(),
@@ -92,7 +92,7 @@ pub fn area_object_catalog(git: &GitFile) -> Vec<RenderAreaObject> {
     for (index, value) in git.stores.iter().enumerate() {
         push_area_object(
             &mut result,
-            RenderInstanceKind::Store,
+            SceneInstanceKind::Store,
             index,
             value.localized_name.as_ref(),
             value.tag.as_deref(),
@@ -103,7 +103,7 @@ pub fn area_object_catalog(git: &GitFile) -> Vec<RenderAreaObject> {
     for (index, value) in git.triggers.iter().enumerate() {
         push_area_object(
             &mut result,
-            RenderInstanceKind::Trigger,
+            SceneInstanceKind::Trigger,
             index,
             value.localized_name.as_ref(),
             value.tag.as_deref(),
@@ -114,7 +114,7 @@ pub fn area_object_catalog(git: &GitFile) -> Vec<RenderAreaObject> {
     for (index, value) in git.waypoints.iter().enumerate() {
         push_area_object(
             &mut result,
-            RenderInstanceKind::Waypoint,
+            SceneInstanceKind::Waypoint,
             index,
             value.localized_name.as_ref(),
             value.tag.as_deref(),
@@ -126,15 +126,15 @@ pub fn area_object_catalog(git: &GitFile) -> Vec<RenderAreaObject> {
 }
 
 fn push_area_object(
-    target: &mut Vec<RenderAreaObject>,
-    kind: RenderInstanceKind,
+    target: &mut Vec<SceneAreaObject>,
+    kind: SceneInstanceKind,
     source_index: usize,
     localized_name: Option<&GffCExoLocString>,
     tag: Option<&str>,
     template_resref: Option<&str>,
     transform: &GitTransform,
 ) {
-    let kind_name = render_instance_kind_name(kind);
+    let kind_name = scene_instance_kind_name(kind);
     let tag = tag.filter(|value| !value.trim().is_empty());
     let template_resref = template_resref.filter(|value| !value.trim().is_empty());
     let label = localized_name
@@ -151,7 +151,7 @@ fn push_area_object(
             || format!("{} {}", title_case_kind(kind_name), source_index + 1),
             str::to_string,
         );
-    target.push(RenderAreaObject {
+    target.push(SceneAreaObject {
         key: format!("{kind_name}:{source_index}"),
         label,
         kind,
@@ -163,21 +163,21 @@ fn push_area_object(
     });
 }
 
-const fn render_instance_kind_name(kind: RenderInstanceKind) -> &'static str {
+const fn scene_instance_kind_name(kind: SceneInstanceKind) -> &'static str {
     match kind {
-        RenderInstanceKind::Creature => "creature",
-        RenderInstanceKind::Door => "door",
-        RenderInstanceKind::Placeable => "placeable",
-        RenderInstanceKind::Encounter => "encounter",
-        RenderInstanceKind::Sound => "sound",
-        RenderInstanceKind::Store => "store",
-        RenderInstanceKind::Trigger => "trigger",
-        RenderInstanceKind::Waypoint => "waypoint",
-        RenderInstanceKind::Item => "item",
-        RenderInstanceKind::Model => "model",
-        RenderInstanceKind::Tile => "tile",
-        RenderInstanceKind::Skybox => "skybox",
-        RenderInstanceKind::Collision => "collision",
+        SceneInstanceKind::Creature => "creature",
+        SceneInstanceKind::Door => "door",
+        SceneInstanceKind::Placeable => "placeable",
+        SceneInstanceKind::Encounter => "encounter",
+        SceneInstanceKind::Sound => "sound",
+        SceneInstanceKind::Store => "store",
+        SceneInstanceKind::Trigger => "trigger",
+        SceneInstanceKind::Waypoint => "waypoint",
+        SceneInstanceKind::Item => "item",
+        SceneInstanceKind::Model => "model",
+        SceneInstanceKind::Tile => "tile",
+        SceneInstanceKind::Skybox => "skybox",
+        SceneInstanceKind::Collision => "collision",
     }
 }
 
@@ -202,17 +202,17 @@ impl<'a> SceneLoader<'a> {
     ///
     /// # Errors
     ///
-    /// Returns [`RendererError`] when the root resource is missing or invalid.
+    /// Returns [`SceneError`] when the root resource is missing or invalid.
     #[instrument(level = "debug", skip_all, err, fields(resource = %resource))]
-    pub fn load_model(&mut self, resource: &ResolvedResRef) -> RendererResult<RenderScene> {
+    pub fn load_model(&mut self, resource: &ResolvedResRef) -> SceneResult<SceneDocument> {
         let kind =
             ModelResourceKind::from_res_type(resource.base().res_type()).ok_or_else(|| {
-                RendererError::invalid(format!("{} is not a model-shaped resource", resource))
+                SceneError::invalid(format!("{} is not a model-shaped resource", resource))
             })?;
         let root = self
             .resman
             .get_resolved(resource)
-            .ok_or_else(|| RendererError::missing(resource.to_string()))?;
+            .ok_or_else(|| SceneError::missing(resource.to_string()))?;
         let mut dependencies = DependencyGraph::default();
         let root_id = dependencies.record(
             resource.to_string(),
@@ -227,32 +227,32 @@ impl<'a> SceneLoader<'a> {
                 resource.base().res_ref(),
                 &NwnAppearanceOverrides::default(),
             )
-            .map_err(|error| RendererError::scene(error.to_string()))?;
+            .map_err(|error| SceneError::scene(error.to_string()))?;
             self.record_composed_dependencies(root_id, &composed, &mut dependencies);
-            (SceneSource::Model, ModelScene::Composed(composed))
+            (SceneSource::Model, SceneModel::Composed(composed))
         } else {
             let bytes = root
                 .read_all(CachePolicy::Use)
-                .map_err(|error| RendererError::invalid(format!("read {resource}: {error}")))?;
+                .map_err(|error| SceneError::invalid(format!("read {resource}: {error}")))?;
             let scene = parse_scene_resource_auto(kind, resource.base().res_ref(), &bytes)
-                .map_err(|error| RendererError::invalid(format!("parse {resource}: {error}")))?;
+                .map_err(|error| SceneError::invalid(format!("parse {resource}: {error}")))?;
             let source = match kind {
                 ModelResourceKind::Model => SceneSource::Model,
                 ModelResourceKind::Walkmesh => SceneSource::Walkmesh,
                 ModelResourceKind::DoorWalkmesh => SceneSource::DoorWalkmesh,
                 ModelResourceKind::PlaceableWalkmesh => SceneSource::PlaceableWalkmesh,
             };
-            (source, ModelScene::Auxiliary(scene))
+            (source, SceneModel::Auxiliary(scene))
         };
         let mut models = vec![model];
-        let mut instances = vec![RenderInstance {
+        let mut instances = vec![SceneInstance {
             id:                    0,
             object_key:            None,
             label:                 resource.to_string(),
             kind:                  if kind == ModelResourceKind::Model {
-                RenderInstanceKind::Model
+                SceneInstanceKind::Model
             } else {
-                RenderInstanceKind::Collision
+                SceneInstanceKind::Collision
             },
             model:                 Some(0),
             resource:              Some(resource.to_string()),
@@ -276,11 +276,11 @@ impl<'a> SceneLoader<'a> {
                 };
                 let bytes = companion
                     .read_all(CachePolicy::Use)
-                    .map_err(|error| RendererError::invalid(format!("read {filename}: {error}")))?;
+                    .map_err(|error| SceneError::invalid(format!("read {filename}: {error}")))?;
                 let scene =
                     parse_scene_resource_auto(companion_kind, resource.base().res_ref(), &bytes)
                         .map_err(|error| {
-                            RendererError::invalid(format!("parse {filename}: {error}"))
+                            SceneError::invalid(format!("parse {filename}: {error}"))
                         })?;
                 let collision_id = dependencies.record(
                     filename,
@@ -291,12 +291,12 @@ impl<'a> SceneLoader<'a> {
                 );
                 dependencies.connect(root_id, collision_id, "collision");
                 let model_index = models.len();
-                models.push(ModelScene::Auxiliary(scene));
-                instances.push(RenderInstance {
+                models.push(SceneModel::Auxiliary(scene));
+                instances.push(SceneInstance {
                     id:                    instances.len(),
                     object_key:            None,
                     label:                 resolved.to_string(),
-                    kind:                  RenderInstanceKind::Collision,
+                    kind:                  SceneInstanceKind::Collision,
                     model:                 Some(model_index),
                     resource:              Some(resolved.to_string()),
                     position:              [0.0; 3],
@@ -311,7 +311,7 @@ impl<'a> SceneLoader<'a> {
         self.append_emitter_chunk_models(&mut models, &mut dependencies, &mut diagnostics);
         let (model_assets, textures, shaders) =
             resolve_model_assets(self.resman, &models, &mut dependencies, &mut diagnostics)?;
-        Ok(RenderScene {
+        Ok(SceneDocument {
             name: resource.base().res_ref().to_string(),
             source,
             models,
@@ -321,7 +321,7 @@ impl<'a> SceneLoader<'a> {
             instances,
             area: None,
             module: None,
-            environment: RenderEnvironment::Studio,
+            environment: SceneEnvironment::Studio,
             dependencies,
             diagnostics,
         })
@@ -332,18 +332,18 @@ impl<'a> SceneLoader<'a> {
     ///
     /// # Errors
     ///
-    /// Returns [`RendererError`] when the resource is not a supported
+    /// Returns [`SceneError`] when the resource is not a supported
     /// blueprint or any required appearance dependency is invalid.
     #[instrument(level = "debug", skip_all, err, fields(resource = %resource))]
-    pub fn load_blueprint(&mut self, resource: &ResolvedResRef) -> RendererResult<RenderScene> {
+    pub fn load_blueprint(&mut self, resource: &ResolvedResRef) -> SceneResult<SceneDocument> {
         let kind =
             NwnBlueprintKind::from_res_type(resource.base().res_type()).ok_or_else(|| {
-                RendererError::invalid(format!("{} is not a visual blueprint", resource))
+                SceneError::invalid(format!("{} is not a visual blueprint", resource))
             })?;
         let root = self
             .resman
             .get_resolved(resource)
-            .ok_or_else(|| RendererError::missing(resource.to_string()))?;
+            .ok_or_else(|| SceneError::missing(resource.to_string()))?;
         let mut dependencies = DependencyGraph::default();
         let root_id = dependencies.record(
             resource.to_string(),
@@ -354,7 +354,7 @@ impl<'a> SceneLoader<'a> {
         );
         let visual =
             compose_blueprint_visual_from_resman(self.resman, kind, resource.base().res_ref())
-                .map_err(|error| RendererError::scene(error.to_string()))?;
+                .map_err(|error| SceneError::scene(error.to_string()))?;
         let mut models = Vec::with_capacity(visual.models.len());
         let mut instances = Vec::with_capacity(visual.models.len());
         let mut model_indices = std::collections::BTreeMap::new();
@@ -369,8 +369,8 @@ impl<'a> SceneLoader<'a> {
             self.record_composed_dependencies(model_id, &composed, &mut dependencies);
             let model_index = models.len();
             let model_name = composed.model_name.clone();
-            models.push(ModelScene::Composed(composed));
-            instances.push(RenderInstance {
+            models.push(SceneModel::Composed(composed));
+            instances.push(SceneInstance {
                 id:                    instances.len(),
                 object_key:            None,
                 label:                 resource.to_string(),
@@ -400,7 +400,7 @@ impl<'a> SceneLoader<'a> {
         self.append_emitter_chunk_models(&mut models, &mut dependencies, &mut diagnostics);
         let (model_assets, textures, shaders) =
             resolve_model_assets(self.resman, &models, &mut dependencies, &mut diagnostics)?;
-        Ok(RenderScene {
+        Ok(SceneDocument {
             name: resource.base().res_ref().to_string(),
             source: source_for_blueprint(kind),
             models,
@@ -410,7 +410,7 @@ impl<'a> SceneLoader<'a> {
             instances,
             area: None,
             module: None,
-            environment: RenderEnvironment::Studio,
+            environment: SceneEnvironment::Studio,
             dependencies,
             diagnostics,
         })
@@ -421,21 +421,21 @@ impl<'a> SceneLoader<'a> {
     ///
     /// # Errors
     ///
-    /// Returns [`RendererError`] when required area resources are missing or
+    /// Returns [`SceneError`] when required area resources are missing or
     /// invalid.
     #[instrument(level = "debug", skip_all, err, fields(area_name))]
-    pub fn load_area(&mut self, area_name: &str) -> RendererResult<RenderScene> {
+    pub fn load_area(&mut self, area_name: &str) -> SceneResult<SceneDocument> {
         let area = AreFile::from_resman(self.resman, area_name, CachePolicy::Use)
-            .map_err(|error| RendererError::invalid(error.to_string()))?;
+            .map_err(|error| SceneError::invalid(error.to_string()))?;
         let git = GitFile::from_resman(self.resman, area_name, CachePolicy::Use)
-            .map_err(|error| RendererError::invalid(error.to_string()))?;
+            .map_err(|error| SceneError::invalid(error.to_string()))?;
         let area_objects = area_object_catalog(&git);
         let tileset_name = area
             .tileset
             .as_deref()
-            .ok_or_else(|| RendererError::invalid(format!("{area_name}.are has no Tileset")))?;
+            .ok_or_else(|| SceneError::invalid(format!("{area_name}.are has no Tileset")))?;
         let tileset = SetFile::from_resman(self.resman, tileset_name, CachePolicy::Use)
-            .map_err(|error| RendererError::invalid(error.to_string()))?;
+            .map_err(|error| SceneError::invalid(error.to_string()))?;
 
         let mut dependencies = DependencyGraph::default();
         let area_id = self.record_resolved(
@@ -464,8 +464,8 @@ impl<'a> SceneLoader<'a> {
         let mut instances = Vec::new();
         for tile in &area.tiles {
             let Some(tile_id) = tile.tile_id.and_then(|id| u32::try_from(id).ok()) else {
-                diagnostics.push(RenderDiagnostic {
-                    severity: RenderDiagnosticSeverity::Error,
+                diagnostics.push(SceneDiagnostic {
+                    severity: SceneDiagnosticSeverity::Error,
                     code:     "area.tile.missingId".into(),
                     message:  format!("tile {} has no valid Tile_ID", tile.index),
                     resource: Some(format!("{area_name}.are")),
@@ -473,8 +473,8 @@ impl<'a> SceneLoader<'a> {
                 continue;
             };
             let Some(definition) = tileset.tiles.get(&tile_id) else {
-                diagnostics.push(RenderDiagnostic {
-                    severity: RenderDiagnosticSeverity::Error,
+                diagnostics.push(SceneDiagnostic {
+                    severity: SceneDiagnosticSeverity::Error,
                     code:     "area.tile.unknownId".into(),
                     message:  format!("tile {} references missing SET tile {tile_id}", tile.index),
                     resource: Some(format!("{tileset_name}.set")),
@@ -482,8 +482,8 @@ impl<'a> SceneLoader<'a> {
                 continue;
             };
             let Some(model_name) = definition.model.as_deref() else {
-                diagnostics.push(RenderDiagnostic {
-                    severity: RenderDiagnosticSeverity::Error,
+                diagnostics.push(SceneDiagnostic {
+                    severity: SceneDiagnosticSeverity::Error,
                     code:     "area.tile.missingModel".into(),
                     message:  format!("SET tile {tile_id} has no model"),
                     resource: Some(format!("{tileset_name}.set")),
@@ -508,7 +508,7 @@ impl<'a> SceneLoader<'a> {
                         dependencies.connect(set_id, model_id, format!("tile:{tile_id}:model"));
                         self.record_composed_dependencies(model_id, &model, &mut dependencies);
                         let index = models.len();
-                        models.push(ModelScene::Composed(model));
+                        models.push(SceneModel::Composed(model));
                         model_indices.insert(model_key, index);
                         index
                     }
@@ -521,8 +521,8 @@ impl<'a> SceneLoader<'a> {
                             Some(error.to_string()),
                         );
                         dependencies.connect(set_id, missing_id, format!("tile:{tile_id}:model"));
-                        diagnostics.push(RenderDiagnostic {
-                            severity: RenderDiagnosticSeverity::Error,
+                        diagnostics.push(SceneDiagnostic {
+                            severity: SceneDiagnosticSeverity::Error,
                             code:     "area.tile.modelFailed".into(),
                             message:  format!(
                                 "could not load tile {tile_id} model {model_name}: {error}"
@@ -534,11 +534,11 @@ impl<'a> SceneLoader<'a> {
                 }
             };
             let orientation = tile.orientation.unwrap_or_default().rem_euclid(4) as f32 * FRAC_PI_2;
-            instances.push(RenderInstance {
+            instances.push(SceneInstance {
                 id:                    instances.len(),
                 object_key:            None,
                 label:                 format!("Tile {} ({}, {})", tile.index, tile.x, tile.y),
-                kind:                  RenderInstanceKind::Tile,
+                kind:                  SceneInstanceKind::Tile,
                 model:                 Some(model_index),
                 resource:              Some(format!("{model_name}.mdl")),
                 position:              [
@@ -566,12 +566,12 @@ impl<'a> SceneLoader<'a> {
                 } else {
                     let filename = format!("{walkmesh_name}.wok");
                     let resolved = ResolvedResRef::from_filename(&filename).map_err(|error| {
-                        RendererError::invalid(format!("invalid walkmesh {filename}: {error}"))
+                        SceneError::invalid(format!("invalid walkmesh {filename}: {error}"))
                     })?;
                     match self.resman.get_resolved(&resolved) {
                         Some(resource) => {
                             let bytes = resource.read_all(CachePolicy::Use).map_err(|error| {
-                                RendererError::invalid(format!("read {filename}: {error}"))
+                                SceneError::invalid(format!("read {filename}: {error}"))
                             })?;
                             match parse_scene_resource_auto(
                                 ModelResourceKind::Walkmesh,
@@ -592,7 +592,7 @@ impl<'a> SceneLoader<'a> {
                                         format!("tile:{tile_id}:walkmesh"),
                                     );
                                     let index = models.len();
-                                    models.push(ModelScene::Auxiliary(scene));
+                                    models.push(SceneModel::Auxiliary(scene));
                                     model_indices.insert(walkmesh_key, index);
                                     Some(index)
                                 }
@@ -609,8 +609,8 @@ impl<'a> SceneLoader<'a> {
                                         dependency_id,
                                         format!("tile:{tile_id}:walkmesh"),
                                     );
-                                    diagnostics.push(RenderDiagnostic {
-                                        severity: RenderDiagnosticSeverity::Error,
+                                    diagnostics.push(SceneDiagnostic {
+                                        severity: SceneDiagnosticSeverity::Error,
                                         code:     "area.tile.walkmeshInvalid".into(),
                                         message:  format!(
                                             "could not parse tile {tile_id} walkmesh {filename}: \
@@ -635,8 +635,8 @@ impl<'a> SceneLoader<'a> {
                                 dependency_id,
                                 format!("tile:{tile_id}:walkmesh"),
                             );
-                            diagnostics.push(RenderDiagnostic {
-                                severity: RenderDiagnosticSeverity::Error,
+                            diagnostics.push(SceneDiagnostic {
+                                severity: SceneDiagnosticSeverity::Error,
                                 code:     "area.tile.walkmeshMissing".into(),
                                 message:  format!(
                                     "tile {tile_id} requires missing walkmesh {filename}"
@@ -648,11 +648,11 @@ impl<'a> SceneLoader<'a> {
                     }
                 };
                 if let Some(walkmesh_index) = walkmesh_index {
-                    instances.push(RenderInstance {
+                    instances.push(SceneInstance {
                         id:                    instances.len(),
                         object_key:            None,
                         label:                 format!("Tile {} collision", tile.index),
-                        kind:                  RenderInstanceKind::Collision,
+                        kind:                  SceneInstanceKind::Collision,
                         model:                 Some(walkmesh_index),
                         resource:              Some(format!("{walkmesh_name}.wok")),
                         position:              [
@@ -677,8 +677,8 @@ impl<'a> SceneLoader<'a> {
             &mut instances,
             &mut dependencies,
             &mut diagnostics,
-        );
-        append_git_overlays(&git, &area_objects, &mut instances);
+        )?;
+        append_git_overlays(&git, &area_objects, &mut instances)?;
         self.append_skybox(
             &area,
             area_id,
@@ -693,7 +693,7 @@ impl<'a> SceneLoader<'a> {
         let (model_assets, textures, shaders) =
             resolve_model_assets(self.resman, &models, &mut dependencies, &mut diagnostics)?;
 
-        Ok(RenderScene {
+        Ok(SceneDocument {
             name: area_name.to_string(),
             source: SceneSource::Area,
             models,
@@ -701,13 +701,13 @@ impl<'a> SceneLoader<'a> {
             textures,
             shaders,
             instances,
-            area: Some(AreaScene {
+            area: Some(SceneArea {
                 area: area.clone(),
                 instances: git,
                 tileset,
             }),
             module: None,
-            environment: RenderEnvironment::Nwn(AreEnvironmentView::from(&area.environment)),
+            environment: SceneEnvironment::Nwn(SceneAreaEnvironment::from(&area.environment)),
             dependencies,
             diagnostics,
         })
@@ -719,9 +719,9 @@ impl<'a> SceneLoader<'a> {
     ///
     /// # Errors
     ///
-    /// Returns [`RendererError`] when the IFO has no areas or the selected
+    /// Returns [`SceneError`] when the IFO has no areas or the selected
     /// entry area cannot be assembled.
-    pub fn load_module(&mut self, module_name: &str) -> RendererResult<RenderScene> {
+    pub fn load_module(&mut self, module_name: &str) -> SceneResult<SceneDocument> {
         self.load_module_area(module_name, None)
     }
 
@@ -730,28 +730,26 @@ impl<'a> SceneLoader<'a> {
     ///
     /// # Errors
     ///
-    /// Returns [`RendererError`] when the requested area is not declared by
+    /// Returns [`SceneError`] when the requested area is not declared by
     /// the module or cannot be assembled.
     pub fn load_module_area(
         &mut self,
         module_name: &str,
         selected_area: Option<&str>,
-    ) -> RendererResult<RenderScene> {
+    ) -> SceneResult<SceneDocument> {
         let info = ModuleInfo::from_resman(self.resman, module_name, CachePolicy::Use)
-            .map_err(|error| RendererError::invalid(error.to_string()))?;
+            .map_err(|error| SceneError::invalid(error.to_string()))?;
         let entry_area = selected_area
             .map(str::to_string)
             .or_else(|| info.entry.area.clone())
             .or_else(|| info.areas.first().cloned())
-            .ok_or_else(|| {
-                RendererError::invalid(format!("{module_name}.ifo declares no areas"))
-            })?;
+            .ok_or_else(|| SceneError::invalid(format!("{module_name}.ifo declares no areas")))?;
         if !info
             .areas
             .iter()
             .any(|area| area.eq_ignore_ascii_case(&entry_area))
         {
-            return Err(RendererError::invalid(format!(
+            return Err(SceneError::invalid(format!(
                 "{module_name}.ifo entry area {entry_area} is not present in Mod_Area_list"
             )));
         }
@@ -766,7 +764,7 @@ impl<'a> SceneLoader<'a> {
         }
         scene.name = module_name.to_string();
         scene.source = SceneSource::Module;
-        scene.module = Some(RenderModule {
+        scene.module = Some(SceneModule {
             areas: info.areas,
             entry_area,
             entry_position: info.entry.position,
@@ -780,18 +778,18 @@ impl<'a> SceneLoader<'a> {
     fn append_git_visuals(
         &mut self,
         git: &GitFile,
-        area_objects: &[RenderAreaObject],
+        area_objects: &[SceneAreaObject],
         git_id: usize,
         model_indices: &mut std::collections::BTreeMap<String, usize>,
-        models: &mut Vec<ModelScene>,
-        instances: &mut Vec<RenderInstance>,
+        models: &mut Vec<SceneModel>,
+        instances: &mut Vec<SceneInstance>,
         dependencies: &mut DependencyGraph,
-        diagnostics: &mut Vec<RenderDiagnostic>,
-    ) {
+        diagnostics: &mut Vec<SceneDiagnostic>,
+    ) -> SceneResult<()> {
         for (index, creature) in git.creatures.iter().enumerate() {
             self.append_blueprint_instance(
                 NwnBlueprintKind::Creature,
-                area_object_key(area_objects, RenderInstanceKind::Creature, index),
+                area_object_key(area_objects, SceneInstanceKind::Creature, index)?,
                 creature.template_resref.as_deref(),
                 &creature.raw,
                 creature.tag.as_deref().unwrap_or("Creature"),
@@ -807,7 +805,7 @@ impl<'a> SceneLoader<'a> {
         for (index, door) in git.doors.iter().enumerate() {
             self.append_blueprint_instance(
                 NwnBlueprintKind::Door,
-                area_object_key(area_objects, RenderInstanceKind::Door, index),
+                area_object_key(area_objects, SceneInstanceKind::Door, index)?,
                 door.template_resref.as_deref(),
                 &door.raw,
                 door.tag.as_deref().unwrap_or("Door"),
@@ -823,7 +821,7 @@ impl<'a> SceneLoader<'a> {
         for (index, placeable) in git.placeables.iter().enumerate() {
             self.append_blueprint_instance(
                 NwnBlueprintKind::Placeable,
-                area_object_key(area_objects, RenderInstanceKind::Placeable, index),
+                area_object_key(area_objects, SceneInstanceKind::Placeable, index)?,
                 placeable.template_resref.as_deref(),
                 &placeable.raw,
                 placeable.tag.as_deref().unwrap_or("Placeable"),
@@ -836,6 +834,7 @@ impl<'a> SceneLoader<'a> {
                 diagnostics,
             );
         }
+        Ok(())
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -844,10 +843,10 @@ impl<'a> SceneLoader<'a> {
         area: &AreFile,
         area_id: usize,
         model_indices: &mut std::collections::BTreeMap<String, usize>,
-        models: &mut Vec<ModelScene>,
-        instances: &mut Vec<RenderInstance>,
+        models: &mut Vec<SceneModel>,
+        instances: &mut Vec<SceneInstance>,
         dependencies: &mut DependencyGraph,
-        diagnostics: &mut Vec<RenderDiagnostic>,
+        diagnostics: &mut Vec<SceneDiagnostic>,
     ) {
         let Some(skybox_id) = area
             .environment
@@ -865,8 +864,8 @@ impl<'a> SceneLoader<'a> {
             .ok()
             .and_then(|resolved| self.resman.get_resolved(&resolved));
         let Some(table_resource) = table_resource else {
-            diagnostics.push(RenderDiagnostic {
-                severity: RenderDiagnosticSeverity::Error,
+            diagnostics.push(SceneDiagnostic {
+                severity: SceneDiagnosticSeverity::Error,
                 code:     "area.skybox.catalogMissing".into(),
                 message:  "area selects a skybox, but skyboxes.2da is unavailable".into(),
                 resource: Some("skyboxes.2da".into()),
@@ -876,8 +875,8 @@ impl<'a> SceneLoader<'a> {
         let table_bytes = match table_resource.read_all(CachePolicy::Use) {
             Ok(bytes) => bytes,
             Err(error) => {
-                diagnostics.push(RenderDiagnostic {
-                    severity: RenderDiagnosticSeverity::Error,
+                diagnostics.push(SceneDiagnostic {
+                    severity: SceneDiagnosticSeverity::Error,
                     code:     "area.skybox.catalogReadFailed".into(),
                     message:  format!("could not read skyboxes.2da: {error}"),
                     resource: Some("skyboxes.2da".into()),
@@ -888,8 +887,8 @@ impl<'a> SceneLoader<'a> {
         let table = match read_twoda(&mut Cursor::new(table_bytes)) {
             Ok(table) => table,
             Err(error) => {
-                diagnostics.push(RenderDiagnostic {
-                    severity: RenderDiagnosticSeverity::Error,
+                diagnostics.push(SceneDiagnostic {
+                    severity: SceneDiagnosticSeverity::Error,
                     code:     "area.skybox.catalogInvalid".into(),
                     message:  format!("could not parse skyboxes.2da: {error}"),
                     resource: Some("skyboxes.2da".into()),
@@ -906,8 +905,8 @@ impl<'a> SceneLoader<'a> {
             .cell(skybox_id, column)
             .filter(|value| !value.trim().is_empty() && !value.eq_ignore_ascii_case("****"))
         else {
-            diagnostics.push(RenderDiagnostic {
-                severity: RenderDiagnosticSeverity::Error,
+            diagnostics.push(SceneDiagnostic {
+                severity: SceneDiagnosticSeverity::Error,
                 code:     "area.skybox.rowInvalid".into(),
                 message:  format!("skyboxes.2da row {skybox_id} has no {column} model"),
                 resource: Some("skyboxes.2da".into()),
@@ -932,13 +931,13 @@ impl<'a> SceneLoader<'a> {
                     dependencies.connect(table_id, model_id, format!("row:{skybox_id}:{column}"));
                     self.record_composed_dependencies(model_id, &model, dependencies);
                     let index = models.len();
-                    models.push(ModelScene::Composed(model));
+                    models.push(SceneModel::Composed(model));
                     model_indices.insert(model_key, index);
                     index
                 }
                 Err(error) => {
-                    diagnostics.push(RenderDiagnostic {
-                        severity: RenderDiagnosticSeverity::Error,
+                    diagnostics.push(SceneDiagnostic {
+                        severity: SceneDiagnosticSeverity::Error,
                         code:     "area.skybox.modelFailed".into(),
                         message:  format!("could not load skybox model {model_name}: {error}"),
                         resource: Some(format!("{model_name}.mdl")),
@@ -947,11 +946,11 @@ impl<'a> SceneLoader<'a> {
                 }
             }
         };
-        instances.push(RenderInstance {
+        instances.push(SceneInstance {
             id:                    instances.len(),
             object_key:            None,
             label:                 format!("Skybox {skybox_id} ({model_name})"),
-            kind:                  RenderInstanceKind::Skybox,
+            kind:                  SceneInstanceKind::Skybox,
             model:                 Some(model_index),
             resource:              Some(format!("{model_name}.mdl")),
             position:              [0.0; 3],
@@ -967,7 +966,7 @@ impl<'a> SceneLoader<'a> {
         area: &AreFile,
         area_id: usize,
         dependencies: &mut DependencyGraph,
-        diagnostics: &mut Vec<RenderDiagnostic>,
+        diagnostics: &mut Vec<SceneDiagnostic>,
     ) -> Vec<Option<[f32; 3]>> {
         if !area.tiles.iter().any(|tile| {
             tile.main_lights
@@ -1008,8 +1007,8 @@ impl<'a> SceneLoader<'a> {
         match result {
             Ok(palette) => palette,
             Err(error) => {
-                diagnostics.push(RenderDiagnostic {
-                    severity: RenderDiagnosticSeverity::Error,
+                diagnostics.push(SceneDiagnostic {
+                    severity: SceneDiagnosticSeverity::Error,
                     code:     "area.lighting.paletteInvalid".into(),
                     message:  format!("could not load tile light palette: {error}"),
                     resource: Some("lightcolor.2da".into()),
@@ -1030,10 +1029,10 @@ impl<'a> SceneLoader<'a> {
         transform: &GitTransform,
         git_id: usize,
         model_indices: &mut std::collections::BTreeMap<String, usize>,
-        models: &mut Vec<ModelScene>,
-        instances: &mut Vec<RenderInstance>,
+        models: &mut Vec<SceneModel>,
+        instances: &mut Vec<SceneInstance>,
         dependencies: &mut DependencyGraph,
-        diagnostics: &mut Vec<RenderDiagnostic>,
+        diagnostics: &mut Vec<SceneDiagnostic>,
     ) {
         let blueprint_id = template.map(|name| {
             let filename = format!("{name}.{}", kind.extension());
@@ -1050,8 +1049,8 @@ impl<'a> SceneLoader<'a> {
                     node.state = DependencyState::Invalid;
                     node.message = Some(error.to_string());
                 }
-                diagnostics.push(RenderDiagnostic {
-                    severity: RenderDiagnosticSeverity::Error,
+                diagnostics.push(SceneDiagnostic {
+                    severity: SceneDiagnosticSeverity::Error,
                     code:     format!("area.{}.visualFailed", kind.extension()),
                     message:  format!("could not resolve {label} visual: {error}"),
                     resource: template.map(|name| format!("{name}.{}", kind.extension())),
@@ -1074,13 +1073,13 @@ impl<'a> SceneLoader<'a> {
             self.record_composed_dependencies(model_id, &composed, dependencies);
             let model_index = models
                 .iter()
-                .position(|existing| matches!(existing, ModelScene::Composed(existing) if existing == &composed))
+                .position(|existing| matches!(existing, SceneModel::Composed(existing) if existing == &composed))
                 .unwrap_or_else(|| {
                     let index = models.len();
-                    models.push(ModelScene::Composed(composed));
+                    models.push(SceneModel::Composed(composed));
                     index
                 });
-            instances.push(RenderInstance {
+            instances.push(SceneInstance {
                 id:                    instances.len(),
                 object_key:            Some(object_key.to_string()),
                 label:                 label.to_string(),
@@ -1119,10 +1118,10 @@ impl<'a> SceneLoader<'a> {
         position: [f32; 3],
         rotation: [f32; 4],
         model_indices: &mut std::collections::BTreeMap<String, usize>,
-        models: &mut Vec<ModelScene>,
-        instances: &mut Vec<RenderInstance>,
+        models: &mut Vec<SceneModel>,
+        instances: &mut Vec<SceneInstance>,
         dependencies: &mut DependencyGraph,
-        diagnostics: &mut Vec<RenderDiagnostic>,
+        diagnostics: &mut Vec<SceneDiagnostic>,
     ) {
         let (resource_kind, extension) = match kind {
             NwnBlueprintKind::Door => (ModelResourceKind::DoorWalkmesh, "dwk"),
@@ -1137,8 +1136,8 @@ impl<'a> SceneLoader<'a> {
             let resolved = match ResolvedResRef::from_filename(&filename) {
                 Ok(resolved) => resolved,
                 Err(error) => {
-                    diagnostics.push(RenderDiagnostic {
-                        severity: RenderDiagnosticSeverity::Error,
+                    diagnostics.push(SceneDiagnostic {
+                        severity: SceneDiagnosticSeverity::Error,
                         code:     "blueprint.collision.invalidReference".into(),
                         message:  error.to_string(),
                         resource: Some(filename),
@@ -1164,7 +1163,7 @@ impl<'a> SceneLoader<'a> {
                         );
                         dependencies.connect(parent_id, id, "collision");
                         let index = models.len();
-                        models.push(ModelScene::Auxiliary(scene));
+                        models.push(SceneModel::Auxiliary(scene));
                         model_indices.insert(cache_key, index);
                         Some(index)
                     }
@@ -1177,8 +1176,8 @@ impl<'a> SceneLoader<'a> {
                             Some(error.to_string()),
                         );
                         dependencies.connect(parent_id, id, "collision");
-                        diagnostics.push(RenderDiagnostic {
-                            severity: RenderDiagnosticSeverity::Error,
+                        diagnostics.push(SceneDiagnostic {
+                            severity: SceneDiagnosticSeverity::Error,
                             code:     "blueprint.collision.invalid".into(),
                             message:  format!("could not parse {filename}: {error}"),
                             resource: Some(filename.clone()),
@@ -1200,11 +1199,11 @@ impl<'a> SceneLoader<'a> {
             }
         };
         if let Some(model) = model_index {
-            instances.push(RenderInstance {
+            instances.push(SceneInstance {
                 id: instances.len(),
                 object_key: object_key.map(str::to_string),
                 label: format!("{model_name} collision"),
-                kind: RenderInstanceKind::Collision,
+                kind: SceneInstanceKind::Collision,
                 model: Some(model),
                 resource: Some(filename),
                 position,
@@ -1221,20 +1220,20 @@ impl<'a> SceneLoader<'a> {
         kind: NwnBlueprintKind,
         template: Option<&str>,
         raw: &GffStruct,
-    ) -> RendererResult<NwnBlueprintVisual> {
+    ) -> SceneResult<NwnBlueprintVisual> {
         let mut root = if let Some(template) = template {
             let resolved =
                 ResolvedResRef::from_filename(&format!("{template}.{}", kind.extension()))
-                    .map_err(|error| RendererError::invalid(error.to_string()))?;
+                    .map_err(|error| SceneError::invalid(error.to_string()))?;
             let resource = self
                 .resman
                 .get_resolved(&resolved)
-                .ok_or_else(|| RendererError::missing(resolved.to_string()))?;
+                .ok_or_else(|| SceneError::missing(resolved.to_string()))?;
             let bytes = resource
                 .read_all(CachePolicy::Use)
-                .map_err(|error| RendererError::invalid(error.to_string()))?;
+                .map_err(|error| SceneError::invalid(error.to_string()))?;
             read_gff_root(&mut Cursor::new(bytes))
-                .map_err(|error| RendererError::invalid(error.to_string()))?
+                .map_err(|error| SceneError::invalid(error.to_string()))?
         } else {
             GffRoot::new(match kind {
                 NwnBlueprintKind::Creature => "UTC ",
@@ -1246,17 +1245,17 @@ impl<'a> SceneLoader<'a> {
         for (label, field) in raw.fields() {
             root.root
                 .put_field(label.clone(), field.clone())
-                .map_err(|error| RendererError::invalid(error.to_string()))?;
+                .map_err(|error| SceneError::invalid(error.to_string()))?;
         }
         compose_blueprint_visual_from_root(self.resman, kind, &root)
-            .map_err(|error| RendererError::scene(error.to_string()))
+            .map_err(|error| SceneError::scene(error.to_string()))
     }
 
     fn append_emitter_chunk_models(
         &mut self,
-        models: &mut Vec<ModelScene>,
+        models: &mut Vec<SceneModel>,
         dependencies: &mut DependencyGraph,
-        diagnostics: &mut Vec<RenderDiagnostic>,
+        diagnostics: &mut Vec<SceneDiagnostic>,
     ) {
         let mut source_index = 0;
         while let Some(source) = models.get(source_index) {
@@ -1287,7 +1286,7 @@ impl<'a> SceneLoader<'a> {
                         );
                         dependencies.connect(parent_id, chunk_id, "emitterChunk");
                         self.record_composed_dependencies(chunk_id, &chunk, dependencies);
-                        models.push(ModelScene::Composed(chunk));
+                        models.push(SceneModel::Composed(chunk));
                     }
                     Err(error) => {
                         let chunk_id = dependencies.record(
@@ -1298,8 +1297,8 @@ impl<'a> SceneLoader<'a> {
                             Some(error.to_string()),
                         );
                         dependencies.connect(parent_id, chunk_id, "emitterChunk");
-                        diagnostics.push(RenderDiagnostic {
-                            severity: RenderDiagnosticSeverity::Error,
+                        diagnostics.push(SceneDiagnostic {
+                            severity: SceneDiagnosticSeverity::Error,
                             code:     "emitter.chunkModel.missing".into(),
                             message:  format!(
                                 "{parent} references missing emitter chunk model {chunk_name}: \
@@ -1382,7 +1381,7 @@ impl<'a> SceneLoader<'a> {
     }
 }
 
-fn emitter_chunk_references(model: &ModelScene) -> Vec<(String, String)> {
+fn emitter_chunk_references(model: &SceneModel) -> Vec<(String, String)> {
     fn collect(scene: &NwnComposedScene, target: &mut Vec<(String, String)>) {
         collect_scene_emitter_chunks(&scene.scene, target);
         for attachment in &scene.attachments {
@@ -1391,8 +1390,8 @@ fn emitter_chunk_references(model: &ModelScene) -> Vec<(String, String)> {
     }
     let mut result = Vec::new();
     match model {
-        ModelScene::Composed(scene) => collect(scene, &mut result),
-        ModelScene::Auxiliary(scene) => collect_scene_emitter_chunks(scene, &mut result),
+        SceneModel::Composed(scene) => collect(scene, &mut result),
+        SceneModel::Auxiliary(scene) => collect_scene_emitter_chunks(scene, &mut result),
     }
     result
 }
@@ -1439,7 +1438,7 @@ fn collect_scene_emitter_chunks(
     }
 }
 
-fn model_tree_contains_name(model: &ModelScene, name: &str) -> bool {
+fn model_tree_contains_name(model: &SceneModel, name: &str) -> bool {
     fn composed_contains(scene: &NwnComposedScene, name: &str) -> bool {
         scene.model_name.eq_ignore_ascii_case(name)
             || scene
@@ -1448,34 +1447,38 @@ fn model_tree_contains_name(model: &ModelScene, name: &str) -> bool {
                 .any(|attachment| composed_contains(&attachment.scene, name))
     }
     match model {
-        ModelScene::Composed(scene) => composed_contains(scene, name),
-        ModelScene::Auxiliary(scene) => scene.name.eq_ignore_ascii_case(name),
+        SceneModel::Composed(scene) => composed_contains(scene, name),
+        SceneModel::Auxiliary(scene) => scene.name.eq_ignore_ascii_case(name),
     }
 }
 
 fn area_object_key(
-    objects: &[RenderAreaObject],
-    kind: RenderInstanceKind,
+    objects: &[SceneAreaObject],
+    kind: SceneInstanceKind,
     source_index: usize,
-) -> &str {
+) -> SceneResult<&str> {
     objects
         .iter()
         .find(|object| object.kind == kind && object.source_index == source_index)
         .map(|object| object.key.as_str())
-        .expect("area object catalog must contain every authored GIT object")
+        .ok_or_else(|| {
+            SceneError::scene(format!(
+                "area object catalog is missing {kind:?} GIT entry {source_index}"
+            ))
+        })
 }
 
 fn append_git_overlays(
     git: &GitFile,
-    area_objects: &[RenderAreaObject],
-    target: &mut Vec<RenderInstance>,
-) {
+    area_objects: &[SceneAreaObject],
+    target: &mut Vec<SceneInstance>,
+) -> SceneResult<()> {
     for (index, trigger) in git.triggers.iter().enumerate() {
         push_polygon_instance(
             target,
-            area_object_key(area_objects, RenderInstanceKind::Trigger, index),
+            area_object_key(area_objects, SceneInstanceKind::Trigger, index)?,
             trigger.tag.as_deref().unwrap_or("Trigger"),
-            RenderInstanceKind::Trigger,
+            SceneInstanceKind::Trigger,
             &trigger.transform,
             &trigger.geometry,
         );
@@ -1483,9 +1486,9 @@ fn append_git_overlays(
     for (index, encounter) in git.encounters.iter().enumerate() {
         push_polygon_instance(
             target,
-            area_object_key(area_objects, RenderInstanceKind::Encounter, index),
+            area_object_key(area_objects, SceneInstanceKind::Encounter, index)?,
             encounter.tag.as_deref().unwrap_or("Encounter"),
-            RenderInstanceKind::Encounter,
+            SceneInstanceKind::Encounter,
             &encounter.transform,
             &encounter.geometry,
         );
@@ -1493,9 +1496,9 @@ fn append_git_overlays(
     for (index, waypoint) in git.waypoints.iter().enumerate() {
         push_marker_instance(
             target,
-            area_object_key(area_objects, RenderInstanceKind::Waypoint, index),
+            area_object_key(area_objects, SceneInstanceKind::Waypoint, index)?,
             waypoint.tag.as_deref().unwrap_or("Waypoint"),
-            RenderInstanceKind::Waypoint,
+            SceneInstanceKind::Waypoint,
             &waypoint.transform,
             0.35,
             4,
@@ -1504,9 +1507,9 @@ fn append_git_overlays(
     for (index, sound) in git.sounds.iter().enumerate() {
         push_marker_instance(
             target,
-            area_object_key(area_objects, RenderInstanceKind::Sound, index),
+            area_object_key(area_objects, SceneInstanceKind::Sound, index)?,
             sound.tag.as_deref().unwrap_or("Sound"),
-            RenderInstanceKind::Sound,
+            SceneInstanceKind::Sound,
             &sound.transform,
             sound.max_distance.unwrap_or(1.0).max(0.1),
             48,
@@ -1515,14 +1518,15 @@ fn append_git_overlays(
     for (index, store) in git.stores.iter().enumerate() {
         push_marker_instance(
             target,
-            area_object_key(area_objects, RenderInstanceKind::Store, index),
+            area_object_key(area_objects, SceneInstanceKind::Store, index)?,
             store.tag.as_deref().unwrap_or("Store"),
-            RenderInstanceKind::Store,
+            SceneInstanceKind::Store,
             &store.transform,
             0.35,
             4,
         );
     }
+    Ok(())
 }
 
 const fn source_for_blueprint(kind: NwnBlueprintKind) -> SceneSource {
@@ -1534,12 +1538,12 @@ const fn source_for_blueprint(kind: NwnBlueprintKind) -> SceneSource {
     }
 }
 
-const fn render_kind_for_blueprint(kind: NwnBlueprintKind) -> RenderInstanceKind {
+const fn render_kind_for_blueprint(kind: NwnBlueprintKind) -> SceneInstanceKind {
     match kind {
-        NwnBlueprintKind::Creature => RenderInstanceKind::Creature,
-        NwnBlueprintKind::Door => RenderInstanceKind::Door,
-        NwnBlueprintKind::Placeable => RenderInstanceKind::Placeable,
-        NwnBlueprintKind::Item => RenderInstanceKind::Item,
+        NwnBlueprintKind::Creature => SceneInstanceKind::Creature,
+        NwnBlueprintKind::Door => SceneInstanceKind::Door,
+        NwnBlueprintKind::Placeable => SceneInstanceKind::Placeable,
+        NwnBlueprintKind::Item => SceneInstanceKind::Item,
     }
 }
 
@@ -1568,15 +1572,15 @@ fn palette_color(palette: &[Option<[f32; 3]>], index: Option<i32>) -> Option<[f3
 }
 
 fn push_marker_instance(
-    target: &mut Vec<RenderInstance>,
+    target: &mut Vec<SceneInstance>,
     object_key: &str,
     label: &str,
-    kind: RenderInstanceKind,
+    kind: SceneInstanceKind,
     transform: &nwnrs_types::gff::GitTransform,
     radius: f32,
     segments: usize,
 ) {
-    target.push(RenderInstance {
+    target.push(SceneInstance {
         id: target.len(),
         object_key: Some(object_key.to_string()),
         label: label.to_string(),
@@ -1597,14 +1601,14 @@ fn push_marker_instance(
 }
 
 fn push_polygon_instance(
-    target: &mut Vec<RenderInstance>,
+    target: &mut Vec<SceneInstance>,
     object_key: &str,
     label: &str,
-    kind: RenderInstanceKind,
+    kind: SceneInstanceKind,
     transform: &nwnrs_types::gff::GitTransform,
     points: &[nwnrs_types::gff::GitPoint],
 ) {
-    target.push(RenderInstance {
+    target.push(SceneInstance {
         id: target.len(),
         object_key: Some(object_key.to_string()),
         label: label.to_string(),
@@ -1637,7 +1641,7 @@ mod tests {
         resman::{ResContainer, ResMan, ResolvedResRef, read_resmemfile},
     };
 
-    use crate::{RenderInstanceKind, SceneLoader, SceneSource};
+    use crate::scene::{SceneInstanceKind, SceneLoader, SceneSource};
 
     #[test]
     fn loads_model_resource_through_shared_scene_assembler() {
@@ -1803,7 +1807,7 @@ WalkMesh=tilewalk
             .instances
             .first()
             .unwrap_or_else(|| panic!("expected a tile instance"));
-        assert_eq!(tile.kind, RenderInstanceKind::Tile);
+        assert_eq!(tile.kind, SceneInstanceKind::Tile);
         assert_eq!(tile.position, [0.0, 0.0, 5.0]);
         assert_eq!(
             tile.light_color_overrides.first().copied().flatten(),
@@ -1813,13 +1817,13 @@ WalkMesh=tilewalk
             scene
                 .instances
                 .iter()
-                .any(|instance| instance.kind == RenderInstanceKind::Trigger)
+                .any(|instance| instance.kind == SceneInstanceKind::Trigger)
         );
         assert!(
             scene
                 .instances
                 .iter()
-                .any(|instance| instance.kind == RenderInstanceKind::Skybox)
+                .any(|instance| instance.kind == SceneInstanceKind::Skybox)
         );
         assert!(scene.diagnostics.is_empty());
     }

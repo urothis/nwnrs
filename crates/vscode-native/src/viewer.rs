@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, HashMap},
     fs,
     hash::{DefaultHasher, Hash, Hasher},
     io::Cursor,
@@ -14,18 +14,22 @@ use napi::{
 };
 use napi_derive::napi;
 use nwnrs_nwpkg::{DependencySpec, PROJECT_MANIFEST_FILENAME, read_project_manifest};
-use nwnrs_renderer::{
-    RenderAreaObject, RenderScene, SceneLoader, ScenePacket, area_object_catalog,
-};
 use nwnrs_types::{
     gff::{
         ARE_RES_TYPE, GIT_RES_TYPE, IFO_RES_TYPE, gff_root_from_json_bytes, parse_git_root,
         parse_module_info_root, read_gff_root, write_gff_root,
     },
-    install::{find_nwnrs_root, find_user_root, new_default_resman},
+    install::{find_nwnrs_root, find_user_root, new_default_resman, resolve_language_root},
+    localization::{BAD_STRREF, CUSTOM_STRREF_OFFSET, Language, resolve_language},
     lru::WeightedLru,
     mdl::{ModelResourceKind, NwnBlueprintKind},
-    resman::{ResContainer, ResMan, ResolvedResRef, read_resdir, read_resmemfile},
+    resman::{CachePolicy, ResContainer, ResMan, ResolvedResRef, read_resdir, read_resmemfile},
+    scene::{
+        AreaInspectionCache, AreaInspector, InspectionLocalizationResolver,
+        InspectionLocalizedEntry, InspectionLocalizedString, SceneAreaObject, SceneDocument,
+        SceneLoader, ScenePacket, area_object_catalog,
+    },
+    tlk::SingleTlk,
 };
 use serde::{Deserialize, Serialize};
 
@@ -49,11 +53,14 @@ struct ViewerSession {
     resman:            ResMan,
     scenes:            WeightedLru<String, Arc<CachedViewerScene>>,
     resources:         Option<Arc<Vec<ViewerResourceEntry>>>,
+    inspection_cache:  AreaInspectionCache,
+    localization:      ViewerLocalization,
 }
 
 struct CachedViewerScene {
-    scene:   Arc<RenderScene>,
-    catalog: Arc<Vec<u8>>,
+    scene:       Arc<SceneDocument>,
+    catalog:     Arc<Vec<u8>>,
+    inspections: Mutex<WeightedLru<String, Arc<String>>>,
 }
 
 /// One persistent native viewer service with an independent layered resource
@@ -112,6 +119,16 @@ impl ViewerService {
     #[napi]
     pub fn load_texture(&self, request_json: String) -> AsyncTask<ViewerTextureTask> {
         AsyncTask::new(ViewerTextureTask {
+            state: Arc::clone(&self.state),
+            request_json,
+        })
+    }
+
+    /// Lazily builds one complete authored object inspection from a cached
+    /// scene.
+    #[napi]
+    pub fn inspect_area_object(&self, request_json: String) -> AsyncTask<ViewerAreaInspectionTask> {
+        AsyncTask::new(ViewerAreaInspectionTask {
             state: Arc::clone(&self.state),
             request_json,
         })
@@ -215,6 +232,12 @@ pub struct ViewerTextureTask {
     request_json: String,
 }
 
+/// Background authored-area-object inspection task.
+pub struct ViewerAreaInspectionTask {
+    state:        Arc<ViewerServiceState>,
+    request_json: String,
+}
+
 /// Background dependency provenance task.
 pub struct ViewerResolveTask {
     state:        Arc<ViewerServiceState>,
@@ -235,6 +258,209 @@ pub struct ViewerPackageSourceTask {
 pub struct ViewerResourceCatalogTask {
     state:        Arc<ViewerServiceState>,
     request_json: String,
+}
+
+struct ViewerTlkLayer {
+    male:            Option<SingleTlk>,
+    female:          Option<SingleTlk>,
+    male_resource:   Option<String>,
+    female_resource: Option<String>,
+}
+
+struct ViewerLocalization {
+    language:  Language,
+    user_root: PathBuf,
+    dialog:    ViewerTlkLayer,
+    custom:    HashMap<String, ViewerTlkLayer>,
+}
+
+impl ViewerLocalization {
+    fn new(root: &Path, user_root: PathBuf, language: &str) -> Result<Self, String> {
+        let language = resolve_language(language).map_err(|error| error.to_string())?;
+        let language_root = resolve_language_root(root, language.short_code())
+            .map_err(|error| error.to_string())?;
+        let data = language_root.join("data");
+        Ok(Self {
+            language,
+            user_root,
+            dialog: ViewerTlkLayer::from_paths(data.join("dialog.tlk"), data.join("dialogf.tlk")),
+            custom: HashMap::new(),
+        })
+    }
+
+    fn ensure_custom(&mut self, resman: &mut ResMan, name: Option<&str>) {
+        let Some(name) = name.and_then(valid_custom_tlk_name) else {
+            return
+        };
+        if self.custom.contains_key(name) {
+            return;
+        }
+        let male_name = format!("{name}.tlk");
+        let female_name = format!("{name}f.tlk");
+        let male_res = ResolvedResRef::from_filename(&male_name)
+            .ok()
+            .and_then(|resolved| resman.get_resolved(&resolved));
+        let female_res = ResolvedResRef::from_filename(&female_name)
+            .ok()
+            .and_then(|resolved| resman.get_resolved(&resolved));
+        let directory = self.user_root.join("tlk");
+        self.custom.insert(
+            name.to_string(),
+            ViewerTlkLayer {
+                male_resource:   male_res.as_ref().map_or_else(
+                    || {
+                        directory
+                            .join(&male_name)
+                            .is_file()
+                            .then_some(male_name.clone())
+                    },
+                    |res| Some(format!("{} @ {}", male_name, res.origin())),
+                ),
+                female_resource: female_res.as_ref().map_or_else(
+                    || {
+                        directory
+                            .join(&female_name)
+                            .is_file()
+                            .then_some(female_name.clone())
+                    },
+                    |res| Some(format!("{} @ {}", female_name, res.origin())),
+                ),
+                male:            male_res
+                    .as_ref()
+                    .and_then(|res| SingleTlk::from_res(res, CachePolicy::Use).ok())
+                    .or_else(|| {
+                        SingleTlk::from_file(directory.join(&male_name), CachePolicy::Use).ok()
+                    }),
+                female:          female_res
+                    .as_ref()
+                    .and_then(|res| SingleTlk::from_res(res, CachePolicy::Use).ok())
+                    .or_else(|| {
+                        SingleTlk::from_file(directory.join(&female_name), CachePolicy::Use).ok()
+                    }),
+            },
+        );
+    }
+
+    fn resolve(
+        &mut self,
+        value: &nwnrs_types::gff::GffCExoLocString,
+        custom: Option<&str>,
+    ) -> InspectionLocalizedString {
+        let entries = value
+            .entries
+            .iter()
+            .map(|(id, text)| InspectionLocalizedEntry {
+                id:   *id,
+                text: text.clone(),
+            })
+            .collect::<Vec<_>>();
+        let language_id = i32::try_from(self.language.id()).unwrap_or_default() * 2;
+        let inline = value
+            .entries
+            .iter()
+            .find(|(id, text)| *id == language_id && !text.is_empty())
+            .or_else(|| {
+                value
+                    .entries
+                    .iter()
+                    .find(|(id, text)| *id == language_id + 1 && !text.is_empty())
+            })
+            .or_else(|| {
+                value
+                    .entries
+                    .iter()
+                    .find(|(id, text)| *id == 0 && !text.is_empty())
+            })
+            .or_else(|| value.entries.iter().find(|(_, text)| !text.is_empty()));
+        if let Some((id, text)) = inline {
+            return InspectionLocalizedString {
+                text: Some(text.clone()),
+                str_ref: (value.str_ref != BAD_STRREF).then_some(value.str_ref),
+                source: Some("inline".into()),
+                language_id: u32::try_from(*id / 2).ok(),
+                gender: Some(
+                    if id.rem_euclid(2) == 0 {
+                        "male"
+                    } else {
+                        "female"
+                    }
+                    .into(),
+                ),
+                entries,
+            };
+        }
+        let mut selected = None;
+        if value.str_ref != BAD_STRREF {
+            let (layer, index) = if value.str_ref >= CUSTOM_STRREF_OFFSET {
+                let name = custom.and_then(valid_custom_tlk_name);
+                (
+                    name.and_then(|name| self.custom.get_mut(name)),
+                    value.str_ref - CUSTOM_STRREF_OFFSET,
+                )
+            } else {
+                (Some(&mut self.dialog), value.str_ref)
+            };
+            if let Some(layer) = layer {
+                selected = layer
+                    .male
+                    .as_mut()
+                    .and_then(|tlk| tlk.get(index).ok().flatten())
+                    .map(|entry| (entry.text, layer.male_resource.clone(), "male"))
+                    .or_else(|| {
+                        layer
+                            .female
+                            .as_mut()
+                            .and_then(|tlk| tlk.get(index).ok().flatten())
+                            .map(|entry| (entry.text, layer.female_resource.clone(), "female"))
+                    });
+            }
+        }
+        InspectionLocalizedString {
+            text: selected.as_ref().map(|(text, _, _)| text.clone()),
+            str_ref: (value.str_ref != BAD_STRREF).then_some(value.str_ref),
+            source: selected.as_ref().and_then(|(_, source, _)| source.clone()),
+            language_id: selected.as_ref().map(|_| self.language.id()),
+            gender: selected.map(|(_, _, gender)| gender.into()),
+            entries,
+        }
+    }
+}
+
+impl ViewerTlkLayer {
+    fn from_paths(male: PathBuf, female: PathBuf) -> Self {
+        Self {
+            male_resource:   male.is_file().then(|| male.display().to_string()),
+            female_resource: female.is_file().then(|| female.display().to_string()),
+            male:            SingleTlk::from_file(&male, CachePolicy::Use).ok(),
+            female:          SingleTlk::from_file(&female, CachePolicy::Use).ok(),
+        }
+    }
+}
+
+struct ViewerInspectionLocalization<'a> {
+    localization: &'a mut ViewerLocalization,
+    custom_tlk:   Option<&'a str>,
+}
+
+impl InspectionLocalizationResolver for ViewerInspectionLocalization<'_> {
+    fn resolve(&mut self, value: &nwnrs_types::gff::GffCExoLocString) -> InspectionLocalizedString {
+        self.localization.resolve(value, self.custom_tlk)
+    }
+}
+
+fn valid_custom_tlk_name(value: &str) -> Option<&str> {
+    let value = value
+        .get(value.len().saturating_sub(4)..)
+        .is_some_and(|suffix| suffix.eq_ignore_ascii_case(".tlk"))
+        .then(|| value.get(..value.len() - 4))
+        .flatten()
+        .unwrap_or(value);
+    (!value.is_empty()
+        && value.len() <= 16
+        && value
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || character == '_'))
+    .then_some(value)
 }
 
 #[derive(Debug, Deserialize)]
@@ -348,7 +574,7 @@ struct ViewerPackageSourceArea {
     files:        Vec<ViewerPackageSourceFile>,
     missing:      Vec<String>,
     conflicts:    Vec<String>,
-    objects:      Vec<RenderAreaObject>,
+    objects:      Vec<SceneAreaObject>,
     object_error: Option<String>,
 }
 
@@ -620,7 +846,7 @@ fn source_area(
 
 fn read_source_area_objects(
     files: &[ViewerPackageSourceFile],
-) -> Result<Vec<RenderAreaObject>, String> {
+) -> Result<Vec<SceneAreaObject>, String> {
     let git_files = files
         .iter()
         .filter(|file| file.kind.eq_ignore_ascii_case("git"))
@@ -1230,7 +1456,7 @@ impl Task for ViewerLoadTask {
             } else if resource.base().res_type() == IFO_RES_TYPE {
                 loader.load_module_area(resource.base().res_ref(), request.area.as_deref())
             } else {
-                Err(nwnrs_renderer::RendererError::invalid(format!(
+                Err(nwnrs_types::scene::SceneError::invalid(format!(
                     "{} does not have a 3D scene provider",
                     resource
                 )))
@@ -1276,6 +1502,7 @@ impl Task for ViewerLoadTask {
             Arc::new(CachedViewerScene {
                 scene,
                 catalog: Arc::new(packet.clone()),
+                inspections: Mutex::new(WeightedLru::new(8 * 1024 * 1024, 1)),
             }),
         );
         Ok(packet)
@@ -1346,6 +1573,82 @@ impl Task for ViewerTextureTask {
     }
 }
 
+impl Task for ViewerAreaInspectionTask {
+    type JsValue = String;
+    type Output = String;
+
+    fn compute(&mut self) -> napi::Result<Self::Output> {
+        let request: ViewerAreaInspectionRequest = serde_json::from_str(&self.request_json)
+            .map_err(|error| {
+                napi::Error::from_reason(format!("invalid area inspection request: {error}"))
+            })?;
+        let session = {
+            let mut sessions = self.state.sessions.lock().map_err(|error| {
+                napi::Error::from_reason(format!("viewer session map is poisoned: {error}"))
+            })?;
+            Arc::clone(sessions.get(&request.session_key).ok_or_else(|| {
+                napi::Error::from_reason("viewer session is no longer available; reload the scene")
+            })?)
+        };
+        let mut session = session.lock().map_err(|error| {
+            napi::Error::from_reason(format!("viewer package session is poisoned: {error}"))
+        })?;
+        let session = session
+            .as_mut()
+            .ok_or_else(|| napi::Error::from_reason("viewer session was not initialized"))?;
+        let cached = Arc::clone(session.scenes.get(&request.asset_key).ok_or_else(|| {
+            napi::Error::from_reason("viewer scene assets were evicted; reload the scene")
+        })?);
+        {
+            let mut inspections = cached.inspections.lock().map_err(|error| {
+                napi::Error::from_reason(format!("inspection cache is poisoned: {error}"))
+            })?;
+            if let Some(encoded) = inspections.get(&request.object_key).cloned() {
+                return Ok(encoded.as_ref().clone());
+            }
+        }
+
+        let custom_tlk = cached
+            .scene
+            .module
+            .as_ref()
+            .and_then(|module| module.custom_tlk.as_deref());
+        let ViewerSession {
+            resman,
+            inspection_cache,
+            localization,
+            ..
+        } = session;
+        localization.ensure_custom(resman, custom_tlk);
+        let mut localization = ViewerInspectionLocalization {
+            localization,
+            custom_tlk,
+        };
+        let inspection = AreaInspector::new(resman, inspection_cache, &mut localization)
+            .inspect(&cached.scene, &request.object_key)
+            .map_err(|error| napi::Error::from_reason(error.to_string()))?;
+        let encoded = Arc::new(serde_json::to_string(&inspection).map_err(|error| {
+            napi::Error::from_reason(format!("failed to encode area inspection: {error}"))
+        })?);
+        cached
+            .inspections
+            .lock()
+            .map_err(|error| {
+                napi::Error::from_reason(format!("inspection cache is poisoned: {error}"))
+            })?
+            .insert_weighted(
+                request.object_key,
+                encoded.len().max(1),
+                Arc::clone(&encoded),
+            );
+        Ok(encoded.as_ref().clone())
+    }
+
+    fn resolve(&mut self, _env: napi::Env, output: Self::Output) -> napi::Result<Self::JsValue> {
+        Ok(output)
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 struct ViewerLoadRequest {
     session_key: String,
@@ -1391,6 +1694,14 @@ struct ViewerAssetRequest {
     texture_index:     Option<usize>,
     #[serde(default)]
     prefer_compressed: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ViewerAreaInspectionRequest {
+    session_key: String,
+    asset_key:   String,
+    object_key:  String,
 }
 
 #[derive(Serialize)]
@@ -1442,9 +1753,10 @@ fn build_session(
     {
         push_unique_path(&mut directories, parent.to_path_buf());
     }
+    let localization = ViewerLocalization::new(&root, user.clone(), &request.language)?;
     let mut resman = new_default_resman(
-        root,
-        user,
+        &root,
+        &user,
         &request.language,
         96,
         true,
@@ -1473,6 +1785,8 @@ fn build_session(
         resman,
         scenes: WeightedLru::new(96 * 1024 * 1024, 1),
         resources: None,
+        inspection_cache: AreaInspectionCache::default(),
+        localization,
     })
 }
 
@@ -1544,7 +1858,7 @@ fn is_gff_resource_extension(extension: &str) -> bool {
 fn cached_scene(
     state: &ViewerServiceState,
     request: &ViewerAssetRequest,
-) -> napi::Result<Arc<RenderScene>> {
+) -> napi::Result<Arc<SceneDocument>> {
     let session = {
         let mut sessions = state.sessions.lock().map_err(|error| {
             napi::Error::from_reason(format!("viewer session map is poisoned: {error}"))
@@ -1725,6 +2039,65 @@ const fn default_true() -> bool {
 mod tests {
     use super::*;
 
+    fn empty_localization() -> ViewerLocalization {
+        ViewerLocalization {
+            language:  Language::English,
+            user_root: PathBuf::new(),
+            dialog:    ViewerTlkLayer {
+                male:            None,
+                female:          None,
+                male_resource:   None,
+                female_resource: None,
+            },
+            custom:    HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn localized_inspection_prefers_configured_inline_text() {
+        let mut localization = empty_localization();
+        let resolved = localization.resolve(
+            &nwnrs_types::gff::GffCExoLocString {
+                str_ref: 42,
+                entries: vec![(0, "English".into()), (2, "German".into())],
+            },
+            None,
+        );
+        assert_eq!(resolved.text.as_deref(), Some("English"));
+        assert_eq!(resolved.source.as_deref(), Some("inline"));
+        assert_eq!(resolved.str_ref, Some(42));
+    }
+
+    #[test]
+    fn localized_inspection_applies_the_custom_tlk_offset() {
+        let mut localization = empty_localization();
+        let mut custom = SingleTlk::new();
+        custom.set_text(7, "Custom text");
+        localization.custom.insert(
+            "module_text".into(),
+            ViewerTlkLayer {
+                male:            Some(custom),
+                female:          None,
+                male_resource:   Some("module_text.tlk".into()),
+                female_resource: None,
+            },
+        );
+        let resolved = localization.resolve(
+            &nwnrs_types::gff::GffCExoLocString {
+                str_ref: 0x0100_0007,
+                entries: Vec::new(),
+            },
+            Some("module_text"),
+        );
+        assert_eq!(resolved.text.as_deref(), Some("Custom text"));
+        assert_eq!(resolved.source.as_deref(), Some("module_text.tlk"));
+        assert_eq!(
+            valid_custom_tlk_name("MODULE_TEXT.TLK"),
+            Some("MODULE_TEXT")
+        );
+        assert_eq!(valid_custom_tlk_name("../escape"), None);
+    }
+
     fn temporary_directory(label: &str) -> PathBuf {
         let path = std::env::temp_dir().join(format!(
             "nwnrs-vscode-viewer-{label}-{}-{}",
@@ -1890,7 +2263,7 @@ mod tests {
         assert_eq!(result.areas[0].objects.len(), 1);
         assert_eq!(
             result.areas[0].objects[0].kind,
-            nwnrs_renderer::RenderInstanceKind::Placeable
+            nwnrs_types::scene::SceneInstanceKind::Placeable
         );
         assert_eq!(result.areas[0].objects[0].label, "test_chest");
         assert_eq!(result.areas[0].objects[0].position, [4.0, 5.0, 0.0]);

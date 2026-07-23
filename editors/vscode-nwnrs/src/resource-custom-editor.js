@@ -453,6 +453,40 @@ class ResourceCustomEditorProvider {
               })));
           }
           break;
+        case 'inspectAreaObject':
+          if (document.viewer) {
+            const generation = document.sceneGeneration || 0;
+            const assetKey = String(message.assetKey || '');
+            const objectKey = String(message.objectKey || '');
+            try {
+              const inspection = await this.viewerWorker.inspectAreaObject({
+                sessionKey: this.viewerRequest(document).session_key,
+                assetKey,
+                objectKey,
+              });
+              if (generation === (document.sceneGeneration || 0) && view.ready) {
+                await view.webview.postMessage({
+                  type: 'areaObjectInspection',
+                  assetKey,
+                  objectKey,
+                  inspection,
+                });
+              }
+            } catch (error) {
+              if (generation !== (document.sceneGeneration || 0)) break;
+              if (viewerAssetCacheMiss(error)) {
+                await this.recoverViewerScene(document);
+                break;
+              }
+              if (view.ready) await view.webview.postMessage({
+                type: 'areaObjectInspectionError',
+                assetKey,
+                objectKey,
+                message: error.message || String(error),
+              });
+            }
+          }
+          break;
         case 'loadAnimation':
           if (document.viewer) {
             const generation = document.sceneGeneration || 0;

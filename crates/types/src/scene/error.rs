@@ -1,8 +1,8 @@
 use std::{fmt, io};
 
-/// Errors returned while assembling renderer-neutral scenes.
+/// Errors returned while assembling frontend-neutral scenes.
 #[derive(Debug)]
-pub enum RendererError {
+pub enum SceneError {
     /// An underlying IO operation failed.
     Io(io::Error),
     /// A requested resource could not be resolved.
@@ -13,7 +13,7 @@ pub enum RendererError {
     Scene(String),
 }
 
-impl RendererError {
+impl SceneError {
     /// Creates a missing-resource error.
     #[must_use]
     pub fn missing(resource: impl Into<String>) -> Self {
@@ -33,7 +33,7 @@ impl RendererError {
     }
 }
 
-impl fmt::Display for RendererError {
+impl fmt::Display for SceneError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Io(error) => error.fmt(f),
@@ -43,13 +43,13 @@ impl fmt::Display for RendererError {
     }
 }
 
-impl std::error::Error for RendererError {}
+impl std::error::Error for SceneError {}
 
-impl From<io::Error> for RendererError {
+impl From<io::Error> for SceneError {
     fn from(value: io::Error) -> Self {
         Self::Io(value)
     }
 }
 
-/// Result type for renderer scene assembly.
-pub type RendererResult<T> = Result<T, RendererError>;
+/// Result type for scene assembly.
+pub type SceneResult<T> = Result<T, SceneError>;

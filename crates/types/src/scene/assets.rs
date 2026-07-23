@@ -12,24 +12,24 @@ use nwnrs_types::{
     tga::TgaTexture,
 };
 
-use crate::{
-    DependencyGraph, DependencyKind, DependencyState, ModelScene, RenderCompressedTexture,
-    RenderDiagnostic, RenderDiagnosticSeverity, RenderMaterialAssets, RenderMaterialTexture,
-    RenderModelAssets, RenderMtr, RenderMtrParameter, RenderNodeTexture, RenderShaderSource,
-    RenderShaderStage, RenderTexture, RenderTextureCompression, RenderTextureKind,
-    RenderTextureMip, RenderTxiDirective, RendererError, RendererResult,
+use crate::scene::{
+    DependencyGraph, DependencyKind, DependencyState, SceneCompressedTexture, SceneDiagnostic,
+    SceneDiagnosticSeverity, SceneError, SceneMaterialAssets, SceneMaterialTexture, SceneModel,
+    SceneModelAssets, SceneMtr, SceneMtrParameter, SceneNodeTexture, SceneResult,
+    SceneShaderSource, SceneShaderStage, SceneTexture, SceneTextureCompression, SceneTextureKind,
+    SceneTextureMip, SceneTxiDirective,
 };
 
 /// Resolves and decodes the complete visual asset tree for a model collection.
 pub(crate) fn resolve_model_assets(
     resman: &mut ResMan,
-    models: &[ModelScene],
+    models: &[SceneModel],
     dependencies: &mut DependencyGraph,
-    diagnostics: &mut Vec<RenderDiagnostic>,
-) -> RendererResult<(
-    Vec<RenderModelAssets>,
-    Vec<RenderTexture>,
-    Vec<RenderShaderSource>,
+    diagnostics: &mut Vec<SceneDiagnostic>,
+) -> SceneResult<(
+    Vec<SceneModelAssets>,
+    Vec<SceneTexture>,
+    Vec<SceneShaderSource>,
 )> {
     let mut context = AssetContext {
         resman,
@@ -43,35 +43,32 @@ pub(crate) fn resolve_model_assets(
     let assets = models
         .iter()
         .map(|model| match model {
-            ModelScene::Composed(composed) => context.resolve_composed(composed),
-            ModelScene::Auxiliary(scene) => {
+            SceneModel::Composed(composed) => context.resolve_composed(composed),
+            SceneModel::Auxiliary(scene) => {
                 context.resolve_scene(scene, &NwnAppearanceOverrides::default(), Vec::new())
             }
         })
-        .collect::<RendererResult<Vec<_>>>()?;
+        .collect::<SceneResult<Vec<_>>>()?;
     Ok((assets, context.textures, context.shaders))
 }
 
 struct AssetContext<'a> {
     resman:          &'a mut ResMan,
     dependencies:    &'a mut DependencyGraph,
-    diagnostics:     &'a mut Vec<RenderDiagnostic>,
-    textures:        Vec<RenderTexture>,
+    diagnostics:     &'a mut Vec<SceneDiagnostic>,
+    textures:        Vec<SceneTexture>,
     texture_indices: BTreeMap<String, usize>,
-    shaders:         Vec<RenderShaderSource>,
-    shader_indices:  BTreeSet<(String, RenderShaderStage)>,
+    shaders:         Vec<SceneShaderSource>,
+    shader_indices:  BTreeSet<(String, SceneShaderStage)>,
 }
 
 impl AssetContext<'_> {
-    fn resolve_composed(
-        &mut self,
-        composed: &NwnComposedScene,
-    ) -> RendererResult<RenderModelAssets> {
+    fn resolve_composed(&mut self, composed: &NwnComposedScene) -> SceneResult<SceneModelAssets> {
         let attachments = composed
             .attachments
             .iter()
             .map(|attachment| self.resolve_composed(&attachment.scene))
-            .collect::<RendererResult<Vec<_>>>()?;
+            .collect::<SceneResult<Vec<_>>>()?;
         self.resolve_scene(&composed.scene, &composed.appearance_overrides, attachments)
     }
 
@@ -79,8 +76,8 @@ impl AssetContext<'_> {
         &mut self,
         scene: &NwnScene,
         appearance: &NwnAppearanceOverrides,
-        attachments: Vec<RenderModelAssets>,
-    ) -> RendererResult<RenderModelAssets> {
+        attachments: Vec<SceneModelAssets>,
+    ) -> SceneResult<SceneModelAssets> {
         let model_resource = format!("{}.mdl", scene.name);
         let model_id = self
             .dependencies
@@ -96,7 +93,7 @@ impl AssetContext<'_> {
         let resolved =
             resolve_scene_materials(scene, self.resman, &TextureResolverOptions::default())
                 .map_err(|error| {
-                    RendererError::scene(format!("resolve materials for {}: {error}", scene.name))
+                    SceneError::scene(format!("resolve materials for {}: {error}", scene.name))
                 })?;
         let mut materials = Vec::with_capacity(resolved.len());
         for material in resolved {
@@ -112,26 +109,26 @@ impl AssetContext<'_> {
                 let vertex_shader = self.resolve_shader(
                     mtr_id,
                     mtr.material.custom_shader_vs.as_deref(),
-                    RenderShaderStage::Vertex,
+                    SceneShaderStage::Vertex,
                 );
                 let geometry_shader = self.resolve_shader(
                     mtr_id,
                     mtr.material.custom_shader_gs.as_deref(),
-                    RenderShaderStage::Geometry,
+                    SceneShaderStage::Geometry,
                 );
                 let fragment_shader = self.resolve_shader(
                     mtr_id,
                     mtr.material.custom_shader_fs.as_deref(),
-                    RenderShaderStage::Fragment,
+                    SceneShaderStage::Fragment,
                 );
-                Some(RenderMtr {
+                Some(SceneMtr {
                     resource: mtr.resolved.to_string(),
                     render_hint: mtr.material.render_hint.clone(),
                     parameters: mtr
                         .material
                         .parameters
                         .iter()
-                        .map(|(name, parameter)| RenderMtrParameter {
+                        .map(|(name, parameter)| SceneMtrParameter {
                             name:       name.clone(),
                             param_type: parameter.param_type.clone(),
                             values:     parameter.values.clone(),
@@ -151,8 +148,8 @@ impl AssetContext<'_> {
                         Some("referenced MTR was not found".into()),
                     );
                     self.dependencies.connect(model_id, id, "material");
-                    self.diagnostics.push(RenderDiagnostic {
-                        severity: RenderDiagnosticSeverity::Error,
+                    self.diagnostics.push(SceneDiagnostic {
+                        severity: SceneDiagnosticSeverity::Error,
                         code:     "material.mtr.missing".into(),
                         message:  format!("{} references missing {missing}", scene.name),
                         resource: Some(missing.to_string()),
@@ -182,8 +179,8 @@ impl AssetContext<'_> {
                                 node.state = DependencyState::Invalid;
                                 node.message = Some(error.to_string());
                             }
-                            self.diagnostics.push(RenderDiagnostic {
-                                severity: RenderDiagnosticSeverity::Error,
+                            self.diagnostics.push(SceneDiagnostic {
+                                severity: SceneDiagnosticSeverity::Error,
                                 code:     "texture.decode.failed".into(),
                                 message:  format!(
                                     "failed to decode {} for {}: {error}",
@@ -210,8 +207,8 @@ impl AssetContext<'_> {
                                 format!("{relationship}:candidate"),
                             );
                         }
-                        self.diagnostics.push(RenderDiagnostic {
-                            severity: RenderDiagnosticSeverity::Error,
+                        self.diagnostics.push(SceneDiagnostic {
+                            severity: SceneDiagnosticSeverity::Error,
                             code:     "texture.missing".into(),
                             message:  format!(
                                 "{} cannot resolve texture {}",
@@ -233,14 +230,14 @@ impl AssetContext<'_> {
                     self.dependencies.connect(model_id, txi_id, "textureInfo");
                     txi.directives
                         .into_iter()
-                        .map(|directive| RenderTxiDirective {
+                        .map(|directive| SceneTxiDirective {
                             name:          directive.name,
                             arguments:     directive.arguments,
                             continuations: directive.continuations,
                         })
                         .collect()
                 });
-                textures.push(RenderMaterialTexture {
+                textures.push(SceneMaterialTexture {
                     role,
                     source: match slot.source {
                         NwnMaterialTextureSource::Mdl => "mdl",
@@ -252,7 +249,7 @@ impl AssetContext<'_> {
                     directives,
                 });
             }
-            materials.push(RenderMaterialAssets {
+            materials.push(SceneMaterialAssets {
                 material_index: material.material_index,
                 source_node: material.source_node,
                 render_hint: material.render_hint,
@@ -299,7 +296,7 @@ impl AssetContext<'_> {
                 node_textures.push(texture);
             }
         }
-        Ok(RenderModelAssets {
+        Ok(SceneModelAssets {
             model_name: scene.name.clone(),
             materials,
             node_textures,
@@ -314,7 +311,7 @@ impl AssetContext<'_> {
         role: String,
         name: &str,
         appearance: &NwnAppearanceOverrides,
-    ) -> RendererResult<Option<RenderNodeTexture>> {
+    ) -> SceneResult<Option<SceneNodeTexture>> {
         let name = name.trim();
         if name.is_empty() || name.eq_ignore_ascii_case("null") {
             return Ok(None);
@@ -341,13 +338,13 @@ impl AssetContext<'_> {
                     self.dependencies
                         .connect(model_id, id, format!("node:{node_index}:{role}"));
                 }
-                self.diagnostics.push(RenderDiagnostic {
-                    severity: RenderDiagnosticSeverity::Error,
+                self.diagnostics.push(SceneDiagnostic {
+                    severity: SceneDiagnosticSeverity::Error,
                     code:     "node.texture.missing".into(),
                     message:  format!("node {node_index} cannot resolve {role} texture {name}"),
                     resource: Some(name.to_string()),
                 });
-                return Ok(Some(RenderNodeTexture {
+                return Ok(Some(SceneNodeTexture {
                     node_index,
                     role,
                     name: name.to_string(),
@@ -371,18 +368,18 @@ impl AssetContext<'_> {
             resolved.resolved.res_ref(),
             CachePolicy::Use,
         )
-        .map_err(|error| RendererError::invalid(error.to_string()))?
+        .map_err(|error| SceneError::invalid(error.to_string()))?
         .map_or_else(Vec::new, |txi| {
             txi.directives
                 .into_iter()
-                .map(|directive| RenderTxiDirective {
+                .map(|directive| SceneTxiDirective {
                     name:          directive.name,
                     arguments:     directive.arguments,
                     continuations: directive.continuations,
                 })
                 .collect()
         });
-        Ok(Some(RenderNodeTexture {
+        Ok(Some(SceneNodeTexture {
             node_index,
             role,
             name: name.to_string(),
@@ -396,7 +393,7 @@ impl AssetContext<'_> {
         resource: &Res,
         kind: TextureResourceKind,
         appearance: &NwnAppearanceOverrides,
-    ) -> RendererResult<usize> {
+    ) -> SceneResult<usize> {
         let palette_key = if kind == TextureResourceKind::Plt {
             appearance
                 .plt_rows
@@ -414,26 +411,26 @@ impl AssetContext<'_> {
         let (texture_kind, width, height, rgba8, compressed) = match kind {
             TextureResourceKind::Dds => {
                 let texture = DdsTexture::from_res(resource, CachePolicy::Use)
-                    .map_err(|error| RendererError::invalid(error.to_string()))?;
+                    .map_err(|error| SceneError::invalid(error.to_string()))?;
                 let compression = match texture.format {
-                    DdsFormat::Dxt1 => RenderTextureCompression::Dxt1,
-                    DdsFormat::Dxt5 => RenderTextureCompression::Dxt5,
+                    DdsFormat::Dxt1 => SceneTextureCompression::Dxt1,
+                    DdsFormat::Dxt5 => SceneTextureCompression::Dxt5,
                 };
                 let mip_levels = texture
                     .mip_levels
                     .into_iter()
-                    .map(|mip| RenderTextureMip {
+                    .map(|mip| SceneTextureMip {
                         width:  mip.width,
                         height: mip.height,
                         data:   mip.data,
                     })
                     .collect();
                 (
-                    RenderTextureKind::Dds,
+                    SceneTextureKind::Dds,
                     texture.width,
                     texture.height,
                     Vec::new(),
-                    Some(RenderCompressedTexture {
+                    Some(SceneCompressedTexture {
                         compression,
                         mip_levels,
                     }),
@@ -441,12 +438,12 @@ impl AssetContext<'_> {
             }
             TextureResourceKind::Tga => {
                 let texture = TgaTexture::from_res(resource, CachePolicy::Use)
-                    .map_err(|error| RendererError::invalid(error.to_string()))?;
+                    .map_err(|error| SceneError::invalid(error.to_string()))?;
                 let rgba = texture
                     .decode_rgba8()
-                    .map_err(|error| RendererError::invalid(error.to_string()))?;
+                    .map_err(|error| SceneError::invalid(error.to_string()))?;
                 (
-                    RenderTextureKind::Tga,
+                    SceneTextureKind::Tga,
                     u32::from(texture.width),
                     u32::from(texture.height),
                     rgba,
@@ -455,13 +452,13 @@ impl AssetContext<'_> {
             }
             TextureResourceKind::Plt => {
                 let texture = PltTexture::from_res(resource, CachePolicy::Use)
-                    .map_err(|error| RendererError::invalid(error.to_string()))?;
+                    .map_err(|error| SceneError::invalid(error.to_string()))?;
                 self.record_plt_palettes(&texture);
                 let rgba = texture
                     .render_nwn_rgba8(self.resman, &appearance.plt_rows, CachePolicy::Use)
-                    .map_err(|error| RendererError::invalid(error.to_string()))?;
+                    .map_err(|error| SceneError::invalid(error.to_string()))?;
                 (
-                    RenderTextureKind::Plt,
+                    SceneTextureKind::Plt,
                     texture.width,
                     texture.height,
                     rgba,
@@ -470,7 +467,7 @@ impl AssetContext<'_> {
             }
         };
         let index = self.textures.len();
-        self.textures.push(RenderTexture {
+        self.textures.push(SceneTexture {
             resource: resource.resref().to_string(),
             origin: resource.origin().to_string(),
             kind: texture_kind,
@@ -504,7 +501,7 @@ impl AssetContext<'_> {
         &mut self,
         parent_id: usize,
         name: Option<&str>,
-        stage: RenderShaderStage,
+        stage: SceneShaderStage,
     ) -> Option<String> {
         let authored_name = name?;
         let name = authored_name
@@ -516,8 +513,8 @@ impl AssetContext<'_> {
         }
         let filename = format!("{name}.shd");
         let Ok(resolved) = ResolvedResRef::from_filename(&filename) else {
-            self.diagnostics.push(RenderDiagnostic {
-                severity: RenderDiagnosticSeverity::Error,
+            self.diagnostics.push(SceneDiagnostic {
+                severity: SceneDiagnosticSeverity::Error,
                 code:     "shader.name.invalid".into(),
                 message:  format!("invalid custom shader name {name}"),
                 resource: Some(filename),
@@ -533,8 +530,8 @@ impl AssetContext<'_> {
                 Some("custom shader was not found".into()),
             );
             self.dependencies.connect(parent_id, id, "customShader");
-            self.diagnostics.push(RenderDiagnostic {
-                severity: RenderDiagnosticSeverity::Error,
+            self.diagnostics.push(SceneDiagnostic {
+                severity: SceneDiagnosticSeverity::Error,
                 code:     "shader.missing".into(),
                 message:  format!("custom shader {filename} was not found"),
                 resource: Some(filename),
@@ -554,14 +551,14 @@ impl AssetContext<'_> {
             match resource.read_all(CachePolicy::Use) {
                 Ok(bytes) => match String::from_utf8(bytes) {
                     Ok(source) => {
-                        self.shaders.push(RenderShaderSource {
+                        self.shaders.push(SceneShaderSource {
                             resource: filename.clone(),
                             origin: resource.origin().to_string(),
                             stage,
                             source,
                         });
-                        self.diagnostics.push(RenderDiagnostic {
-                            severity: RenderDiagnosticSeverity::Warning,
+                        self.diagnostics.push(SceneDiagnostic {
+                            severity: SceneDiagnosticSeverity::Warning,
                             code:     "shader.webgl.compatibility".into(),
                             message:  format!(
                                 "{filename} is preserved and inspectable, but NWN OpenGL shader \
@@ -576,16 +573,16 @@ impl AssetContext<'_> {
                             node.state = DependencyState::Invalid;
                             node.message = Some(error.to_string());
                         }
-                        self.diagnostics.push(RenderDiagnostic {
-                            severity: RenderDiagnosticSeverity::Error,
+                        self.diagnostics.push(SceneDiagnostic {
+                            severity: SceneDiagnosticSeverity::Error,
                             code:     "shader.encoding.invalid".into(),
                             message:  format!("custom shader {filename} is not UTF-8: {error}"),
                             resource: Some(filename.clone()),
                         });
                     }
                 },
-                Err(error) => self.diagnostics.push(RenderDiagnostic {
-                    severity: RenderDiagnosticSeverity::Error,
+                Err(error) => self.diagnostics.push(SceneDiagnostic {
+                    severity: SceneDiagnosticSeverity::Error,
                     code:     "shader.read.failed".into(),
                     message:  format!("could not read {filename}: {error}"),
                     resource: Some(filename.clone()),

@@ -15,10 +15,11 @@ async function pump() {
   running = true;
   const entry = queue.shift();
   try {
-    if (entry.method === 'resolveResource' || entry.method === 'inspectPackage'
+    if (entry.method === 'resolveResource' || entry.method === 'inspectAreaObject' || entry.method === 'inspectPackage'
         || entry.method === 'inspectPackageSource' || entry.method === 'listResources') {
       const method = entry.method === 'resolveResource' ? 'resolveResource'
-        : entry.method === 'inspectPackage' ? 'inspectPackage'
+        : entry.method === 'inspectAreaObject' ? 'inspectAreaObject'
+          : entry.method === 'inspectPackage' ? 'inspectPackage'
           : entry.method === 'inspectPackageSource' ? 'inspectPackageSource' : 'listResources';
       const resolved = JSON.parse(await service[method](JSON.stringify(entry.request)));
       parentPort.postMessage({ type: 'response', id: entry.id, response: resolved });

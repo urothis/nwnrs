@@ -18,6 +18,8 @@ points such as `nwnrs_types::gff` and `nwnrs_types::resman`.
 - file formats: [`crate::gff`], [`crate::twoda`], [`crate::tlk`],
   [`crate::ssf`], [`crate::tga`], [`crate::dds`], [`crate::plt`],
   [`crate::txi`], [`crate::mtr`], [`crate::mdl`], and [`crate::set`]
+- cross-format tooling: [`crate::scene`] for resource-aware scene assembly,
+  inspection, dependency provenance, and packed frontend transport
 - service/API surface: [`crate::masterlist`]
 
 The important architectural rule is that the root page is the entry map, while
@@ -57,6 +59,12 @@ the module pages hold the detailed semantics and examples for each subsystem.
 
 - [`crate::masterlist`]: typed async client for the Beamdog masterlist API
 
+### Cross-format Tooling
+
+- [`crate::scene`]: reusable model, blueprint, area, and module scene assembly;
+  authored-object inspection; dependency provenance; and compact frontend
+  packets
+
 ## Start Here If…
 
 - you want to read or write `GFF`-backed gameplay data:
@@ -69,6 +77,9 @@ the module pages hold the detailed semantics and examples for each subsystem.
 - you want to work with models, materials, or textures:
   start with [`crate::mdl`], [`crate::mtr`], [`crate::txi`], [`crate::tga`],
   [`crate::dds`], and [`crate::plt`]
+- you want to assemble complete areas, inspect effective object data, or feed a
+  rendering frontend:
+  start with [`crate::scene`]
 - you want to compile or analyze `NWScript`:
   use the sibling `nwnrs-nwscript` crate
 

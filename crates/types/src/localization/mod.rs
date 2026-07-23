@@ -10,6 +10,7 @@ pub use types::*;
 /// Common imports for consumers of this crate.
 pub mod prelude {
     pub use crate::localization::{
-        BAD_STRREF, Gender, Language, ParseLanguageError, StrRef, resolve_language,
+        BAD_STRREF, CUSTOM_STRREF_OFFSET, Gender, Language, ParseLanguageError, StrRef,
+        resolve_language,
     };
 }

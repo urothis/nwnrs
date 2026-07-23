@@ -97,6 +97,11 @@ pub mod plt;
 /// Resource-manager types and helpers.
 pub mod resman;
 
+#[cfg(feature = "scene")]
+#[cfg_attr(docsrs, doc(cfg(feature = "scene")))]
+/// Cross-format scene assembly, inspection, and packed transport.
+pub mod scene;
+
 #[cfg(feature = "set")]
 #[cfg_attr(docsrs, doc(cfg(feature = "set")))]
 /// Tileset `SET` types and helpers.
@@ -184,6 +189,8 @@ pub mod prelude {
     pub use crate::plt;
     #[cfg(feature = "resman")]
     pub use crate::resman;
+    #[cfg(feature = "scene")]
+    pub use crate::scene;
     #[cfg(feature = "set")]
     pub use crate::set;
     #[cfg(feature = "ssf")]

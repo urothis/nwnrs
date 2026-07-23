@@ -1025,6 +1025,34 @@ test('persistent viewer uses authoritative resources and assembles the repositor
   assert.ok(authoredManifest.instances
     .filter((instance) => instance.objectKey && instance.kind === 'collision')
     .every((instance) => /\.(?:dwk|pwk|wok)$/u.test(instance.resource)));
+  const selectedObject = authoredManifest.areaObjects[0];
+  const inspectionRequest = {
+    sessionKey: path.join(moduleRoot, 'nwpkg.toml'),
+    assetKey: authoredManifest.assetKey,
+    objectKey: selectedObject.key,
+  };
+  const inspection = JSON.parse(await service.inspectAreaObject(JSON.stringify(inspectionRequest)));
+  assert.equal(inspection.schema, 'nwnrs.area-object-inspection');
+  assert.equal(inspection.key, selectedObject.key);
+  assert.equal(inspection.kind, 'placeable');
+  assert.equal(inspection.sources[0].layer, 'instance');
+  assert.equal(inspection.sources[0].resource, 'start.git');
+  assert.ok(inspection.sources[0].data.fields.length > 30);
+  const effectiveFields = inspection.sections.flatMap((section) => section.fields);
+  assert.ok(effectiveFields.length >= inspection.sources[0].data.fields.length);
+  assert.ok(inspection.sources[0].data.fields.every(
+    (sourceField) => effectiveFields.some((field) => field.name === sourceField.name),
+  ));
+  assert.equal(
+    effectiveFields.find((field) => field.name === 'Description')?.display,
+    'This is the default nwnrs server module. You are seeing it because the server administrator did not provide another module.',
+  );
+  assert.equal(effectiveFields.find((field) => field.name === 'Appearance')?.lookup?.resource, 'placeables.2da');
+  assert.deepEqual(
+    JSON.parse(await service.inspectAreaObject(JSON.stringify(inspectionRequest))),
+    inspection,
+    'the second inspection should return the cached scene-owned payload',
+  );
   const mistModel = authoredManifest.models.find((model) => model.name.toLowerCase() === 'tnp_gmist');
   assert.ok(mistModel, 'x3_plc_mist must resolve its installed tnp_gmist model');
   const mistEmitters = mistModel.nodes
