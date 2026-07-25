@@ -1,9 +1,4 @@
-use std::{
-    collections::BTreeMap,
-    ffi::c_void,
-    ptr,
-    sync::atomic::{AtomicPtr, Ordering},
-};
+use std::{collections::BTreeMap, ffi::c_void};
 
 use nwnrs_runtime::EventValue;
 
@@ -11,7 +6,7 @@ use super::{
     super::{
         Engine, EventSpec,
         abi::{CancelTimingEvent, SendTimingEvent},
-        hook::NativeHookSpec,
+        hook::{NativeHookSpec, NativeOriginal},
     },
     dispatch,
 };
@@ -20,32 +15,31 @@ use crate::bridge::BridgeInstallError;
 const SEND_HOOK: &str = "timing_bar_send";
 const CANCEL_HOOK: &str = "timing_bar_cancel";
 
-static SEND_ORIGINAL: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
-static CANCEL_ORIGINAL: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
+static SEND_ORIGINAL: NativeOriginal<SendTimingEvent> = NativeOriginal::new();
+static CANCEL_ORIGINAL: NativeOriginal<CancelTimingEvent> = NativeOriginal::new();
 
 pub(super) fn append_hook_specs(
     engine: &Engine,
     hooks: &mut Vec<NativeHookSpec>,
 ) -> Result<(), BridgeInstallError> {
-    if engine
-        .event_function_target("player_get_game_object")
-        .is_none()
-    {
+    if !engine.event_function_available("player_get_game_object") {
         return Ok(());
     }
     if let Some(target) = engine.event_hook_target(SEND_HOOK) {
-        hooks.push(NativeHookSpec::new(
+        hooks.push(NativeHookSpec::typed_event(
+            SEND_HOOK,
             "CNWSMessage::SendServerToPlayerGuiTimingEvent events",
             target,
-            send_replacement as SendTimingEvent as *const () as usize,
+            send_replacement as SendTimingEvent,
             &SEND_ORIGINAL,
         ));
     }
     if let Some(target) = engine.event_hook_target(CANCEL_HOOK) {
-        hooks.push(NativeHookSpec::new(
+        hooks.push(NativeHookSpec::typed_event(
+            CANCEL_HOOK,
             "CNWSMessage::HandlePlayerToServerInputCancelGuiTimingEvent events",
             target,
-            cancel_replacement as CancelTimingEvent as *const () as usize,
+            cancel_replacement as CancelTimingEvent,
             &CANCEL_ORIGINAL,
         ));
     }
@@ -101,21 +95,15 @@ fn call_send(
     event_id: u8,
     duration: u32,
 ) -> i32 {
-    let original = SEND_ORIGINAL.load(Ordering::Acquire);
-    if original.is_null() {
+    let Some(original) = SEND_ORIGINAL.load() else {
         return 0;
-    }
-    // SAFETY: Gum published the SendTimingEvent trampoline for this hook.
-    let original = unsafe { std::mem::transmute::<*mut c_void, SendTimingEvent>(original) };
+    };
     original(message, player, starting, event_id, duration)
 }
 
 fn call_cancel(message: *mut c_void, player: *mut c_void) -> i32 {
-    let original = CANCEL_ORIGINAL.load(Ordering::Acquire);
-    if original.is_null() {
+    let Some(original) = CANCEL_ORIGINAL.load() else {
         return 0;
-    }
-    // SAFETY: Gum published the CancelTimingEvent trampoline for this hook.
-    let original = unsafe { std::mem::transmute::<*mut c_void, CancelTimingEvent>(original) };
+    };
     original(message, player)
 }

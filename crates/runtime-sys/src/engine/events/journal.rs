@@ -1,12 +1,11 @@
-use std::{
-    collections::BTreeMap,
-    ffi::c_void,
-    ptr,
-    sync::atomic::{AtomicPtr, Ordering},
-};
+use std::{collections::BTreeMap, ffi::c_void};
 
 use super::{
-    super::{Engine, EventSpec, abi::PlayerMessage, hook::NativeHookSpec},
+    super::{
+        Engine, EventSpec,
+        abi::PlayerMessage,
+        hook::{NativeHookSpec, NativeOriginal},
+    },
     dispatch,
 };
 use crate::bridge::BridgeInstallError;
@@ -15,23 +14,21 @@ const HOOK: &str = "journal_message";
 const QUEST_SCREEN_OPEN: u8 = 0x0a;
 const QUEST_SCREEN_CLOSED: u8 = 0x0b;
 
-static ORIGINAL: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
+static ORIGINAL: NativeOriginal<PlayerMessage> = NativeOriginal::new();
 
 pub(super) fn append_hook_specs(
     engine: &Engine,
     hooks: &mut Vec<NativeHookSpec>,
 ) -> Result<(), BridgeInstallError> {
-    if engine
-        .event_function_target("player_get_game_object")
-        .is_none()
-    {
+    if !engine.event_function_available("player_get_game_object") {
         return Ok(());
     }
     if let Some(target) = engine.event_hook_target(HOOK) {
-        hooks.push(NativeHookSpec::new(
+        hooks.push(NativeHookSpec::typed_event(
+            HOOK,
             "CNWSMessage::HandlePlayerToServerJournalMessage events",
             target,
-            replacement as PlayerMessage as *const () as usize,
+            replacement as PlayerMessage,
             &ORIGINAL,
         ));
     }
@@ -51,11 +48,8 @@ extern "C" fn replacement(message: *mut c_void, player: *mut c_void, minor: u8) 
 }
 
 fn call_original(message: *mut c_void, player: *mut c_void, minor: u8) -> i32 {
-    let original = ORIGINAL.load(Ordering::Acquire);
-    if original.is_null() {
+    let Some(original) = ORIGINAL.load() else {
         return 0;
-    }
-    // SAFETY: Gum published the PlayerMessage trampoline for this hook.
-    let original = unsafe { std::mem::transmute::<*mut c_void, PlayerMessage>(original) };
+    };
     original(message, player, minor)
 }

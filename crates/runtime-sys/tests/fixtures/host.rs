@@ -178,94 +178,17 @@ static SKILL_EVENT_CALLS: AtomicU32 = AtomicU32::new(0);
 static SKILL_ORIGINAL_CALLS: AtomicU32 = AtomicU32::new(0);
 static ITEM_EVENT_CALLS: AtomicU32 = AtomicU32::new(0);
 static ITEM_ORIGINAL_CALLS: AtomicU32 = AtomicU32::new(0);
+static EXPANDED_EVENT_CALLS: AtomicU32 = AtomicU32::new(0);
+static EXPANDED_ORIGINAL_CALLS: AtomicU32 = AtomicU32::new(0);
 
-const EVENT_IDENTITIES: &[&str] = &[
-    "module_load",
-    "associate_add_before",
-    "associate_add_after",
-    "associate_remove_before",
-    "associate_remove_after",
-    "associate_possess_familiar_before",
-    "associate_possess_familiar_after",
-    "associate_unpossess_familiar_before",
-    "associate_unpossess_familiar_after",
-    "object_lock_before",
-    "object_lock_after",
-    "object_unlock_before",
-    "object_unlock_after",
-    "object_use_before",
-    "object_use_after",
-    "placeable_open_before",
-    "placeable_open_after",
-    "placeable_close_before",
-    "placeable_close_after",
-    "inventory_add_gold_before",
-    "inventory_add_gold_after",
-    "inventory_remove_gold_before",
-    "inventory_remove_gold_after",
-    "feat_use_before",
-    "feat_use_after",
-    "journal_open_before",
-    "journal_open_after",
-    "journal_close_before",
-    "journal_close_after",
-    "timing_bar_start_before",
-    "timing_bar_start_after",
-    "timing_bar_stop_before",
-    "timing_bar_stop_after",
-    "timing_bar_cancel_before",
-    "timing_bar_cancel_after",
-    "object_broadcast_safe_projectile_before",
-    "object_broadcast_safe_projectile_after",
-    "skill_use_before",
-    "skill_use_after",
-    "item_use_before",
-    "item_use_after",
-    "item_inventory_open_before",
-    "item_inventory_open_after",
-    "item_inventory_close_before",
-    "item_inventory_close_after",
-    "item_scroll_learn_before",
-    "item_scroll_learn_after",
-    "item_use_lore_before",
-    "item_use_lore_after",
-    "item_pay_to_identify_before",
-    "item_pay_to_identify_after",
-    "item_destroy_before",
-    "item_destroy_after",
-    "item_decrement_stack_size_before",
-    "item_decrement_stack_size_after",
-    "object_set_experience_before",
-    "object_set_experience_after",
-    "feat_decrement_remaining_uses_before",
-    "feat_decrement_remaining_uses_after",
-    "feat_has_before",
-    "feat_has_after",
-    "inventory_open_before",
-    "inventory_open_after",
-    "inventory_select_panel_before",
-    "inventory_select_panel_after",
-    "inventory_add_item_before",
-    "inventory_add_item_after",
-    "inventory_remove_item_before",
-    "inventory_remove_item_after",
-    "item_validate_use_before",
-    "item_validate_use_after",
-    "item_ammo_reload_before",
-    "item_ammo_reload_after",
-    "item_validate_equip_before",
-    "item_validate_equip_after",
-    "item_equip_before",
-    "item_equip_after",
-    "item_unequip_before",
-    "item_unequip_after",
-    "item_split_before",
-    "item_split_after",
-    "item_merge_before",
-    "item_merge_after",
-    "item_acquire_before",
-    "item_acquire_after",
-];
+static mut EXPANDED_CREATURE: *mut c_void = std::ptr::null_mut();
+static mut EXPANDED_REPOSITORY_PARENT: *mut c_void = std::ptr::null_mut();
+static mut EXPANDED_ITEM: *mut c_void = std::ptr::null_mut();
+static mut EXPANDED_MERGED_ITEM: *mut c_void = std::ptr::null_mut();
+static mut EXPANDED_PLAYER: *mut c_void = std::ptr::null_mut();
+static mut EXPANDED_MESSAGE: *mut c_void = std::ptr::null_mut();
+
+const EVENT_MANIFEST_ENVIRONMENT: &str = "NWNRS_FIXTURE_EVENT_MANIFEST";
 
 #[repr(C)]
 struct FixtureGameObject {
@@ -278,6 +201,71 @@ struct FixtureGameObject {
 #[repr(C)]
 struct FixturePlayer {
     game_object: *mut c_void,
+}
+
+#[repr(C)]
+struct FixtureStats {
+    before_creature: [u8; 48],
+    creature:        *mut c_void,
+    before_xp:       [u8; 112],
+    xp:              u32,
+}
+
+#[repr(C)]
+struct FixtureRepository {
+    before_parent: [u8; 8],
+    parent:        u32,
+}
+
+const ITEM_POSSESSOR_PADDING: usize = if cfg!(target_os = "macos") {
+    876
+} else if cfg!(target_os = "windows") {
+    900
+} else {
+    892
+};
+
+#[repr(C)]
+struct FixtureExpandedItem {
+    vtable:           *mut c_void,
+    object_id:        u32,
+    object_type:      u8,
+    before_base_item: [u8; 51],
+    base_item:        u32,
+    before_possessor: [u8; ITEM_POSSESSOR_PADDING],
+    possessor:        u32,
+}
+
+#[repr(C)]
+struct FixtureInventoryGui {
+    before_selected_panel: [u8; 12],
+    selected_panel:        u8,
+}
+
+#[repr(C)]
+struct FixtureExpandedPlayer {
+    game_object:          *mut c_void,
+    before_player_id:     [u8; 64],
+    player_id:            u32,
+    before_object_id:     [u8; 8],
+    object_id:            u32,
+    before_inventory_gui: [u8; 64],
+    inventory_gui:        *mut c_void,
+    other_inventory_gui:  *mut c_void,
+}
+
+#[repr(C)]
+struct FixtureMessage {
+    before_read_buffer:      [u8; 56],
+    read_buffer:             *const u8,
+    read_buffer_size:        u32,
+    read_buffer_position:    u32,
+    before_fragments:        [u8; 8],
+    read_fragments_size:     u32,
+    read_fragments_position: u32,
+    before_read_bits:        [u8; 4],
+    current_read_bit:        u8,
+    last_byte_bits:          u8,
 }
 
 unsafe extern "C" {
@@ -820,23 +808,34 @@ pub extern "C" fn nwnrs_fixture_item_event_handler(
 #[unsafe(no_mangle)]
 #[inline(never)]
 pub extern "C" fn nwnrs_fixture_set_experience(
-    _stats: *mut c_void,
-    _experience: u32,
-    _do_level: i32,
+    stats: *mut c_void,
+    experience: u32,
+    do_level: i32,
 ) {
+    assert!(!stats.is_null());
+    assert_eq!((experience, do_level), (100, 1));
+    // SAFETY: the fixture passes its live FixtureStats object synchronously.
+    unsafe {
+        (*stats.cast::<FixtureStats>()).xp = experience;
+    }
+    EXPANDED_ORIGINAL_CALLS.fetch_add(1, Ordering::Relaxed);
 }
 
 #[unsafe(no_mangle)]
 #[inline(never)]
 pub extern "C" fn nwnrs_fixture_decrement_feat_remaining_uses(
     _stats: *mut c_void,
-    _feat: u16,
+    feat: u16,
 ) {
+    assert_eq!(feat, 43);
+    EXPANDED_ORIGINAL_CALLS.fetch_add(1, Ordering::Relaxed);
 }
 
 #[unsafe(no_mangle)]
 #[inline(never)]
-pub extern "C" fn nwnrs_fixture_has_feat(_stats: *mut c_void, _feat: u16) -> i32 {
+pub extern "C" fn nwnrs_fixture_has_feat(_stats: *mut c_void, feat: u16) -> i32 {
+    assert_eq!(feat, 44);
+    EXPANDED_ORIGINAL_CALLS.fetch_add(1, Ordering::Relaxed);
     1
 }
 
@@ -854,8 +853,10 @@ pub extern "C" fn nwnrs_fixture_get_feat_remaining_uses(
 pub extern "C" fn nwnrs_fixture_inventory_message(
     _message: *mut c_void,
     _player: *mut c_void,
-    _minor: u8,
+    minor: u8,
 ) -> i32 {
+    assert!(matches!(minor, 1 | 2));
+    EXPANDED_ORIGINAL_CALLS.fetch_add(1, Ordering::Relaxed);
     1
 }
 
@@ -865,11 +866,13 @@ pub extern "C" fn nwnrs_fixture_inventory_message(
 pub extern "C" fn nwnrs_fixture_inventory_add_item(
     _repository: *mut c_void,
     _item: *mut *mut c_void,
-    _x: u8,
-    _y: u8,
-    _allow_encumbrance: i32,
-    _merge: i32,
+    x: u8,
+    y: u8,
+    allow_encumbrance: i32,
+    merge: i32,
 ) -> i32 {
+    assert_eq!((x, y, allow_encumbrance, merge), (2, 3, 1, 0));
+    EXPANDED_ORIGINAL_CALLS.fetch_add(1, Ordering::Relaxed);
     1
 }
 
@@ -879,6 +882,7 @@ pub extern "C" fn nwnrs_fixture_inventory_remove_item(
     _repository: *mut c_void,
     _item: *mut c_void,
 ) -> i32 {
+    EXPANDED_ORIGINAL_CALLS.fetch_add(1, Ordering::Relaxed);
     1
 }
 
@@ -887,8 +891,10 @@ pub extern "C" fn nwnrs_fixture_inventory_remove_item(
 pub extern "C" fn nwnrs_fixture_item_validate_use(
     _creature: *mut c_void,
     _item: *mut c_void,
-    _ignore_identified: i32,
+    ignore_identified: i32,
 ) -> i32 {
+    assert_eq!(ignore_identified, 1);
+    EXPANDED_ORIGINAL_CALLS.fetch_add(1, Ordering::Relaxed);
     1
 }
 
@@ -896,9 +902,11 @@ pub extern "C" fn nwnrs_fixture_item_validate_use(
 #[inline(never)]
 pub extern "C" fn nwnrs_fixture_item_ammo_reload(
     _repository: *mut c_void,
-    _base_item: u32,
-    _nth: i32,
+    base_item: u32,
+    nth: i32,
 ) -> u32 {
+    assert_eq!((base_item, nth), (10, 2));
+    EXPANDED_ORIGINAL_CALLS.fetch_add(1, Ordering::Relaxed);
     0x7f00_0000
 }
 
@@ -909,11 +917,13 @@ pub extern "C" fn nwnrs_fixture_item_validate_equip(
     _creature: *mut c_void,
     _item: *mut c_void,
     _slot: *mut u32,
-    _equipping: i32,
-    _loading: i32,
-    _feedback: i32,
+    equipping: i32,
+    loading: i32,
+    feedback: i32,
     _player: *mut c_void,
 ) -> u8 {
+    assert_eq!((equipping, loading, feedback), (1, 0, 1));
+    EXPANDED_ORIGINAL_CALLS.fetch_add(1, Ordering::Relaxed);
     1
 }
 
@@ -921,10 +931,12 @@ pub extern "C" fn nwnrs_fixture_item_validate_equip(
 #[inline(never)]
 pub extern "C" fn nwnrs_fixture_item_equip(
     _creature: *mut c_void,
-    _item: u32,
-    _slot: u32,
-    _feedback_player: u32,
+    item: u32,
+    slot: u32,
+    feedback_player: u32,
 ) -> i32 {
+    assert_eq!((item, slot, feedback_player), (0x2122_2324, 8, 0x7f00_0000));
+    EXPANDED_ORIGINAL_CALLS.fetch_add(1, Ordering::Relaxed);
     1
 }
 
@@ -933,13 +945,18 @@ pub extern "C" fn nwnrs_fixture_item_equip(
 #[allow(clippy::too_many_arguments)]
 pub extern "C" fn nwnrs_fixture_item_unequip(
     _creature: *mut c_void,
-    _item: u32,
-    _repository: u32,
-    _x: u8,
-    _y: u8,
-    _merge: i32,
-    _feedback_player: u32,
+    item: u32,
+    repository: u32,
+    x: u8,
+    y: u8,
+    merge: i32,
+    feedback_player: u32,
 ) -> i32 {
+    assert_eq!(
+        (item, repository, x, y, merge, feedback_player),
+        (0x2122_2324, 0x1112_1314, 4, 5, 0, 0x7f00_0000)
+    );
+    EXPANDED_ORIGINAL_CALLS.fetch_add(1, Ordering::Relaxed);
     1
 }
 
@@ -948,8 +965,10 @@ pub extern "C" fn nwnrs_fixture_item_unequip(
 pub extern "C" fn nwnrs_fixture_item_split(
     _creature: *mut c_void,
     _item: *mut c_void,
-    _amount: i32,
+    amount: i32,
 ) {
+    assert_eq!(amount, 6);
+    EXPANDED_ORIGINAL_CALLS.fetch_add(1, Ordering::Relaxed);
 }
 
 #[unsafe(no_mangle)]
@@ -959,6 +978,7 @@ pub extern "C" fn nwnrs_fixture_item_merge(
     _into: *mut c_void,
     _merged: *mut c_void,
 ) {
+    EXPANDED_ORIGINAL_CALLS.fetch_add(1, Ordering::Relaxed);
 }
 
 #[unsafe(no_mangle)]
@@ -967,13 +987,18 @@ pub extern "C" fn nwnrs_fixture_item_merge(
 pub extern "C" fn nwnrs_fixture_item_acquire(
     _creature: *mut c_void,
     _item: *mut *mut c_void,
-    _possessor: u32,
-    _repository: u32,
-    _x: u8,
-    _y: u8,
-    _from_script: i32,
-    _feedback: i32,
+    possessor: u32,
+    repository: u32,
+    x: u8,
+    y: u8,
+    from_script: i32,
+    feedback: i32,
 ) -> i32 {
+    assert_eq!(
+        (possessor, repository, x, y, from_script, feedback),
+        (0x0102_0304, 0x1112_1314, 7, 8, 1, 1)
+    );
+    EXPANDED_ORIGINAL_CALLS.fetch_add(1, Ordering::Relaxed);
     1
 }
 
@@ -981,24 +1006,39 @@ pub extern "C" fn nwnrs_fixture_item_acquire(
 #[inline(never)]
 pub extern "C" fn nwnrs_fixture_get_game_object(
     _server: *mut c_void,
-    _object: u32,
+    object: u32,
 ) -> *mut c_void {
-    std::ptr::null_mut()
+    // SAFETY: these fixture-owned pointers are initialized once on this
+    // process's main thread before any expanded event helper runs.
+    unsafe {
+        match object {
+            0x0102_0304 => std::ptr::read_volatile(&raw const EXPANDED_CREATURE),
+            0x1112_1314 => std::ptr::read_volatile(&raw const EXPANDED_REPOSITORY_PARENT),
+            0x2122_2324 => std::ptr::read_volatile(&raw const EXPANDED_ITEM),
+            0x3132_3334 => std::ptr::read_volatile(&raw const EXPANDED_MERGED_ITEM),
+            _ => std::ptr::null_mut(),
+        }
+    }
 }
 
 #[unsafe(no_mangle)]
 #[inline(never)]
 pub extern "C" fn nwnrs_fixture_get_client_object(
     _server: *mut c_void,
-    _object: u32,
+    object: u32,
 ) -> *mut c_void {
-    std::ptr::null_mut()
+    if object != 0x0102_0304 {
+        return std::ptr::null_mut();
+    }
+    // SAFETY: the fixture pointer is initialized once on the main thread.
+    unsafe { std::ptr::read_volatile(&raw const EXPANDED_PLAYER) }
 }
 
 #[unsafe(no_mangle)]
 #[inline(never)]
 pub extern "C" fn nwnrs_fixture_get_nws_message(_server: *mut c_void) -> *mut c_void {
-    std::ptr::null_mut()
+    // SAFETY: the fixture pointer is initialized once on the main thread.
+    unsafe { std::ptr::read_volatile(&raw const EXPANDED_MESSAGE) }
 }
 
 #[unsafe(no_mangle)]
@@ -1098,16 +1138,17 @@ pub extern "C" fn nwnrs_fixture_run_script(
             )
         );
         if SUBSCRIBE_EVENTS.load(Ordering::Relaxed) {
-            for identity in EVENT_IDENTITIES {
-                vm.stack.push(Value::String((*identity).to_string()));
+            for identity in fixture_event_identities() {
+                vm.stack.push(Value::String(identity.clone()));
                 assert_eq!(call(&mut commands, NWNX_PUSH_STRING), 0);
-                assert_eq!(call_integer(&mut commands, vm, "GetEventSupported"), 1);
-                call_with_string(&mut commands, vm, "SubscribeEvent", identity);
+                let supported = call_integer(&mut commands, vm, "GetEventSupported");
+                assert_eq!(supported, 1);
+                call_with_string(&mut commands, vm, "SubscribeEvent", &identity);
             }
         }
         MODULE_ONLOAD_CALLS.fetch_add(1, Ordering::Relaxed);
     } else {
-        assert_eq!(owner, 0x0102_0304);
+        assert!(matches!(owner, 0x0102_0304 | 0x1112_1314));
         let associate_events = [
             concat!(
                 "{\"name\":\"associate.add\",\"id\":-1,",
@@ -1177,6 +1218,92 @@ pub extern "C" fn nwnrs_fixture_run_script(
             {
                 call_without_result(&mut commands, vm, "SkipCurrentEvent");
             }
+        } else if current.contains("\"name\":\"object.set_experience\"") {
+            assert!(current.contains("\"target\":\"01020304\""));
+            assert!(current.contains("\"xp\":100"));
+            EXPANDED_EVENT_CALLS.fetch_add(1, Ordering::Relaxed);
+        } else if current.contains("\"name\":\"feat.decrement_remaining_uses\"") {
+            assert!(current.contains("\"target\":\"01020304\""));
+            assert!(current.contains("\"feat_id\":43"));
+            assert!(current.contains("\"remaining_uses\":3"));
+            EXPANDED_EVENT_CALLS.fetch_add(1, Ordering::Relaxed);
+        } else if current.contains("\"name\":\"feat.has\"") {
+            assert!(current.contains("\"target\":\"01020304\""));
+            assert!(current.contains("\"feat_id\":44"));
+            assert!(current.contains("\"has_feat\":true"));
+            if current.contains("\"phase\":\"after\"") {
+                assert!(current.contains("\"action_result\":true"));
+            }
+            EXPANDED_EVENT_CALLS.fetch_add(1, Ordering::Relaxed);
+        } else if current.contains("\"name\":\"inventory.open\"") {
+            assert!(current.contains("\"target\":\"01020304\""));
+            assert!(current.contains("\"target_inventory\":\"11121314\""));
+            EXPANDED_EVENT_CALLS.fetch_add(1, Ordering::Relaxed);
+        } else if current.contains("\"name\":\"inventory.select_panel\"") {
+            assert!(current.contains("\"target\":\"01020304\""));
+            assert!(current.contains("\"current_panel\":2"));
+            assert!(current.contains("\"selected_panel\":4"));
+            EXPANDED_EVENT_CALLS.fetch_add(1, Ordering::Relaxed);
+        } else if current.contains("\"name\":\"inventory.add_item\"")
+            || current.contains("\"name\":\"inventory.remove_item\"")
+        {
+            assert!(current.contains("\"target\":\"11121314\""));
+            assert!(current.contains("\"item\":\"21222324\""));
+            EXPANDED_EVENT_CALLS.fetch_add(1, Ordering::Relaxed);
+        } else if current.contains("\"name\":\"item.validate_use\"") {
+            assert!(current.contains("\"target\":\"01020304\""));
+            assert!(current.contains("\"item_object_id\":\"21222324\""));
+            if current.contains("\"phase\":\"after\"") {
+                assert!(current.contains("\"before_result\":true"));
+            }
+            EXPANDED_EVENT_CALLS.fetch_add(1, Ordering::Relaxed);
+        } else if current.contains("\"name\":\"item.ammo_reload\"") {
+            assert!(current.contains("\"target\":\"01020304\""));
+            assert!(current.contains("\"base_item_id\":10"));
+            assert!(current.contains("\"base_item_nth\":2"));
+            if current.contains("\"phase\":\"after\"") {
+                assert!(current.contains("\"action_result\":\"7f000000\""));
+            }
+            EXPANDED_EVENT_CALLS.fetch_add(1, Ordering::Relaxed);
+        } else if current.contains("\"name\":\"item.validate_equip\"") {
+            assert!(current.contains("\"target\":\"01020304\""));
+            assert!(current.contains("\"item_object_id\":\"21222324\""));
+            assert!(current.contains("\"slot\":3"));
+            if current.contains("\"phase\":\"after\"") {
+                assert!(current.contains("\"before_result\":true"));
+            }
+            EXPANDED_EVENT_CALLS.fetch_add(1, Ordering::Relaxed);
+        } else if current.contains("\"name\":\"item.equip\"") {
+            assert!(current.contains("\"target\":\"01020304\""));
+            assert!(current.contains("\"item\":\"21222324\""));
+            assert!(current.contains("\"slot\":3"));
+            if current.contains("\"phase\":\"after\"") {
+                assert!(current.contains("\"action_result\":1"));
+            }
+            EXPANDED_EVENT_CALLS.fetch_add(1, Ordering::Relaxed);
+        } else if current.contains("\"name\":\"item.unequip\"") {
+            assert!(current.contains("\"target\":\"01020304\""));
+            assert!(current.contains("\"item\":\"21222324\""));
+            if current.contains("\"phase\":\"after\"") {
+                assert!(current.contains("\"action_result\":1"));
+            }
+            EXPANDED_EVENT_CALLS.fetch_add(1, Ordering::Relaxed);
+        } else if current.contains("\"name\":\"item.split\"") {
+            assert!(current.contains("\"target\":\"01020304\""));
+            assert!(current.contains("\"item\":\"21222324\""));
+            assert!(current.contains("\"number_split_off\":6"));
+            EXPANDED_EVENT_CALLS.fetch_add(1, Ordering::Relaxed);
+        } else if current.contains("\"name\":\"item.merge\"") {
+            assert!(current.contains("\"target\":\"01020304\""));
+            assert!(current.contains("\"item_to_merge_into\":\"21222324\""));
+            assert!(current.contains("\"item_to_merge\":\"31323334\""));
+            EXPANDED_EVENT_CALLS.fetch_add(1, Ordering::Relaxed);
+        } else if current.contains("\"name\":\"item.acquire\"") {
+            assert!(current.contains("\"target\":\"01020304\""));
+            assert!(current.contains("\"item\":\"21222324\""));
+            assert!(current.contains("\"giver\":\"01020304\""));
+            assert!(current.contains("\"result\":"));
+            EXPANDED_EVENT_CALLS.fetch_add(1, Ordering::Relaxed);
         } else if (current.contains("\"name\":\"object.")
             && !current.contains("\"name\":\"object.broadcast_safe_projectile\""))
             || current.contains("\"name\":\"placeable.")
@@ -1491,6 +1618,19 @@ fn empty_exo_string() -> CExoString {
     }
 }
 
+fn fixture_event_identities() -> Vec<String> {
+    let path = std::env::var_os(EVENT_MANIFEST_ENVIRONMENT)
+        .unwrap_or_else(|| panic!("{EVENT_MANIFEST_ENVIRONMENT} is not set"));
+    let contents = fs::read_to_string(path).expect("read generated fixture event manifest");
+    let identities = contents
+        .lines()
+        .filter(|identity| !identity.is_empty())
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    assert!(!identities.is_empty(), "fixture event manifest is empty");
+    identities
+}
+
 fn assert_fixture_layout() {
     let expected_stride = if cfg!(target_os = "linux") {
         152
@@ -1509,6 +1649,52 @@ fn assert_fixture_layout() {
     assert_eq!(std::mem::offset_of!(ServerInfo, play_options), 252);
     assert_eq!(std::mem::offset_of!(ServerInfo, persistent_world_options), 404);
     assert_eq!(std::mem::offset_of!(FixtureGameObject, object_id), 8);
+    assert_eq!(std::mem::offset_of!(FixtureStats, creature), 48);
+    assert_eq!(std::mem::offset_of!(FixtureStats, xp), 168);
+    assert_eq!(std::mem::offset_of!(FixtureRepository, parent), 8);
+    assert_eq!(std::mem::offset_of!(FixtureExpandedItem, object_id), 8);
+    assert_eq!(std::mem::offset_of!(FixtureExpandedItem, object_type), 12);
+    assert_eq!(std::mem::offset_of!(FixtureExpandedItem, base_item), 64);
+    assert_eq!(
+        std::mem::offset_of!(FixtureExpandedItem, possessor),
+        if cfg!(target_os = "macos") {
+            944
+        } else if cfg!(target_os = "windows") {
+            968
+        } else {
+            960
+        }
+    );
+    assert_eq!(std::mem::offset_of!(FixtureExpandedPlayer, player_id), 72);
+    assert_eq!(std::mem::offset_of!(FixtureExpandedPlayer, object_id), 84);
+    assert_eq!(
+        std::mem::offset_of!(FixtureExpandedPlayer, inventory_gui),
+        152
+    );
+    assert_eq!(
+        std::mem::offset_of!(FixtureExpandedPlayer, other_inventory_gui),
+        160
+    );
+    assert_eq!(
+        std::mem::offset_of!(FixtureInventoryGui, selected_panel),
+        12
+    );
+    assert_eq!(std::mem::offset_of!(FixtureMessage, read_buffer), 56);
+    assert_eq!(std::mem::offset_of!(FixtureMessage, read_buffer_size), 64);
+    assert_eq!(
+        std::mem::offset_of!(FixtureMessage, read_buffer_position),
+        68
+    );
+    assert_eq!(
+        std::mem::offset_of!(FixtureMessage, read_fragments_size),
+        80
+    );
+    assert_eq!(
+        std::mem::offset_of!(FixtureMessage, read_fragments_position),
+        84
+    );
+    assert_eq!(std::mem::offset_of!(FixtureMessage, current_read_bit), 92);
+    assert_eq!(std::mem::offset_of!(FixtureMessage, last_byte_bits), 93);
 }
 
 fn main() {
@@ -1838,6 +2024,213 @@ fn main() {
     );
     assert_eq!(ITEM_EVENT_CALLS.load(Ordering::Relaxed), 16);
     assert_eq!(ITEM_ORIGINAL_CALLS.load(Ordering::Relaxed), 5);
+
+    let mut repository_parent = FixtureGameObject {
+        vtable:      std::ptr::null_mut(),
+        object_id:   0x1112_1314,
+        object_type: 9,
+        padding:     [0; 3],
+    };
+    let mut expanded_item = FixtureExpandedItem {
+        vtable:           std::ptr::null_mut(),
+        object_id:        0x2122_2324,
+        object_type:      6,
+        before_base_item: [0; 51],
+        base_item:        10,
+        before_possessor: [0; ITEM_POSSESSOR_PADDING],
+        possessor:        0x0102_0304,
+    };
+    let mut merged_item = FixtureExpandedItem {
+        vtable:           std::ptr::null_mut(),
+        object_id:        0x3132_3334,
+        object_type:      6,
+        before_base_item: [0; 51],
+        base_item:        10,
+        before_possessor: [0; ITEM_POSSESSOR_PADDING],
+        possessor:        0x0102_0304,
+    };
+    let mut inventory_gui = FixtureInventoryGui {
+        before_selected_panel: [0; 12],
+        selected_panel:        2,
+    };
+    let mut expanded_player = FixtureExpandedPlayer {
+        game_object:          (&raw mut creature).cast(),
+        before_player_id:     [0; 64],
+        player_id:            77,
+        before_object_id:     [0; 8],
+        object_id:            0x0102_0304,
+        before_inventory_gui: [0; 64],
+        inventory_gui:        (&raw mut inventory_gui).cast(),
+        other_inventory_gui:  (&raw mut inventory_gui).cast(),
+    };
+    let mut inventory_message_data = [0_u8; 5];
+    inventory_message_data
+        .get_mut(..4)
+        .expect("inventory target bytes")
+        .copy_from_slice(&0x1112_1314_u32.to_le_bytes());
+    inventory_message_data[4] = 0x10;
+    let mut expanded_message = FixtureMessage {
+        before_read_buffer:      [0; 56],
+        read_buffer:             inventory_message_data.as_ptr(),
+        read_buffer_size:        5,
+        read_buffer_position:    0,
+        before_fragments:        [0; 8],
+        read_fragments_size:     0,
+        read_fragments_position: 0,
+        before_read_bits:        [0; 4],
+        current_read_bit:        0,
+        last_byte_bits:          0,
+    };
+    // SAFETY: all fixture objects remain live until after the expanded event
+    // calls and are read only from this process's main thread.
+    unsafe {
+        EXPANDED_CREATURE = (&raw mut creature).cast();
+        EXPANDED_REPOSITORY_PARENT = (&raw mut repository_parent).cast();
+        EXPANDED_ITEM = (&raw mut expanded_item).cast();
+        EXPANDED_MERGED_ITEM = (&raw mut merged_item).cast();
+        EXPANDED_PLAYER = (&raw mut expanded_player).cast();
+        EXPANDED_MESSAGE = (&raw mut expanded_message).cast();
+    }
+
+    let mut stats = FixtureStats {
+        before_creature: [0; 48],
+        creature:        (&raw mut creature).cast(),
+        before_xp:       [0; 112],
+        xp:              0,
+    };
+    nwnrs_fixture_set_experience((&raw mut stats).cast(), 100, 1);
+    nwnrs_fixture_decrement_feat_remaining_uses((&raw mut stats).cast(), 43);
+    call_with_string_and_integer(
+        &mut event_commands,
+        &mut vm,
+        "AddEventIdToWhitelist",
+        "feat.has.feat_id",
+        44,
+    );
+    assert_eq!(nwnrs_fixture_has_feat((&raw mut stats).cast(), 44), 1);
+
+    let expanded_player_pointer = (&raw mut expanded_player).cast();
+    assert_eq!(
+        nwnrs_fixture_inventory_message(
+            (&raw mut expanded_message).cast(),
+            expanded_player_pointer,
+            1,
+        ),
+        1
+    );
+    inventory_message_data = [4, 0x10, 0, 0, 0];
+    expanded_message.read_buffer = inventory_message_data.as_ptr();
+    expanded_message.read_buffer_size = 2;
+    expanded_message.read_buffer_position = 0;
+    assert_eq!(
+        nwnrs_fixture_inventory_message(
+            (&raw mut expanded_message).cast(),
+            expanded_player_pointer,
+            2,
+        ),
+        1
+    );
+
+    let mut inventory_repository = FixtureRepository {
+        before_parent: [0; 8],
+        parent:        0x1112_1314,
+    };
+    let mut expanded_item_pointer = (&raw mut expanded_item).cast();
+    assert_eq!(
+        nwnrs_fixture_inventory_add_item(
+            (&raw mut inventory_repository).cast(),
+            &raw mut expanded_item_pointer,
+            2,
+            3,
+            1,
+            0,
+        ),
+        1
+    );
+    assert_eq!(
+        nwnrs_fixture_inventory_remove_item(
+            (&raw mut inventory_repository).cast(),
+            (&raw mut expanded_item).cast(),
+        ),
+        1
+    );
+
+    assert_eq!(
+        nwnrs_fixture_item_validate_use(
+            (&raw mut creature).cast(),
+            (&raw mut expanded_item).cast(),
+            1,
+        ),
+        1
+    );
+    let mut ammo_repository = FixtureRepository {
+        before_parent: [0; 8],
+        parent:        0x0102_0304,
+    };
+    assert_eq!(
+        nwnrs_fixture_item_ammo_reload((&raw mut ammo_repository).cast(), 10, 2),
+        0x7f00_0000
+    );
+    let mut equipment_slot = 8_u32;
+    assert_eq!(
+        nwnrs_fixture_item_validate_equip(
+            (&raw mut creature).cast(),
+            (&raw mut expanded_item).cast(),
+            &raw mut equipment_slot,
+            1,
+            0,
+            1,
+            expanded_player_pointer,
+        ),
+        1
+    );
+    assert_eq!(
+        nwnrs_fixture_item_equip(
+            (&raw mut creature).cast(),
+            0x2122_2324,
+            8,
+            0x7f00_0000,
+        ),
+        1
+    );
+    assert_eq!(
+        nwnrs_fixture_item_unequip(
+            (&raw mut creature).cast(),
+            0x2122_2324,
+            0x1112_1314,
+            4,
+            5,
+            0,
+            0x7f00_0000,
+        ),
+        1
+    );
+    nwnrs_fixture_item_split(
+        (&raw mut creature).cast(),
+        (&raw mut expanded_item).cast(),
+        6,
+    );
+    nwnrs_fixture_item_merge(
+        (&raw mut creature).cast(),
+        (&raw mut expanded_item).cast(),
+        (&raw mut merged_item).cast(),
+    );
+    assert_eq!(
+        nwnrs_fixture_item_acquire(
+            (&raw mut creature).cast(),
+            &raw mut expanded_item_pointer,
+            0x0102_0304,
+            0x1112_1314,
+            7,
+            8,
+            1,
+            1,
+        ),
+        1
+    );
+    assert_eq!(EXPANDED_EVENT_CALLS.load(Ordering::Relaxed), 30);
+    assert_eq!(EXPANDED_ORIGINAL_CALLS.load(Ordering::Relaxed), 15);
+
     let mut commands = Commands {
         virtual_machine: (&raw mut vm).cast(),
     };

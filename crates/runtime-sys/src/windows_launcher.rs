@@ -3,7 +3,9 @@
 use std::{
     error::Error,
     ffi::{OsStr, c_void},
-    fmt, mem,
+    fmt,
+    io::Read as _,
+    mem,
     os::windows::{ffi::OsStrExt as _, io::AsRawHandle as _, process::CommandExt as _},
     path::Path,
     process::{Child, Command},
@@ -128,9 +130,19 @@ pub fn spawn_injected_windows(
     let result = initialize_suspended_process(&child, &runtime);
     match result {
         Ok(control) => Ok((child, control)),
-        Err(error) => {
+        Err(mut error) => {
             let _ = child.kill();
             let _ = child.wait();
+            if let Some(mut stderr) = child.stderr.take() {
+                let mut diagnostic = String::new();
+                if stderr.read_to_string(&mut diagnostic).is_ok() {
+                    let diagnostic = diagnostic.trim();
+                    if !diagnostic.is_empty() {
+                        error.message.push_str(": ");
+                        error.message.push_str(diagnostic);
+                    }
+                }
+            }
             Err(error)
         }
     }

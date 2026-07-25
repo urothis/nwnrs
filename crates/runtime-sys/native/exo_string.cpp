@@ -4,6 +4,8 @@
 #include <cstring>
 #include <new>
 
+#include "abi_shim.hpp"
+
 namespace {
 
 struct CExoString {
@@ -46,6 +48,12 @@ using DisconnectPlayer = std::int32_t (*)(
     std::uint32_t,
     std::int32_t,
     const CExoString&);
+using String3I32 = std::int32_t (*)(
+    void*,
+    CExoString,
+    CExoString,
+    CExoString,
+    std::int32_t);
 
 } // namespace
 
@@ -160,4 +168,58 @@ extern "C" void nwnrs_engine_replace_string(
     std::swap(string->string, replacement.string);
     std::swap(string->length, replacement.length);
     std::swap(string->capacity, replacement.capacity);
+}
+
+extern "C" std::int32_t nwnrs_engine_call_string3_i32(
+    void* address,
+    void* object,
+    NwnrsByteSpan first,
+    NwnrsByteSpan second,
+    NwnrsByteSpan third,
+    std::int32_t tail) {
+    const auto function = reinterpret_cast<String3I32>(address);
+    return function(
+        object,
+        CExoString(
+            reinterpret_cast<const char*>(first.data),
+            first.length),
+        CExoString(
+            reinterpret_cast<const char*>(second.data),
+            second.length),
+        CExoString(
+            reinterpret_cast<const char*>(third.data),
+        third.length),
+        tail);
+}
+
+namespace {
+
+std::int32_t string3_i32_fixture(
+    void* object,
+    CExoString first,
+    CExoString second,
+    CExoString third,
+    std::int32_t tail) {
+    const auto seed = static_cast<std::int32_t>(
+        reinterpret_cast<std::uintptr_t>(object));
+    return seed
+        + static_cast<std::int32_t>(first.length)
+        + static_cast<std::int32_t>(second.length * 10)
+        + static_cast<std::int32_t>(third.length * 100)
+        + tail;
+}
+
+} // namespace
+
+extern "C" std::int32_t nwnrs_engine_shim_self_test_string3_i32() {
+    const std::uint8_t first[] = {'a'};
+    const std::uint8_t second[] = {'b', 'c'};
+    const std::uint8_t third[] = {'d', 'e', 'f'};
+    return nwnrs_engine_call_string3_i32(
+        reinterpret_cast<void*>(&string3_i32_fixture),
+        reinterpret_cast<void*>(4),
+        NwnrsByteSpan{first, sizeof(first)},
+        NwnrsByteSpan{second, sizeof(second)},
+        NwnrsByteSpan{third, sizeof(third)},
+        5);
 }

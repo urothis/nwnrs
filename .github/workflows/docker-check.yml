@@ -15,10 +15,22 @@ on:
 
 jobs:
     check:
-        runs-on: ubuntu-latest
+        name: ${{ matrix.name }}
+        runs-on:
+            [self-hosted, nwnrs, "${{ matrix.os_label }}", "${{ matrix.arch_label }}"]
         timeout-minutes: 30
         permissions:
             contents: read
+        strategy:
+            fail-fast: false
+            matrix:
+                include:
+                    - name: Linux x86_64
+                      os_label: Linux
+                      arch_label: X64
+                    - name: Linux ARM64
+                      os_label: Linux
+                      arch_label: ARM64
         steps:
             - uses: actions/checkout@v6.0.3
               with:

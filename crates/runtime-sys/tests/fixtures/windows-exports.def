@@ -76,3 +76,26 @@ EXPORTS
     nwnrs_fixture_item_use_lore
     nwnrs_fixture_item_pay_to_identify
     nwnrs_fixture_item_event_handler
+    nwnrs_fixture_set_experience
+    nwnrs_fixture_decrement_feat_remaining_uses
+    nwnrs_fixture_has_feat
+    nwnrs_fixture_get_feat_remaining_uses
+    nwnrs_fixture_inventory_message
+    nwnrs_fixture_inventory_add_item
+    nwnrs_fixture_inventory_remove_item
+    nwnrs_fixture_item_validate_use
+    nwnrs_fixture_item_ammo_reload
+    nwnrs_fixture_item_validate_equip
+    nwnrs_fixture_item_equip
+    nwnrs_fixture_item_unequip
+    nwnrs_fixture_item_split
+    nwnrs_fixture_item_merge
+    nwnrs_fixture_item_acquire
+    nwnrs_fixture_get_game_object
+    nwnrs_fixture_get_client_object
+    nwnrs_fixture_get_nws_message
+    nwnrs_fixture_inventory_status
+    nwnrs_fixture_inventory_gui_set_open
+    nwnrs_fixture_inventory_select_panel
+    nwnrs_fixture_inventory_equip_cancel
+    nwnrs_fixture_inventory_unequip_cancel

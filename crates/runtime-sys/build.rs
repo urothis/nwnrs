@@ -1,6 +1,8 @@
 //! Builds the portable C++ ABI thunks used by the native engine boundary.
 
 fn main() {
+    println!("cargo:rerun-if-changed=native/abi_shim.hpp");
+    println!("cargo:rerun-if-changed=native/abi_shim.cpp");
     println!("cargo:rerun-if-changed=native/exo_string.cpp");
     let windows = std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows");
     let mut build = cc::Build::new();
@@ -9,6 +11,7 @@ fn main() {
         .std("c++17")
         .warnings(true)
         .warnings_into_errors(true)
+        .file("native/abi_shim.cpp")
         .file("native/exo_string.cpp");
     if windows {
         build.static_crt(false);
@@ -18,5 +21,5 @@ fn main() {
         // allowing LINK to choose both runtimes.
         println!("cargo:rustc-link-arg=/NODEFAULTLIB:LIBCMT");
     }
-    build.compile("nwnrs_engine_exo_string");
+    build.compile("nwnrs_engine_shim");
 }

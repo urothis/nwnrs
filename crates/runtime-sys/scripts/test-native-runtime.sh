@@ -7,6 +7,7 @@ readonly build_root=${CARGO_TARGET_DIR:-$repository/target}
 readonly fixture_root="$build_root/runtime-fixture"
 readonly host="$fixture_root/nwserver-fixture"
 readonly targets="$fixture_root/targets"
+readonly event_manifest="$targets/fixture-event-identities.txt"
 readonly administration_object="$fixture_root/administration.o"
 
 case "$(uname -s)" in
@@ -41,6 +42,7 @@ cargo run --quiet --locked --package nwnrs-runtime-sys \
 test -f "$runtime"
 readonly runtime_output="$fixture_root/runtime-output.log"
 RUST_LOG='warn,nwnrs::launcher=info,nwnrs::runtime=info,nwnrs::script=trace' \
+  NWNRS_FIXTURE_EVENT_MANIFEST="$event_manifest" \
   "$build_root/debug/nwnrs" run \
   --no-tail-logs \
   --runtime "$runtime" \

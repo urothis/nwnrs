@@ -10,7 +10,7 @@ description = "In-process Node.js binding for nwnrs Visual Studio Code tooling"
 crate-type = ["cdylib"]
 
 [dependencies]
-napi = { version = "3", default-features = false, features = ["napi8"] }
+napi = { version = "3", default-features = false, features = ["napi8", "dyn-symbols"] }
 napi-derive = "3"
 nwnrs = { path = "../nwnrs", default-features = false, features = ["tooling"] }
 nwnrs-nwscript = { path = "../nwscript" }

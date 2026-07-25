@@ -1,18 +1,22 @@
 pub(crate) mod abi;
 mod address;
 mod administration;
+mod correlation;
 mod event;
 mod events;
 pub(crate) mod hook;
+mod pump;
 mod server;
+mod shim;
 mod string;
 pub(crate) mod thread;
 mod vm;
 
 use std::{collections::BTreeMap, ffi::c_void, sync::OnceLock};
 
-use address::Resolver;
+use address::{NativeFunction, Resolver};
 use administration::AdministrationEngine;
+pub(crate) use correlation::CorrelationToken;
 use event::{EventEngine, EventSubscriptionUpdate};
 pub(crate) use event::{EventFrame, EventSpec};
 use hook::{NativeHookSpec, install_native_hooks};
@@ -50,6 +54,7 @@ impl Engine {
         module: *mut frida_gum_sys::GumModule,
         context: &RuntimeContext,
     ) -> Result<Self, BridgeInstallError> {
+        shim::verify_native_shim()?;
         let resolver = Resolver::new(module)?;
         let layouts = &context.target.pack.layouts;
         let vm = VirtualMachineEngine::resolve(
@@ -121,8 +126,17 @@ impl Engine {
         self.event.as_ref()?.hook_target(name)
     }
 
-    pub(crate) fn event_function_target(&self, name: &str) -> Option<usize> {
-        self.event.as_ref()?.function_target(name)
+    pub(crate) fn event_function_available(&self, name: &str) -> bool {
+        self.event
+            .as_ref()
+            .is_some_and(|event| event.function_available(name))
+    }
+
+    pub(crate) fn event_function<Function: Copy>(
+        &self,
+        name: &str,
+    ) -> Option<NativeFunction<Function>> {
+        self.event.as_ref()?.function(name)
     }
 
     pub(crate) fn event_layout_offset(&self, name: &str) -> Option<usize> {
@@ -169,10 +183,10 @@ impl Engine {
         events::bootstrap_hook_specs(self)
     }
 
-    pub(crate) fn event_is_subscribed(&self, name: &str, phase: &str) -> bool {
+    pub(crate) fn event_should_dispatch(&self, spec: EventSpec) -> bool {
         self.event
             .as_ref()
-            .is_some_and(|event| event.is_subscribed(name, phase))
+            .is_some_and(|event| event.should_dispatch(spec))
     }
 
     pub(crate) fn begin_event_subscription_update(
@@ -184,18 +198,104 @@ impl Engine {
             .begin_subscription_update()
     }
 
+    pub(crate) fn commit_event_subscription_update(
+        &self,
+        subscriptions: EventSubscriptionUpdate<'_>,
+    ) -> Result<(), BridgeInstallError> {
+        let event = self
+            .event
+            .as_ref()
+            .ok_or_else(|| BridgeInstallError::new("target pack does not provide event targets"))?;
+        let required_hooks = event.pending_physical_hooks()?;
+        if !required_hooks.is_empty() {
+            let hooks: Vec<_> = events::hook_specs(self)?
+                .into_iter()
+                .filter(|hook| required_hooks.contains(hook.id()))
+                .collect();
+            let resolved_hooks = hooks
+                .iter()
+                .map(NativeHookSpec::id)
+                .collect::<std::collections::BTreeSet<_>>();
+            if resolved_hooks != required_hooks || resolved_hooks.len() != hooks.len() {
+                return Err(BridgeInstallError::new(format!(
+                    "event subscription plan resolved {} physical hooks for {} required hooks",
+                    hooks.len(),
+                    required_hooks.len()
+                )));
+            }
+            install_native_hooks(&hooks)?;
+            event.mark_hooks_installed(&required_hooks)?;
+        }
+        subscriptions.commit()
+    }
+
     pub(crate) fn event_id_is_whitelisted(&self, name: &str, id: i32) -> bool {
         self.event
             .as_ref()
             .is_some_and(|event| event.id_is_whitelisted(name, id))
     }
 
+    #[allow(dead_code)]
+    pub(crate) fn begin_event_correlation<Value>(
+        &self,
+        owner: &'static str,
+        key: u64,
+        value: Value,
+    ) -> Result<CorrelationToken, BridgeInstallError>
+    where
+        Value: Send + 'static,
+    {
+        self.event
+            .as_ref()
+            .ok_or_else(|| BridgeInstallError::new("target pack does not provide event targets"))?
+            .begin_correlation(owner, key, value)
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn finish_event_correlation<Value>(
+        &self,
+        owner: &'static str,
+        key: u64,
+        token: CorrelationToken,
+    ) -> Result<Value, BridgeInstallError>
+    where
+        Value: Send + 'static,
+    {
+        self.event
+            .as_ref()
+            .ok_or_else(|| BridgeInstallError::new("target pack does not provide event targets"))?
+            .finish_correlation(owner, key, token)
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn enqueue_pump_event(
+        &self,
+        identity: &str,
+        target: EventObjectId,
+        data: BTreeMap<String, EventValue>,
+    ) -> Result<u64, BridgeInstallError> {
+        self.event
+            .as_ref()
+            .ok_or_else(|| BridgeInstallError::new("target pack does not provide event targets"))?
+            .enqueue_pump_record(identity, target, data)
+    }
+
     pub(crate) fn process_deferred_administration(
         &self,
         thread: &EngineThreadToken,
     ) -> Result<(), BridgeInstallError> {
+        if let Some(event) = &self.event {
+            event.process_pump(thread)?;
+        }
         if let Some(administration) = &self.administration {
             administration.process_deferred(thread, self.server()?)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn reset_event_lifecycle(&self) -> Result<(), BridgeInstallError> {
+        if let Some(event) = &self.event {
+            event.reset_lifecycle()?;
         }
         Ok(())
     }
@@ -297,8 +397,15 @@ impl Engine {
         thread: &EngineThreadToken,
         command: &AdministrationCommand,
     ) -> Result<HostCommandResult, BridgeInstallError> {
-        self.administration()?
-            .execute(thread, self.server()?, command)
+        let result = self
+            .administration()?
+            .execute(thread, self.server()?, command)?;
+        if matches!(command, AdministrationCommand::RequestShutdown)
+            && let Some(event) = &self.event
+        {
+            event.shutdown()?;
+        }
+        Ok(result)
     }
 
     pub(crate) fn current_event(
@@ -320,23 +427,7 @@ impl Engine {
             .as_ref()
             .ok_or_else(|| BridgeInstallError::new("target pack does not provide event targets"))?;
         match command {
-            EventCommand::Subscribe(identity) => {
-                if let Some(target) = event.subscription_target(&identity)? {
-                    let hooks: Vec<_> = events::hook_specs(self)?
-                        .into_iter()
-                        .filter(|hook| hook.target() == target)
-                        .collect();
-                    if hooks.len() != 1 {
-                        return Err(BridgeInstallError::new(format!(
-                            "event subscription {identity} resolved to {} physical hooks",
-                            hooks.len()
-                        )));
-                    }
-                    install_native_hooks(&hooks)?;
-                    event.mark_hook_installed(target)?;
-                }
-                event.record_subscription(&identity)
-            }
+            EventCommand::Subscribe(identity) => event.record_subscription(&identity),
             EventCommand::ToggleIdWhitelist {
                 name,
                 enabled,

@@ -11,11 +11,28 @@ $ErrorActionPreference = 'Stop'
 $repository = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path
 $unified = (Resolve-Path $UnifiedRoot).Path
 $unifiedCmake = Join-Path $unified 'CMakeLists.txt'
-$unifiedCommitLines = & git -c "safe.directory=$unified" -C $unified rev-parse HEAD
-if ($LASTEXITCODE -ne 0 -or -not $unifiedCommitLines) {
-    throw "failed to resolve the Unified commit from $unified"
+$unifiedCommit = $env:NWNRS_UNIFIED_COMMIT
+if (-not $unifiedCommit) {
+    $unifiedCommitLines = & git -c "safe.directory=$unified" -C $unified rev-parse HEAD
+    if ($LASTEXITCODE -ne 0 -or -not $unifiedCommitLines) {
+        throw "failed to resolve the Unified commit from $unified; set NWNRS_UNIFIED_COMMIT for a copied source tree"
+    }
+    $unifiedCommit = ($unifiedCommitLines -join '').Trim()
 }
-$unifiedCommit = ($unifiedCommitLines -join '').Trim()
+elseif ((Get-Command git -ErrorAction SilentlyContinue) -and
+        (Test-Path -LiteralPath (Join-Path $unified '.git'))) {
+    $checkoutCommitLines = & git -c "safe.directory=$unified" -C $unified rev-parse HEAD
+    if ($LASTEXITCODE -ne 0 -or -not $checkoutCommitLines) {
+        throw "failed to resolve the Unified checkout commit from $unified"
+    }
+    $checkoutCommit = ($checkoutCommitLines -join '').Trim()
+    if ($checkoutCommit -cne $unifiedCommit) {
+        throw "Unified checkout is $checkoutCommit, not NWNRS_UNIFIED_COMMIT=$unifiedCommit"
+    }
+}
+if ($unifiedCommit -cnotmatch '^[0-9a-f]{40}$') {
+    throw 'Unified commit must contain exactly 40 lowercase hexadecimal characters'
+}
 
 function Read-CMakeInteger([string] $Name) {
     $pattern = "(?m)^\s*set\($([regex]::Escape($Name))\s+([0-9]+)\)\s*$"
@@ -95,10 +112,16 @@ try {
         $encoding
     )
 
-    & cargo run --quiet --locked --package nwnrs-runtime --example verify-unified-abi -- `
-        $outputPath `
-        (Join-Path $repository 'crates\runtime\targets')
-    if ($LASTEXITCODE -ne 0) { throw 'Windows ABI target-pack verification failed' }
+    Push-Location $repository
+    try {
+        & cargo run --quiet --locked --package nwnrs-runtime --example verify-unified-abi -- `
+            $outputPath `
+            (Join-Path $repository 'crates\runtime\targets')
+        if ($LASTEXITCODE -ne 0) { throw 'Windows ABI target-pack verification failed' }
+    }
+    finally {
+        Pop-Location
+    }
 }
 finally {
     if (Test-Path -LiteralPath $temporaryRoot) {

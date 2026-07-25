@@ -5,27 +5,35 @@ use std::{
     thread::ThreadId,
 };
 
+use arc_swap::ArcSwap;
 use nwnrs_runtime::{
-    EngineClassLayouts, EventCommand, EventControls, EventObjectId, EventPayload, EventResultKind,
-    EventTarget, ServerStateTarget, event_definition, runtime_event_definition,
+    EngineClassLayouts, EventCommand, EventControls, EventKey, EventObjectId, EventPayload,
+    EventReentrancyPolicy, EventResultKind, EventSourceKind, EventSubscriptionMask, EventTarget,
+    ServerStateTarget, event_definition, keyed_event_definition, keyed_runtime_event_definition,
 };
 
 use super::{
     abi::{CExoString, RunScript},
-    address::{FunctionTarget, GlobalStorage, HookTarget, NativeAddress, Resolver},
+    address::{FunctionTarget, GlobalStorage, HookTarget, NativeAddress, NativeFunction, Resolver},
+    correlation::{CorrelationOwner, CorrelationToken},
+    pump::{DEFAULT_EVENT_PUMP_DRAIN_LIMIT, EventPump, EventPumpRecord},
     thread::EngineThreadToken,
 };
 use crate::bridge::BridgeInstallError;
 
 const MAX_EVENT_DEPTH: usize = 64;
 const EVENT_DISPATCHER: &str = "_nwnrs_onload";
+type EventIdWhitelists = BTreeMap<String, BTreeSet<i32>>;
 
 #[derive(Clone, Copy)]
 pub(crate) struct EventSpec {
-    pub(crate) name:     &'static str,
-    pub(crate) id:       i32,
-    pub(crate) phase:    &'static str,
-    pub(crate) controls: EventControls,
+    pub(crate) key:        EventKey,
+    pub(crate) name:       &'static str,
+    pub(crate) id:         i32,
+    pub(crate) phase:      &'static str,
+    pub(crate) controls:   EventControls,
+    pub(crate) result:     EventResultKind,
+    pub(crate) reentrancy: EventReentrancyPolicy,
 }
 
 impl EventSpec {
@@ -33,10 +41,11 @@ impl EventSpec {
         name: &'static str,
         phase: &'static str,
     ) -> Result<Self, BridgeInstallError> {
-        let definition = runtime_event_definition(name, phase).ok_or_else(|| {
+        let (key, definition) = keyed_runtime_event_definition(name, phase).ok_or_else(|| {
             BridgeInstallError::new(format!("event {name} {phase} is absent from the catalog"))
         })?;
         Ok(Self {
+            key,
             name,
             id: -1,
             phase,
@@ -44,6 +53,8 @@ impl EventSpec {
                 skippable: definition.skippable,
                 result:    definition.result_kind != EventResultKind::None,
             },
+            result: definition.result_kind,
+            reentrancy: definition.reentrancy,
         })
     }
 
@@ -51,12 +62,42 @@ impl EventSpec {
         self.id = id;
         self
     }
+
+    fn identity(identity: &str) -> Result<Self, BridgeInstallError> {
+        let (key, definition) = keyed_event_definition(identity).ok_or_else(|| {
+            BridgeInstallError::new(format!("event {identity} is absent from the catalog"))
+        })?;
+        Ok(Self {
+            key,
+            name: definition.name,
+            id: -1,
+            phase: definition.phase,
+            controls: EventControls {
+                skippable: definition.skippable,
+                result:    definition.result_kind != EventResultKind::None,
+            },
+            result: definition.result_kind,
+            reentrancy: definition.reentrancy,
+        })
+    }
 }
 
 pub(crate) struct EventFrame {
-    payload: EventPayload,
-    skipped: bool,
-    result:  Option<Vec<u8>>,
+    payload:     EventPayload,
+    key:         EventKey,
+    skipped:     bool,
+    result_kind: EventResultKind,
+    result:      Option<EventResultValue>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+enum EventResultValue {
+    Boolean(bool),
+    Unsigned(u32),
+    Signed(i32),
+    Float(f32),
+    String(String),
+    ObjectId(u32),
 }
 
 impl EventFrame {
@@ -64,8 +105,53 @@ impl EventFrame {
         self.skipped
     }
 
-    pub(crate) fn result(&self) -> Option<&[u8]> {
-        self.result.as_deref()
+    pub(crate) fn has_result(&self) -> bool {
+        self.result.is_some()
+    }
+
+    pub(crate) fn boolean_result(&self) -> Option<bool> {
+        match &self.result {
+            Some(EventResultValue::Boolean(value)) => Some(*value),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn unsigned_result(&self) -> Option<u32> {
+        match &self.result {
+            Some(EventResultValue::Unsigned(value)) => Some(*value),
+            _ => None,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn signed_result(&self) -> Option<i32> {
+        match &self.result {
+            Some(EventResultValue::Signed(value)) => Some(*value),
+            _ => None,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn float_result(&self) -> Option<f32> {
+        match &self.result {
+            Some(EventResultValue::Float(value)) => Some(*value),
+            _ => None,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn string_result(&self) -> Option<&str> {
+        match &self.result {
+            Some(EventResultValue::String(value)) => Some(value),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn object_result(&self) -> Option<u32> {
+        match &self.result {
+            Some(EventResultValue::ObjectId(value)) => Some(*value),
+            _ => None,
+        }
     }
 }
 
@@ -81,7 +167,12 @@ struct EventFrames {
 }
 
 impl EventFrames {
-    fn enter(&self, mut payload: EventPayload) -> Result<EventScope<'_>, BridgeInstallError> {
+    fn enter(
+        &self,
+        mut payload: EventPayload,
+        key: EventKey,
+        result_kind: EventResultKind,
+    ) -> Result<EventScope<'_>, BridgeInstallError> {
         self.validate_thread()?;
         let mut frames = lock_frames(&self.values)?;
         if frames.len() >= MAX_EVENT_DEPTH {
@@ -95,7 +186,9 @@ impl EventFrames {
             .ok_or_else(|| BridgeInstallError::new("event nesting depth overflowed"))?;
         frames.push(EventFrame {
             payload,
+            key,
             skipped: false,
+            result_kind,
             result: None,
         });
         drop(frames);
@@ -110,6 +203,14 @@ impl EventFrames {
         Ok(lock_frames(&self.values)?
             .last()
             .map(|frame| frame.payload.clone()))
+    }
+
+    fn contains(&self, key: EventKey) -> bool {
+        self.values
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .iter()
+            .any(|frame| frame.key == key)
     }
 
     fn control(&self, command: EventCommand) -> Result<(), BridgeInstallError> {
@@ -127,7 +228,7 @@ impl EventFrames {
                 )));
             }
             EventCommand::SetResult(result) if frame.payload.controls.result => {
-                frame.result = Some(result);
+                frame.result = Some(parse_event_result(frame.result_kind, &result)?);
             }
             EventCommand::SetResult(_) => {
                 return Err(BridgeInstallError::new(format!(
@@ -174,26 +275,64 @@ impl EventFrames {
 
 #[derive(Default)]
 struct SubscriptionState {
-    active:  BTreeSet<String>,
-    pending: Option<BTreeSet<String>>,
+    active:                BTreeSet<String>,
+    pending:               Option<BTreeSet<String>>,
+    active_id_whitelists:  EventIdWhitelists,
+    pending_id_whitelists: Option<EventIdWhitelists>,
+}
+
+struct PublishedEventConfiguration {
+    subscriptions: EventSubscriptionMask,
+    id_whitelists: EventIdWhitelists,
+}
+
+impl PublishedEventConfiguration {
+    fn empty() -> Self {
+        Self {
+            subscriptions: EventSubscriptionMask::empty(),
+            id_whitelists: BTreeMap::new(),
+        }
+    }
+
+    fn is_subscribed(&self, key: EventKey) -> bool {
+        self.subscriptions.contains(key)
+    }
+
+    fn id_is_whitelisted(&self, name: &str, id: i32) -> bool {
+        self.id_whitelists
+            .get(name)
+            .is_none_or(|whitelist| whitelist.contains(&id))
+    }
 }
 
 impl SubscriptionState {
     fn begin(&mut self) -> Result<(), BridgeInstallError> {
-        if self.pending.is_some() {
+        if self.pending.is_some() || self.pending_id_whitelists.is_some() {
             return Err(BridgeInstallError::new(
                 "event subscription update is already active",
             ));
         }
         self.pending = Some(BTreeSet::new());
+        self.pending_id_whitelists = Some(BTreeMap::new());
         Ok(())
     }
 
-    fn record(&mut self, identity: &str) -> Result<(), BridgeInstallError> {
+    fn record(
+        &mut self,
+        identity: &str,
+        forced_id_whitelist: Option<&str>,
+    ) -> Result<(), BridgeInstallError> {
         self.pending
             .as_mut()
             .ok_or_else(|| BridgeInstallError::new("event subscription update is not active"))?
             .insert(identity.to_string());
+        if let Some(name) = forced_id_whitelist {
+            self.pending_id_whitelists
+                .as_mut()
+                .ok_or_else(|| BridgeInstallError::new("event filter update is not active"))?
+                .entry(name.to_string())
+                .or_default();
+        }
         Ok(())
     }
 
@@ -201,12 +340,29 @@ impl SubscriptionState {
         let pending = self.pending.take().ok_or_else(|| {
             BridgeInstallError::new("event subscription update disappeared before commit")
         })?;
+        let pending_id_whitelists = self.pending_id_whitelists.take().ok_or_else(|| {
+            BridgeInstallError::new("event filter update disappeared before commit")
+        })?;
         self.active = pending;
+        self.active_id_whitelists = pending_id_whitelists;
         Ok(())
     }
 
     fn abort(&mut self) {
         self.pending = None;
+        self.pending_id_whitelists = None;
+    }
+
+    fn id_whitelists_mut(&mut self) -> &mut EventIdWhitelists {
+        self.pending_id_whitelists
+            .as_mut()
+            .unwrap_or(&mut self.active_id_whitelists)
+    }
+
+    fn configuration_if_active(&self) -> Option<(&BTreeSet<String>, &EventIdWhitelists)> {
+        self.pending
+            .is_none()
+            .then_some((&self.active, &self.active_id_whitelists))
     }
 }
 
@@ -223,6 +379,14 @@ impl EventSubscriptionUpdate<'_> {
             .lock()
             .map_err(|_error| BridgeInstallError::new("event subscription lock is poisoned"))?;
         subscriptions.commit()?;
+        let (active, id_whitelists) = subscriptions.configuration_if_active().ok_or_else(|| {
+            BridgeInstallError::new("event subscription update remained active after commit")
+        })?;
+        let published = self
+            .engine
+            .build_published_configuration(active, id_whitelists)?;
+        drop(subscriptions);
+        self.engine.published.store(published.into());
         self.active = false;
         Ok(())
     }
@@ -263,18 +427,20 @@ impl Drop for EventScope<'_> {
 }
 
 pub(crate) struct EventEngine {
-    virtual_machine_storage:   NativeAddress<GlobalStorage>,
-    run_script:                RunScript,
-    hook_targets:              BTreeMap<String, NativeAddress<HookTarget>>,
-    function_targets:          BTreeMap<String, NativeAddress<FunctionTarget>>,
-    game_object_id_offset:     usize,
-    event_layout_offsets:      BTreeMap<&'static str, usize>,
-    app_manager_storage:       Option<NativeAddress<GlobalStorage>>,
+    virtual_machine_storage: NativeAddress<GlobalStorage>,
+    run_script: RunScript,
+    hook_targets: BTreeMap<String, NativeAddress<HookTarget>>,
+    function_targets: BTreeMap<String, NativeAddress<FunctionTarget>>,
+    game_object_id_offset: usize,
+    event_layout_offsets: BTreeMap<&'static str, usize>,
+    app_manager_storage: Option<NativeAddress<GlobalStorage>>,
     app_manager_server_offset: usize,
-    frames:                    EventFrames,
-    subscriptions:             Mutex<SubscriptionState>,
-    installed_hook_targets:    Mutex<BTreeSet<usize>>,
-    id_whitelists:             Mutex<BTreeMap<String, BTreeSet<i32>>>,
+    frames: EventFrames,
+    correlations: CorrelationOwner,
+    pump: EventPump,
+    subscriptions: Mutex<SubscriptionState>,
+    published: ArcSwap<PublishedEventConfiguration>,
+    installed_physical_hooks: Mutex<BTreeSet<&'static str>>,
 }
 
 impl EventEngine {
@@ -289,12 +455,10 @@ impl EventEngine {
             "virtual_machine",
             &target.virtual_machine,
         )?;
-        let run_script_address =
-            resolver.resolve::<HookTarget>("events", "run_script", &target.run_script)?;
-        // SAFETY: the exact target pack binds this address to
-        // CVirtualMachine::RunScript for the selected server binary.
-        let run_script =
-            unsafe { std::mem::transmute::<usize, RunScript>(run_script_address.get()) };
+        let run_script = resolver
+            .resolve::<FunctionTarget>("events", "run_script", &target.run_script)?
+            .function::<RunScript>()
+            .get();
         let mut hook_targets = BTreeMap::new();
         let mut resolved_hook_targets = BTreeMap::new();
         for (name, address) in &target.hooks {
@@ -401,12 +565,11 @@ impl EventEngine {
             .map_err(|_error| {
                 BridgeInstallError::new("layouts.classes.app_manager_server_offset exceeds usize")
             })?;
-        let installed_hook_targets = target
+        let installed_physical_hooks = target
             .hooks
             .get("module_load")
-            .and_then(|_| hook_targets.get("module_load"))
-            .map_or_else(std::collections::BTreeSet::new, |target| {
-                std::collections::BTreeSet::from([target.get()])
+            .map_or_else(std::collections::BTreeSet::new, |_target| {
+                std::collections::BTreeSet::from(["module_load"])
             });
         Ok(Self {
             virtual_machine_storage,
@@ -418,9 +581,11 @@ impl EventEngine {
             app_manager_storage,
             app_manager_server_offset,
             frames: EventFrames::default(),
+            correlations: CorrelationOwner::default(),
+            pump: EventPump::default(),
             subscriptions: Mutex::new(SubscriptionState::default()),
-            installed_hook_targets: Mutex::new(installed_hook_targets),
-            id_whitelists: Mutex::new(BTreeMap::new()),
+            published: ArcSwap::from_pointee(PublishedEventConfiguration::empty()),
+            installed_physical_hooks: Mutex::new(installed_physical_hooks),
         })
     }
 
@@ -428,8 +593,12 @@ impl EventEngine {
         self.hook_targets.get(name).map(NativeAddress::get)
     }
 
-    pub(crate) fn function_target(&self, name: &str) -> Option<usize> {
-        self.function_targets.get(name).map(NativeAddress::get)
+    pub(crate) fn function_available(&self, name: &str) -> bool {
+        self.function_targets.contains_key(name)
+    }
+
+    pub(crate) fn function<Function: Copy>(&self, name: &str) -> Option<NativeFunction<Function>> {
+        self.function_targets.get(name).map(NativeAddress::function)
     }
 
     pub(crate) fn layout_offset(&self, name: &str) -> Option<usize> {
@@ -466,13 +635,121 @@ impl EventEngine {
         Ok(server)
     }
 
-    pub(crate) fn is_subscribed(&self, name: &str, phase: &str) -> bool {
-        let subscriptions = self
-            .subscriptions
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
-        nwnrs_runtime::runtime_event_definition(name, phase)
-            .is_some_and(|event| subscriptions.active.contains(event.identity))
+    pub(crate) fn is_subscribed(&self, key: EventKey) -> bool {
+        self.published.load().is_subscribed(key)
+    }
+
+    pub(crate) fn should_dispatch(&self, spec: EventSpec) -> bool {
+        self.is_subscribed(spec.key)
+            && match spec.reentrancy {
+                EventReentrancyPolicy::Allow => true,
+                EventReentrancyPolicy::SuppressSameRoute => !self.frames.contains(spec.key),
+            }
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn begin_correlation<Value>(
+        &self,
+        owner: &'static str,
+        key: u64,
+        value: Value,
+    ) -> Result<CorrelationToken, BridgeInstallError>
+    where
+        Value: Send + 'static,
+    {
+        self.correlations.begin(owner, key, value)
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn finish_correlation<Value>(
+        &self,
+        owner: &'static str,
+        key: u64,
+        token: CorrelationToken,
+    ) -> Result<Value, BridgeInstallError>
+    where
+        Value: Send + 'static,
+    {
+        self.correlations.finish(owner, key, token)
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn enqueue_pump_record(
+        &self,
+        identity: &str,
+        target: EventObjectId,
+        data: BTreeMap<String, nwnrs_runtime::EventValue>,
+    ) -> Result<u64, BridgeInstallError> {
+        let definition = event_definition(identity)
+            .ok_or_else(|| BridgeInstallError::new("unknown asynchronous event identity"))?;
+        if definition.source_kind != EventSourceKind::EventPump {
+            return Err(BridgeInstallError::new(format!(
+                "event {identity} is not produced by the asynchronous event pump"
+            )));
+        }
+        self.pump.enqueue(identity, target, data)
+    }
+
+    pub(crate) fn process_pump(
+        &self,
+        thread: &EngineThreadToken,
+    ) -> Result<(), BridgeInstallError> {
+        let records = self.pump.drain(DEFAULT_EVENT_PUMP_DRAIN_LIMIT)?;
+        let mut first_error = None;
+        for record in records {
+            if let Err(error) = self.dispatch_pump_record(thread, record)
+                && first_error.is_none()
+            {
+                first_error = Some(error);
+            }
+        }
+        match first_error {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
+    }
+
+    fn dispatch_pump_record(
+        &self,
+        thread: &EngineThreadToken,
+        record: EventPumpRecord,
+    ) -> Result<(), BridgeInstallError> {
+        let definition = event_definition(&record.identity).ok_or_else(|| {
+            BridgeInstallError::new(format!(
+                "queued event {} disappeared from the catalog",
+                record.identity
+            ))
+        })?;
+        if definition.source_kind != EventSourceKind::EventPump {
+            return Err(BridgeInstallError::new(format!(
+                "queued event {} is not an event-pump route",
+                record.identity
+            )));
+        }
+        let spec = EventSpec::identity(&record.identity)?;
+        if !self.should_dispatch(spec) {
+            return Ok(());
+        }
+        let (ran, _frame) = self.dispatch(thread, spec, record.target, record.data)?;
+        if !ran {
+            return Err(BridgeInstallError::new(format!(
+                "generated event dispatcher did not run for queued event {} sequence {}",
+                record.identity, record.sequence
+            )));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn reset_lifecycle(&self) -> Result<(), BridgeInstallError> {
+        let _discarded_correlations = self.correlations.clear()?;
+        let _discarded_records = self.pump.reset()?;
+        Ok(())
+    }
+
+    pub(crate) fn shutdown(&self) -> Result<(), BridgeInstallError> {
+        let _discarded_correlations = self.correlations.clear()?;
+        let _discarded_records = self.pump.close()?;
+        Ok(())
     }
 
     pub(crate) fn begin_subscription_update(
@@ -489,49 +766,90 @@ impl EventEngine {
         })
     }
 
-    pub(crate) fn subscription_target(
+    pub(crate) fn pending_physical_hooks(
         &self,
-        identity: &str,
-    ) -> Result<Option<usize>, BridgeInstallError> {
-        let event = event_definition(identity)
-            .ok_or_else(|| BridgeInstallError::new("unknown event subscription"))?;
-        let target = self.hook_target(event.hook).ok_or_else(|| {
-            BridgeInstallError::new(format!("event hook {} is unavailable", event.hook))
-        })?;
-        if self
-            .installed_hook_targets
+    ) -> Result<BTreeSet<&'static str>, BridgeInstallError> {
+        let subscriptions = self
+            .subscriptions
             .lock()
-            .map_err(|_error| BridgeInstallError::new("installed event hook lock is poisoned"))?
-            .contains(&target)
-        {
-            Ok(None)
-        } else {
-            Ok(Some(target))
+            .map_err(|_error| BridgeInstallError::new("event subscription lock is poisoned"))?;
+        let pending = subscriptions
+            .pending
+            .as_ref()
+            .ok_or_else(|| BridgeInstallError::new("event subscription update is not active"))?;
+        let installed = self
+            .installed_physical_hooks
+            .lock()
+            .map_err(|_error| BridgeInstallError::new("installed event hook lock is poisoned"))?;
+        let mut required = BTreeSet::new();
+        for identity in pending {
+            let event = event_definition(identity)
+                .ok_or_else(|| BridgeInstallError::new("unknown event subscription"))?;
+            self.hook_target(event.hook).ok_or_else(|| {
+                BridgeInstallError::new(format!("event hook {} is unavailable", event.hook))
+            })?;
+            if !installed.contains(event.hook) {
+                required.insert(event.hook);
+            }
         }
+        Ok(required)
     }
 
     pub(crate) fn record_subscription(&self, identity: &str) -> Result<(), BridgeInstallError> {
-        if let Some(whitelist) =
-            event_definition(identity).and_then(|definition| definition.forced_id_whitelist)
-        {
-            self.id_whitelists
-                .lock()
-                .map_err(|_error| BridgeInstallError::new("event ID whitelist lock is poisoned"))?
-                .entry(whitelist.to_string())
-                .or_default();
-        }
+        let forced_id_whitelist = event_definition(identity)
+            .and_then(|definition| definition.filter_policy.required_whitelist());
         let mut subscriptions = self
             .subscriptions
             .lock()
             .map_err(|_error| BridgeInstallError::new("event subscription lock is poisoned"))?;
-        subscriptions.record(identity)
+        subscriptions.record(identity, forced_id_whitelist)
     }
 
-    pub(crate) fn mark_hook_installed(&self, target: usize) -> Result<(), BridgeInstallError> {
-        self.installed_hook_targets
+    fn build_published_configuration(
+        &self,
+        active: &BTreeSet<String>,
+        id_whitelists: &EventIdWhitelists,
+    ) -> Result<PublishedEventConfiguration, BridgeInstallError> {
+        let mut subscriptions = EventSubscriptionMask::empty();
+        for identity in active {
+            let (key, _event) = keyed_event_definition(identity).ok_or_else(|| {
+                BridgeInstallError::new(format!(
+                    "event subscription {identity} disappeared from the catalog"
+                ))
+            })?;
+            if !subscriptions.insert(key) {
+                return Err(BridgeInstallError::new(
+                    "event subscription key exceeds the bitset",
+                ));
+            }
+        }
+        Ok(PublishedEventConfiguration {
+            subscriptions,
+            id_whitelists: id_whitelists.clone(),
+        })
+    }
+
+    fn publish_active_configuration(
+        &self,
+        subscriptions: &SubscriptionState,
+    ) -> Result<(), BridgeInstallError> {
+        if let Some((active, id_whitelists)) = subscriptions.configuration_if_active() {
+            self.published.store(
+                self.build_published_configuration(active, id_whitelists)?
+                    .into(),
+            );
+        }
+        Ok(())
+    }
+
+    pub(crate) fn mark_hooks_installed(
+        &self,
+        hooks: &BTreeSet<&'static str>,
+    ) -> Result<(), BridgeInstallError> {
+        self.installed_physical_hooks
             .lock()
             .map_err(|_error| BridgeInstallError::new("installed event hook lock is poisoned"))?
-            .insert(target);
+            .extend(hooks);
         Ok(())
     }
 
@@ -540,16 +858,17 @@ impl EventEngine {
         name: String,
         enabled: bool,
     ) -> Result<(), BridgeInstallError> {
-        let mut whitelists = self
-            .id_whitelists
+        let mut subscriptions = self
+            .subscriptions
             .lock()
             .map_err(|_error| BridgeInstallError::new("event ID whitelist lock is poisoned"))?;
+        let whitelists = subscriptions.id_whitelists_mut();
         if enabled {
             whitelists.entry(name).or_default();
         } else {
             whitelists.remove(&name);
         }
-        Ok(())
+        self.publish_active_configuration(&subscriptions)
     }
 
     pub(crate) fn add_id_to_whitelist(
@@ -557,15 +876,14 @@ impl EventEngine {
         name: String,
         id: i32,
     ) -> Result<(), BridgeInstallError> {
-        if let Some(whitelist) = self
-            .id_whitelists
+        let mut subscriptions = self
+            .subscriptions
             .lock()
-            .map_err(|_error| BridgeInstallError::new("event ID whitelist lock is poisoned"))?
-            .get_mut(&name)
-        {
+            .map_err(|_error| BridgeInstallError::new("event ID whitelist lock is poisoned"))?;
+        if let Some(whitelist) = subscriptions.id_whitelists_mut().get_mut(&name) {
             whitelist.insert(id);
         }
-        Ok(())
+        self.publish_active_configuration(&subscriptions)
     }
 
     pub(crate) fn remove_id_from_whitelist(
@@ -573,23 +891,18 @@ impl EventEngine {
         name: &str,
         id: i32,
     ) -> Result<(), BridgeInstallError> {
-        if let Some(whitelist) = self
-            .id_whitelists
+        let mut subscriptions = self
+            .subscriptions
             .lock()
-            .map_err(|_error| BridgeInstallError::new("event ID whitelist lock is poisoned"))?
-            .get_mut(name)
-        {
+            .map_err(|_error| BridgeInstallError::new("event ID whitelist lock is poisoned"))?;
+        if let Some(whitelist) = subscriptions.id_whitelists_mut().get_mut(name) {
             whitelist.remove(&id);
         }
-        Ok(())
+        self.publish_active_configuration(&subscriptions)
     }
 
     pub(crate) fn id_is_whitelisted(&self, name: &str, id: i32) -> bool {
-        self.id_whitelists
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .get(name)
-            .is_none_or(|whitelist| whitelist.contains(&id))
+        self.published.load().id_is_whitelisted(name, id)
     }
 
     pub(crate) fn game_object_id(
@@ -631,7 +944,7 @@ impl EventEngine {
             controls: spec.controls,
             data,
         };
-        let scope = self.frames.enter(payload)?;
+        let scope = self.frames.enter(payload, spec.key, spec.result)?;
         let vm = self.virtual_machine()?;
         let mut script_name = format!("{EVENT_DISPATCHER}\0").into_bytes();
         let string_length = u32::try_from(EVENT_DISPATCHER.len())
@@ -683,6 +996,61 @@ fn lock_frames(
         .map_err(|_error| BridgeInstallError::new("event frame lock is poisoned"))
 }
 
+fn parse_event_result(
+    kind: EventResultKind,
+    result: &[u8],
+) -> Result<EventResultValue, BridgeInstallError> {
+    match kind {
+        EventResultKind::None => Err(BridgeInstallError::new(
+            "event result has no declared result type",
+        )),
+        EventResultKind::Boolean => serde_json::from_slice(result)
+            .map(EventResultValue::Boolean)
+            .map_err(|_error| BridgeInstallError::new("event result is not a JSON boolean")),
+        EventResultKind::Unsigned => serde_json::from_slice(result)
+            .map(EventResultValue::Unsigned)
+            .map_err(|_error| BridgeInstallError::new("event result is not a JSON u32")),
+        EventResultKind::Signed => serde_json::from_slice(result)
+            .map(EventResultValue::Signed)
+            .map_err(|_error| BridgeInstallError::new("event result is not a JSON i32")),
+        EventResultKind::Float => {
+            let value: f32 = serde_json::from_slice(result)
+                .map_err(|_error| BridgeInstallError::new("event result is not a JSON f32"))?;
+            if !value.is_finite() {
+                return Err(BridgeInstallError::new(
+                    "event result is not a finite JSON f32",
+                ));
+            }
+            Ok(EventResultValue::Float(value))
+        }
+        EventResultKind::String => {
+            let value: String = serde_json::from_slice(result)
+                .map_err(|_error| BridgeInstallError::new("event result is not a JSON string"))?;
+            if value.len() > 65_535 || value.contains('\0') {
+                return Err(BridgeInstallError::new(
+                    "event result is not a bounded engine string",
+                ));
+            }
+            Ok(EventResultValue::String(value))
+        }
+        EventResultKind::ObjectId => {
+            let value: String = serde_json::from_slice(result).map_err(|_error| {
+                BridgeInstallError::new("event result is not a JSON object-ID string")
+            })?;
+            if value.len() != 8 {
+                return Err(BridgeInstallError::new(
+                    "event result object ID must contain eight hexadecimal digits",
+                ));
+            }
+            u32::from_str_radix(&value, 16)
+                .map(EventResultValue::ObjectId)
+                .map_err(|_error| {
+                    BridgeInstallError::new("event result object ID is not hexadecimal")
+                })
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -702,27 +1070,44 @@ mod tests {
         }
     }
 
+    fn event_key(identity: &str) -> EventKey {
+        keyed_event_definition(identity)
+            .expect("fixture event identity exists")
+            .0
+    }
+
     #[test]
     fn nested_frames_restore_parent_state() -> Result<(), BridgeInstallError> {
         let frames = EventFrames::default();
-        let outer = frames.enter(payload(
-            "fixture.outer",
-            EventControls {
-                skippable: true,
-                result:    true,
-            },
-        ))?;
+        let outer = frames.enter(
+            payload(
+                "fixture.outer",
+                EventControls {
+                    skippable: true,
+                    result:    true,
+                },
+            ),
+            event_key("module_load"),
+            EventResultKind::Boolean,
+        )?;
         assert_eq!(frames.current()?.map(|event| event.depth), Some(1));
-        frames.control(EventCommand::SetResult(b"{\"outer\":true}".to_vec()))?;
+        assert!(frames.contains(event_key("module_load")));
+        assert!(!frames.contains(event_key("associate_add_before")));
+        frames.control(EventCommand::SetResult(b"true".to_vec()))?;
 
-        let inner = frames.enter(payload(
-            "fixture.inner",
-            EventControls {
-                skippable: true,
-                result:    false,
-            },
-        ))?;
+        let inner = frames.enter(
+            payload(
+                "fixture.inner",
+                EventControls {
+                    skippable: true,
+                    result:    false,
+                },
+            ),
+            event_key("associate_add_before"),
+            EventResultKind::None,
+        )?;
         assert_eq!(frames.current()?.map(|event| event.depth), Some(2));
+        assert!(frames.contains(event_key("associate_add_before")));
         frames.control(EventCommand::Skip)?;
         let inner = inner.finish()?;
         assert!(inner.skipped);
@@ -734,8 +1119,9 @@ mod tests {
         );
         let outer = outer.finish()?;
         assert!(!outer.skipped);
-        assert_eq!(outer.result, Some(b"{\"outer\":true}".to_vec()));
+        assert_eq!(outer.boolean_result(), Some(true));
         assert!(frames.current()?.is_none());
+        assert!(!frames.contains(event_key("module_load")));
         Ok(())
     }
 
@@ -744,7 +1130,11 @@ mod tests {
     {
         let frames = EventFrames::default();
         {
-            let _scope = frames.enter(payload("fixture.read_only", EventControls::default()))?;
+            let _scope = frames.enter(
+                payload("fixture.read_only", EventControls::default()),
+                event_key("module_load"),
+                EventResultKind::None,
+            )?;
             let error = frames
                 .control(EventCommand::Skip)
                 .expect_err("read-only event must reject skip");
@@ -771,26 +1161,82 @@ mod tests {
     }
 
     #[test]
+    fn event_results_are_decoded_once_to_the_declared_type() -> Result<(), BridgeInstallError> {
+        assert_eq!(
+            parse_event_result(EventResultKind::Boolean, b"true")?,
+            EventResultValue::Boolean(true)
+        );
+        assert_eq!(
+            parse_event_result(EventResultKind::Unsigned, b"4294967295")?,
+            EventResultValue::Unsigned(u32::MAX)
+        );
+        assert_eq!(
+            parse_event_result(EventResultKind::Signed, b"-2147483648")?,
+            EventResultValue::Signed(i32::MIN)
+        );
+        assert_eq!(
+            parse_event_result(EventResultKind::Float, b"1.25")?,
+            EventResultValue::Float(1.25)
+        );
+        assert_eq!(
+            parse_event_result(EventResultKind::String, br#""denied""#)?,
+            EventResultValue::String("denied".to_string())
+        );
+        assert_eq!(
+            parse_event_result(EventResultKind::ObjectId, b"\"0102aBcd\"")?,
+            EventResultValue::ObjectId(0x0102_abcd)
+        );
+        assert!(parse_event_result(EventResultKind::Boolean, b"1").is_err());
+        assert!(parse_event_result(EventResultKind::ObjectId, b"\"123\"").is_err());
+        Ok(())
+    }
+
+    #[test]
     fn subscription_updates_commit_or_preserve_the_previous_set() -> Result<(), BridgeInstallError>
     {
         let mut subscriptions = SubscriptionState::default();
         subscriptions.active.insert("old".to_string());
+        subscriptions
+            .active_id_whitelists
+            .insert("old.filter".to_string(), BTreeSet::from([1]));
         subscriptions.begin()?;
-        subscriptions.record("new")?;
+        subscriptions.record("new", Some("new.filter"))?;
+        subscriptions
+            .id_whitelists_mut()
+            .get_mut("new.filter")
+            .expect("forced filter")
+            .insert(2);
         subscriptions.abort();
         assert_eq!(subscriptions.active, BTreeSet::from(["old".to_string()]));
+        assert_eq!(
+            subscriptions.active_id_whitelists,
+            BTreeMap::from([("old.filter".to_string(), BTreeSet::from([1]))])
+        );
 
         subscriptions.begin()?;
-        subscriptions.record("new")?;
+        subscriptions.record("new", Some("new.filter"))?;
+        subscriptions
+            .id_whitelists_mut()
+            .get_mut("new.filter")
+            .expect("forced filter")
+            .insert(2);
         subscriptions.commit()?;
         assert_eq!(subscriptions.active, BTreeSet::from(["new".to_string()]));
+        assert_eq!(
+            subscriptions.active_id_whitelists,
+            BTreeMap::from([("new.filter".to_string(), BTreeSet::from([2]))])
+        );
         Ok(())
     }
 
     #[test]
     fn event_frames_reject_a_second_native_thread() -> Result<(), BridgeInstallError> {
         let frames = Arc::new(EventFrames::default());
-        let scope = frames.enter(payload("fixture.owner", EventControls::default()))?;
+        let scope = frames.enter(
+            payload("fixture.owner", EventControls::default()),
+            event_key("module_load"),
+            EventResultKind::None,
+        )?;
         let other = Arc::clone(&frames);
         let error = std::thread::spawn(move || other.current())
             .join()

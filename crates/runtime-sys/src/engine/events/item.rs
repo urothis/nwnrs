@@ -1,9 +1,4 @@
-use std::{
-    collections::BTreeMap,
-    ffi::c_void,
-    ptr,
-    sync::atomic::{AtomicPtr, Ordering},
-};
+use std::{collections::BTreeMap, ffi::c_void};
 
 use nwnrs_runtime::{EventObjectId, EventValue, EventVector};
 
@@ -17,7 +12,7 @@ use super::{
             UseItem, ValidateEquipItem, ValidateUseItem,
         },
         active_engine,
-        hook::NativeHookSpec,
+        hook::{NativeHookSpec, NativeOriginal},
     },
     dispatch, native,
 };
@@ -39,21 +34,21 @@ const SPLIT_HOOK: &str = "item_split";
 const MERGE_HOOK: &str = "item_merge";
 const ACQUIRE_HOOK: &str = "item_acquire";
 
-static USE_ORIGINAL: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
-static OPEN_ORIGINAL: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
-static CLOSE_ORIGINAL: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
-static LEARN_SCROLL_ORIGINAL: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
-static USE_LORE_ORIGINAL: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
-static PAY_TO_IDENTIFY_ORIGINAL: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
-static EVENT_HANDLER_ORIGINAL: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
-static VALIDATE_USE_ORIGINAL: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
-static AMMO_RELOAD_ORIGINAL: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
-static VALIDATE_EQUIP_ORIGINAL: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
-static EQUIP_ORIGINAL: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
-static UNEQUIP_ORIGINAL: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
-static SPLIT_ORIGINAL: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
-static MERGE_ORIGINAL: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
-static ACQUIRE_ORIGINAL: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
+static USE_ORIGINAL: NativeOriginal<UseItem> = NativeOriginal::new();
+static OPEN_ORIGINAL: NativeOriginal<ItemInventoryOpen> = NativeOriginal::new();
+static CLOSE_ORIGINAL: NativeOriginal<ItemInventoryClose> = NativeOriginal::new();
+static LEARN_SCROLL_ORIGINAL: NativeOriginal<ItemObjectAction> = NativeOriginal::new();
+static USE_LORE_ORIGINAL: NativeOriginal<ItemObjectAction> = NativeOriginal::new();
+static PAY_TO_IDENTIFY_ORIGINAL: NativeOriginal<PayToIdentifyItem> = NativeOriginal::new();
+static EVENT_HANDLER_ORIGINAL: NativeOriginal<ItemEventHandler> = NativeOriginal::new();
+static VALIDATE_USE_ORIGINAL: NativeOriginal<ValidateUseItem> = NativeOriginal::new();
+static AMMO_RELOAD_ORIGINAL: NativeOriginal<FindItemWithBaseItemId> = NativeOriginal::new();
+static VALIDATE_EQUIP_ORIGINAL: NativeOriginal<ValidateEquipItem> = NativeOriginal::new();
+static EQUIP_ORIGINAL: NativeOriginal<RunEquip> = NativeOriginal::new();
+static UNEQUIP_ORIGINAL: NativeOriginal<RunUnequip> = NativeOriginal::new();
+static SPLIT_ORIGINAL: NativeOriginal<SplitItem> = NativeOriginal::new();
+static MERGE_ORIGINAL: NativeOriginal<MergeItem> = NativeOriginal::new();
+static ACQUIRE_ORIGINAL: NativeOriginal<AcquireItem> = NativeOriginal::new();
 
 pub(super) fn append_hook_specs(engine: &Engine, hooks: &mut Vec<NativeHookSpec>) {
     append(
@@ -61,7 +56,7 @@ pub(super) fn append_hook_specs(engine: &Engine, hooks: &mut Vec<NativeHookSpec>
         hooks,
         USE_HOOK,
         "CNWSCreature::UseItem events",
-        use_replacement as UseItem as *const () as usize,
+        use_replacement as UseItem,
         &USE_ORIGINAL,
     );
     append(
@@ -69,7 +64,7 @@ pub(super) fn append_hook_specs(engine: &Engine, hooks: &mut Vec<NativeHookSpec>
         hooks,
         OPEN_HOOK,
         "CNWSItem::OpenInventory events",
-        open_replacement as ItemInventoryOpen as *const () as usize,
+        open_replacement as ItemInventoryOpen,
         &OPEN_ORIGINAL,
     );
     append(
@@ -77,7 +72,7 @@ pub(super) fn append_hook_specs(engine: &Engine, hooks: &mut Vec<NativeHookSpec>
         hooks,
         CLOSE_HOOK,
         "CNWSItem::CloseInventory events",
-        close_replacement as ItemInventoryClose as *const () as usize,
+        close_replacement as ItemInventoryClose,
         &CLOSE_ORIGINAL,
     );
     append(
@@ -85,7 +80,7 @@ pub(super) fn append_hook_specs(engine: &Engine, hooks: &mut Vec<NativeHookSpec>
         hooks,
         LEARN_SCROLL_HOOK,
         "CNWSCreature::LearnScroll events",
-        learn_scroll_replacement as ItemObjectAction as *const () as usize,
+        learn_scroll_replacement as ItemObjectAction,
         &LEARN_SCROLL_ORIGINAL,
     );
     append(
@@ -93,7 +88,7 @@ pub(super) fn append_hook_specs(engine: &Engine, hooks: &mut Vec<NativeHookSpec>
         hooks,
         USE_LORE_HOOK,
         "CNWSCreature::UseLoreOnItem events",
-        use_lore_replacement as ItemObjectAction as *const () as usize,
+        use_lore_replacement as ItemObjectAction,
         &USE_LORE_ORIGINAL,
     );
     append(
@@ -101,7 +96,7 @@ pub(super) fn append_hook_specs(engine: &Engine, hooks: &mut Vec<NativeHookSpec>
         hooks,
         PAY_TO_IDENTIFY_HOOK,
         "CNWSCreature::PayToIdentifyItem events",
-        pay_to_identify_replacement as PayToIdentifyItem as *const () as usize,
+        pay_to_identify_replacement as PayToIdentifyItem,
         &PAY_TO_IDENTIFY_ORIGINAL,
     );
     append(
@@ -109,7 +104,7 @@ pub(super) fn append_hook_specs(engine: &Engine, hooks: &mut Vec<NativeHookSpec>
         hooks,
         EVENT_HANDLER_HOOK,
         "CNWSItem::EventHandler events",
-        event_handler_replacement as ItemEventHandler as *const () as usize,
+        event_handler_replacement as ItemEventHandler,
         &EVENT_HANDLER_ORIGINAL,
     );
     append(
@@ -117,7 +112,7 @@ pub(super) fn append_hook_specs(engine: &Engine, hooks: &mut Vec<NativeHookSpec>
         hooks,
         VALIDATE_USE_HOOK,
         "CNWSCreature::CanUseItem events",
-        validate_use_replacement as ValidateUseItem as *const () as usize,
+        validate_use_replacement as ValidateUseItem,
         &VALIDATE_USE_ORIGINAL,
     );
     append(
@@ -125,7 +120,7 @@ pub(super) fn append_hook_specs(engine: &Engine, hooks: &mut Vec<NativeHookSpec>
         hooks,
         AMMO_RELOAD_HOOK,
         "CItemRepository::FindItemWithBaseItemId events",
-        ammo_reload_replacement as FindItemWithBaseItemId as *const () as usize,
+        ammo_reload_replacement as FindItemWithBaseItemId,
         &AMMO_RELOAD_ORIGINAL,
     );
     append(
@@ -133,7 +128,7 @@ pub(super) fn append_hook_specs(engine: &Engine, hooks: &mut Vec<NativeHookSpec>
         hooks,
         VALIDATE_EQUIP_HOOK,
         "CNWSCreature::CanEquipItem events",
-        validate_equip_replacement as ValidateEquipItem as *const () as usize,
+        validate_equip_replacement as ValidateEquipItem,
         &VALIDATE_EQUIP_ORIGINAL,
     );
     append(
@@ -141,7 +136,7 @@ pub(super) fn append_hook_specs(engine: &Engine, hooks: &mut Vec<NativeHookSpec>
         hooks,
         EQUIP_HOOK,
         "CNWSCreature::RunEquip events",
-        equip_replacement as RunEquip as *const () as usize,
+        equip_replacement as RunEquip,
         &EQUIP_ORIGINAL,
     );
     append(
@@ -149,7 +144,7 @@ pub(super) fn append_hook_specs(engine: &Engine, hooks: &mut Vec<NativeHookSpec>
         hooks,
         UNEQUIP_HOOK,
         "CNWSCreature::RunUnequip events",
-        unequip_replacement as RunUnequip as *const () as usize,
+        unequip_replacement as RunUnequip,
         &UNEQUIP_ORIGINAL,
     );
     append(
@@ -157,7 +152,7 @@ pub(super) fn append_hook_specs(engine: &Engine, hooks: &mut Vec<NativeHookSpec>
         hooks,
         SPLIT_HOOK,
         "CNWSCreature::SplitItem events",
-        split_replacement as SplitItem as *const () as usize,
+        split_replacement as SplitItem,
         &SPLIT_ORIGINAL,
     );
     append(
@@ -165,7 +160,7 @@ pub(super) fn append_hook_specs(engine: &Engine, hooks: &mut Vec<NativeHookSpec>
         hooks,
         MERGE_HOOK,
         "CNWSCreature::MergeItem events",
-        merge_replacement as MergeItem as *const () as usize,
+        merge_replacement as MergeItem,
         &MERGE_ORIGINAL,
     );
     append(
@@ -173,21 +168,27 @@ pub(super) fn append_hook_specs(engine: &Engine, hooks: &mut Vec<NativeHookSpec>
         hooks,
         ACQUIRE_HOOK,
         "CNWSCreature::AcquireItem events",
-        acquire_replacement as AcquireItem as *const () as usize,
+        acquire_replacement as AcquireItem,
         &ACQUIRE_ORIGINAL,
     );
 }
 
-fn append(
+fn append<Function: Copy>(
     engine: &Engine,
     hooks: &mut Vec<NativeHookSpec>,
-    key: &str,
+    key: &'static str,
     name: &'static str,
-    replacement: usize,
-    original: &'static AtomicPtr<c_void>,
+    replacement: Function,
+    original: &'static NativeOriginal<Function>,
 ) {
     if let Some(target) = engine.event_hook_target(key) {
-        hooks.push(NativeHookSpec::new(name, target, replacement, original));
+        hooks.push(NativeHookSpec::typed_event(
+            key,
+            name,
+            target,
+            replacement,
+            original,
+        ));
     }
 }
 
@@ -235,8 +236,7 @@ extern "C" fn use_replacement(
     let result = if frame.as_ref().is_some_and(EventFrame::skipped) {
         frame
             .as_ref()
-            .and_then(EventFrame::result)
-            .and_then(|result| serde_json::from_slice::<bool>(result).ok())
+            .and_then(EventFrame::boolean_result)
             .map_or(0, i32::from)
     } else {
         call_use(
@@ -257,45 +257,24 @@ extern "C" fn use_replacement(
 }
 
 extern "C" fn open_replacement(item: *mut c_void, owner: u32) {
-    inventory(item, owner, 0, "item.inventory_open", &OPEN_ORIGINAL, true);
+    inventory(item, owner, 0, "item.inventory_open", true);
 }
 
 extern "C" fn close_replacement(item: *mut c_void, owner: u32, update_player: i32) {
-    inventory(
-        item,
-        owner,
-        update_player,
-        "item.inventory_close",
-        &CLOSE_ORIGINAL,
-        false,
-    );
+    inventory(item, owner, update_player, "item.inventory_close", false);
 }
 
-fn inventory(
-    item: *mut c_void,
-    owner: u32,
-    update_player: i32,
-    name: &'static str,
-    original: &AtomicPtr<c_void>,
-    open: bool,
-) {
+fn inventory(item: *mut c_void, owner: u32, update_player: i32, name: &'static str, open: bool) {
     let data = BTreeMap::from([object_value("owner", owner)]);
     let skipped = dispatch::game_object(item, EventSpec::catalog(name, "before"), data.clone())
         .is_some_and(|frame| frame.skipped());
     if !skipped {
-        let pointer = original.load(Ordering::Acquire);
-        if !pointer.is_null() {
-            if open {
-                // SAFETY: Gum published the CNWSItem::OpenInventory trampoline.
-                let original =
-                    unsafe { std::mem::transmute::<*mut c_void, ItemInventoryOpen>(pointer) };
+        if open {
+            if let Some(original) = OPEN_ORIGINAL.load() {
                 original(item, owner);
-            } else {
-                // SAFETY: Gum published the CNWSItem::CloseInventory trampoline.
-                let original =
-                    unsafe { std::mem::transmute::<*mut c_void, ItemInventoryClose>(pointer) };
-                original(item, owner, update_player);
             }
+        } else if let Some(original) = CLOSE_ORIGINAL.load() {
+            original(item, owner, update_player);
         }
     }
     dispatch::game_object(item, EventSpec::catalog(name, "after"), data);
@@ -320,7 +299,7 @@ fn object_action(
     object: u32,
     key: &str,
     name: &'static str,
-    original: &AtomicPtr<c_void>,
+    original: &NativeOriginal<ItemObjectAction>,
 ) -> i32 {
     let data = BTreeMap::from([object_value(key, object)]);
     let skipped = dispatch::game_object(creature, EventSpec::catalog(name, "before"), data.clone())
@@ -344,14 +323,8 @@ extern "C" fn pay_to_identify_replacement(creature: *mut c_void, item: u32, stor
         data.clone(),
     )
     .is_some_and(|frame| frame.skipped());
-    if !skipped {
-        let original = PAY_TO_IDENTIFY_ORIGINAL.load(Ordering::Acquire);
-        if !original.is_null() {
-            // SAFETY: Gum published the PayToIdentifyItem trampoline.
-            let original =
-                unsafe { std::mem::transmute::<*mut c_void, PayToIdentifyItem>(original) };
-            original(creature, item, store);
-        }
+    if !skipped && let Some(original) = PAY_TO_IDENTIFY_ORIGINAL.load() {
+        original(creature, item, store);
     }
     dispatch::game_object(
         creature,
@@ -407,7 +380,9 @@ extern "C" fn validate_use_replacement(
     );
     let mut result = if before.as_ref().is_some_and(EventFrame::skipped) {
         i32::from(
-            native::parse_boolean_result(before.as_ref().and_then(EventFrame::result))
+            before
+                .as_ref()
+                .and_then(EventFrame::boolean_result)
                 .unwrap_or(false),
         )
     } else {
@@ -423,9 +398,7 @@ extern "C" fn validate_use_replacement(
         EventSpec::catalog("item.validate_use", "after"),
         after_data,
     );
-    if let Some(replacement) =
-        native::parse_boolean_result(after.as_ref().and_then(EventFrame::result))
-    {
+    if let Some(replacement) = after.as_ref().and_then(EventFrame::boolean_result) {
         result = i32::from(replacement);
     }
     result
@@ -454,8 +427,7 @@ extern "C" fn ammo_reload_replacement(repository: *mut c_void, base_item: u32, n
         data.clone(),
     );
     if before.as_ref().is_some_and(EventFrame::skipped)
-        && let Some(replacement) =
-            native::parse_object_result(before.as_ref().and_then(EventFrame::result))
+        && let Some(replacement) = before.as_ref().and_then(EventFrame::object_result)
     {
         if ammo_result_is_valid(replacement, base_item, parent) {
             return replacement;
@@ -470,9 +442,7 @@ extern "C" fn ammo_reload_replacement(repository: *mut c_void, base_item: u32, n
         EventSpec::catalog("item.ammo_reload", "after"),
         after_data,
     );
-    if let Some(replacement) =
-        native::parse_object_result(after.as_ref().and_then(EventFrame::result))
-    {
+    if let Some(replacement) = after.as_ref().and_then(EventFrame::object_result) {
         if ammo_result_is_valid(replacement, base_item, parent) {
             return replacement;
         }
@@ -508,7 +478,9 @@ extern "C" fn validate_equip_replacement(
     );
     let mut result = if before.as_ref().is_some_and(EventFrame::skipped) {
         u8::from(
-            native::parse_boolean_result(before.as_ref().and_then(EventFrame::result))
+            before
+                .as_ref()
+                .and_then(EventFrame::boolean_result)
                 .unwrap_or(false),
         )
     } else {
@@ -532,9 +504,7 @@ extern "C" fn validate_equip_replacement(
         EventSpec::catalog("item.validate_equip", "after"),
         after_data,
     );
-    if let Some(replacement) =
-        native::parse_boolean_result(after.as_ref().and_then(EventFrame::result))
-    {
+    if let Some(replacement) = after.as_ref().and_then(EventFrame::boolean_result) {
         result = u8::from(replacement);
     }
     result
@@ -800,39 +770,29 @@ fn send_equipment_cancel(
     };
     let non_player = i32::from(feedback_player != native::OBJECT_INVALID);
     if equip {
-        if let Some(target) = active_engine()
-            .and_then(|engine| engine.event_function_target("inventory_equip_cancel"))
-        {
-            // SAFETY: the target pack binds this helper to the equip-cancel sender.
-            let function = unsafe { std::mem::transmute::<usize, InventoryEquipCancel>(target) };
-            let _sent = function(message, player_id, item, slot, non_player);
+        if let Some(target) = active_engine().and_then(|engine| {
+            engine.event_function::<InventoryEquipCancel>("inventory_equip_cancel")
+        }) {
+            let _sent = target.get()(message, player_id, item, slot, non_player);
         }
-    } else if let Some(target) =
-        active_engine().and_then(|engine| engine.event_function_target("inventory_unequip_cancel"))
-    {
-        // SAFETY: the target pack binds this helper to the unequip-cancel sender.
-        let function = unsafe { std::mem::transmute::<usize, InventoryUnequipCancel>(target) };
-        let _sent = function(message, player_id, item, non_player);
+    } else if let Some(target) = active_engine().and_then(|engine| {
+        engine.event_function::<InventoryUnequipCancel>("inventory_unequip_cancel")
+    }) {
+        let _sent = target.get()(message, player_id, item, non_player);
     }
 }
 
 fn call_validate_use(creature: *mut c_void, item: *mut c_void, ignore: i32) -> i32 {
-    let original = VALIDATE_USE_ORIGINAL.load(Ordering::Acquire);
-    if original.is_null() {
+    let Some(original) = VALIDATE_USE_ORIGINAL.load() else {
         return 0;
-    }
-    // SAFETY: Gum published the CNWSCreature::CanUseItem trampoline.
-    let original = unsafe { std::mem::transmute::<*mut c_void, ValidateUseItem>(original) };
+    };
     original(creature, item, ignore)
 }
 
 fn call_ammo_reload(repository: *mut c_void, base_item: u32, nth: i32) -> u32 {
-    let original = AMMO_RELOAD_ORIGINAL.load(Ordering::Acquire);
-    if original.is_null() {
+    let Some(original) = AMMO_RELOAD_ORIGINAL.load() else {
         return native::OBJECT_INVALID;
-    }
-    // SAFETY: Gum published the CItemRepository::FindItemWithBaseItemId trampoline.
-    let original = unsafe { std::mem::transmute::<*mut c_void, FindItemWithBaseItemId>(original) };
+    };
     original(repository, base_item, nth)
 }
 
@@ -846,12 +806,9 @@ fn call_validate_equip(
     display_feedback: i32,
     feedback_player: *mut c_void,
 ) -> u8 {
-    let original = VALIDATE_EQUIP_ORIGINAL.load(Ordering::Acquire);
-    if original.is_null() {
+    let Some(original) = VALIDATE_EQUIP_ORIGINAL.load() else {
         return 0;
-    }
-    // SAFETY: Gum published the CNWSCreature::CanEquipItem trampoline.
-    let original = unsafe { std::mem::transmute::<*mut c_void, ValidateEquipItem>(original) };
+    };
     original(
         creature,
         item,
@@ -864,12 +821,9 @@ fn call_validate_equip(
 }
 
 fn call_equip(creature: *mut c_void, item: u32, slot: u32, feedback: u32) -> i32 {
-    let original = EQUIP_ORIGINAL.load(Ordering::Acquire);
-    if original.is_null() {
+    let Some(original) = EQUIP_ORIGINAL.load() else {
         return 0;
-    }
-    // SAFETY: Gum published the CNWSCreature::RunEquip trampoline.
-    let original = unsafe { std::mem::transmute::<*mut c_void, RunEquip>(original) };
+    };
     original(creature, item, slot, feedback)
 }
 
@@ -883,33 +837,22 @@ fn call_unequip(
     merge: i32,
     feedback: u32,
 ) -> i32 {
-    let original = UNEQUIP_ORIGINAL.load(Ordering::Acquire);
-    if original.is_null() {
+    let Some(original) = UNEQUIP_ORIGINAL.load() else {
         return 0;
-    }
-    // SAFETY: Gum published the CNWSCreature::RunUnequip trampoline.
-    let original = unsafe { std::mem::transmute::<*mut c_void, RunUnequip>(original) };
+    };
     original(creature, item, target_repository, x, y, merge, feedback)
 }
 
 fn call_split(creature: *mut c_void, item: *mut c_void, amount: i32) {
-    let original = SPLIT_ORIGINAL.load(Ordering::Acquire);
-    if original.is_null() {
-        return;
+    if let Some(original) = SPLIT_ORIGINAL.load() {
+        original(creature, item, amount);
     }
-    // SAFETY: Gum published the CNWSCreature::SplitItem trampoline.
-    let original = unsafe { std::mem::transmute::<*mut c_void, SplitItem>(original) };
-    original(creature, item, amount);
 }
 
 fn call_merge(creature: *mut c_void, into: *mut c_void, merged: *mut c_void) {
-    let original = MERGE_ORIGINAL.load(Ordering::Acquire);
-    if original.is_null() {
-        return;
+    if let Some(original) = MERGE_ORIGINAL.load() {
+        original(creature, into, merged);
     }
-    // SAFETY: Gum published the CNWSCreature::MergeItem trampoline.
-    let original = unsafe { std::mem::transmute::<*mut c_void, MergeItem>(original) };
-    original(creature, into, merged);
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -923,12 +866,9 @@ fn call_acquire(
     from_script: i32,
     display_feedback: i32,
 ) -> i32 {
-    let original = ACQUIRE_ORIGINAL.load(Ordering::Acquire);
-    if original.is_null() {
+    let Some(original) = ACQUIRE_ORIGINAL.load() else {
         return 0;
-    }
-    // SAFETY: Gum published the CNWSCreature::AcquireItem trampoline.
-    let original = unsafe { std::mem::transmute::<*mut c_void, AcquireItem>(original) };
+    };
     original(
         creature,
         item,
@@ -952,23 +892,20 @@ fn call_use(
     area: u32,
     charges: i32,
 ) -> i32 {
-    let original = USE_ORIGINAL.load(Ordering::Acquire);
-    if original.is_null() {
+    let Some(original) = USE_ORIGINAL.load() else {
         return 0;
-    }
-    // SAFETY: Gum published the UseItem trampoline with this exact ABI.
-    let original = unsafe { std::mem::transmute::<*mut c_void, UseItem>(original) };
+    };
     original(creature, item, active, sub, target, position, area, charges)
 }
 
-fn call_object_action(original: &AtomicPtr<c_void>, creature: *mut c_void, object: u32) -> i32 {
-    let original = original.load(Ordering::Acquire);
-    if original.is_null() {
-        return 0;
-    }
-    // SAFETY: Gum published the matching one-object trampoline.
-    let original = unsafe { std::mem::transmute::<*mut c_void, ItemObjectAction>(original) };
-    original(creature, object)
+fn call_object_action(
+    original: &NativeOriginal<ItemObjectAction>,
+    creature: *mut c_void,
+    object: u32,
+) -> i32 {
+    original
+        .load()
+        .map_or(0, |original| original(creature, object))
 }
 
 fn call_event_handler(
@@ -979,11 +916,7 @@ fn call_event_handler(
     calendar_day: u32,
     time_of_day: u32,
 ) {
-    let original = EVENT_HANDLER_ORIGINAL.load(Ordering::Acquire);
-    if original.is_null() {
-        return;
+    if let Some(original) = EVENT_HANDLER_ORIGINAL.load() {
+        original(item, event_id, caller, script, calendar_day, time_of_day);
     }
-    // SAFETY: Gum published the CNWSItem::EventHandler trampoline.
-    let original = unsafe { std::mem::transmute::<*mut c_void, ItemEventHandler>(original) };
-    original(item, event_id, caller, script, calendar_day, time_of_day);
 }

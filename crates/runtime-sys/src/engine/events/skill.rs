@@ -1,9 +1,4 @@
-use std::{
-    collections::BTreeMap,
-    ffi::c_void,
-    ptr,
-    sync::atomic::{AtomicPtr, Ordering},
-};
+use std::{collections::BTreeMap, ffi::c_void};
 
 use nwnrs_runtime::{EventObjectId, EventValue, EventVector};
 
@@ -11,21 +6,22 @@ use super::{
     super::{
         Engine, EventSpec,
         abi::{EngineVector, UseSkill},
-        hook::NativeHookSpec,
+        hook::{NativeHookSpec, NativeOriginal},
     },
     dispatch,
 };
 
 const USE_HOOK: &str = "skill_use";
 
-static USE_ORIGINAL: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
+static USE_ORIGINAL: NativeOriginal<UseSkill> = NativeOriginal::new();
 
 pub(super) fn append_hook_specs(engine: &Engine, hooks: &mut Vec<NativeHookSpec>) {
     if let Some(target) = engine.event_hook_target(USE_HOOK) {
-        hooks.push(NativeHookSpec::new(
+        hooks.push(NativeHookSpec::typed_event(
+            USE_HOOK,
             "CNWSCreature::UseSkill events",
             target,
-            use_replacement as UseSkill as *const () as usize,
+            use_replacement as UseSkill,
             &USE_ORIGINAL,
         ));
     }
@@ -110,12 +106,9 @@ fn call_original(
     used_item: u32,
     active_property_index: i32,
 ) -> i32 {
-    let original = USE_ORIGINAL.load(Ordering::Acquire);
-    if original.is_null() {
+    let Some(original) = USE_ORIGINAL.load() else {
         return 0;
-    }
-    // SAFETY: Gum published the UseSkill trampoline with this exact ABI.
-    let original = unsafe { std::mem::transmute::<*mut c_void, UseSkill>(original) };
+    };
     original(
         creature,
         skill,

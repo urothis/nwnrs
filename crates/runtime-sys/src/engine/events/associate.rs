@@ -2,8 +2,6 @@ use std::{
     collections::BTreeMap,
     ffi::c_void,
     panic::{self, AssertUnwindSafe},
-    ptr,
-    sync::atomic::{AtomicPtr, Ordering},
 };
 
 use nwnrs_runtime::{EventObjectId, EventValue};
@@ -13,7 +11,7 @@ use super::{
         Engine, EventSpec,
         abi::{AddAssociate, FamiliarAction, GetAssociateId, RemoveAssociate},
         active_engine,
-        hook::NativeHookSpec,
+        hook::{NativeHookSpec, NativeOriginal},
     },
     dispatch as event_dispatch,
 };
@@ -25,50 +23,56 @@ const POSSESS_FAMILIAR_HOOK: &str = "associate_possess_familiar";
 const UNPOSSESS_FAMILIAR_HOOK: &str = "associate_unpossess_familiar";
 const GET_ID_FUNCTION: &str = "associate_get_id";
 
-static ADD_ORIGINAL: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
-static REMOVE_ORIGINAL: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
-static POSSESS_FAMILIAR_ORIGINAL: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
-static UNPOSSESS_FAMILIAR_ORIGINAL: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
+static ADD_ORIGINAL: NativeOriginal<AddAssociate> = NativeOriginal::new();
+static REMOVE_ORIGINAL: NativeOriginal<RemoveAssociate> = NativeOriginal::new();
+static POSSESS_FAMILIAR_ORIGINAL: NativeOriginal<FamiliarAction> = NativeOriginal::new();
+static UNPOSSESS_FAMILIAR_ORIGINAL: NativeOriginal<FamiliarAction> = NativeOriginal::new();
 
 pub(super) fn append_hook_specs(
     engine: &Engine,
     hooks: &mut Vec<NativeHookSpec>,
 ) -> Result<(), BridgeInstallError> {
     if let Some(target) = engine.event_hook_target(ADD_HOOK) {
-        hooks.push(NativeHookSpec::new(
+        hooks.push(NativeHookSpec::typed_event(
+            ADD_HOOK,
             "CNWSCreature::AddAssociate events",
             target,
-            add_replacement as AddAssociate as *const () as usize,
+            add_replacement as AddAssociate,
             &ADD_ORIGINAL,
         ));
     }
     if let Some(target) = engine.event_hook_target(REMOVE_HOOK) {
-        hooks.push(NativeHookSpec::new(
+        hooks.push(NativeHookSpec::typed_event(
+            REMOVE_HOOK,
             "CNWSCreature::RemoveAssociate events",
             target,
-            remove_replacement as RemoveAssociate as *const () as usize,
+            remove_replacement as RemoveAssociate,
             &REMOVE_ORIGINAL,
         ));
     }
     if let Some(target) = engine
-        .event_function_target(GET_ID_FUNCTION)
-        .and_then(|_| engine.event_hook_target(POSSESS_FAMILIAR_HOOK))
+        .event_function_available(GET_ID_FUNCTION)
+        .then(|| engine.event_hook_target(POSSESS_FAMILIAR_HOOK))
+        .flatten()
     {
-        hooks.push(NativeHookSpec::new(
+        hooks.push(NativeHookSpec::typed_event(
+            POSSESS_FAMILIAR_HOOK,
             "CNWSCreature::PossessFamiliar events",
             target,
-            possess_familiar_replacement as FamiliarAction as *const () as usize,
+            possess_familiar_replacement as FamiliarAction,
             &POSSESS_FAMILIAR_ORIGINAL,
         ));
     }
     if let Some(target) = engine
-        .event_function_target(GET_ID_FUNCTION)
-        .and_then(|_| engine.event_hook_target(UNPOSSESS_FAMILIAR_HOOK))
+        .event_function_available(GET_ID_FUNCTION)
+        .then(|| engine.event_hook_target(UNPOSSESS_FAMILIAR_HOOK))
+        .flatten()
     {
-        hooks.push(NativeHookSpec::new(
+        hooks.push(NativeHookSpec::typed_event(
+            UNPOSSESS_FAMILIAR_HOOK,
             "CNWSCreature::UnpossessFamiliar events",
             target,
-            unpossess_familiar_replacement as FamiliarAction as *const () as usize,
+            unpossess_familiar_replacement as FamiliarAction,
             &UNPOSSESS_FAMILIAR_ORIGINAL,
         ));
     }
@@ -126,7 +130,7 @@ extern "C" fn unpossess_familiar_replacement(creature: *mut c_void) {
 fn emit_familiar_pair(
     creature: *mut c_void,
     name: &'static str,
-    original: &'static AtomicPtr<c_void>,
+    original: &'static NativeOriginal<FamiliarAction>,
 ) {
     let familiar = familiar_id(creature);
     if !emit_familiar(creature, familiar, EventSpec::catalog(name, "before")) {
@@ -139,12 +143,10 @@ fn familiar_id(creature: *mut c_void) -> u32 {
     let result = panic::catch_unwind(AssertUnwindSafe(|| {
         let engine = active_engine()
             .ok_or_else(|| BridgeInstallError::new("event engine is not initialized"))?;
-        let target = engine
-            .event_function_target(GET_ID_FUNCTION)
+        let get_id = engine
+            .event_function::<GetAssociateId>(GET_ID_FUNCTION)
             .ok_or_else(|| BridgeInstallError::new("associate_get_id is missing"))?;
-        // SAFETY: the target pack binds this address to GetAssociateId.
-        let get_id = unsafe { std::mem::transmute::<usize, GetAssociateId>(target) };
-        Ok::<u32, BridgeInstallError>(get_id(creature, 3, 1))
+        Ok::<u32, BridgeInstallError>(get_id.get()(creature, 3, 1))
     }));
     match result {
         Ok(Ok(value)) => value,
@@ -199,28 +201,19 @@ fn dispatch(
 }
 
 fn call_original_add(creature: *mut c_void, associate: u32, associate_type: u16) {
-    let original = ADD_ORIGINAL.load(Ordering::Acquire);
-    if !original.is_null() {
-        // SAFETY: Gum published the AddAssociate trampoline with this ABI.
-        let original = unsafe { std::mem::transmute::<*mut c_void, AddAssociate>(original) };
+    if let Some(original) = ADD_ORIGINAL.load() {
         original(creature, associate, associate_type);
     }
 }
 
 fn call_original_remove(creature: *mut c_void, associate: u32) {
-    let original = REMOVE_ORIGINAL.load(Ordering::Acquire);
-    if !original.is_null() {
-        // SAFETY: Gum published the RemoveAssociate trampoline with this ABI.
-        let original = unsafe { std::mem::transmute::<*mut c_void, RemoveAssociate>(original) };
+    if let Some(original) = REMOVE_ORIGINAL.load() {
         original(creature, associate);
     }
 }
 
-fn call_original_familiar(original: &AtomicPtr<c_void>, creature: *mut c_void) {
-    let original = original.load(Ordering::Acquire);
-    if !original.is_null() {
-        // SAFETY: Gum published the familiar-action trampoline with this ABI.
-        let original = unsafe { std::mem::transmute::<*mut c_void, FamiliarAction>(original) };
+fn call_original_familiar(original: &NativeOriginal<FamiliarAction>, creature: *mut c_void) {
+    if let Some(original) = original.load() {
         original(creature);
     }
 }

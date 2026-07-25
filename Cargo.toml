@@ -11,6 +11,7 @@ repository = "https://github.com/urothis/nwnrs"
 homepage = "https://github.com/urothis/nwnrs"
 
 [workspace.dependencies]
+arc-swap = { version = "1.9", default-features = false }
 argh = { version = "0.1", default-features = false, features = ["help"] }
 base64 = { version = "0.22", default-features = false, features = ["std"] }
 codepage = { version = "0.1", default-features = false }

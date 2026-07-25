@@ -2,6 +2,9 @@
 
 This is the unversioned working plan for porting the Unified Events plugin into nwnrs. It describes current implementation coverage; it is not an API standard or a compatibility-version document.
 
+Implementation rules shared by every family are defined in
+[`crates/runtime/EVENT_ARCHITECTURE.md`](crates/runtime/EVENT_ARCHITECTURE.md).
+
 ## Scope and source of truth
 
 - Unified source: `sources/unified/Plugins/Events/Events/*.cpp` at pinned commit `3d4c4e13c6bf01b032ffe90534fc4a19eb036c03`.
@@ -14,15 +17,14 @@ This is the unversioned working plan for porting the Unified Events plugin into 
 | Status | Meaning |
 | --- | --- |
 | ✅ Ported | Both Unified phases, or the complete one-shot event, are present in the Rust event catalog and native event implementation. |
-| 🍎 macOS | Ported and verified for the current macOS target. Linux and Windows target symbols/layouts are still intentionally absent. |
 | 🟨 Partial | The family has some implemented events, but still has missing events. |
 | ⬜ Pending | No event in the family has been ported yet, or the individual event is still missing. |
 
 ## Coverage summary
 
-- **42 of 181 logical Unified events ported on macOS** (84 of 350 concrete Unified signals).
-- **27 of 181 are currently backed by all existing platform target packs; the latest 15 are macOS-only until Linux and Windows are verified locally.**
-- **8 complete families and 28 pending families on macOS.**
+- **42 of 181 logical Unified events ported on all four targets** (84 of 350 concrete Unified signals).
+- **Linux x86_64, Linux ARM64, macOS ARM64, and Windows x86_64 target packs back every ported event.**
+- **8 complete families and 28 pending families.**
 - `module_load` is implemented in nwnrs but is listed separately because it is a runtime bootstrap event, not one of the Unified Events plugin hooks.
 
 | Family | Ported | Remaining | Family status |
@@ -39,17 +41,17 @@ This is the unversioned working plan for porting the Unified Events plugin into 
 | Event script | 0 / 1 | 1 | ⬜ Pending |
 | Examine | 0 / 4 | 4 | ⬜ Pending |
 | Faction | 0 / 1 | 1 | ⬜ Pending |
-| Feat | 3 / 3 | 0 | ✅ Complete (macOS) |
+| Feat | 3 / 3 | 0 | ✅ Complete |
 | Healing | 0 / 2 | 2 | ⬜ Pending |
 | Input | 0 / 8 | 8 | ⬜ Pending |
-| Inventory | 6 / 6 | 0 | ✅ Complete (macOS) |
-| Item | 16 / 16 | 0 | ✅ Complete (macOS) |
+| Inventory | 6 / 6 | 0 | ✅ Complete |
+| Item | 16 / 16 | 0 | ✅ Complete |
 | Item property | 0 / 2 | 2 | ⬜ Pending |
 | Journal | 2 / 2 | 0 | ✅ Complete |
 | Level | 0 / 4 | 4 | ⬜ Pending |
 | Map | 0 / 3 | 3 | ⬜ Pending |
 | Movement | 0 / 5 | 5 | ⬜ Pending |
-| Object | 7 / 7 | 0 | ✅ Complete (macOS) |
+| Object | 7 / 7 | 0 | ✅ Complete |
 | PVP | 0 / 1 | 1 | ⬜ Pending |
 | Party | 0 / 8 | 8 | ⬜ Pending |
 | Polymorph | 0 / 2 | 2 | ⬜ Pending |
@@ -63,15 +65,14 @@ This is the unversioned working plan for porting the Unified Events plugin into 
 | Timing bar | 3 / 3 | 0 | ✅ Complete |
 | Trap | 0 / 6 | 6 | ⬜ Pending |
 | UUID | 0 / 1 | 1 | ⬜ Pending |
-| **Total** | **42 / 181** | **139** | **macOS coverage** |
+| **Total** | **42 / 181** | **139** | **All-platform coverage** |
 
 ## Work order
 
-1. Verify the latest 15 event implementations on Linux and Windows, then add their platform-specific hook symbols and layouts. The runtime contains explicit `todo!` guards for those target-enablement paths; subscriptions remain unsupported until the target packs are populated.
-2. Port small self-contained families next, using the same catalog, dispatch, target-map, fixture, and warning coverage already required by implemented events.
-3. Port cross-cutting gameplay families such as Effect, Spell, Combat, Movement, and Stealth after their shared hook and payload requirements are mapped.
-4. Port client/protocol and UI families after validating their message layouts for every supported target.
-5. Treat DM action as its own batch: it contains 38 logical events and is the largest remaining family.
+1. Port small self-contained families next, using the same catalog, dispatch, target-map, fixture, and warning coverage already required by implemented events.
+2. Port cross-cutting gameplay families such as Effect, Spell, Combat, Movement, and Stealth after their shared hook and payload requirements are mapped.
+3. Port client/protocol and UI families after validating their message layouts for every supported target.
+4. Treat DM action as its own batch: it contains 38 logical events and is the largest remaining family.
 
 ## Related tooling: VS Code extension
 
@@ -90,9 +91,21 @@ remain tracked in [the editor backlog](./editors/vscode-nwnrs/VSCODE_TODO.md).
 
 ## Source discrepancies to resolve during implementation
 
-- Unified signals `NWNX_ON_ABILITY_CHANGE_{BEFORE,AFTER}`, `NWNX_ON_SET_EXPERIENCE_{BEFORE,AFTER}`, and `NWNX_ON_CREATURE_ON_AREA_EDGE_ENTER` in C++ but does not declare matching public constants in `nwnx_events.nss`. They remain in this plan because the implementation is the inventory source of truth.
-- Unified declares the Disarm constants, but its lazy-subscription pattern is `NWNX_ON_DISARM_*`; as a regular expression, that does not match the full before/after names as intended. Verify the desired hook behavior rather than copying that registration defect.
-- `NWNX_ON_ELC_VALIDATE_CHARACTER_{BEFORE,AFTER}` and `NWNX_ON_WEBHOOK_{SUCCESS,FAILURE}` are present in the shared NWScript constant file but are not implemented by `Plugins/Events/Events/*.cpp`, so they are outside this plan.
+These discrepancies are resolved, not open questions. The authoritative,
+machine-checked resolutions and acceptance requirements live in
+[`crates/runtime/event-decisions.toml`](crates/runtime/event-decisions.toml)
+and are explained in
+[`crates/runtime/UNIFIED_DECISIONS.md`](crates/runtime/UNIFIED_DECISIONS.md).
+
+- Unified signals `NWNX_ON_ABILITY_CHANGE_{BEFORE,AFTER}`,
+  `NWNX_ON_SET_EXPERIENCE_{BEFORE,AFTER}`, and
+  `NWNX_ON_CREATURE_ON_AREA_EDGE_ENTER` in C++ but omits matching public
+  constants. They are included because the implementation is authoritative.
+- The Disarm before and after routes share one physical hook; nwnrs does not
+  reproduce Unified's `NWNX_ON_DISARM_*` subscription-regex defect.
+- `NWNX_ON_ELC_VALIDATE_CHARACTER_{BEFORE,AFTER}` and
+  `NWNX_ON_WEBHOOK_{SUCCESS,FAILURE}` have no Events-plugin producer and remain
+  outside this port.
 
 ## nwnrs bootstrap event
 
@@ -243,12 +256,12 @@ remain tracked in [the editor backlog](./editors/vscode-nwnrs/VSCODE_TODO.md).
 | --- | --- | --- |
 | ⬜ Pending | `NWNX_ON_SET_NPC_FACTION_REPUTATION_{BEFORE,AFTER}` | — |
 
-### Feat (3/3 on macOS)
+### Feat (3/3)
 
 | Status | Unified signal(s) | nwnrs annotation identities |
 | --- | --- | --- |
-| 🍎 macOS | `NWNX_ON_DECREMENT_REMAINING_FEAT_USES_{BEFORE,AFTER}` | `feat_decrement_remaining_uses_before`<br>`feat_decrement_remaining_uses_after` |
-| 🍎 macOS | `NWNX_ON_HAS_FEAT_{BEFORE,AFTER}` | `feat_has_before`<br>`feat_has_after` |
+| ✅ Ported | `NWNX_ON_DECREMENT_REMAINING_FEAT_USES_{BEFORE,AFTER}` | `feat_decrement_remaining_uses_before`<br>`feat_decrement_remaining_uses_after` |
+| ✅ Ported | `NWNX_ON_HAS_FEAT_{BEFORE,AFTER}` | `feat_has_before`<br>`feat_has_after` |
 | ✅ Ported | `NWNX_ON_USE_FEAT_{BEFORE,AFTER}` | `feat_use_before`<br>`feat_use_after` |
 
 ### Healing (0/2)
@@ -271,37 +284,37 @@ remain tracked in [the editor backlog](./editors/vscode-nwnrs/VSCODE_TODO.md).
 | ⬜ Pending | `NWNX_ON_INPUT_TOGGLE_PAUSE_{BEFORE,AFTER}` | — |
 | ⬜ Pending | `NWNX_ON_INPUT_WALK_TO_WAYPOINT_{BEFORE,AFTER}` | — |
 
-### Inventory (6/6 on macOS)
+### Inventory (6/6)
 
 | Status | Unified signal(s) | nwnrs annotation identities |
 | --- | --- | --- |
 | ✅ Ported | `NWNX_ON_INVENTORY_ADD_GOLD_{BEFORE,AFTER}` | `inventory_add_gold_before`<br>`inventory_add_gold_after` |
-| 🍎 macOS | `NWNX_ON_INVENTORY_ADD_ITEM_{BEFORE,AFTER}` | `inventory_add_item_before`<br>`inventory_add_item_after` |
-| 🍎 macOS | `NWNX_ON_INVENTORY_OPEN_{BEFORE,AFTER}` | `inventory_open_before`<br>`inventory_open_after` |
+| ✅ Ported | `NWNX_ON_INVENTORY_ADD_ITEM_{BEFORE,AFTER}` | `inventory_add_item_before`<br>`inventory_add_item_after` |
+| ✅ Ported | `NWNX_ON_INVENTORY_OPEN_{BEFORE,AFTER}` | `inventory_open_before`<br>`inventory_open_after` |
 | ✅ Ported | `NWNX_ON_INVENTORY_REMOVE_GOLD_{BEFORE,AFTER}` | `inventory_remove_gold_before`<br>`inventory_remove_gold_after` |
-| 🍎 macOS | `NWNX_ON_INVENTORY_REMOVE_ITEM_{BEFORE,AFTER}` | `inventory_remove_item_before`<br>`inventory_remove_item_after` |
-| 🍎 macOS | `NWNX_ON_INVENTORY_SELECT_PANEL_{BEFORE,AFTER}` | `inventory_select_panel_before`<br>`inventory_select_panel_after` |
+| ✅ Ported | `NWNX_ON_INVENTORY_REMOVE_ITEM_{BEFORE,AFTER}` | `inventory_remove_item_before`<br>`inventory_remove_item_after` |
+| ✅ Ported | `NWNX_ON_INVENTORY_SELECT_PANEL_{BEFORE,AFTER}` | `inventory_select_panel_before`<br>`inventory_select_panel_after` |
 
-### Item (16/16 on macOS)
+### Item (16/16)
 
 | Status | Unified signal(s) | nwnrs annotation identities |
 | --- | --- | --- |
-| 🍎 macOS | `NWNX_ON_ITEM_ACQUIRE_{BEFORE,AFTER}` | `item_acquire_before`<br>`item_acquire_after` |
-| 🍎 macOS | `NWNX_ON_ITEM_AMMO_RELOAD_{BEFORE,AFTER}` | `item_ammo_reload_before`<br>`item_ammo_reload_after` |
+| ✅ Ported | `NWNX_ON_ITEM_ACQUIRE_{BEFORE,AFTER}` | `item_acquire_before`<br>`item_acquire_after` |
+| ✅ Ported | `NWNX_ON_ITEM_AMMO_RELOAD_{BEFORE,AFTER}` | `item_ammo_reload_before`<br>`item_ammo_reload_after` |
 | ✅ Ported | `NWNX_ON_ITEM_DECREMENT_STACKSIZE_{BEFORE,AFTER}` | `item_decrement_stack_size_before`<br>`item_decrement_stack_size_after` |
 | ✅ Ported | `NWNX_ON_ITEM_DESTROY_OBJECT_{BEFORE,AFTER}` | `item_destroy_before`<br>`item_destroy_after` |
-| 🍎 macOS | `NWNX_ON_ITEM_EQUIP_{BEFORE,AFTER}` | `item_equip_before`<br>`item_equip_after` |
+| ✅ Ported | `NWNX_ON_ITEM_EQUIP_{BEFORE,AFTER}` | `item_equip_before`<br>`item_equip_after` |
 | ✅ Ported | `NWNX_ON_ITEM_INVENTORY_CLOSE_{BEFORE,AFTER}` | `item_inventory_close_before`<br>`item_inventory_close_after` |
 | ✅ Ported | `NWNX_ON_ITEM_INVENTORY_OPEN_{BEFORE,AFTER}` | `item_inventory_open_before`<br>`item_inventory_open_after` |
-| 🍎 macOS | `NWNX_ON_ITEM_MERGE_{BEFORE,AFTER}` | `item_merge_before`<br>`item_merge_after` |
+| ✅ Ported | `NWNX_ON_ITEM_MERGE_{BEFORE,AFTER}` | `item_merge_before`<br>`item_merge_after` |
 | ✅ Ported | `NWNX_ON_ITEM_PAY_TO_IDENTIFY_{BEFORE,AFTER}` | `item_pay_to_identify_before`<br>`item_pay_to_identify_after` |
 | ✅ Ported | `NWNX_ON_ITEM_SCROLL_LEARN_{BEFORE,AFTER}` | `item_scroll_learn_before`<br>`item_scroll_learn_after` |
-| 🍎 macOS | `NWNX_ON_ITEM_SPLIT_{BEFORE,AFTER}` | `item_split_before`<br>`item_split_after` |
-| 🍎 macOS | `NWNX_ON_ITEM_UNEQUIP_{BEFORE,AFTER}` | `item_unequip_before`<br>`item_unequip_after` |
+| ✅ Ported | `NWNX_ON_ITEM_SPLIT_{BEFORE,AFTER}` | `item_split_before`<br>`item_split_after` |
+| ✅ Ported | `NWNX_ON_ITEM_UNEQUIP_{BEFORE,AFTER}` | `item_unequip_before`<br>`item_unequip_after` |
 | ✅ Ported | `NWNX_ON_ITEM_USE_LORE_{BEFORE,AFTER}` | `item_use_lore_before`<br>`item_use_lore_after` |
 | ✅ Ported | `NWNX_ON_USE_ITEM_{BEFORE,AFTER}` | `item_use_before`<br>`item_use_after` |
-| 🍎 macOS | `NWNX_ON_VALIDATE_ITEM_EQUIP_{BEFORE,AFTER}` | `item_validate_equip_before`<br>`item_validate_equip_after` |
-| 🍎 macOS | `NWNX_ON_VALIDATE_USE_ITEM_{BEFORE,AFTER}` | `item_validate_use_before`<br>`item_validate_use_after` |
+| ✅ Ported | `NWNX_ON_VALIDATE_ITEM_EQUIP_{BEFORE,AFTER}` | `item_validate_equip_before`<br>`item_validate_equip_after` |
+| ✅ Ported | `NWNX_ON_VALIDATE_USE_ITEM_{BEFORE,AFTER}` | `item_validate_use_before`<br>`item_validate_use_after` |
 
 ### Item property (0/2)
 
@@ -344,7 +357,7 @@ remain tracked in [the editor backlog](./editors/vscode-nwnrs/VSCODE_TODO.md).
 | ⬜ Pending | `NWNX_ON_CREATURE_TILE_CHANGE_{BEFORE,AFTER}` | — |
 | ⬜ Pending | `NWNX_ON_MATERIALCHANGE_{BEFORE,AFTER}` | — |
 
-### Object (7/7 on macOS)
+### Object (7/7)
 
 | Status | Unified signal(s) | nwnrs annotation identities |
 | --- | --- | --- |
@@ -354,7 +367,7 @@ remain tracked in [the editor backlog](./editors/vscode-nwnrs/VSCODE_TODO.md).
 | ✅ Ported | `NWNX_ON_OBJECT_USE_{BEFORE,AFTER}` | `object_use_before`<br>`object_use_after` |
 | ✅ Ported | `NWNX_ON_PLACEABLE_CLOSE_{BEFORE,AFTER}` | `placeable_close_before`<br>`placeable_close_after` |
 | ✅ Ported | `NWNX_ON_PLACEABLE_OPEN_{BEFORE,AFTER}` | `placeable_open_before`<br>`placeable_open_after` |
-| 🍎 macOS | `NWNX_ON_SET_EXPERIENCE_{BEFORE,AFTER}` | `object_set_experience_before`<br>`object_set_experience_after` |
+| ✅ Ported | `NWNX_ON_SET_EXPERIENCE_{BEFORE,AFTER}` | `object_set_experience_before`<br>`object_set_experience_after` |
 
 ### PVP (0/1)
 

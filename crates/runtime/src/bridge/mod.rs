@@ -1160,6 +1160,38 @@ fn validate_event_result(value: Vec<u8>, kind: EventResultKind) -> BridgeResult<
             ));
         }
         EventResultKind::Unsigned => {}
+        EventResultKind::Signed
+            if !value
+                .as_i64()
+                .is_some_and(|value| i32::try_from(value).is_ok()) =>
+        {
+            return Err(invalid_argument(
+                "current event result must be a JSON signed 32-bit integer",
+            ));
+        }
+        EventResultKind::Signed => {}
+        EventResultKind::Float
+            if !value.is_number()
+                || serde_json::from_value::<f32>(value.clone())
+                    .ok()
+                    .is_none_or(|value| !value.is_finite()) =>
+        {
+            return Err(invalid_argument(
+                "current event result must be a finite JSON 32-bit float",
+            ));
+        }
+        EventResultKind::Float => {}
+        EventResultKind::String
+            if !value
+                .as_str()
+                .is_some_and(|value| value.len() <= 65_535 && !value.contains('\0')) =>
+        {
+            return Err(invalid_argument(
+                "current event result must be a JSON string no longer than 65535 bytes without \
+                 NUL characters",
+            ));
+        }
+        EventResultKind::String => {}
         EventResultKind::ObjectId
             if !value.as_str().is_some_and(|value| {
                 value.len() == 8 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
@@ -1246,6 +1278,26 @@ mod tests {
         assert!(validate_event_result(b"\"7f00a1b\"".to_vec(), EventResultKind::ObjectId).is_err());
         assert!(
             validate_event_result(b"\"7f00a1bz\"".to_vec(), EventResultKind::ObjectId).is_err()
+        );
+        assert_eq!(
+            validate_event_result(b"-2147483648".to_vec(), EventResultKind::Signed)
+                .expect("i32 minimum should be accepted"),
+            b"-2147483648"
+        );
+        assert!(validate_event_result(b"2147483648".to_vec(), EventResultKind::Signed).is_err());
+        assert_eq!(
+            validate_event_result(b"1.25".to_vec(), EventResultKind::Float)
+                .expect("finite f32 should be accepted"),
+            b"1.25"
+        );
+        assert_eq!(
+            validate_event_result(br#""connection denied""#.to_vec(), EventResultKind::String)
+                .expect("bounded string should be accepted"),
+            br#""connection denied""#
+        );
+        assert!(
+            validate_event_result(br#""bad\u0000value""#.to_vec(), EventResultKind::String)
+                .is_err()
         );
     }
 

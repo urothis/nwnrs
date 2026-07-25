@@ -1,8 +1,11 @@
 [CmdletBinding()]
-param()
+param(
+    [switch] $SkipGui
+)
 
 $ErrorActionPreference = 'Stop'
 $repository = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path
+Set-Location -LiteralPath $repository
 $buildRoot = if ($env:CARGO_TARGET_DIR) {
     $env:CARGO_TARGET_DIR
 } else {
@@ -11,6 +14,7 @@ $buildRoot = if ($env:CARGO_TARGET_DIR) {
 $fixtureRoot = Join-Path $buildRoot 'runtime-fixture-windows'
 $fixtureHost = Join-Path $fixtureRoot 'nwserver-fixture.exe'
 $targets = Join-Path $fixtureRoot 'targets'
+$eventManifest = Join-Path $targets 'fixture-event-identities.txt'
 $administrationObject = Join-Path $fixtureRoot 'administration.obj'
 $runtime = Join-Path $buildRoot 'debug\nwnrs_runtime_sys.dll'
 $launcher = Join-Path $buildRoot 'debug\nwnrs.exe'
@@ -65,8 +69,12 @@ if ($LASTEXITCODE -ne 0) { throw 'fixture host build failed' }
     --example write-fixture-target-pack -- $fixtureHost $targets
 if ($LASTEXITCODE -ne 0) { throw 'fixture target-pack generation failed' }
 if (-not (Test-Path -LiteralPath $runtime)) { throw "runtime DLL is missing: $runtime" }
+if (-not (Test-Path -LiteralPath $eventManifest)) {
+    throw "fixture event manifest is missing: $eventManifest"
+}
 
 $env:RUST_LOG = 'warn,nwnrs::launcher=info,nwnrs::runtime=info,nwnrs::script=trace,nwnrs::console=info'
+$env:NWNRS_FIXTURE_EVENT_MANIFEST = $eventManifest
 $process = Start-Process `
     -FilePath $launcher `
     -ArgumentList @('run', '--no-tail-logs', '--runtime', $runtime, '--targets', $targets, $fixtureHost) `
@@ -77,15 +85,17 @@ $process = Start-Process `
     -RedirectStandardError $output
 if ($process.ExitCode -ne 0) { throw "injected fixture failed with exit code $($process.ExitCode)" }
 
-$process = Start-Process `
-    -FilePath $launcher `
-    -ArgumentList @('run', '--gui', '--no-tail-logs', '--runtime', $runtime, '--targets', $targets, $fixtureHost) `
-    -NoNewWindow `
-    -Wait `
-    -PassThru `
-    -RedirectStandardOutput $consoleOutput `
-    -RedirectStandardError $output
-if ($process.ExitCode -ne 0) { throw "GUI fixture failed with exit code $($process.ExitCode)" }
+if (-not $SkipGui) {
+    $process = Start-Process `
+        -FilePath $launcher `
+        -ArgumentList @('run', '--gui', '--no-tail-logs', '--runtime', $runtime, '--targets', $targets, $fixtureHost) `
+        -NoNewWindow `
+        -Wait `
+        -PassThru `
+        -RedirectStandardOutput $consoleOutput `
+        -RedirectStandardError $output
+    if ($process.ExitCode -ne 0) { throw "GUI fixture failed with exit code $($process.ExitCode)" }
+}
 
 foreach ($expected in @(
     'TRACE nwnrs::script: fixture trace message',

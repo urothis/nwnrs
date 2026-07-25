@@ -10,10 +10,29 @@ concurrency:
     cancel-in-progress: true
 jobs:
     lint:
-        name: Lint
-        runs-on: ubuntu-latest
+        name: ${{ matrix.name }}
+        runs-on:
+            [self-hosted, nwnrs, "${{ matrix.os_label }}", "${{ matrix.arch_label }}"]
+        strategy:
+            fail-fast: false
+            matrix:
+                include:
+                    - name: macOS ARM64
+                      os_label: macOS
+                      arch_label: ARM64
+                    - name: Linux x86_64
+                      os_label: Linux
+                      arch_label: X64
+                    - name: Linux ARM64
+                      os_label: Linux
+                      arch_label: ARM64
+                    - name: Windows x86_64
+                      os_label: Windows
+                      arch_label: X64
         steps:
             - uses: actions/checkout@v6.0.3
+              with:
+                  persist-credentials: false
             - name: Reject proprietary Docker build assets
               shell: bash
               run: |

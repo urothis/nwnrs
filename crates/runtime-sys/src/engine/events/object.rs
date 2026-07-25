@@ -1,9 +1,4 @@
-use std::{
-    collections::BTreeMap,
-    ffi::c_void,
-    ptr,
-    sync::atomic::{AtomicPtr, Ordering},
-};
+use std::{collections::BTreeMap, ffi::c_void};
 
 use nwnrs_runtime::{
     EventObjectId, EventValue, EventVector, PROJECTILE_SPELL_ID_WHITELIST,
@@ -18,7 +13,7 @@ use super::{
             SetExperience, UnlockObjectAction,
         },
         active_engine,
-        hook::NativeHookSpec,
+        hook::{NativeHookSpec, NativeOriginal},
     },
     dispatch, native,
 };
@@ -32,13 +27,14 @@ const PLACEABLE_CLOSE_HOOK: &str = "placeable_close";
 const BROADCAST_SAFE_PROJECTILE_HOOK: &str = "object_broadcast_safe_projectile";
 const SET_EXPERIENCE_HOOK: &str = "object_set_experience";
 
-static LOCK_ORIGINAL: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
-static UNLOCK_ORIGINAL: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
-static USE_ORIGINAL: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
-static PLACEABLE_OPEN_ORIGINAL: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
-static PLACEABLE_CLOSE_ORIGINAL: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
-static BROADCAST_SAFE_PROJECTILE_ORIGINAL: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
-static SET_EXPERIENCE_ORIGINAL: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
+static LOCK_ORIGINAL: NativeOriginal<ObjectAction> = NativeOriginal::new();
+static UNLOCK_ORIGINAL: NativeOriginal<UnlockObjectAction> = NativeOriginal::new();
+static USE_ORIGINAL: NativeOriginal<ObjectAction> = NativeOriginal::new();
+static PLACEABLE_OPEN_ORIGINAL: NativeOriginal<OpenInventory> = NativeOriginal::new();
+static PLACEABLE_CLOSE_ORIGINAL: NativeOriginal<CloseInventory> = NativeOriginal::new();
+static BROADCAST_SAFE_PROJECTILE_ORIGINAL: NativeOriginal<BroadcastSafeProjectile> =
+    NativeOriginal::new();
+static SET_EXPERIENCE_ORIGINAL: NativeOriginal<SetExperience> = NativeOriginal::new();
 
 pub(super) fn append_hook_specs(engine: &Engine, hooks: &mut Vec<NativeHookSpec>) {
     append(
@@ -46,7 +42,7 @@ pub(super) fn append_hook_specs(engine: &Engine, hooks: &mut Vec<NativeHookSpec>
         hooks,
         LOCK_HOOK,
         "CNWSObject::AddLockObjectAction events",
-        lock_replacement as ObjectAction as *const () as usize,
+        lock_replacement as ObjectAction,
         &LOCK_ORIGINAL,
     );
     append(
@@ -54,7 +50,7 @@ pub(super) fn append_hook_specs(engine: &Engine, hooks: &mut Vec<NativeHookSpec>
         hooks,
         UNLOCK_HOOK,
         "CNWSObject::AddUnlockObjectAction events",
-        unlock_replacement as UnlockObjectAction as *const () as usize,
+        unlock_replacement as UnlockObjectAction,
         &UNLOCK_ORIGINAL,
     );
     append(
@@ -62,7 +58,7 @@ pub(super) fn append_hook_specs(engine: &Engine, hooks: &mut Vec<NativeHookSpec>
         hooks,
         USE_HOOK,
         "CNWSObject::AddUseObjectAction events",
-        use_replacement as ObjectAction as *const () as usize,
+        use_replacement as ObjectAction,
         &USE_ORIGINAL,
     );
     append(
@@ -70,7 +66,7 @@ pub(super) fn append_hook_specs(engine: &Engine, hooks: &mut Vec<NativeHookSpec>
         hooks,
         PLACEABLE_OPEN_HOOK,
         "CNWSPlaceable::OpenInventory events",
-        placeable_open_replacement as OpenInventory as *const () as usize,
+        placeable_open_replacement as OpenInventory,
         &PLACEABLE_OPEN_ORIGINAL,
     );
     append(
@@ -78,7 +74,7 @@ pub(super) fn append_hook_specs(engine: &Engine, hooks: &mut Vec<NativeHookSpec>
         hooks,
         PLACEABLE_CLOSE_HOOK,
         "CNWSPlaceable::CloseInventory events",
-        placeable_close_replacement as CloseInventory as *const () as usize,
+        placeable_close_replacement as CloseInventory,
         &PLACEABLE_CLOSE_ORIGINAL,
     );
     append(
@@ -86,7 +82,7 @@ pub(super) fn append_hook_specs(engine: &Engine, hooks: &mut Vec<NativeHookSpec>
         hooks,
         BROADCAST_SAFE_PROJECTILE_HOOK,
         "CNWSObject::BroadcastSafeProjectile events",
-        broadcast_safe_projectile_replacement as BroadcastSafeProjectile as *const () as usize,
+        broadcast_safe_projectile_replacement as BroadcastSafeProjectile,
         &BROADCAST_SAFE_PROJECTILE_ORIGINAL,
     );
     append(
@@ -94,7 +90,7 @@ pub(super) fn append_hook_specs(engine: &Engine, hooks: &mut Vec<NativeHookSpec>
         hooks,
         SET_EXPERIENCE_HOOK,
         "CNWSCreatureStats::SetExperience events",
-        set_experience_replacement as SetExperience as *const () as usize,
+        set_experience_replacement as SetExperience,
         &SET_EXPERIENCE_ORIGINAL,
     );
 }
@@ -119,9 +115,7 @@ extern "C" fn set_experience_replacement(stats: *mut c_void, value: u32, do_leve
     );
     if before.as_ref().is_none_or(|frame| !frame.skipped()) {
         call_set_experience(stats, value, do_level);
-    } else if let Some(replacement) =
-        native::parse_unsigned_result(before.as_ref().and_then(EventFrame::result))
-    {
+    } else if let Some(replacement) = before.as_ref().and_then(EventFrame::unsigned_result) {
         call_set_experience(stats, replacement, do_level);
     }
     dispatch::game_object(
@@ -132,25 +126,27 @@ extern "C" fn set_experience_replacement(stats: *mut c_void, value: u32, do_leve
 }
 
 fn call_set_experience(stats: *mut c_void, value: u32, do_level: i32) {
-    let original = SET_EXPERIENCE_ORIGINAL.load(Ordering::Acquire);
-    if original.is_null() {
-        return;
+    if let Some(original) = SET_EXPERIENCE_ORIGINAL.load() {
+        original(stats, value, do_level);
     }
-    // SAFETY: Gum published the CNWSCreatureStats::SetExperience trampoline.
-    let original = unsafe { std::mem::transmute::<*mut c_void, SetExperience>(original) };
-    original(stats, value, do_level);
 }
 
-fn append(
+fn append<Function: Copy>(
     engine: &Engine,
     hooks: &mut Vec<NativeHookSpec>,
-    key: &str,
+    key: &'static str,
     name: &'static str,
-    replacement: usize,
-    original: &'static AtomicPtr<c_void>,
+    replacement: Function,
+    original: &'static NativeOriginal<Function>,
 ) {
     if let Some(target) = engine.event_hook_target(key) {
-        hooks.push(NativeHookSpec::new(name, target, replacement, original));
+        hooks.push(NativeHookSpec::typed_event(
+            key,
+            name,
+            target,
+            replacement,
+            original,
+        ));
     }
 }
 
@@ -178,7 +174,7 @@ fn object_action(
     object: *mut c_void,
     name: &'static str,
     data: BTreeMap<String, EventValue>,
-    original: &'static AtomicPtr<c_void>,
+    original: &'static NativeOriginal<ObjectAction>,
     argument: u32,
 ) -> i32 {
     let skipped = emit(object, EventSpec::catalog(name, "before"), data.clone())
@@ -368,23 +364,20 @@ fn object_value(name: &str, value: u32) -> (String, EventValue) {
     )
 }
 
-fn call_object_action(original: &AtomicPtr<c_void>, object: *mut c_void, argument: u32) -> i32 {
-    let original = original.load(Ordering::Acquire);
-    if original.is_null() {
-        return 0;
-    }
-    // SAFETY: Gum published an ObjectAction trampoline for this hook.
-    let original = unsafe { std::mem::transmute::<*mut c_void, ObjectAction>(original) };
-    original(object, argument)
+fn call_object_action(
+    original: &NativeOriginal<ObjectAction>,
+    object: *mut c_void,
+    argument: u32,
+) -> i32 {
+    original
+        .load()
+        .map_or(0, |original| original(object, argument))
 }
 
 fn call_unlock(object: *mut c_void, door: u32, thieves_tool: u32, index: i32) -> i32 {
-    let original = UNLOCK_ORIGINAL.load(Ordering::Acquire);
-    if original.is_null() {
+    let Some(original) = UNLOCK_ORIGINAL.load() else {
         return 0;
-    }
-    // SAFETY: Gum published the UnlockObjectAction trampoline.
-    let original = unsafe { std::mem::transmute::<*mut c_void, UnlockObjectAction>(original) };
+    };
     original(object, door, thieves_tool, index)
 }
 
@@ -401,12 +394,9 @@ fn call_broadcast_safe_projectile(
     attack_result: u8,
     projectile_path_type: u8,
 ) {
-    let original = BROADCAST_SAFE_PROJECTILE_ORIGINAL.load(Ordering::Acquire);
-    if original.is_null() {
+    let Some(original) = BROADCAST_SAFE_PROJECTILE_ORIGINAL.load() else {
         return;
-    }
-    // SAFETY: Gum published the BroadcastSafeProjectile trampoline.
-    let original = unsafe { std::mem::transmute::<*mut c_void, BroadcastSafeProjectile>(original) };
+    };
     original(
         object,
         originator,
@@ -422,19 +412,13 @@ fn call_broadcast_safe_projectile(
 }
 
 fn call_open(placeable: *mut c_void, opener: u32) {
-    let original = PLACEABLE_OPEN_ORIGINAL.load(Ordering::Acquire);
-    if !original.is_null() {
-        // SAFETY: Gum published the OpenInventory trampoline.
-        let original = unsafe { std::mem::transmute::<*mut c_void, OpenInventory>(original) };
+    if let Some(original) = PLACEABLE_OPEN_ORIGINAL.load() {
         original(placeable, opener);
     }
 }
 
 fn call_close(placeable: *mut c_void, closer: u32, update_player: i32) {
-    let original = PLACEABLE_CLOSE_ORIGINAL.load(Ordering::Acquire);
-    if !original.is_null() {
-        // SAFETY: Gum published the CloseInventory trampoline.
-        let original = unsafe { std::mem::transmute::<*mut c_void, CloseInventory>(original) };
+    if let Some(original) = PLACEABLE_CLOSE_ORIGINAL.load() {
         original(placeable, closer, update_player);
     }
 }

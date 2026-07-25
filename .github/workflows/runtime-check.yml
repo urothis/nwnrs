@@ -17,7 +17,8 @@ on:
 jobs:
     native:
         name: ${{ matrix.name }}
-        runs-on: ${{ matrix.runner }}
+        runs-on:
+            [self-hosted, nwnrs, "${{ matrix.os_label }}", "${{ matrix.arch_label }}"]
         timeout-minutes: 30
         permissions:
             contents: read
@@ -26,13 +27,17 @@ jobs:
             matrix:
                 include:
                     - name: macOS ARM64
-                      runner: macos-14
+                      os_label: macOS
+                      arch_label: ARM64
                     - name: Linux x86_64
-                      runner: ubuntu-24.04
+                      os_label: Linux
+                      arch_label: X64
                     - name: Linux ARM64
-                      runner: ubuntu-24.04-arm
+                      os_label: Linux
+                      arch_label: ARM64
                     - name: Windows x86_64
-                      runner: windows-2022
+                      os_label: Windows
+                      arch_label: X64
         steps:
             - uses: actions/checkout@v6.0.3
               with:
@@ -70,6 +75,10 @@ jobs:
                   sources/unified target/unified-abi.toml
             - name: Run Frida Gum interception probe
               run: cargo run --locked --package nwnrs-runtime-sys --example frida-probe
+            - name: Enforce event subscription hot-path budget
+              run: >-
+                  cargo run --locked --release --package nwnrs-runtime
+                  --example event-hot-path
             - name: Test launcher and injected runtime on Unix
               if: runner.os != 'Windows'
               run: crates/runtime-sys/scripts/test-native-runtime.sh
@@ -79,3 +88,4 @@ jobs:
               run: >-
                   powershell.exe -NoProfile -ExecutionPolicy Bypass
                   -File crates/runtime-sys/scripts/test-native-runtime.ps1
+                  -SkipGui

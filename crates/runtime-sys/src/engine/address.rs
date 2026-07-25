@@ -8,6 +8,25 @@ pub(crate) enum HookTarget {}
 pub(crate) enum FunctionTarget {}
 pub(crate) enum GlobalStorage {}
 
+#[derive(Clone, Copy)]
+pub(crate) struct NativeFunction<Function> {
+    address: usize,
+    marker:  PhantomData<fn() -> Function>,
+}
+
+impl<Function: Copy> NativeFunction<Function> {
+    pub(crate) fn get(self) -> Function {
+        assert_eq!(
+            std::mem::size_of::<Function>(),
+            std::mem::size_of::<usize>(),
+            "native function pointer has an unsupported representation"
+        );
+        // SAFETY: construction is restricted to a resolved FunctionTarget and
+        // the caller selects the ABI alias declared for that target-pack key.
+        unsafe { std::mem::transmute_copy(&self.address) }
+    }
+}
+
 pub(crate) struct NativeAddress<T> {
     value:  NonZeroUsize,
     marker: PhantomData<fn() -> T>,
@@ -16,6 +35,15 @@ pub(crate) struct NativeAddress<T> {
 impl<T> NativeAddress<T> {
     pub(crate) fn get(&self) -> usize {
         self.value.get()
+    }
+}
+
+impl NativeAddress<FunctionTarget> {
+    pub(crate) fn function<Function: Copy>(&self) -> NativeFunction<Function> {
+        NativeFunction {
+            address: self.get(),
+            marker:  PhantomData,
+        }
     }
 }
 

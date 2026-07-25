@@ -15,7 +15,7 @@ pub(super) fn game_object(
     data: BTreeMap<String, EventValue>,
 ) -> Option<EventFrame> {
     let spec = resolve_spec(spec)?;
-    if !active_engine().is_some_and(|engine| engine.event_is_subscribed(spec.name, spec.phase)) {
+    if !active_engine().is_some_and(|engine| engine.event_should_dispatch(spec)) {
         return None;
     }
     guarded(spec, || {
@@ -34,20 +34,16 @@ pub(super) fn player(
     data: BTreeMap<String, EventValue>,
 ) -> Option<EventFrame> {
     let spec = resolve_spec(spec)?;
-    if !active_engine().is_some_and(|engine| engine.event_is_subscribed(spec.name, spec.phase)) {
+    if !active_engine().is_some_and(|engine| engine.event_should_dispatch(spec)) {
         return None;
     }
     guarded(spec, || {
         let engine = active_engine()
             .ok_or_else(|| BridgeInstallError::new("event engine is not initialized"))?;
-        let target = engine
-            .event_function_target("player_get_game_object")
+        let get_game_object = engine
+            .event_function::<super::super::abi::GetPlayerGameObject>("player_get_game_object")
             .ok_or_else(|| BridgeInstallError::new("player_get_game_object is missing"))?;
-        // SAFETY: the target pack binds this address to
-        // CNWSPlayer::GetGameObject().
-        let get_game_object =
-            unsafe { std::mem::transmute::<usize, super::super::abi::GetPlayerGameObject>(target) };
-        let object = get_game_object(player);
+        let object = get_game_object.get()(player);
         // SAFETY: this token is scoped to the synchronous native engine hook.
         let thread = unsafe { EngineThreadToken::new() };
         let target = engine.event_game_object_id(&thread, object)?;
@@ -61,7 +57,7 @@ pub(super) fn object_id(
     data: BTreeMap<String, EventValue>,
 ) -> Option<EventFrame> {
     let spec = resolve_spec(spec)?;
-    if !active_engine().is_some_and(|engine| engine.event_is_subscribed(spec.name, spec.phase)) {
+    if !active_engine().is_some_and(|engine| engine.event_should_dispatch(spec)) {
         return None;
     }
     guarded(spec, || {

@@ -1,0 +1,81 @@
+schema = 1
+
+[[decision]]
+id = "inventory-authority"
+status = "decided"
+source = "Unified Plugins/Events/Events/*.cpp at 3d4c4e13c6bf01b032ffe90534fc4a19eb036c03"
+resolution = "The registered and signalled C++ implementation is the event inventory authority."
+rationale = "The shared NWScript constant file contains names owned by other plugins and omits several implemented Events-plugin signals."
+acceptance = "Every catalog route must map to a concrete Unified signal site or an explicitly nwnrs-owned bootstrap event."
+
+[[decision]]
+id = "ability-change-missing-public-constants"
+status = "decided"
+source = "AbilityEvents.cpp signals NWNX_ON_ABILITY_CHANGE_BEFORE and NWNX_ON_ABILITY_CHANGE_AFTER."
+resolution = "Include both routes and publish native nwnrs annotation identities even though Unified omits constant declarations."
+rationale = "Executable implementation behavior is authoritative over the incomplete public constant inventory."
+acceptance = "Fixture and real-server tests must prove initialization suppression, changed ability, value, and calculated modifier."
+
+[[decision]]
+id = "set-experience-missing-public-constants"
+status = "decided"
+source = "ObjectEvents.cpp signals NWNX_ON_SET_EXPERIENCE_BEFORE and NWNX_ON_SET_EXPERIENCE_AFTER."
+resolution = "Keep object.set_experience; a skipped before route may replace the experience argument with a typed unsigned result."
+rationale = "This preserves the implemented Unified behavior without exposing stringly typed result parsing."
+acceptance = "All four targets must prove original, suppressed, and replacement-argument paths."
+
+[[decision]]
+id = "area-edge-enter-missing-public-constant"
+status = "decided"
+source = "MovementEvents.cpp signals NWNX_ON_CREATURE_ON_AREA_EDGE_ENTER from CNWSObject::SetPosition."
+resolution = "Include one observe-only route with top, right, bottom, left, and area payload fields."
+rationale = "The event is implemented as a one-shot signal and has no before/after pair."
+acceptance = "A real creature crossing each edge transition must signal only when edge membership changes."
+
+[[decision]]
+id = "disarm-subscription-regex-defect"
+status = "decided"
+source = "CombatEvents.cpp registers NWNX_ON_DISARM_* but signals full BEFORE and AFTER names."
+resolution = "Subscribing either logical route installs the single OnApplyDisarm physical hook."
+rationale = "nwnrs physical-hook planning is identity based and must not reproduce Unified's regular-expression mismatch."
+acceptance = "Before-only, after-only, and paired subscriptions must each install exactly one detour."
+
+[[decision]]
+id = "elc-events-out-of-scope"
+status = "decided"
+source = "nwnx_events.nss declares ELC validation names, but Plugins/Events/Events/*.cpp does not implement them."
+resolution = "Exclude ELC validation from the Unified Events port."
+rationale = "A constant without an Events-plugin producer is not an event implementation."
+acceptance = "The inventory test must continue to exclude these names unless the pinned implementation source gains a producer."
+
+[[decision]]
+id = "webhook-events-out-of-scope"
+status = "decided"
+source = "nwnx_events.nss declares webhook names, but Plugins/Events/Events/*.cpp does not implement them."
+resolution = "Exclude webhook success and failure from the Unified Events port."
+rationale = "Webhook callbacks belong to a separate producer subsystem."
+acceptance = "The inventory test must continue to exclude these names unless a separately scoped producer is approved."
+
+[[decision]]
+id = "after-result-overrides"
+status = "decided"
+source = "ItemEvents.cpp, SpellEvents.cpp, and StealthEvents.cpp consume non-empty AFTER event results."
+resolution = "Declare after-route replacement results where Unified consumes them; do not make all after routes mutable."
+rationale = "After-result mutation is exceptional behavior and must be represented explicitly in EventControlPolicy."
+acceptance = "Each mutable after route must test empty-result preservation, typed replacement, and invalid-result rejection."
+
+[[decision]]
+id = "typed-results"
+status = "decided"
+source = "Unified carries event results through std::string and parses them at each hook."
+resolution = "nwnrs validates and decodes results once as Boolean, Unsigned, Signed, Float, String, or ObjectId."
+rationale = "Typed results eliminate per-family parsing differences while retaining the source behavior."
+acceptance = "Catalog, bridge validation, native frame storage, fixture behavior, and documentation must change together for a new result kind."
+
+[[decision]]
+id = "memorized-spell-slot-spelling"
+status = "decided"
+source = "SpellEvents.cpp signals NWNX_SET_MEMORIZED_SPELL_SLOT_BEFORE and AFTER without the usual NWNX_ON prefix."
+resolution = "Use a correctly spelled semantic nwnrs identity while recording the exact Unified signal spelling as provenance."
+rationale = "nwnrs annotations are not compatibility aliases for Unified constant strings."
+acceptance = "Fixture evidence must bind the semantic route to SetMemorizedSpellSlot and preserve both Unified phases."

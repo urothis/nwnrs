@@ -14,10 +14,28 @@ on:
 
 jobs:
     check:
-        runs-on: ubuntu-latest
+        name: ${{ matrix.name }}
+        runs-on:
+            [self-hosted, nwnrs, "${{ matrix.os_label }}", "${{ matrix.arch_label }}"]
         timeout-minutes: 30
         permissions:
             contents: read
+        strategy:
+            fail-fast: false
+            matrix:
+                include:
+                    - name: macOS ARM64
+                      os_label: macOS
+                      arch_label: ARM64
+                    - name: Linux x86_64
+                      os_label: Linux
+                      arch_label: X64
+                    - name: Linux ARM64
+                      os_label: Linux
+                      arch_label: ARM64
+                    - name: Windows x86_64
+                      os_label: Windows
+                      arch_label: X64
         steps:
             - uses: actions/checkout@v6.0.3
               with:
@@ -28,8 +46,20 @@ jobs:
                   cargo test --locked --package nwnrs-types gff::json --lib
                   cargo test --locked --package nwnrs-nwpkg
                   cargo test --locked --package nwnrs
-            - name: Build module
+            - name: Build module on Unix
+              if: runner.os != 'Windows'
+              shell: bash
               run: |
                   cargo run --locked --package nwnrs -- pack --force \
                     module "$RUNNER_TEMP/nwnrs.mod"
                   test -s "$RUNNER_TEMP/nwnrs.mod"
+            - name: Build module on Windows
+              if: runner.os == 'Windows'
+              shell: pwsh
+              run: |
+                  $output = Join-Path $env:RUNNER_TEMP 'nwnrs.mod'
+                  cargo run --locked --package nwnrs -- pack --force module $output
+                  if (-not (Test-Path -LiteralPath $output) -or
+                      (Get-Item -LiteralPath $output).Length -eq 0) {
+                      throw "Module output was not created at $output"
+                  }

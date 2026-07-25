@@ -60,9 +60,18 @@ Unified therefore fails the platform check before Rust is compiled against a
 new pack.
 
 The expanded Object, Feat, Inventory, and Item event layouts and symbols are
-currently populated only in the macOS target pack. Linux and Windows keep
-those event identities unsupported until their native probes are run on those
-platforms and their target packs are filled in.
+populated in the macOS ARM64, Linux x86_64, Linux ARM64, and Windows x86_64
+target packs. Symbol/layout evidence for build 8193.37-17 is recorded in
+`abi/evidence/linux-expanded-events-8193.37-17.md` and
+`abi/evidence/windows-expanded-events-8193.37-17.md`.
+
+Native validation of the shared event foundations, compiled shim, hot-path
+budget, fixture, and real server is recorded separately for each target:
+
+- `abi/evidence/macos-aarch64-event-foundations-8193.37-17.md`;
+- `abi/evidence/linux-x86_64-event-foundations-8193.37-17.md`;
+- `abi/evidence/linux-aarch64-event-foundations-8193.37-17.md`; and
+- `abi/evidence/windows-x86_64-event-foundations-8193.37-17.md`.
 
 ## Rules
 
@@ -90,6 +99,19 @@ crates/runtime/scripts/verify-unified-abi.sh \
   sources/unified \
   target/unified-abi.toml
 ```
+
+For a source tree copied without Git metadata, provide the exact pinned
+revision explicitly:
+
+```bash
+NWNRS_UNIFIED_COMMIT=3d4c4e13c6bf01b032ffe90534fc4a19eb036c03 \
+  crates/runtime/scripts/verify-unified-abi.sh \
+  sources/unified \
+  target/unified-abi.toml
+```
+
+When both the override and Git metadata are available, the verifier rejects a
+checkout whose `HEAD` does not match the override.
 
 On Windows, compile the same probe with MSVC and verify the Windows target pack
 with:

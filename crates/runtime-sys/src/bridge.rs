@@ -102,7 +102,7 @@ pub fn install_nwscript_bridge(context: &RuntimeContext) -> Result<(), BridgeIns
     )];
     if let Some(target) = main_loop_hook_target {
         hooks.push(NativeHookSpec::new(
-            "deferred administration",
+            "main-loop services",
             target,
             main_loop_replacement as MainLoop as *const () as usize,
             &MAIN_LOOP_ORIGINAL,

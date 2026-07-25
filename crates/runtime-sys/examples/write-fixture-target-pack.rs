@@ -1,13 +1,22 @@
 //! Writes the exact-hash target pack used by the native runtime fixture.
 
-use std::{collections::BTreeMap, error::Error, ffi::OsString, fs, path::PathBuf};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    error::Error,
+    ffi::OsString,
+    fs,
+    path::PathBuf,
+};
 
 use nwnrs_runtime::{
     AbiLayouts, AdministrationTarget, BinaryIdentity, BridgeTarget, CExoStringLayout,
-    EngineClassLayouts, EventTarget, OperatingSystem, PlayerListLayout, RUNTIME_API_VERSION,
-    ServerStateTarget, ShutdownTarget, TARGET_PACK_SCHEMA_VERSION, TargetAddress, TargetPack,
-    TargetServer, TargetSource, VectorLayout,
+    EVENT_CATALOG, EngineClassLayouts, EventTarget, OperatingSystem, PHYSICAL_HOOK_CATALOG,
+    PlayerListLayout, RUNTIME_API_VERSION, ServerStateTarget, ShutdownTarget,
+    TARGET_PACK_SCHEMA_VERSION, TargetAddress, TargetPack, TargetServer, TargetSource,
+    VectorLayout,
 };
+
+const EVENT_MANIFEST_NAME: &str = "fixture-event-identities.txt";
 
 fn main() -> Result<(), Box<dyn Error>> {
     let mut arguments = std::env::args_os().skip(1);
@@ -23,7 +32,6 @@ fn main() -> Result<(), Box<dyn Error>> {
         OperatingSystem::Linux => 152,
         OperatingSystem::Windows => 160,
     };
-    let macos_events = identity.platform.os == OperatingSystem::Macos;
     let mut pack = TargetPack {
         schema_version: TARGET_PACK_SCHEMA_VERSION,
         runtime_api:    RUNTIME_API_VERSION,
@@ -202,11 +210,25 @@ fn main() -> Result<(), Box<dyn Error>> {
             ]),
         }),
     };
-    if macos_events {
-        enable_macos_events(&mut pack)?;
-    }
+    enable_expanded_events(&mut pack, identity.platform.os)?;
     let directory = PathBuf::from(targets).join(identity.platform.directory_name());
     fs::create_dir_all(&directory)?;
+    validate_event_targets(
+        pack.events
+            .as_ref()
+            .ok_or("fixture has no event targets after construction")?,
+    )?;
+    let target_root = directory
+        .parent()
+        .ok_or("fixture target directory has no parent")?;
+    fs::write(
+        target_root.join(EVENT_MANIFEST_NAME),
+        EVENT_CATALOG
+            .iter()
+            .map(|event| event.identity)
+            .collect::<Vec<_>>()
+            .join("\n"),
+    )?;
     fs::write(
         directory.join(format!("{}.toml", identity.sha256)),
         toml::to_string_pretty(&pack)?,
@@ -214,14 +236,72 @@ fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn enable_macos_events(pack: &mut TargetPack) -> Result<(), &'static str> {
+fn validate_event_targets(events: &EventTarget) -> Result<(), Box<dyn Error>> {
+    let expected_hooks = PHYSICAL_HOOK_CATALOG
+        .iter()
+        .map(|hook| hook.id)
+        .collect::<BTreeSet<_>>();
+    let provided_hooks = events
+        .hooks
+        .keys()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    if expected_hooks != provided_hooks {
+        let missing = expected_hooks
+            .difference(&provided_hooks)
+            .copied()
+            .collect::<Vec<_>>();
+        let unexpected = provided_hooks
+            .difference(&expected_hooks)
+            .copied()
+            .collect::<Vec<_>>();
+        return Err(format!(
+            "fixture event hook catalog mismatch; missing={missing:?}, unexpected={unexpected:?}"
+        )
+        .into());
+    }
+
+    let required_functions = EVENT_CATALOG
+        .iter()
+        .flat_map(|event| {
+            event
+                .helper
+                .into_iter()
+                .chain(event.requirements.functions.iter().copied())
+        })
+        .collect::<BTreeSet<_>>();
+    let provided_functions = events
+        .functions
+        .keys()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    let missing_functions = required_functions
+        .difference(&provided_functions)
+        .copied()
+        .collect::<Vec<_>>();
+    if !missing_functions.is_empty() {
+        return Err(
+            format!("fixture event helper catalog mismatch; missing={missing_functions:?}").into(),
+        );
+    }
+    Ok(())
+}
+
+fn enable_expanded_events(
+    pack: &mut TargetPack,
+    operating_system: OperatingSystem,
+) -> Result<(), &'static str> {
     let classes = &mut pack.layouts.classes;
     classes.game_object_type_offset = Some(12);
     classes.item_repository_parent_offset = Some(8);
     classes.creature_stats_base_creature_offset = Some(48);
     classes.creature_stats_experience_offset = Some(168);
     classes.item_base_item_offset = Some(64);
-    classes.item_possessor_offset = Some(944);
+    classes.item_possessor_offset = Some(match operating_system {
+        OperatingSystem::Macos => 944,
+        OperatingSystem::Linux => 960,
+        OperatingSystem::Windows => 968,
+    });
     classes.message_read_buffer_offset = Some(56);
     classes.message_read_buffer_size_offset = Some(64);
     classes.message_read_buffer_position_offset = Some(68);

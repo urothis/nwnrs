@@ -42,7 +42,7 @@ concurrency:
 jobs:
     publish:
         name: Publish GHCR multi-architecture image
-        runs-on: [self-hosted, linux, X64, nwserver-assets]
+        runs-on: [self-hosted, nwnrs, Linux, X64, nwserver-assets]
         timeout-minutes: 90
         permissions:
             contents: read

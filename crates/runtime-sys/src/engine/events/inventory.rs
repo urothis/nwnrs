@@ -1,9 +1,4 @@
-use std::{
-    collections::BTreeMap,
-    ffi::c_void,
-    ptr,
-    sync::atomic::{AtomicPtr, Ordering},
-};
+use std::{collections::BTreeMap, ffi::c_void};
 
 use nwnrs_runtime::{EventObjectId, EventValue};
 
@@ -15,7 +10,7 @@ use super::{
             RepositoryAddItem, RepositoryRemoveItem,
         },
         active_engine,
-        hook::NativeHookSpec,
+        hook::{NativeHookSpec, NativeOriginal},
     },
     dispatch, native,
 };
@@ -28,11 +23,11 @@ const REMOVE_ITEM_HOOK: &str = "inventory_remove_item";
 const STATUS_MINOR: u8 = 0x01;
 const SELECT_PANEL_MINOR: u8 = 0x02;
 
-static ADD_GOLD_ORIGINAL: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
-static REMOVE_GOLD_ORIGINAL: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
-static MESSAGE_ORIGINAL: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
-static ADD_ITEM_ORIGINAL: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
-static REMOVE_ITEM_ORIGINAL: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
+static ADD_GOLD_ORIGINAL: NativeOriginal<ModifyGold> = NativeOriginal::new();
+static REMOVE_GOLD_ORIGINAL: NativeOriginal<ModifyGold> = NativeOriginal::new();
+static MESSAGE_ORIGINAL: NativeOriginal<PlayerMessage> = NativeOriginal::new();
+static ADD_ITEM_ORIGINAL: NativeOriginal<RepositoryAddItem> = NativeOriginal::new();
+static REMOVE_ITEM_ORIGINAL: NativeOriginal<RepositoryRemoveItem> = NativeOriginal::new();
 
 pub(super) fn append_hook_specs(engine: &Engine, hooks: &mut Vec<NativeHookSpec>) {
     append(
@@ -40,7 +35,7 @@ pub(super) fn append_hook_specs(engine: &Engine, hooks: &mut Vec<NativeHookSpec>
         hooks,
         ADD_GOLD_HOOK,
         "CNWSCreature::AddGold events",
-        add_gold_replacement as ModifyGold as *const () as usize,
+        add_gold_replacement as ModifyGold,
         &ADD_GOLD_ORIGINAL,
     );
     append(
@@ -48,7 +43,7 @@ pub(super) fn append_hook_specs(engine: &Engine, hooks: &mut Vec<NativeHookSpec>
         hooks,
         REMOVE_GOLD_HOOK,
         "CNWSCreature::RemoveGold events",
-        remove_gold_replacement as ModifyGold as *const () as usize,
+        remove_gold_replacement as ModifyGold,
         &REMOVE_GOLD_ORIGINAL,
     );
     append(
@@ -56,7 +51,7 @@ pub(super) fn append_hook_specs(engine: &Engine, hooks: &mut Vec<NativeHookSpec>
         hooks,
         MESSAGE_HOOK,
         "CNWSMessage::HandlePlayerToServerGuiInventoryMessage events",
-        message_replacement as PlayerMessage as *const () as usize,
+        message_replacement as PlayerMessage,
         &MESSAGE_ORIGINAL,
     );
     append(
@@ -64,7 +59,7 @@ pub(super) fn append_hook_specs(engine: &Engine, hooks: &mut Vec<NativeHookSpec>
         hooks,
         ADD_ITEM_HOOK,
         "CItemRepository::AddItem events",
-        add_item_replacement as RepositoryAddItem as *const () as usize,
+        add_item_replacement as RepositoryAddItem,
         &ADD_ITEM_ORIGINAL,
     );
     append(
@@ -72,7 +67,7 @@ pub(super) fn append_hook_specs(engine: &Engine, hooks: &mut Vec<NativeHookSpec>
         hooks,
         REMOVE_ITEM_HOOK,
         "CItemRepository::RemoveItem events",
-        remove_item_replacement as RepositoryRemoveItem as *const () as usize,
+        remove_item_replacement as RepositoryRemoveItem,
         &REMOVE_ITEM_ORIGINAL,
     );
 }
@@ -89,11 +84,13 @@ extern "C" fn message_replacement(message: *mut c_void, player: *mut c_void, min
 }
 
 fn inventory_open(message: *mut c_void, player: *mut c_void, minor: u8) -> i32 {
-    let Some(target) = native::peek_message::<u32>(message, 0).map(|target| target & 0x7fff_ffff)
-    else {
+    let Some(reader) = native::message_reader(message) else {
         return call_message(message, player, minor);
     };
-    let Some(open) = native::peek_message::<u8>(message, 4).map(|flags| flags & 0x10 != 0) else {
+    let Some(target) = reader.u32_le(0).map(|target| target & 0x7fff_ffff) else {
+        return call_message(message, player, minor);
+    };
+    let Some(open) = reader.byte(4).map(|flags| flags & 0x10 != 0) else {
         return call_message(message, player, minor);
     };
     if !open {
@@ -117,10 +114,13 @@ fn inventory_open(message: *mut c_void, player: *mut c_void, minor: u8) -> i32 {
 }
 
 fn inventory_select_panel(message: *mut c_void, player: *mut c_void, minor: u8) -> i32 {
-    let Some(selected_panel) = native::peek_message::<u8>(message, 0) else {
+    let Some(reader) = native::message_reader(message) else {
         return call_message(message, player, minor);
     };
-    if !native::peek_message::<u8>(message, 1).is_some_and(|flags| flags & 0x10 != 0) {
+    let Some(selected_panel) = reader.byte(0) else {
+        return call_message(message, player, minor);
+    };
+    if !reader.byte(1).is_some_and(|flags| flags & 0x10 != 0) {
         return call_message(message, player, minor);
     }
     let Some(gui) = native::read_field::<*mut c_void>(player, "player_inventory_gui") else {
@@ -149,12 +149,11 @@ fn inventory_select_panel(message: *mut c_void, player: *mut c_void, minor: u8) 
         let _cleared = native::clear_read_message(message);
         if let (Some(player_id), Some(target)) = (
             native::read_field::<u32>(player, "player_id"),
-            active_engine()
-                .and_then(|engine| engine.event_function_target("inventory_select_panel")),
+            active_engine().and_then(|engine| {
+                engine.event_function::<InventorySelectPanel>("inventory_select_panel")
+            }),
         ) {
-            // SAFETY: the target pack binds this helper to the select-panel sender.
-            let function = unsafe { std::mem::transmute::<usize, InventorySelectPanel>(target) };
-            let _sent = function(message, player_id, current_panel);
+            let _sent = target.get()(message, player_id, current_panel);
         }
         0
     } else {
@@ -170,12 +169,10 @@ fn inventory_select_panel(message: *mut c_void, player: *mut c_void, minor: u8) 
 
 fn cancel_inventory_open(message: *mut c_void, player: *mut c_void, target: u32) {
     let _cleared = native::clear_read_message(message);
-    if let Some(status) =
-        active_engine().and_then(|engine| engine.event_function_target("inventory_status"))
+    if let Some(status) = active_engine()
+        .and_then(|engine| engine.event_function::<InventoryStatus>("inventory_status"))
     {
-        // SAFETY: the target pack binds this helper to the inventory-status sender.
-        let function = unsafe { std::mem::transmute::<usize, InventoryStatus>(status) };
-        let _sent = function(message, player, 0, target);
+        let _sent = status.get()(message, player, 0, target);
     }
     let own = native::read_field::<u32>(player, "player_object_id") == Some(target);
     let layout = if own {
@@ -185,13 +182,12 @@ fn cancel_inventory_open(message: *mut c_void, player: *mut c_void, target: u32)
     };
     if let (Some(gui), Some(set_open)) = (
         native::read_field::<*mut c_void>(player, layout),
-        active_engine().and_then(|engine| engine.event_function_target("inventory_gui_set_open")),
+        active_engine().and_then(|engine| {
+            engine.event_function::<InventoryGuiSetOpen>("inventory_gui_set_open")
+        }),
     ) && !gui.is_null()
     {
-        // SAFETY: the target pack binds this helper to
-        // CNWSPlayerInventoryGUI::SetOpen(BOOL, BOOL).
-        let function = unsafe { std::mem::transmute::<usize, InventoryGuiSetOpen>(set_open) };
-        function(gui, 0, 0);
+        set_open.get()(gui, 0, 0);
     }
 }
 
@@ -281,12 +277,9 @@ fn game_object_id(object: *mut c_void) -> Option<u32> {
 }
 
 fn call_message(message: *mut c_void, player: *mut c_void, minor: u8) -> i32 {
-    let original = MESSAGE_ORIGINAL.load(Ordering::Acquire);
-    if original.is_null() {
+    let Some(original) = MESSAGE_ORIGINAL.load() else {
         return 0;
-    }
-    // SAFETY: Gum published the inventory PlayerMessage trampoline.
-    let original = unsafe { std::mem::transmute::<*mut c_void, PlayerMessage>(original) };
+    };
     original(message, player, minor)
 }
 
@@ -298,22 +291,16 @@ fn call_add_item(
     allow_encumbrance: i32,
     merge_item: i32,
 ) -> i32 {
-    let original = ADD_ITEM_ORIGINAL.load(Ordering::Acquire);
-    if original.is_null() {
+    let Some(original) = ADD_ITEM_ORIGINAL.load() else {
         return 0;
-    }
-    // SAFETY: Gum published the CItemRepository::AddItem trampoline.
-    let original = unsafe { std::mem::transmute::<*mut c_void, RepositoryAddItem>(original) };
+    };
     original(repository, item, x, y, allow_encumbrance, merge_item)
 }
 
 fn call_remove_item(repository: *mut c_void, item: *mut c_void) -> i32 {
-    let original = REMOVE_ITEM_ORIGINAL.load(Ordering::Acquire);
-    if original.is_null() {
+    let Some(original) = REMOVE_ITEM_ORIGINAL.load() else {
         return 0;
-    }
-    // SAFETY: Gum published the CItemRepository::RemoveItem trampoline.
-    let original = unsafe { std::mem::transmute::<*mut c_void, RepositoryRemoveItem>(original) };
+    };
     original(repository, item)
 }
 
@@ -324,16 +311,22 @@ fn object_value(name: &str, value: u32) -> (String, EventValue) {
     )
 }
 
-fn append(
+fn append<Function: Copy>(
     engine: &Engine,
     hooks: &mut Vec<NativeHookSpec>,
-    key: &str,
+    key: &'static str,
     name: &'static str,
-    replacement: usize,
-    original: &'static AtomicPtr<c_void>,
+    replacement: Function,
+    original: &'static NativeOriginal<Function>,
 ) {
     if let Some(target) = engine.event_hook_target(key) {
-        hooks.push(NativeHookSpec::new(name, target, replacement, original));
+        hooks.push(NativeHookSpec::typed_event(
+            key,
+            name,
+            target,
+            replacement,
+            original,
+        ));
     }
 }
 
@@ -362,7 +355,7 @@ fn modify_gold(
     gold: i32,
     feedback: i32,
     name: &'static str,
-    original: &'static AtomicPtr<c_void>,
+    original: &'static NativeOriginal<ModifyGold>,
 ) {
     let data = BTreeMap::from([("gold".to_string(), EventValue::Integer(gold))]);
     let skipped = dispatch::game_object(creature, EventSpec::catalog(name, "before"), data.clone())
@@ -373,11 +366,13 @@ fn modify_gold(
     dispatch::game_object(creature, EventSpec::catalog(name, "after"), data);
 }
 
-fn call_original(original: &AtomicPtr<c_void>, creature: *mut c_void, gold: i32, feedback: i32) {
-    let original = original.load(Ordering::Acquire);
-    if !original.is_null() {
-        // SAFETY: Gum published the ModifyGold trampoline for this hook.
-        let original = unsafe { std::mem::transmute::<*mut c_void, ModifyGold>(original) };
+fn call_original(
+    original: &NativeOriginal<ModifyGold>,
+    creature: *mut c_void,
+    gold: i32,
+    feedback: i32,
+) {
+    if let Some(original) = original.load() {
         original(creature, gold, feedback);
     }
 }

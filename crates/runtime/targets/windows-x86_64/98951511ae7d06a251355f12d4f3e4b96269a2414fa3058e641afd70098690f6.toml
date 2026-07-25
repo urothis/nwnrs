@@ -39,6 +39,23 @@ z_offset = 8
 
 [layouts.classes]
 game_object_id_offset = 8
+game_object_type_offset = 12
+item_repository_parent_offset = 8
+creature_stats_base_creature_offset = 48
+creature_stats_experience_offset = 168
+item_base_item_offset = 64
+item_possessor_offset = 968
+message_read_buffer_offset = 56
+message_read_buffer_size_offset = 64
+message_read_buffer_position_offset = 68
+message_read_fragments_size_offset = 80
+message_read_fragments_position_offset = 84
+message_current_read_bit_offset = 92
+message_last_byte_bits_offset = 93
+player_object_id_offset = 84
+player_inventory_gui_offset = 152
+player_other_inventory_gui_offset = 160
+inventory_gui_selected_panel_offset = 12
 command_implementer_vm_offset = 16
 app_manager_server_offset = 8
 server_info_module_offset = 8
@@ -221,8 +238,77 @@ symbol = "?PayToIdentifyItem@CNWSCreature@@QEAAXII@Z"
 [events.hooks.item_event_handler]
 symbol = "?EventHandler@CNWSItem@@UEAAXIIPEAXII@Z"
 
+[events.hooks.object_set_experience]
+symbol = "?SetExperience@CNWSCreatureStats@@QEAAXIH@Z"
+
+[events.hooks.feat_decrement_remaining_uses]
+symbol = "?DecrementFeatRemainingUses@CNWSCreatureStats@@QEAAXG@Z"
+
+[events.hooks.feat_has]
+symbol = "?HasFeat@CNWSCreatureStats@@QEAAHG@Z"
+
+[events.hooks.inventory_message]
+symbol = "?HandlePlayerToServerGuiInventoryMessage@CNWSMessage@@QEAAHPEAVCNWSPlayer@@E@Z"
+
+[events.hooks.inventory_add_item]
+symbol = "?AddItem@CItemRepository@@QEAAHPEAPEAVCNWSItem@@EEHH@Z"
+
+[events.hooks.inventory_remove_item]
+symbol = "?RemoveItem@CItemRepository@@QEAAHPEAVCNWSItem@@@Z"
+
+[events.hooks.item_validate_use]
+symbol = "?CanUseItem@CNWSCreature@@QEAAHPEAVCNWSItem@@H@Z"
+
+[events.hooks.item_ammo_reload]
+symbol = "?FindItemWithBaseItemId@CItemRepository@@QEAAIIH@Z"
+
+[events.hooks.item_validate_equip]
+symbol = "?CanEquipItem@CNWSCreature@@QEAAEPEAVCNWSItem@@PEAIHHHPEAVCNWSPlayer@@@Z"
+
+[events.hooks.item_equip]
+symbol = "?RunEquip@CNWSCreature@@QEAAHIII@Z"
+
+[events.hooks.item_unequip]
+symbol = "?RunUnequip@CNWSCreature@@QEAAHIIEEHI@Z"
+
+[events.hooks.item_split]
+symbol = "?SplitItem@CNWSCreature@@QEAAXPEAVCNWSItem@@H@Z"
+
+[events.hooks.item_merge]
+symbol = "?MergeItem@CNWSCreature@@QEAAXPEAVCNWSItem@@0@Z"
+
+[events.hooks.item_acquire]
+symbol = "?AcquireItem@CNWSCreature@@QEAAHPEAPEAVCNWSItem@@IIEEHH@Z"
+
 [events.functions.player_get_game_object]
 symbol = "?GetGameObject@CNWSPlayer@@QEAAPEAVCNWSObject@@XZ"
+
+[events.functions.stats_get_feat_remaining_uses]
+symbol = "?GetFeatRemainingUses@CNWSCreatureStats@@QEAAEG@Z"
+
+[events.functions.server_get_game_object]
+symbol = "?GetGameObject@CServerExoApp@@QEAAPEAVCGameObject@@I@Z"
+
+[events.functions.server_get_client_object]
+symbol = "?GetClientObjectByObjectId@CServerExoApp@@QEAAPEAVCNWSPlayer@@I@Z"
+
+[events.functions.server_get_nws_message]
+symbol = "?GetNWSMessage@CServerExoApp@@QEAAPEAVCNWSMessage@@XZ"
+
+[events.functions.inventory_status]
+symbol = "?SendPlayerToServerGuiInventory_Status@CNWSMessage@@QEAAHPEAVCNWSPlayer@@HI@Z"
+
+[events.functions.inventory_gui_set_open]
+symbol = "?SetOpen@CNWSPlayerInventoryGUI@@QEAAXHH@Z"
+
+[events.functions.inventory_select_panel]
+symbol = "?SendServerToPlayerInventory_SelectPanel@CNWSMessage@@QEAAHIE@Z"
+
+[events.functions.inventory_equip_cancel]
+symbol = "?SendServerToPlayerInventory_EquipCancel@CNWSMessage@@QEAAHIIIH@Z"
+
+[events.functions.inventory_unequip_cancel]
+symbol = "?SendServerToPlayerInventory_UnequipCancel@CNWSMessage@@QEAAHIIH@Z"
 
 [administration]
 

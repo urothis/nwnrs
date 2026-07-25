@@ -23,9 +23,12 @@ pub use bridge::{
     ScriptLog, ScriptLogLevel, Vector,
 };
 pub use event_catalog::{
-    EVENT_CATALOG, EventDefinition, EventResultKind, FEAT_HAS_ID_WHITELIST,
-    PROJECTILE_SPELL_ID_WHITELIST, PROJECTILE_TYPE_ID_WHITELIST, event_definition,
-    runtime_event_definition,
+    EVENT_CATALOG, EventControlPolicy, EventDefinition, EventFilterPolicy, EventFrequency,
+    EventKey, EventReentrancyPolicy, EventResultKind, EventResultRole, EventSourceKind,
+    EventSubscriptionMask, FEAT_HAS_ID_WHITELIST, PHYSICAL_HOOK_CATALOG,
+    PROJECTILE_SPELL_ID_WHITELIST, PROJECTILE_TYPE_ID_WHITELIST, PhysicalHookDefinition,
+    PhysicalHookInstallPolicy, event_definition, event_definition_by_key, keyed_event_definition,
+    keyed_runtime_event_definition, physical_hook_definition, runtime_event_definition,
 };
 pub use identity::{BinaryIdentity, FileSha256};
 pub use platform::{Architecture, OperatingSystem, Platform};
@@ -677,6 +680,8 @@ impl TargetPack {
                 .iter()
                 .all(|helper| events.functions.contains_key(*helper))
             && (!definition.requirements.server_state || self.server_state.is_some())
+            && (definition.source_kind != EventSourceKind::EventPump
+                || self.administration.is_some())
             && definition
                 .requirements
                 .layouts
@@ -936,7 +941,7 @@ fn validate_target_pack_metadata(pack: &TargetPack) -> RuntimeResult<()> {
                 "target pack events require the module_load bootstrap hook",
             ));
         }
-        let known_hooks: BTreeSet<_> = EVENT_CATALOG.iter().map(|event| event.hook).collect();
+        let known_hooks: BTreeSet<_> = PHYSICAL_HOOK_CATALOG.iter().map(|hook| hook.id).collect();
         let known_functions: BTreeSet<_> = EVENT_CATALOG
             .iter()
             .flat_map(|event| {
@@ -1796,7 +1801,7 @@ mod tests {
     };
 
     use super::{
-        AbiLayouts, Architecture, BinaryIdentity, BridgeTarget, CExoStringLayout,
+        AbiLayouts, Architecture, BinaryIdentity, BridgeTarget, CExoStringLayout, EVENT_CATALOG,
         EngineClassLayouts, EventTarget, OperatingSystem, Platform, PlayerListLayout,
         RUNTIME_API_VERSION, ServerStateTarget, TARGET_PACK_SCHEMA_VERSION, TargetAddress,
         TargetPack, TargetServer, TargetSource, VectorLayout, bridge_addresses, parse_platform,
@@ -2012,6 +2017,38 @@ mod tests {
             }
         }
         assert!(pack_count >= 3);
+        Ok(())
+    }
+
+    #[test]
+    fn source_controlled_packs_support_the_complete_event_catalog()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("targets");
+        let mut pack_count = 0_usize;
+        for platform in [
+            "linux-aarch64",
+            "linux-x86_64",
+            "macos-aarch64",
+            "windows-x86_64",
+        ] {
+            for entry in fs::read_dir(root.join(platform))? {
+                let path = entry?.path();
+                if path.extension().and_then(std::ffi::OsStr::to_str) != Some("toml") {
+                    continue;
+                }
+                let pack = toml::from_str::<TargetPack>(&fs::read_to_string(path)?)?;
+                for event in EVENT_CATALOG {
+                    assert!(
+                        pack.supports_event(event.identity),
+                        "{} does not support {}",
+                        pack.server.platform,
+                        event.identity
+                    );
+                }
+                pack_count = pack_count.saturating_add(1);
+            }
+        }
+        assert_eq!(pack_count, 4);
         Ok(())
     }
 

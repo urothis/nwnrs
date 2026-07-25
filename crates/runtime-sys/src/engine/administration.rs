@@ -20,6 +20,11 @@ use super::{
     },
     address::{GlobalStorage, Resolver},
     server::ServerEngine,
+    shim::{
+        nwnrs_engine_disconnect_player, nwnrs_engine_get_alias_path, nwnrs_engine_get_loc_string,
+        nwnrs_engine_get_string, nwnrs_engine_replace_string, nwnrs_engine_set_string_bool,
+        nwnrs_engine_set_string_void,
+    },
     string::copy_exo_string,
     thread::EngineThreadToken,
 };
@@ -37,53 +42,6 @@ const DELETE_CHARACTER_STRING_REFERENCE: u32 = 10_392;
 enum ShutdownOperation {
     ExitFlag(usize),
     CurrentThreadMessageQueue,
-}
-
-unsafe extern "C" {
-    fn nwnrs_engine_get_string(
-        address: *mut c_void,
-        free_address: *mut c_void,
-        object: *mut c_void,
-        output: *mut u8,
-        capacity: usize,
-    ) -> usize;
-    fn nwnrs_engine_set_string_bool(
-        address: *mut c_void,
-        object: *mut c_void,
-        value: *const u8,
-        length: usize,
-    ) -> i32;
-    fn nwnrs_engine_set_string_void(
-        address: *mut c_void,
-        object: *mut c_void,
-        value: *const u8,
-        length: usize,
-    );
-    fn nwnrs_engine_replace_string(destination: *mut c_void, value: *const u8, length: usize);
-    fn nwnrs_engine_get_loc_string(
-        address: *mut c_void,
-        free_address: *mut c_void,
-        object: *const c_void,
-        output: *mut u8,
-        capacity: usize,
-    ) -> usize;
-    fn nwnrs_engine_get_alias_path(
-        address: *mut c_void,
-        object: *const c_void,
-        alias: *const u8,
-        alias_length: usize,
-        output: *mut u8,
-        capacity: usize,
-    ) -> usize;
-    fn nwnrs_engine_disconnect_player(
-        address: *mut c_void,
-        object: *mut c_void,
-        player_id: u32,
-        string_reference: u32,
-        cd_auth_failure: i32,
-        reason: *const u8,
-        reason_length: usize,
-    ) -> i32;
 }
 
 struct DeferredPlayerCharacterDeletion {

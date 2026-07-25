@@ -1,9 +1,4 @@
-use std::{
-    collections::BTreeMap,
-    ffi::c_void,
-    ptr,
-    sync::atomic::{AtomicPtr, Ordering},
-};
+use std::{collections::BTreeMap, ffi::c_void};
 
 use nwnrs_runtime::{EventObjectId, EventValue, EventVector, FEAT_HAS_ID_WHITELIST};
 
@@ -12,7 +7,7 @@ use super::{
         Engine, EventFrame, EventSpec,
         abi::{DecrementFeatRemainingUses, EngineVector, GetFeatRemainingUses, HasFeat, UseFeat},
         active_engine,
-        hook::NativeHookSpec,
+        hook::{NativeHookSpec, NativeOriginal},
     },
     dispatch, native,
 };
@@ -21,32 +16,35 @@ const USE_HOOK: &str = "feat_use";
 const DECREMENT_HOOK: &str = "feat_decrement_remaining_uses";
 const HAS_HOOK: &str = "feat_has";
 
-static USE_ORIGINAL: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
-static DECREMENT_ORIGINAL: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
-static HAS_ORIGINAL: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
+static USE_ORIGINAL: NativeOriginal<UseFeat> = NativeOriginal::new();
+static DECREMENT_ORIGINAL: NativeOriginal<DecrementFeatRemainingUses> = NativeOriginal::new();
+static HAS_ORIGINAL: NativeOriginal<HasFeat> = NativeOriginal::new();
 
 pub(super) fn append_hook_specs(engine: &Engine, hooks: &mut Vec<NativeHookSpec>) {
     if let Some(target) = engine.event_hook_target(USE_HOOK) {
-        hooks.push(NativeHookSpec::new(
+        hooks.push(NativeHookSpec::typed_event(
+            USE_HOOK,
             "CNWSCreature::UseFeat events",
             target,
-            use_replacement as UseFeat as *const () as usize,
+            use_replacement as UseFeat,
             &USE_ORIGINAL,
         ));
     }
     if let Some(target) = engine.event_hook_target(DECREMENT_HOOK) {
-        hooks.push(NativeHookSpec::new(
+        hooks.push(NativeHookSpec::typed_event(
+            DECREMENT_HOOK,
             "CNWSCreatureStats::DecrementFeatRemainingUses events",
             target,
-            decrement_replacement as DecrementFeatRemainingUses as *const () as usize,
+            decrement_replacement as DecrementFeatRemainingUses,
             &DECREMENT_ORIGINAL,
         ));
     }
     if let Some(target) = engine.event_hook_target(HAS_HOOK) {
-        hooks.push(NativeHookSpec::new(
+        hooks.push(NativeHookSpec::typed_event(
+            HAS_HOOK,
             "CNWSCreatureStats::HasFeat events",
             target,
-            has_replacement as HasFeat as *const () as usize,
+            has_replacement as HasFeat,
             &HAS_ORIGINAL,
         ));
     }
@@ -108,7 +106,9 @@ extern "C" fn has_replacement(stats: *mut c_void, feat: u16) -> i32 {
     let before = dispatch::game_object(creature, EventSpec::catalog("feat.has", "before"), data);
     let result = if before.as_ref().is_some_and(EventFrame::skipped) {
         i32::from(
-            native::parse_boolean_result(before.as_ref().and_then(EventFrame::result))
+            before
+                .as_ref()
+                .and_then(EventFrame::boolean_result)
                 .unwrap_or(false),
         )
     } else {
@@ -133,32 +133,21 @@ extern "C" fn has_replacement(stats: *mut c_void, feat: u16) -> i32 {
 }
 
 fn get_remaining_uses(stats: *mut c_void, feat: u16) -> Option<u8> {
-    let target = active_engine()?.event_function_target("stats_get_feat_remaining_uses")?;
-    // SAFETY: the target pack binds this address to
-    // CNWSCreatureStats::GetFeatRemainingUses(uint16_t).
-    let function = unsafe { std::mem::transmute::<usize, GetFeatRemainingUses>(target) };
-    Some(function(stats, feat))
+    let function =
+        active_engine()?.event_function::<GetFeatRemainingUses>("stats_get_feat_remaining_uses")?;
+    Some(function.get()(stats, feat))
 }
 
 fn call_decrement(stats: *mut c_void, feat: u16) {
-    let original = DECREMENT_ORIGINAL.load(Ordering::Acquire);
-    if original.is_null() {
-        return;
+    if let Some(original) = DECREMENT_ORIGINAL.load() {
+        original(stats, feat);
     }
-    // SAFETY: Gum published the matching feat-use decrement trampoline.
-    let original =
-        unsafe { std::mem::transmute::<*mut c_void, DecrementFeatRemainingUses>(original) };
-    original(stats, feat);
 }
 
 fn call_has(stats: *mut c_void, feat: u16) -> i32 {
-    let original = HAS_ORIGINAL.load(Ordering::Acquire);
-    if original.is_null() {
-        return 0;
-    }
-    // SAFETY: Gum published the CNWSCreatureStats::HasFeat trampoline.
-    let original = unsafe { std::mem::transmute::<*mut c_void, HasFeat>(original) };
-    original(stats, feat)
+    HAS_ORIGINAL
+        .load()
+        .map_or(0, |original| original(stats, feat))
 }
 
 extern "C" fn use_replacement(
@@ -225,11 +214,8 @@ fn call_original(
     area: u32,
     position: *const EngineVector,
 ) -> i32 {
-    let original = USE_ORIGINAL.load(Ordering::Acquire);
-    if original.is_null() {
+    let Some(original) = USE_ORIGINAL.load() else {
         return 0;
-    }
-    // SAFETY: Gum published the UseFeat trampoline with this exact ABI.
-    let original = unsafe { std::mem::transmute::<*mut c_void, UseFeat>(original) };
+    };
     original(creature, feat, subfeat, target, area, position)
 }
