@@ -107,6 +107,7 @@ proc_macro! nwnrs::__build_event_dispatcher {
                     handlers = __NWNRS_TokenStreamListPush(handlers, handler);
                     tokenstream dispatcher;
                     tokenstream subscription;
+                    int event_supported = FALSE;
                     // NWNRS_EVENT_CATALOG_BEGIN
                     if (FALSE)
                     {
@@ -114,7 +115,7 @@ proc_macro! nwnrs::__build_event_dispatcher {
                         subscription = __NWNRS_QuoteEmpty();
                     }
                     // NWNRS_EVENT_CATALOG_END
-                    else
+                    if (!event_supported)
                     {
                         __NWNRS_MacroErrorAt(event_identity, "unsupported nwnrs event identity");
                     }

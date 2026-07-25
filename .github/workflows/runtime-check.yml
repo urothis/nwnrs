@@ -1,5 +1,8 @@
 name: Native runtime checks
 
+env:
+    NWNRS_UNIFIED_COMMIT: 3d4c4e13c6bf01b032ffe90534fc4a19eb036c03
+
 on:
     pull_request:
         paths:
@@ -12,6 +15,7 @@ on:
             - module/nwnrs_startup.nss
             - Cargo.toml
             - Cargo.lock
+            - .github/actions/rust-toolchain/**
             - .github/workflows/runtime-check.yml
 
 jobs:
@@ -46,10 +50,10 @@ jobs:
               uses: actions/checkout@v6.0.3
               with:
                   repository: nwnxee/unified
-                  ref: 3d4c4e13c6bf01b032ffe90534fc4a19eb036c03
+                  ref: ${{ env.NWNRS_UNIFIED_COMMIT }}
                   path: sources/unified
                   persist-credentials: false
-            - uses: ./.github/actions/setup-rust
+            - uses: ./.github/actions/rust-toolchain
             - name: Configure LLVM on Windows
               if: runner.os == 'Windows'
               shell: pwsh

@@ -1,4 +1,10 @@
+#![allow(rustdoc::missing_doc_code_examples, rustdoc::private_doc_tests)]
 //! In-process Node-API access to reusable nwnrs editor tooling.
+//!
+//! This crate is a Node-API `cdylib`, not a Rust library. `napi` exposes the
+//! annotated surface to JavaScript while keeping the generated Rust items
+//! private, so Rust doctest requirements do not describe this crate's public
+//! API.
 
 mod resource_editor;
 mod viewer;

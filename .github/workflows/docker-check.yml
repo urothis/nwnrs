@@ -11,6 +11,7 @@ on:
             - crates/runtime/**
             - crates/runtime-sys/**
             - docker/**
+            - .github/actions/rust-toolchain/**
             - .github/workflows/docker*.yml
 
 jobs:
@@ -35,7 +36,7 @@ jobs:
             - uses: actions/checkout@v6.0.3
               with:
                   persist-credentials: false
-            - uses: ./.github/actions/setup-rust
+            - uses: ./.github/actions/rust-toolchain
               with:
                   components: clippy
             - name: Check scripts

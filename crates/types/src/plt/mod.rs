@@ -153,6 +153,15 @@ impl PltLayer {
     ///
     /// Paired material layers intentionally share a palette image; each layer
     /// still selects its own blueprint-authored row.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use nwnrs_types::plt::PltLayer;
+    ///
+    /// assert_eq!(PltLayer::Skin.palette_resource(), "pal_skin01");
+    /// assert_eq!(PltLayer::Cloth2.palette_resource(), "pal_cloth01");
+    /// ```
     #[must_use]
     pub const fn palette_resource(self) -> &'static str {
         match self {
@@ -429,6 +438,12 @@ impl PltTexture {
     /// Returns [`PltError`] when a layer is unknown, a required palette is
     /// missing or malformed, a selected row is out of range, or dimensions are
     /// inconsistent.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// let _ = nwnrs_types::plt::PltTexture::render_nwn_rgba8;
+    /// ```
     pub fn render_nwn_rgba8(
         &self,
         resman: &mut ResMan,

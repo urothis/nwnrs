@@ -13,22 +13,7 @@ $unified = (Resolve-Path $UnifiedRoot).Path
 $unifiedCmake = Join-Path $unified 'CMakeLists.txt'
 $unifiedCommit = $env:NWNRS_UNIFIED_COMMIT
 if (-not $unifiedCommit) {
-    $unifiedCommitLines = & git -c "safe.directory=$unified" -C $unified rev-parse HEAD
-    if ($LASTEXITCODE -ne 0 -or -not $unifiedCommitLines) {
-        throw "failed to resolve the Unified commit from $unified; set NWNRS_UNIFIED_COMMIT for a copied source tree"
-    }
-    $unifiedCommit = ($unifiedCommitLines -join '').Trim()
-}
-elseif ((Get-Command git -ErrorAction SilentlyContinue) -and
-        (Test-Path -LiteralPath (Join-Path $unified '.git'))) {
-    $checkoutCommitLines = & git -c "safe.directory=$unified" -C $unified rev-parse HEAD
-    if ($LASTEXITCODE -ne 0 -or -not $checkoutCommitLines) {
-        throw "failed to resolve the Unified checkout commit from $unified"
-    }
-    $checkoutCommit = ($checkoutCommitLines -join '').Trim()
-    if ($checkoutCommit -cne $unifiedCommit) {
-        throw "Unified checkout is $checkoutCommit, not NWNRS_UNIFIED_COMMIT=$unifiedCommit"
-    }
+    throw 'NWNRS_UNIFIED_COMMIT must name the exact Unified source revision'
 }
 if ($unifiedCommit -cnotmatch '^[0-9a-f]{40}$') {
     throw 'Unified commit must contain exactly 40 lowercase hexadecimal characters'

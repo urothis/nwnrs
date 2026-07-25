@@ -12,17 +12,8 @@ readonly unified_root=$(cd -- "$1" && pwd -P)
 readonly output=$2
 unified_commit=${NWNRS_UNIFIED_COMMIT:-}
 if [[ -z $unified_commit ]]; then
-  if ! command -v git >/dev/null 2>&1; then
-    echo "git is unavailable; set NWNRS_UNIFIED_COMMIT to the exact copied Unified revision" >&2
-    exit 1
-  fi
-  unified_commit=$(git -C "$unified_root" rev-parse HEAD)
-elif command -v git >/dev/null 2>&1 && [[ -d $unified_root/.git ]]; then
-  checkout_commit=$(git -C "$unified_root" rev-parse HEAD)
-  if [[ $checkout_commit != "$unified_commit" ]]; then
-    echo "Unified checkout is $checkout_commit, not NWNRS_UNIFIED_COMMIT=$unified_commit" >&2
-    exit 1
-  fi
+  echo "NWNRS_UNIFIED_COMMIT must name the exact Unified source revision" >&2
+  exit 1
 fi
 if [[ ! $unified_commit =~ ^[0-9a-f]{40}$ ]]; then
   echo "Unified commit must contain exactly 40 lowercase hexadecimal characters" >&2

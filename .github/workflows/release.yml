@@ -22,7 +22,7 @@ jobs:
                   fetch-depth: 0
                   persist-credentials: false
 
-            - uses: ./.github/actions/setup-rust
+            - uses: ./.github/actions/rust-toolchain
 
             - name: Run release-plz
               uses: release-plz/action@v0.5
@@ -47,7 +47,7 @@ jobs:
                   fetch-depth: 0
                   persist-credentials: false
 
-            - uses: ./.github/actions/setup-rust
+            - uses: ./.github/actions/rust-toolchain
             - name: Run release-plz
               uses: release-plz/action@v0.5
               with:

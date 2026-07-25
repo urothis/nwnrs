@@ -10,22 +10,6 @@ concurrency:
         github.head_ref || github.ref_name }}
     cancel-in-progress: true
 jobs:
-    debug-event:
-        name: Debug Event
-        runs-on: [self-hosted, nwnrs, Linux, X64]
-        steps:
-            - name: Print label payload
-              env:
-                  EVENT_ACTION: ${{ github.event.action }}
-                  EVENT_LABEL_JSON: ${{ toJson(github.event.label) }}
-                  PR_LABELS_JSON: ${{ toJson(github.event.pull_request.labels) }}
-                  PR_LABEL_NAMES: ${{ join(github.event.pull_request.labels.*.name, ', ') }}
-              run: |
-                  echo "github.event.action=${EVENT_ACTION}"
-                  echo "github.event.label=${EVENT_LABEL_JSON}"
-                  echo "github.event.pull_request.labels=${PR_LABELS_JSON}"
-                  echo "github.event.pull_request.labels.*.name=${PR_LABEL_NAMES}"
-
     nwnrs:
         name: Test nwnrs (${{ matrix.name }})
         if: contains(github.event.pull_request.labels.*.name, 'nwnrs')
@@ -51,7 +35,7 @@ jobs:
             - uses: actions/checkout@v6.0.3
               with:
                   persist-credentials: false
-            - uses: ./.github/actions/setup-rust
+            - uses: ./.github/actions/rust-toolchain
             - run: cargo test -p nwnrs
 
     nwpkg:
@@ -79,7 +63,7 @@ jobs:
             - uses: actions/checkout@v6.0.3
               with:
                   persist-credentials: false
-            - uses: ./.github/actions/setup-rust
+            - uses: ./.github/actions/rust-toolchain
             - run: cargo test -p nwnrs-nwpkg
 
     nwscript:
@@ -107,7 +91,7 @@ jobs:
             - uses: actions/checkout@v6.0.3
               with:
                   persist-credentials: false
-            - uses: ./.github/actions/setup-rust
+            - uses: ./.github/actions/rust-toolchain
             - run: cargo test -p nwnrs-nwscript
 
     types:
@@ -135,5 +119,5 @@ jobs:
             - uses: actions/checkout@v6.0.3
               with:
                   persist-credentials: false
-            - uses: ./.github/actions/setup-rust
+            - uses: ./.github/actions/rust-toolchain
             - run: cargo test -p nwnrs-types

@@ -855,9 +855,23 @@ fn erase_nwnrs_macro_attributes(stream: &mut NwTokenStream) -> Result<(), MacroE
 }
 
 fn validate_nwnrs_attribute_route(attribute: &NwTokenGroup) -> Result<(), MacroExpansionError> {
-    let trees = attribute.stream.trees();
-    let valid_path = matches!(
-        trees,
+    if is_nwnrs_events_attribute(attribute) {
+        Ok(())
+    } else {
+        Err(MacroExpansionError::new(
+            attribute.span(),
+            "only `#[nwnrs::events(...)]` compiler attributes are supported",
+        ))
+    }
+}
+
+/// Returns whether a balanced bracket group is the supported
+/// `nwnrs::events(...)` compiler attribute.
+#[must_use]
+pub fn is_nwnrs_events_attribute(attribute: &NwTokenGroup) -> bool {
+    attribute.delimiter == NwDelimiter::Bracket
+        && matches!(
+        attribute.stream.trees(),
         [
             NwTokenTree::Token(namespace),
             NwTokenTree::Token(first_colon),
@@ -869,15 +883,7 @@ fn validate_nwnrs_attribute_route(attribute: &NwTokenGroup) -> Result<(), MacroE
             && second_colon.kind == TokenKind::Colon
             && name.text == "events"
             && arguments.delimiter == NwDelimiter::Parenthesis
-    );
-    if valid_path {
-        Ok(())
-    } else {
-        Err(MacroExpansionError::new(
-            attribute.span(),
-            "only `#[nwnrs::events(...)]` compiler attributes are supported",
-        ))
-    }
+        )
 }
 
 /// Built-in identity macro used to validate and bootstrap the expansion host.

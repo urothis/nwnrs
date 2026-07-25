@@ -24,22 +24,22 @@ runs:
   steps:
     - name: Check formatting
       if: inputs.check-format == 'true'
-      shell: bash
+      shell: sh
       run: cargo fmt --all -- --check
 
     - name: Run clippy
       if: inputs.clippy == 'true'
-      shell: bash
+      shell: sh
       run: |
         if [ "${{ inputs.workspace }}" = "true" ]; then
-          cargo clippy --workspace --all-targets -- -D warnings
+          cargo clippy --workspace --all-targets --all-features -- -D warnings
         else
-          cargo clippy --all-targets -- -D warnings
+          cargo clippy --all-targets --all-features -- -D warnings
         fi
 
     - name: Run rustdoc checks
       if: inputs.doc == 'true'
-      shell: bash
+      shell: sh
       env:
         RUSTDOCFLAGS: >-
           -D warnings
@@ -57,7 +57,7 @@ runs:
           -D rustdoc::missing_doc_code_examples
       run: |
         if [ "${{ inputs.workspace }}" = "true" ]; then
-          cargo doc --workspace --no-deps
+          cargo doc --workspace --all-features --no-deps
         else
-          cargo doc --no-deps
+          cargo doc --all-features --no-deps
         fi

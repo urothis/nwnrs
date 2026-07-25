@@ -53,8 +53,8 @@ jobs:
               with:
                   persist-credentials: false
 
-            - name: Set up Rust
-              uses: ./.github/actions/setup-rust
+            - name: Use provisioned Rust
+              uses: ./.github/actions/rust-toolchain
 
             - name: Build asset-preparation CLI
               run: cargo build --locked --release --package nwnrs

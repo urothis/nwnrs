@@ -508,6 +508,13 @@ pub struct ServerStateTarget {
 }
 
 /// Platform-specific operation used to request a graceful server shutdown.
+///
+/// ```
+/// use nwnrs_runtime::ShutdownTarget;
+///
+/// let shutdown = ShutdownTarget::CurrentThreadMessageQueue;
+/// assert_eq!(shutdown, ShutdownTarget::CurrentThreadMessageQueue);
+/// ```
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "snake_case", tag = "strategy")]
 pub enum ShutdownTarget {
@@ -521,6 +528,11 @@ pub enum ShutdownTarget {
 }
 
 /// Exact engine entry points and globals used by server administration.
+///
+/// ```
+/// let target: Option<nwnrs_runtime::AdministrationTarget> = None;
+/// assert!(target.is_none());
+/// ```
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct AdministrationTarget {
@@ -661,6 +673,11 @@ impl TargetPack {
     }
 
     /// Reports whether this exact target pack can provide one event identity.
+    ///
+    /// ```no_run
+    /// # let pack: nwnrs_runtime::TargetPack = unimplemented!();
+    /// assert!(!pack.supports_event("unknown.event"));
+    /// ```
     #[must_use]
     pub fn supports_event(&self, identity: &str) -> bool {
         let Some(definition) = event_definition(identity) else {
