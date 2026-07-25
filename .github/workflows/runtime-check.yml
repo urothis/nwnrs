@@ -18,6 +18,11 @@ on:
             - .github/actions/rust-toolchain/**
             - .github/workflows/runtime-check.yml
 
+concurrency:
+    group: ${{ github.workflow }}-${{ github.event.pull_request.head.repo.full_name
+        || github.repository }}-${{ github.head_ref || github.ref_name }}
+    cancel-in-progress: true
+
 jobs:
     native:
         name: ${{ matrix.name }}
