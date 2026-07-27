@@ -173,7 +173,12 @@ impl PatchBuf {
     }
 
     fn fixed_string(&mut self, value: &str, width: usize, field: &str) -> ModelResult<()> {
-        let encoded = crate::mdl::ascii::text::encode_model_text(value);
+        if !value.is_ascii() {
+            return Err(ModelError::msg(format!(
+                "{field} contains a non-ASCII identifier character"
+            )));
+        }
+        let encoded = value.as_bytes();
         if encoded.contains(&0) {
             return Err(ModelError::msg(format!("{field} contains a NUL byte")));
         }
@@ -184,7 +189,7 @@ impl PatchBuf {
                 width - 1
             )));
         }
-        self.bytes.extend_from_slice(&encoded);
+        self.bytes.extend_from_slice(encoded);
         self.zeros(width - encoded.len());
         Ok(())
     }
@@ -1759,7 +1764,12 @@ fn validate_resource_references(model: &SemanticModel) -> ModelResult<()> {
 }
 
 fn validate_resref(value: &str, field: &str) -> ModelResult<()> {
-    let length = crate::mdl::ascii::text::model_text_byte_len(value);
+    if !value.is_ascii() {
+        return Err(ModelError::msg(format!(
+            "{field} contains a non-ASCII resource identifier character"
+        )));
+    }
+    let length = value.len();
     if value.is_empty() || value.eq_ignore_ascii_case("NULL") || length <= RESREF_MAX_LENGTH {
         return Ok(());
     }

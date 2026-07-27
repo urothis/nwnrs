@@ -28,6 +28,7 @@ pub trait InspectionLocalizationResolver {
 
 /// A complete, lossless, type-aware inspection of one authored area object.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct AreaObjectInspection {
     /// Inspection payload schema identity.
@@ -50,6 +51,7 @@ pub struct AreaObjectInspection {
 
 /// One type-aware group of effective fields.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct InspectionSection {
     /// Stable section identity.
@@ -64,6 +66,7 @@ pub struct InspectionSection {
 
 /// One exact GFF field with resolved presentation metadata.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct InspectionField {
     /// Original GFF label.
@@ -104,6 +107,7 @@ pub struct InspectionField {
 
 /// One nested GFF structure.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct InspectionStructure {
     /// Authored GFF structure id.
@@ -114,6 +118,7 @@ pub struct InspectionStructure {
 
 /// A raw GFF source layer retained without flattening.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct InspectionSource {
     /// Source role, such as `instance` or `blueprint`.
@@ -129,6 +134,7 @@ pub struct InspectionSource {
 
 /// Provenance for one effective value.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct InspectionProvenance {
     /// Source role.
@@ -142,6 +148,7 @@ pub struct InspectionProvenance {
 
 /// A resource reference resolved through the active layered resource manager.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct InspectionResource {
     /// Exact `resref.ext` name.
@@ -155,6 +162,7 @@ pub struct InspectionResource {
 
 /// A localized string together with its raw and resolved identities.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct InspectionLocalizedString {
     /// Text selected for the configured language and gender.
@@ -178,6 +186,7 @@ pub struct InspectionLocalizedString {
 
 /// One exact inline CExoLocString entry.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct InspectionLocalizedEntry {
     /// Combined NWN language/gender id.
@@ -188,6 +197,7 @@ pub struct InspectionLocalizedEntry {
 
 /// A resolved numeric reference into a 2DA table.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct InspectionTwoDaLookup {
     /// Table resource.
@@ -381,7 +391,7 @@ impl<'a> AreaInspector<'a> {
         let bytes = res
             .read_all(CachePolicy::Use)
             .map_err(|error| SceneError::invalid(error.to_string()))?;
-        nwnrs_types::gff::read_gff_root(&mut Cursor::new(bytes))
+        nwnrs_types::gff::read_gff_root(&mut Cursor::new(bytes), self.resman.text_context())
             .map_err(|error| SceneError::invalid(error.to_string()))
     }
 
@@ -523,7 +533,9 @@ impl<'a> AreaInspector<'a> {
                 .ok()
                 .and_then(|resolved| self.resman.get_resolved(&resolved))
                 .and_then(|res| res.read_all(CachePolicy::Use).ok())
-                .and_then(|bytes| read_twoda(&mut Cursor::new(bytes)).ok());
+                .and_then(|bytes| {
+                    read_twoda(&mut Cursor::new(bytes), self.resman.text_context()).ok()
+                });
             self.cache.tables.insert(resource.into(), table);
         }
         let table = self.cache.tables.get(resource)?.as_ref()?;
@@ -1084,7 +1096,7 @@ mod tests {
             .unwrap_or_else(|error| panic!("placeable list: {error}"));
         let git = parse_git_root(&git_root).unwrap_or_else(|error| panic!("parse GIT: {error}"));
         let scene = test_area_scene(git);
-        let mut resman = ResMan::new(0);
+        let mut resman = ResMan::new(0, crate::encoding::NwnTextContext::english());
         let mut cache = AreaInspectionCache::default();
         let mut localization = InlineLocalization;
 

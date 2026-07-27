@@ -9,7 +9,7 @@ use std::{
     path::Path,
 };
 
-use nwnrs_types::resman::prelude::*;
+use nwnrs_types::{encoding::prelude::*, resman::prelude::*};
 use tracing::instrument;
 
 /// NWN resource type id for `set`.
@@ -28,6 +28,8 @@ pub enum SetError {
     Io(io::Error),
     /// Resource-manager access failed.
     ResMan(ResManError),
+    /// Native text could not be encoded.
+    Encoding(EncodingConversionError),
     /// The payload was otherwise invalid or unsupported.
     Message(String),
 }
@@ -51,6 +53,7 @@ impl fmt::Display for SetError {
         match self {
             Self::Io(error) => error.fmt(f),
             Self::ResMan(error) => error.fmt(f),
+            Self::Encoding(error) => error.fmt(f),
             Self::Message(message) => f.write_str(message),
         }
     }
@@ -67,6 +70,12 @@ impl From<io::Error> for SetError {
 impl From<ResManError> for SetError {
     fn from(value: ResManError) -> Self {
         Self::ResMan(value)
+    }
+}
+
+impl From<EncodingConversionError> for SetError {
+    fn from(value: EncodingConversionError) -> Self {
+        Self::Encoding(value)
     }
 }
 
@@ -116,11 +125,14 @@ impl SetFile {
     /// # Examples
     ///
     /// ```rust,no_run
-    /// let _ = nwnrs_types::set::SetFile::from_file(std::path::Path::new("tileset.set"));
+    /// let _ = nwnrs_types::set::SetFile::from_file(
+    ///     std::path::Path::new("tileset.set"),
+    ///     nwnrs_types::encoding::NwnTextContext::english(),
+    /// );
     /// ```
-    pub fn from_file(path: impl AsRef<Path>) -> SetResult<Self> {
+    pub fn from_file(path: impl AsRef<Path>, context: NwnTextContext) -> SetResult<Self> {
         let mut file = File::open(path.as_ref())?;
-        read_set(&mut file)
+        read_set(&mut file, context)
     }
 
     /// Reads a typed `SET` file from a [`Res`].
@@ -135,7 +147,11 @@ impl SetFile {
     /// ```rust,no_run
     /// let _ = nwnrs_types::set::SetFile::from_res;
     /// ```
-    pub fn from_res(res: &Res, cache_policy: CachePolicy) -> SetResult<Self> {
+    pub fn from_res(
+        res: &Res,
+        cache_policy: CachePolicy,
+        context: NwnTextContext,
+    ) -> SetResult<Self> {
         if res.resref().res_type() != SET_RES_TYPE {
             return Err(SetError::msg(format!(
                 "expected set resource, got {}",
@@ -144,8 +160,7 @@ impl SetFile {
         }
 
         let bytes = res.read_all(cache_policy)?;
-        let text = String::from_utf8(bytes)
-            .map_err(|error| SetError::msg(format!("SET payload is not valid UTF-8: {error}")))?;
+        let text = decode_legacy_preserving(context.encoding(), &bytes);
         parse_set(&text)
     }
 
@@ -166,7 +181,7 @@ impl SetFile {
         let res = resman
             .get_resolved(&resolved)
             .ok_or_else(|| SetError::msg(format!("tileset not found in ResMan: {resolved}")))?;
-        Self::from_res(&res, cache_policy)
+        Self::from_res(&res, cache_policy, resman.text_context())
     }
 }
 
@@ -433,12 +448,16 @@ pub struct SetPrimaryRule {
 ///
 /// ```rust,no_run
 /// let mut reader = std::io::Cursor::new(Vec::<u8>::new());
-/// let _ = nwnrs_types::set::read_set(&mut reader);
+/// let _ = nwnrs_types::set::read_set(
+///     &mut reader,
+///     nwnrs_types::encoding::NwnTextContext::english(),
+/// );
 /// ```
 #[instrument(level = "debug", skip_all, err)]
-pub fn read_set<R: Read>(reader: &mut R) -> SetResult<SetFile> {
-    let mut text = String::new();
-    reader.read_to_string(&mut text)?;
+pub fn read_set<R: Read>(reader: &mut R, context: NwnTextContext) -> SetResult<SetFile> {
+    let mut bytes = Vec::new();
+    reader.read_to_end(&mut bytes)?;
+    let text = decode_legacy_preserving(context.encoding(), &bytes);
     parse_set(&text)
 }
 
@@ -577,12 +596,20 @@ pub fn build_set_text(set_file: &SetFile) -> SetResult<String> {
 /// ```rust,no_run
 /// let set_file = nwnrs_types::set::SetFile::default();
 /// let mut writer = Vec::new();
-/// nwnrs_types::set::write_set(&mut writer, &set_file)?;
+/// nwnrs_types::set::write_set(
+///     &mut writer,
+///     &set_file,
+///     nwnrs_types::encoding::NwnTextContext::english(),
+/// )?;
 /// # Ok::<(), nwnrs_types::set::SetError>(())
 /// ```
-pub fn write_set<W: Write>(writer: &mut W, set_file: &SetFile) -> SetResult<()> {
+pub fn write_set<W: Write>(
+    writer: &mut W,
+    set_file: &SetFile,
+    context: NwnTextContext,
+) -> SetResult<()> {
     let text = build_set_text(set_file)?;
-    writer.write_all(text.as_bytes())?;
+    writer.write_all(&encode_legacy_preserving(context.encoding(), &text)?)?;
     Ok(())
 }
 
@@ -1016,6 +1043,7 @@ mod tests {
     use std::{fs, path::PathBuf};
 
     use super::{SetFile, build_set_text, parse_set, write_set};
+    use crate::encoding::NwnTextContext;
 
     #[test]
     fn parses_minimal_tileset() {
@@ -1090,9 +1118,10 @@ mod tests {
                 continue;
             }
 
-            let parsed = SetFile::from_file(&path).unwrap_or_else(|error| {
-                panic!("parse {}: {error}", path.display());
-            });
+            let parsed =
+                SetFile::from_file(&path, NwnTextContext::english()).unwrap_or_else(|error| {
+                    panic!("parse {}: {error}", path.display());
+                });
             assert!(
                 !parsed.tiles.is_empty(),
                 "expected at least one tile in {}",
@@ -1229,7 +1258,8 @@ mod tests {
 
         let built = build_set_text(&original).unwrap_or_else(|error| panic!("build set: {error}"));
         let mut bytes = Vec::new();
-        write_set(&mut bytes, &original).unwrap_or_else(|error| panic!("write set: {error}"));
+        write_set(&mut bytes, &original, NwnTextContext::english())
+            .unwrap_or_else(|error| panic!("write set: {error}"));
 
         let written =
             String::from_utf8(bytes).unwrap_or_else(|error| panic!("utf8 write set: {error}"));

@@ -12,7 +12,7 @@ pub mod prelude {
     pub use crate::checksums::{
         EMPTY_SHA1_DIGEST, Md5Digest, ParseSha1DigestError, SHA1_HEX_LEN, SHA256_HEX_LEN,
         Sha1Digest, Sha256Digest, md5_digest, parse_sha1_digest, sha1_digest, sha1_digest_reader,
-        sha256_digest,
+        sha256_digest, sha256_digest_reader,
     };
 }
 
@@ -20,6 +20,7 @@ pub mod prelude {
 mod tests {
     use crate::checksums::{
         md5_digest, parse_sha1_digest, sha1_digest, sha1_digest_reader, sha256_digest,
+        sha256_digest_reader,
     };
 
     #[test]
@@ -62,6 +63,15 @@ mod tests {
         assert_eq!(
             sha256_digest(b"abc").to_string(),
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+    }
+
+    #[test]
+    fn streamed_sha256_matches_in_memory_digest() {
+        let bytes = b"streamed archive fingerprint";
+        assert_eq!(
+            sha256_digest_reader(bytes.as_slice()).expect("stream digest"),
+            sha256_digest(bytes)
         );
     }
 }

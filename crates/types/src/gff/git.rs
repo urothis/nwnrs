@@ -131,11 +131,17 @@ impl GitFile {
     /// # Examples
     ///
     /// ```rust,no_run
-    /// let _ = nwnrs_types::gff::GitFile::from_file(std::path::Path::new("area.git"));
+    /// let _ = nwnrs_types::gff::GitFile::from_file(
+    ///     std::path::Path::new("area.git"),
+    ///     nwnrs_types::encoding::NwnTextContext::english(),
+    /// );
     /// ```
-    pub fn from_file(path: impl AsRef<Path>) -> GitResult<Self> {
+    pub fn from_file(
+        path: impl AsRef<Path>,
+        context: crate::encoding::NwnTextContext,
+    ) -> GitResult<Self> {
         let mut file = File::open(path.as_ref())?;
-        read_git(&mut file)
+        read_git(&mut file, context)
     }
 
     /// Reads a typed `GIT` file from a [`Res`].
@@ -150,7 +156,11 @@ impl GitFile {
     /// ```rust,no_run
     /// let _ = nwnrs_types::gff::GitFile::from_res;
     /// ```
-    pub fn from_res(res: &Res, cache_policy: CachePolicy) -> GitResult<Self> {
+    pub fn from_res(
+        res: &Res,
+        cache_policy: CachePolicy,
+        context: crate::encoding::NwnTextContext,
+    ) -> GitResult<Self> {
         if res.resref().res_type() != GIT_RES_TYPE {
             return Err(GitError::msg(format!(
                 "expected git resource, got {}",
@@ -160,7 +170,7 @@ impl GitFile {
 
         let bytes = res.read_all(cache_policy)?;
         let mut cursor = io::Cursor::new(bytes);
-        read_git(&mut cursor)
+        read_git(&mut cursor, context)
     }
 
     /// Reads a typed `GIT` file from a [`ResMan`] by area name.
@@ -184,7 +194,7 @@ impl GitFile {
         let res = resman
             .get_resolved(&resolved)
             .ok_or_else(|| GitError::msg(format!("git not found in ResMan: {resolved}")))?;
-        Self::from_res(&res, cache_policy)
+        Self::from_res(&res, cache_policy, resman.text_context())
     }
 }
 
@@ -490,11 +500,17 @@ pub struct GitPlaceable {
 ///
 /// ```rust,no_run
 /// let mut reader = std::io::Cursor::new(Vec::<u8>::new());
-/// let _ = nwnrs_types::gff::read_git(&mut reader);
+/// let _ = nwnrs_types::gff::read_git(
+///     &mut reader,
+///     nwnrs_types::encoding::NwnTextContext::english(),
+/// );
 /// ```
 #[instrument(level = "debug", skip_all, err)]
-pub fn read_git<R: Read + Seek>(reader: &mut R) -> GitResult<GitFile> {
-    let root = read_gff_root(reader)?;
+pub fn read_git<R: Read + Seek>(
+    reader: &mut R,
+    context: crate::encoding::NwnTextContext,
+) -> GitResult<GitFile> {
+    let root = read_gff_root(reader, context)?;
     parse_git_root(&root)
 }
 
@@ -635,13 +651,21 @@ pub fn build_git_root(git: &GitFile) -> GitResult<GffRoot> {
 /// ```rust,no_run
 /// let git = nwnrs_types::gff::GitFile::default();
 /// let mut writer = std::io::Cursor::new(Vec::new());
-/// nwnrs_types::gff::write_git(&mut writer, &git)?;
+/// nwnrs_types::gff::write_git(
+///     &mut writer,
+///     &git,
+///     nwnrs_types::encoding::NwnTextContext::english(),
+/// )?;
 /// # Ok::<(), nwnrs_types::gff::GitError>(())
 /// ```
 #[instrument(level = "debug", skip_all, err)]
-pub fn write_git<W: Write + Seek>(writer: &mut W, git: &GitFile) -> GitResult<()> {
+pub fn write_git<W: Write + Seek>(
+    writer: &mut W,
+    git: &GitFile,
+    context: crate::encoding::NwnTextContext,
+) -> GitResult<()> {
     let root = build_git_root(git)?;
-    write_gff_root(writer, &root)?;
+    write_gff_root(writer, &root, context)?;
     Ok(())
 }
 
@@ -1371,7 +1395,12 @@ mod tests {
 
     fn encode_root(root: &GffRoot) -> Vec<u8> {
         let mut output = Cursor::new(Vec::new());
-        write_gff_root(&mut output, root).unwrap_or_else(|error| {
+        write_gff_root(
+            &mut output,
+            root,
+            crate::encoding::NwnTextContext::default(),
+        )
+        .unwrap_or_else(|error| {
             panic!("encode gff: {error}");
         });
         output.into_inner()
@@ -1532,10 +1561,13 @@ mod tests {
     #[test]
     fn parses_typed_git_root() {
         let encoded = encode_root(&sample_git_root());
-        let reparsed_root =
-            read_gff_root(&mut Cursor::new(encoded.clone())).unwrap_or_else(|error| {
-                panic!("re-read gff root: {error}");
-            });
+        let reparsed_root = read_gff_root(
+            &mut Cursor::new(encoded.clone()),
+            crate::encoding::NwnTextContext::default(),
+        )
+        .unwrap_or_else(|error| {
+            panic!("re-read gff root: {error}");
+        });
 
         let parsed = parse_git_root(&reparsed_root).unwrap_or_else(|error| {
             panic!("parse git root: {error}");
@@ -1590,7 +1622,11 @@ mod tests {
             Some(true)
         );
 
-        let reparsed = read_git(&mut Cursor::new(encoded)).unwrap_or_else(|error| {
+        let reparsed = read_git(
+            &mut Cursor::new(encoded),
+            crate::encoding::NwnTextContext::english(),
+        )
+        .unwrap_or_else(|error| {
             panic!("read git: {error}");
         });
         assert_eq!(
@@ -1612,7 +1648,7 @@ mod tests {
             panic!("resmem file: {error}");
         });
 
-        let mut resman = ResMan::new(0);
+        let mut resman = ResMan::new(0, crate::encoding::NwnTextContext::english());
         resman.add(Arc::new(resmem) as Arc<dyn ResContainer>);
 
         let parsed = GitFile::from_resman(&mut resman, "arena", CachePolicy::Bypass)
@@ -1637,15 +1673,27 @@ mod tests {
 
     #[test]
     fn writes_git_round_trip_from_typed_model() {
-        let original = read_git(&mut Cursor::new(encode_root(&sample_git_root())))
-            .unwrap_or_else(|error| panic!("read original git: {error}"));
+        let original = read_git(
+            &mut Cursor::new(encode_root(&sample_git_root())),
+            crate::encoding::NwnTextContext::english(),
+        )
+        .unwrap_or_else(|error| panic!("read original git: {error}"));
 
         let mut encoded = Cursor::new(Vec::new());
-        write_git(&mut encoded, &original).unwrap_or_else(|error| {
+        write_git(
+            &mut encoded,
+            &original,
+            crate::encoding::NwnTextContext::english(),
+        )
+        .unwrap_or_else(|error| {
             panic!("write git: {error}");
         });
 
-        let reparsed = read_git(&mut Cursor::new(encoded.into_inner())).unwrap_or_else(|error| {
+        let reparsed = read_git(
+            &mut Cursor::new(encoded.into_inner()),
+            crate::encoding::NwnTextContext::english(),
+        )
+        .unwrap_or_else(|error| {
             panic!("re-read git: {error}");
         });
         assert_eq!(
@@ -1719,8 +1767,11 @@ mod tests {
 
     #[test]
     fn build_git_root_preserves_unknown_fields_from_raw_entries() {
-        let mut parsed = read_git(&mut Cursor::new(encode_root(&sample_git_root())))
-            .unwrap_or_else(|error| panic!("read original git: {error}"));
+        let mut parsed = read_git(
+            &mut Cursor::new(encode_root(&sample_git_root())),
+            crate::encoding::NwnTextContext::english(),
+        )
+        .unwrap_or_else(|error| panic!("read original git: {error}"));
         parsed
             .creatures
             .first_mut()

@@ -4,11 +4,15 @@ import {
   type OutputChannelLike,
 } from './worker-client';
 import type {
-  NativePackageInfo,
-  NativePackageSourceInfo,
-  NativeResolvedResource,
-  NativeResourceCatalog,
-} from './native-types';
+  NativeViewerAreaInspectionRequest,
+  NativeViewerAssetRequest,
+  NativeViewerLoadRequest,
+  NativeViewerPackageInfo,
+  NativeViewerPackageSourceInfo,
+  NativeViewerResolvedResource,
+  NativeViewerResourceCatalog,
+  NativeViewerResourceCatalogRequest,
+} from './generated/native';
 
 export class ViewerWorkerClient extends WorkerClient {
   public constructor(workerPath: string, bindingPath: string, output?: OutputChannelLike) {
@@ -16,7 +20,7 @@ export class ViewerWorkerClient extends WorkerClient {
   }
 
   public loadScene<TResponse = Uint8Array>(
-    request: unknown,
+    request: NativeViewerLoadRequest,
     contents?: Uint8Array,
     cancellationToken?: CancellationTokenLike,
   ): Promise<TResponse> {
@@ -35,48 +39,56 @@ export class ViewerWorkerClient extends WorkerClient {
   }
 
   public loadAnimation<TResponse = Uint8Array>(
-    request: unknown,
+    request: NativeViewerAssetRequest,
     cancellationToken?: CancellationTokenLike,
   ): Promise<TResponse> {
     return this.request<TResponse>('loadAnimation', request, cancellationToken);
   }
 
   public loadTexture<TResponse = Uint8Array>(
-    request: unknown,
+    request: NativeViewerAssetRequest,
     cancellationToken?: CancellationTokenLike,
   ): Promise<TResponse> {
     return this.request<TResponse>('loadTexture', request, cancellationToken);
   }
 
   public inspectAreaObject<TResponse = unknown>(
-    request: unknown,
+    request: NativeViewerAreaInspectionRequest,
     cancellationToken?: CancellationTokenLike,
   ): Promise<TResponse> {
     return this.request<TResponse>('inspectAreaObject', request, cancellationToken);
   }
 
   public readResource<TResponse = Uint8Array>(
-    request: unknown,
+    request: NativeViewerLoadRequest,
     cancellationToken?: CancellationTokenLike,
   ): Promise<TResponse> {
     return this.request<TResponse>('readResource', request, cancellationToken);
   }
 
-  public resolveResource<TResponse = NativeResolvedResource>(
-    request: unknown,
+  public resolveResource<TResponse = NativeViewerResolvedResource>(
+    request: NativeViewerLoadRequest,
     cancellationToken?: CancellationTokenLike,
   ): Promise<TResponse> {
     return this.request<TResponse>('resolveResource', request, cancellationToken);
   }
 
-  public inspectPackage<TResponse = NativePackageInfo>(
+  public inspectPackage<TResponse = NativeViewerPackageInfo>(
     packagePath: string,
+    dependencyConfiguration?: {
+      readonly gitPath?: string;
+      readonly cachePath?: string;
+    },
     cancellationToken?: CancellationTokenLike,
   ): Promise<TResponse> {
-    return this.request<TResponse>('inspectPackage', { path: packagePath }, cancellationToken);
+    return this.request<TResponse>('inspectPackage', {
+      path: packagePath,
+      gitPath: dependencyConfiguration?.gitPath,
+      cachePath: dependencyConfiguration?.cachePath,
+    }, cancellationToken);
   }
 
-  public inspectPackageSource<TResponse = NativePackageSourceInfo>(
+  public inspectPackageSource<TResponse = NativeViewerPackageSourceInfo>(
     manifestPath: string,
     cancellationToken?: CancellationTokenLike,
   ): Promise<TResponse> {
@@ -87,8 +99,8 @@ export class ViewerWorkerClient extends WorkerClient {
     );
   }
 
-  public listResources<TResponse = NativeResourceCatalog>(
-    request: unknown,
+  public listResources<TResponse = NativeViewerResourceCatalog>(
+    request: NativeViewerResourceCatalogRequest,
     cancellationToken?: CancellationTokenLike,
   ): Promise<TResponse> {
     return this.request<TResponse>('listResources', request, cancellationToken);

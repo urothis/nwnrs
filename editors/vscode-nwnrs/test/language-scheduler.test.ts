@@ -24,6 +24,13 @@ function turn(): Promise<void> {
   return new Promise((resolve) => setImmediate(resolve));
 }
 
+interface SchedulerResponse {
+  readonly id: number;
+  readonly error?: {
+    readonly message: string;
+  };
+}
+
 test('language scheduler serializes one package index while independent packages progress', async () => {
   const work = new Map<number, Deferred>([
     [1, deferred()],
@@ -61,13 +68,13 @@ test('language scheduler coalesces obsolete queued background work', async () =>
   const active = deferred();
   const latest = deferred();
   const calls: number[] = [];
-  const responses: Array<{ readonly id: number; readonly error?: string }> = [];
+  const responses: SchedulerResponse[] = [];
   const scheduler = new LanguageRequestScheduler(
     (request: { readonly id: number }) => {
       calls.push(request.id);
       return request.id === 1 ? active.promise : latest.promise;
     },
-    (response: { readonly id: number; readonly error?: string }) => responses.push(response),
+    (response: SchedulerResponse) => responses.push(response),
     { backgroundConcurrency: 1 },
   );
 
@@ -84,7 +91,7 @@ test('language scheduler coalesces obsolete queued background work', async () =>
     request: { source_path: '/demo/script.nss' },
     sessionKey: 'demo',
   });
-  assert.match(responses[0]?.error || '', /superseded/u);
+  assert.match(responses[0]?.error?.message || '', /superseded/u);
   assert.equal(responses[0]?.id, 2);
   active.resolve('indexed');
   await turn();
@@ -98,7 +105,7 @@ test('interactive language work safely preempts and later resumes project indexi
   const resumedIndex = deferred();
   const hover = deferred();
   const calls: string[] = [];
-  const responses: Array<{ readonly id: number; readonly error?: string }> = [];
+  const responses: SchedulerResponse[] = [];
   let indexAttempt = 0;
   const scheduler = new LanguageRequestScheduler(
     (
@@ -116,7 +123,7 @@ test('interactive language work safely preempts and later resumes project indexi
       }
       return hover.promise;
     },
-    (response: { readonly id: number; readonly error?: string }) => responses.push(response),
+    (response: SchedulerResponse) => responses.push(response),
     { backgroundConcurrency: 1, interactiveConcurrency: 1 },
   );
 
@@ -139,10 +146,10 @@ test('interactive language work safely preempts and later resumes project indexi
       });
       return stale.promise;
     },
-    (response: { readonly id: number; readonly error?: string }) => responses.push(response),
+    (response: SchedulerResponse) => responses.push(response),
   );
   staleScheduler.enqueue({ id: 3, method: 'indexProject', request: {}, sessionKey: 'stale' });
   staleScheduler.invalidate('stale');
   await turn();
-  assert.match(responses.at(-1)?.error || '', /invalidated before completion/u);
+  assert.match(responses.at(-1)?.error?.message || '', /invalidated before completion/u);
 });

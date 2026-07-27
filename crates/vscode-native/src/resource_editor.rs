@@ -9,8 +9,8 @@ use std::{
 
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use napi::{
-    Task,
-    bindgen_prelude::{AbortSignal, AsyncTask, Buffer},
+    Either, Env, Task,
+    bindgen_prelude::{AbortSignal, AsyncTask, Buffer, Unknown},
 };
 use napi_derive::napi;
 use nwnrs_nwscript::{
@@ -21,7 +21,10 @@ use nwnrs_types::{
     checksums::{sha1_digest, sha1_digest_reader},
     compressedbuf::Algorithm,
     dds::{DdsFormat, DdsTexture, read_dds, write_dds},
-    erf::{Erf, ErfVersion, ErfWriteOptions, read_erf, write_erf_with_options},
+    encoding::{
+        LegacyEncoding, NwnText, NwnTextContext, NwnTextSegment, display_legacy_preserving,
+    },
+    erf::{Erf, ErfVersion, ErfWriteOptions, read_erf, write_erf_with_native_text},
     exo::ExoResFileCompressionType,
     gff::{
         GffCExoLocString, GffField, GffRoot, GffStruct, GffValue, gff_root_from_json_bytes,
@@ -31,26 +34,171 @@ use nwnrs_types::{
         KeyBifEntry, KeyBifVersion, KeyTable, key_bif_relative_path, read_key_table_from_file,
         write_key_and_bif,
     },
-    localization::Language,
+    localization::{Language, resolve_language},
     plt::{PltPixel, PltRenderSpec, PltTexture, read_plt, write_plt},
     resman::{CachePolicy, Res, ResContainer, ResRef, ResolvedResRef, get_res_ext},
     tga::{TgaTexture, read_tga, write_tga},
     tlk::{SingleTlk, TlkEntry, read_single_tlk, write_single_tlk},
     twoda::{TwoDa, read_twoda, write_twoda},
 };
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 
-use crate::resource_capabilities::{is_gff_extension, resource_handler};
+use crate::{
+    resource_capabilities::{is_gff_extension, resource_handler},
+    resource_contracts::{
+        JsonValue, ResourceBackupResult, ResourceBinaryEditResult, ResourceCloseResult,
+        ResourceEdit, ResourceEditResult, ResourceSaveAsPlan, ResourceSaveResult, ResourceSnapshot,
+    },
+};
 
 const DEFAULT_PAGE_SIZE: usize = 200;
 const MAX_PAGE_SIZE: usize = 2_000;
 const BACKUP_MAGIC: &[u8; 8] = b"NWNRSB02";
 const MAX_BACKUP_HEADER_SIZE: u64 = 64 * 1024 * 1024;
+
+fn resource_text_context(path: &Path, language: Option<&str>) -> EditorResult<NwnTextContext> {
+    for ancestor in path.parent().into_iter().flat_map(Path::ancestors) {
+        let manifest_path = ancestor.join(nwnrs_nwpkg::PROJECT_MANIFEST_FILENAME);
+        if !manifest_path.is_file() {
+            continue;
+        }
+        if let Some(manifest) =
+            nwnrs_nwpkg::read_project_manifest(&manifest_path).map_err(display_error)?
+        {
+            return Ok(NwnTextContext::for_language_id(
+                manifest.project.language.id(),
+            ));
+        }
+        break;
+    }
+    let language = resolve_language(language.unwrap_or("english")).map_err(display_error)?;
+    Ok(NwnTextContext::for_language_id(language.id()))
+}
 const MAX_BACKUP_FILE_COUNT: usize = 65_536;
 const MAX_BACKUP_PATH_LENGTH: usize = 4_096;
 
 type EditorResult<T> = Result<T, String>;
+
+/// Resource-editor methods whose accepted work must run to completion.
+///
+/// The contract generator exports this exact list to the worker scheduler so
+/// mutation cancellation policy has one Rust-owned source of truth.
+pub const RESOURCE_EDITOR_MUTATION_METHODS: &[&str] = &[
+    "openDocument",
+    "openDocumentBytes",
+    "configureScriptDebug",
+    "applyEdit",
+    "replaceArchiveEntry",
+    "addArchiveEntry",
+    "removeArchiveEntry",
+    "replaceTexturePixels",
+    "applyBinaryUndo",
+    "saveDocument",
+    "saveDocumentAs",
+    "backupDocument",
+    "revertDocument",
+    "closeDocument",
+];
+
+#[napi(object)]
+#[derive(Clone)]
+pub struct NativeResourceOpenRequest {
+    pub document_id:      String,
+    pub path:             String,
+    pub backup_path:      Option<String>,
+    pub read_only_origin: Option<bool>,
+    /// Native resource language used by formats without an embedded language.
+    pub language:         Option<String>,
+}
+
+#[napi(object)]
+#[derive(Clone)]
+pub struct NativeResourceDocumentIdRequest {
+    pub document_id: String,
+}
+
+#[napi(object)]
+#[derive(Clone)]
+pub struct NativeResourceSnapshotRequest {
+    pub document_id: String,
+    pub offset:      Option<u32>,
+    pub limit:       Option<u32>,
+    pub query:       Option<String>,
+}
+
+#[napi(object)]
+#[derive(Clone)]
+pub struct NativeResourceGffNodeRequest {
+    pub document_id: String,
+    pub path:        Vec<Either<String, u32>>,
+    pub offset:      Option<u32>,
+    pub limit:       Option<u32>,
+}
+
+#[napi(object)]
+#[derive(Clone)]
+pub struct NativeResourceSaveRequest {
+    pub document_id: String,
+    pub force:       Option<bool>,
+}
+
+#[napi(object)]
+#[derive(Clone)]
+pub struct NativeResourcePathRequest {
+    pub document_id: String,
+    pub path:        String,
+}
+
+#[napi(object)]
+#[derive(Clone)]
+pub struct NativeResourceSaveAsRequest {
+    pub document_id:        String,
+    pub path:               String,
+    pub confirmation_token: Option<String>,
+}
+
+#[napi(object)]
+pub struct NativeResourceScriptDebugConfiguration {
+    pub ncs:             Option<Buffer>,
+    pub ndb:             Option<Buffer>,
+    pub langspec:        Option<Buffer>,
+    pub source_names:    Option<Vec<String>>,
+    pub source_contents: Option<Vec<Buffer>>,
+}
+
+#[napi(object)]
+#[derive(Clone)]
+pub struct NativeResourceArchiveEntryRequest {
+    pub document_id: String,
+    pub resource:    String,
+    pub bif_index:   Option<u32>,
+}
+
+#[napi(object)]
+#[derive(Clone)]
+pub struct NativeResourceArchiveAddRequest {
+    pub document_id: String,
+    pub resource:    String,
+    pub index:       Option<u32>,
+    pub algorithm:   Option<String>,
+    pub bif_index:   Option<u32>,
+}
+
+#[napi(object)]
+#[derive(Clone)]
+pub struct NativeResourceTextureReplaceRequest {
+    pub document_id: String,
+    pub width:       u32,
+    pub height:      u32,
+}
+
+#[napi(object)]
+#[derive(Clone)]
+pub struct NativeResourceBinaryUndoRequest {
+    pub document_id: String,
+    pub token:       String,
+}
 
 #[derive(Default)]
 struct ResourceEditorState {
@@ -72,38 +220,271 @@ impl ResourceEditorService {
         }
     }
 
-    /// Executes a typed resource-editor request away from the JavaScript event
-    /// loop.
-    #[napi]
-    pub fn execute(
+    #[napi(ts_return_type = "Promise<import('./ResourceSnapshot').ResourceSnapshot>")]
+    pub fn open_document(
         &self,
-        method: String,
-        request_json: String,
+        request: NativeResourceOpenRequest,
+    ) -> AsyncTask<ResourceTask<NativeResourceOpenRequest, ResourceSnapshot>> {
+        self.mutation(request, open_document)
+    }
+
+    #[napi(ts_return_type = "Promise<import('./ResourceSnapshot').ResourceSnapshot>")]
+    pub fn open_document_bytes(
+        &self,
+        request: NativeResourceOpenRequest,
+        contents: Buffer,
+    ) -> AsyncTask<ResourceTask<ResourceOpenBytesRequest, ResourceSnapshot>> {
+        self.mutation(
+            ResourceOpenBytesRequest {
+                request,
+                contents: contents.to_vec(),
+            },
+            open_document_bytes,
+        )
+    }
+
+    #[napi(ts_return_type = "Promise<import('./ResourceSnapshot').ResourceSnapshot>")]
+    pub fn snapshot(
+        &self,
+        request: NativeResourceSnapshotRequest,
         signal: Option<AbortSignal>,
-    ) -> AsyncTask<ResourceEditorTask> {
-        let signal = (!resource_method_is_mutation(&method))
-            .then_some(signal)
-            .flatten();
+    ) -> AsyncTask<ResourceTask<NativeResourceSnapshotRequest, ResourceSnapshot>> {
+        self.query(request, snapshot_document, signal)
+    }
+
+    #[napi(ts_return_type = "Promise<import('./JsonValue').JsonValue>")]
+    pub fn gff_node(
+        &self,
+        request: NativeResourceGffNodeRequest,
+        signal: Option<AbortSignal>,
+    ) -> AsyncTask<ResourceTask<NativeResourceGffNodeRequest, JsonValue>> {
+        self.query(request, gff_document_node, signal)
+    }
+
+    #[napi(ts_return_type = "Promise<import('./ResourceSnapshot').ResourceSnapshot>")]
+    pub fn configure_script_debug(
+        &self,
+        request: NativeResourceDocumentIdRequest,
+        configuration: NativeResourceScriptDebugConfiguration,
+    ) -> napi::Result<AsyncTask<ResourceTask<ResourceScriptDebugRequest, ResourceSnapshot>>> {
+        let sources = match (configuration.source_names, configuration.source_contents) {
+            (None, None) => None,
+            (Some(names), Some(contents)) if names.len() == contents.len() => Some(
+                names
+                    .into_iter()
+                    .zip(contents.into_iter().map(|contents| contents.to_vec()))
+                    .collect(),
+            ),
+            (Some(names), Some(contents)) => {
+                return Err(napi::Error::from_reason(format!(
+                    "script source name count {} does not match content count {}",
+                    names.len(),
+                    contents.len()
+                )));
+            }
+            _ => {
+                return Err(napi::Error::from_reason(
+                    "script source names and contents must be supplied together",
+                ));
+            }
+        };
+        let configuration = ResourceScriptDebugConfiguration {
+            ncs: configuration.ncs.map(|value| value.to_vec()),
+            ndb: configuration.ndb.map(|value| value.to_vec()),
+            langspec: configuration.langspec.map(|value| value.to_vec()),
+            sources,
+        };
+        Ok(self.mutation(
+            ResourceScriptDebugRequest {
+                document_id: request.document_id,
+                configuration,
+            },
+            configure_script_debug,
+        ))
+    }
+
+    #[napi(ts_return_type = "Promise<import('./ResourceEditResult').ResourceEditResult>")]
+    pub fn apply_edit(
+        &self,
+        env: Env,
+        request: NativeResourceDocumentIdRequest,
+        #[napi(ts_arg_type = "import('./ResourceEdit').ResourceEdit")] edit: Unknown<'_>,
+    ) -> napi::Result<AsyncTask<ResourceTask<ResourceApplyEditRequest, ResourceEditResult>>> {
+        let edit: ResourceEdit = env.from_js_value(edit)?;
+        Ok(self.mutation(
+            ResourceApplyEditRequest {
+                document_id: request.document_id,
+                edit,
+            },
+            apply_resource_edit,
+        ))
+    }
+
+    #[napi(
+        ts_return_type = "Promise<import('./ResourceBinaryEditResult').ResourceBinaryEditResult>"
+    )]
+    pub fn replace_archive_entry(
+        &self,
+        request: NativeResourceArchiveEntryRequest,
+        contents: Buffer,
+    ) -> AsyncTask<ResourceTask<ResourceBinaryMutationRequest, ResourceBinaryEditResult>> {
+        self.mutation(
+            ResourceBinaryMutationRequest {
+                document_id: request.document_id,
+                edit:        json!({
+                    "action": "replaceEntry",
+                    "resource": request.resource,
+                    "contents": BASE64.encode(contents),
+                    "bifIndex": request.bif_index,
+                }),
+            },
+            apply_binary_resource_edit,
+        )
+    }
+
+    #[napi(
+        ts_return_type = "Promise<import('./ResourceBinaryEditResult').ResourceBinaryEditResult>"
+    )]
+    pub fn add_archive_entry(
+        &self,
+        request: NativeResourceArchiveAddRequest,
+        contents: Buffer,
+    ) -> AsyncTask<ResourceTask<ResourceBinaryMutationRequest, ResourceBinaryEditResult>> {
+        self.mutation(
+            ResourceBinaryMutationRequest {
+                document_id: request.document_id,
+                edit:        json!({
+                    "action": "addEntry",
+                    "resource": request.resource,
+                    "contents": BASE64.encode(contents),
+                    "index": request.index,
+                    "algorithm": request.algorithm,
+                    "bifIndex": request.bif_index,
+                }),
+            },
+            apply_binary_resource_edit,
+        )
+    }
+
+    #[napi(
+        ts_return_type = "Promise<import('./ResourceBinaryEditResult').ResourceBinaryEditResult>"
+    )]
+    pub fn remove_archive_entry(
+        &self,
+        request: NativeResourceArchiveEntryRequest,
+    ) -> AsyncTask<ResourceTask<NativeResourceArchiveEntryRequest, ResourceBinaryEditResult>> {
+        self.mutation(request, remove_archive_entry)
+    }
+
+    #[napi(
+        ts_return_type = "Promise<import('./ResourceBinaryEditResult').ResourceBinaryEditResult>"
+    )]
+    pub fn replace_texture_pixels(
+        &self,
+        request: NativeResourceTextureReplaceRequest,
+        rgba: Buffer,
+    ) -> AsyncTask<ResourceTask<ResourceBinaryMutationRequest, ResourceBinaryEditResult>> {
+        self.mutation(
+            ResourceBinaryMutationRequest {
+                document_id: request.document_id,
+                edit:        json!({
+                    "action": "replaceTexture",
+                    "width": request.width,
+                    "height": request.height,
+                    "rgba": BASE64.encode(rgba),
+                }),
+            },
+            apply_binary_resource_edit,
+        )
+    }
+
+    #[napi(
+        ts_return_type = "Promise<import('./ResourceBinaryEditResult').ResourceBinaryEditResult>"
+    )]
+    pub fn apply_binary_undo(
+        &self,
+        request: NativeResourceBinaryUndoRequest,
+    ) -> AsyncTask<ResourceTask<NativeResourceBinaryUndoRequest, ResourceBinaryEditResult>> {
+        self.mutation(request, apply_binary_resource_undo)
+    }
+
+    /// Serializes the current document directly into a native byte buffer.
+    /// Exported resources can be large, so they must never transit through
+    /// JSON/base64.
+    #[napi(ts_return_type = "Promise<Uint8Array>")]
+    pub fn export_document(
+        &self,
+        document_id: String,
+        signal: Option<AbortSignal>,
+    ) -> AsyncTask<ResourceExportTask> {
         let cancellation = nwnrs_nwscript::CancellationToken::new();
         if let Some(signal) = &signal {
             let cancellation = cancellation.clone();
             signal.on_abort(move || cancellation.cancel());
         }
         AsyncTask::with_optional_signal(
-            ResourceEditorTask {
+            ResourceExportTask {
                 state: Arc::clone(&self.state),
-                method,
-                request_json,
+                document_id,
                 cancellation,
             },
             signal,
         )
     }
 
+    #[napi(ts_return_type = "Promise<import('./ResourceSaveResult').ResourceSaveResult>")]
+    pub fn save_document(
+        &self,
+        request: NativeResourceSaveRequest,
+    ) -> AsyncTask<ResourceTask<NativeResourceSaveRequest, ResourceSaveResult>> {
+        self.mutation(request, save_document)
+    }
+
+    #[napi(ts_return_type = "Promise<import('./ResourceSaveAsPlan').ResourceSaveAsPlan>")]
+    pub fn plan_save_document_as(
+        &self,
+        request: NativeResourcePathRequest,
+        signal: Option<AbortSignal>,
+    ) -> AsyncTask<ResourceTask<NativeResourcePathRequest, ResourceSaveAsPlan>> {
+        self.query(request, plan_save_document_as, signal)
+    }
+
+    #[napi(ts_return_type = "Promise<import('./ResourceSaveResult').ResourceSaveResult>")]
+    pub fn save_document_as(
+        &self,
+        request: NativeResourceSaveAsRequest,
+    ) -> AsyncTask<ResourceTask<NativeResourceSaveAsRequest, ResourceSaveResult>> {
+        self.mutation(request, save_document_as)
+    }
+
+    #[napi(ts_return_type = "Promise<import('./ResourceBackupResult').ResourceBackupResult>")]
+    pub fn backup_document(
+        &self,
+        request: NativeResourcePathRequest,
+    ) -> AsyncTask<ResourceTask<NativeResourcePathRequest, ResourceBackupResult>> {
+        self.mutation(request, backup_document)
+    }
+
+    #[napi(ts_return_type = "Promise<import('./ResourceSnapshot').ResourceSnapshot>")]
+    pub fn revert_document(
+        &self,
+        request: NativeResourceSnapshotRequest,
+    ) -> AsyncTask<ResourceTask<NativeResourceSnapshotRequest, ResourceSnapshot>> {
+        self.mutation(request, revert_document)
+    }
+
+    #[napi(ts_return_type = "Promise<import('./ResourceCloseResult').ResourceCloseResult>")]
+    pub fn close_document(
+        &self,
+        request: NativeResourceDocumentIdRequest,
+    ) -> AsyncTask<ResourceTask<NativeResourceDocumentIdRequest, ResourceCloseResult>> {
+        self.mutation(request, close_document)
+    }
+
     /// Reads an archive entry as a native byte buffer. Large model and texture
     /// payloads must not be expanded through JSON/base64 on their way to a
     /// renderer worker.
-    #[napi]
+    #[napi(ts_return_type = "Promise<Uint8Array>")]
     pub fn read_entry_bytes(
         &self,
         document_id: String,
@@ -125,21 +506,94 @@ impl ResourceEditorService {
             signal,
         )
     }
+
+    /// Decodes the open DDS, TGA, or PLT document into RGBA8 bytes without a
+    /// JSON/base64 expansion.
+    #[napi(ts_return_type = "Promise<Uint8Array>")]
+    pub fn read_texture_pixels(
+        &self,
+        document_id: String,
+        signal: Option<AbortSignal>,
+    ) -> AsyncTask<ResourceDocumentBytesTask> {
+        self.document_bytes_query(document_id, EditorContent::texture_pixels, signal)
+    }
+
+    /// Reads the interleaved value/layer bytes for an open PLT document.
+    #[napi(ts_return_type = "Promise<Uint8Array>")]
+    pub fn read_plt_pixels(
+        &self,
+        document_id: String,
+        signal: Option<AbortSignal>,
+    ) -> AsyncTask<ResourceDocumentBytesTask> {
+        self.document_bytes_query(document_id, EditorContent::plt_pixels, signal)
+    }
 }
 
-fn resource_method_is_mutation(method: &str) -> bool {
-    matches!(
-        method,
-        "openDocument"
-            | "openDocumentBytes"
-            | "configureScriptDebug"
-            | "applyEdit"
-            | "saveDocument"
-            | "saveDocumentAs"
-            | "backupDocument"
-            | "revertDocument"
-            | "closeDocument"
-    )
+impl ResourceEditorService {
+    fn document_bytes_query(
+        &self,
+        document_id: String,
+        operation: fn(&EditorContent) -> EditorResult<Vec<u8>>,
+        signal: Option<AbortSignal>,
+    ) -> AsyncTask<ResourceDocumentBytesTask> {
+        let cancellation = nwnrs_nwscript::CancellationToken::new();
+        if let Some(signal) = &signal {
+            let cancellation = cancellation.clone();
+            signal.on_abort(move || cancellation.cancel());
+        }
+        AsyncTask::with_optional_signal(
+            ResourceDocumentBytesTask {
+                state: Arc::clone(&self.state),
+                document_id,
+                operation,
+                cancellation,
+            },
+            signal,
+        )
+    }
+
+    fn query<Request, Response>(
+        &self,
+        request: Request,
+        operation: fn(&ResourceEditorState, Request) -> EditorResult<Response>,
+        signal: Option<AbortSignal>,
+    ) -> AsyncTask<ResourceTask<Request, Response>>
+    where
+        Request: Send + 'static,
+        Response: Serialize + Send + 'static,
+    {
+        let cancellation = nwnrs_nwscript::CancellationToken::new();
+        if let Some(signal) = &signal {
+            let cancellation = cancellation.clone();
+            signal.on_abort(move || cancellation.cancel());
+        }
+        AsyncTask::with_optional_signal(
+            ResourceTask {
+                state: Arc::clone(&self.state),
+                operation,
+                request: Some(request),
+                cancellation,
+            },
+            signal,
+        )
+    }
+
+    fn mutation<Request, Response>(
+        &self,
+        request: Request,
+        operation: fn(&ResourceEditorState, Request) -> EditorResult<Response>,
+    ) -> AsyncTask<ResourceTask<Request, Response>>
+    where
+        Request: Send + 'static,
+        Response: Serialize + Send + 'static,
+    {
+        AsyncTask::new(ResourceTask {
+            state: Arc::clone(&self.state),
+            operation,
+            request: Some(request),
+            cancellation: nwnrs_nwscript::CancellationToken::new(),
+        })
+    }
 }
 
 impl Default for ResourceEditorService {
@@ -148,11 +602,39 @@ impl Default for ResourceEditorService {
     }
 }
 
-pub struct ResourceEditorTask {
+pub struct ResourceTask<Request, Response> {
     state:        Arc<ResourceEditorState>,
-    method:       String,
-    request_json: String,
+    operation:    fn(&ResourceEditorState, Request) -> EditorResult<Response>,
+    request:      Option<Request>,
     cancellation: nwnrs_nwscript::CancellationToken,
+}
+
+pub struct ResourceOpenBytesRequest {
+    request:  NativeResourceOpenRequest,
+    contents: Vec<u8>,
+}
+
+pub struct ResourceScriptDebugRequest {
+    document_id:   String,
+    configuration: ResourceScriptDebugConfiguration,
+}
+
+#[derive(Default)]
+pub struct ResourceScriptDebugConfiguration {
+    ncs:      Option<Vec<u8>>,
+    ndb:      Option<Vec<u8>>,
+    langspec: Option<Vec<u8>>,
+    sources:  Option<BTreeMap<String, Vec<u8>>>,
+}
+
+pub struct ResourceApplyEditRequest {
+    document_id: String,
+    edit:        ResourceEdit,
+}
+
+pub struct ResourceBinaryMutationRequest {
+    document_id: String,
+    edit:        Value,
 }
 
 pub struct ResourceEntryReadTask {
@@ -160,6 +642,57 @@ pub struct ResourceEntryReadTask {
     document_id:  String,
     resource:     String,
     cancellation: nwnrs_nwscript::CancellationToken,
+}
+
+pub struct ResourceDocumentBytesTask {
+    state:        Arc<ResourceEditorState>,
+    document_id:  String,
+    operation:    fn(&EditorContent) -> EditorResult<Vec<u8>>,
+    cancellation: nwnrs_nwscript::CancellationToken,
+}
+
+pub struct ResourceExportTask {
+    state:        Arc<ResourceEditorState>,
+    document_id:  String,
+    cancellation: nwnrs_nwscript::CancellationToken,
+}
+
+impl Task for ResourceExportTask {
+    type JsValue = Buffer;
+    type Output = Vec<u8>;
+
+    fn compute(&mut self) -> napi::Result<Self::Output> {
+        self.cancellation
+            .check()
+            .map_err(|error| napi::Error::from_reason(error.to_string()))?;
+        let document = {
+            let documents = self.state.documents.lock().map_err(|error| {
+                napi::Error::from_reason(format!("resource document map is poisoned: {error}"))
+            })?;
+            Arc::clone(documents.get(&self.document_id).ok_or_else(|| {
+                napi::Error::from_reason(format!(
+                    "resource document is not open: {}",
+                    self.document_id
+                ))
+            })?)
+        };
+        let mut document = document.lock().map_err(|error| {
+            napi::Error::from_reason(format!("resource document is poisoned: {error}"))
+        })?;
+        let text_context = document.text_context;
+        let output = document
+            .content
+            .serialize(text_context)
+            .map_err(napi::Error::from_reason)?;
+        self.cancellation
+            .check()
+            .map_err(|error| napi::Error::from_reason(error.to_string()))?;
+        Ok(output)
+    }
+
+    fn resolve(&mut self, _env: napi::Env, output: Self::Output) -> napi::Result<Self::JsValue> {
+        Ok(output.into())
+    }
 }
 
 impl Task for ResourceEntryReadTask {
@@ -199,84 +732,80 @@ impl Task for ResourceEntryReadTask {
     }
 }
 
-impl Task for ResourceEditorTask {
-    type JsValue = String;
-    type Output = String;
+impl Task for ResourceDocumentBytesTask {
+    type JsValue = Buffer;
+    type Output = Vec<u8>;
 
     fn compute(&mut self) -> napi::Result<Self::Output> {
         self.cancellation
             .check()
             .map_err(|error| napi::Error::from_reason(error.to_string()))?;
-        let request: Value = serde_json::from_str(&self.request_json).map_err(|error| {
-            napi::Error::from_reason(format!("invalid editor request: {error}"))
+        let document = {
+            let documents = self.state.documents.lock().map_err(|error| {
+                napi::Error::from_reason(format!("resource document map is poisoned: {error}"))
+            })?;
+            Arc::clone(documents.get(&self.document_id).ok_or_else(|| {
+                napi::Error::from_reason(format!(
+                    "resource document is not open: {}",
+                    self.document_id
+                ))
+            })?)
+        };
+        let document = document.lock().map_err(|error| {
+            napi::Error::from_reason(format!("resource document is poisoned: {error}"))
         })?;
-        let response = execute_request(&self.state, &self.method, request)
-            .map_err(napi::Error::from_reason)?;
-        let encoded = serde_json::to_string(&response).map_err(|error| {
-            napi::Error::from_reason(format!("failed to encode response: {error}"))
-        })?;
+        let output = (self.operation)(&document.content).map_err(napi::Error::from_reason)?;
         self.cancellation
             .check()
             .map_err(|error| napi::Error::from_reason(error.to_string()))?;
-        Ok(encoded)
+        Ok(output)
     }
 
     fn resolve(&mut self, _env: napi::Env, output: Self::Output) -> napi::Result<Self::JsValue> {
-        Ok(output)
+        Ok(output.into())
     }
 }
 
-fn execute_request(
-    state: &ResourceEditorState,
-    method: &str,
-    request: Value,
-) -> EditorResult<Value> {
-    match method {
-        "openDocument" => open_document(state, request),
-        "openDocumentBytes" => open_document_bytes(state, request),
-        "snapshot" => with_document_mut(state, &request, |document| document.snapshot(&request)),
-        "gffNode" => with_document(state, &request, |document| document.gff_node(&request)),
-        "configureScriptDebug" => with_document_mut(state, &request, |document| {
-            document.configure_script_debug(&request)?;
-            document.snapshot(&request)
-        }),
-        "applyEdit" => with_document_mut(state, &request, |document| document.apply_edit(&request)),
-        "readEntry" => with_document(state, &request, |document| document.read_entry(&request)),
-        "exportDocument" => with_document_mut(state, &request, |document| {
-            Ok(json!({ "contents": BASE64.encode(document.content.serialize()?) }))
-        }),
-        "saveDocument" => with_document_mut(state, &request, |document| document.save(&request)),
-        "planSaveDocumentAs" => {
-            with_document(state, &request, |document| document.plan_save_as(&request))
-        }
-        "saveDocumentAs" => {
-            with_document_mut(state, &request, |document| document.save_as(&request))
-        }
-        "backupDocument" => {
-            with_document_mut(state, &request, |document| document.backup(&request))
-        }
-        "revertDocument" => {
-            with_document_mut(state, &request, |document| document.revert(&request))
-        }
-        "closeDocument" => close_document(state, &request),
-        _ => Err(format!("resource editor does not export {method}")),
+impl<Request, Response> Task for ResourceTask<Request, Response>
+where
+    Request: Send + 'static,
+    Response: Serialize + Send + 'static,
+{
+    type JsValue = Unknown<'static>;
+    type Output = Response;
+
+    fn compute(&mut self) -> napi::Result<Self::Output> {
+        self.cancellation
+            .check()
+            .map_err(|error| napi::Error::from_reason(error.to_string()))?;
+        let request = self
+            .request
+            .take()
+            .ok_or_else(|| napi::Error::from_reason("resource task was already executed"))?;
+        let response = (self.operation)(&self.state, request).map_err(napi::Error::from_reason)?;
+        self.cancellation
+            .check()
+            .map_err(|error| napi::Error::from_reason(error.to_string()))?;
+        Ok(response)
+    }
+
+    fn resolve(&mut self, env: napi::Env, output: Self::Output) -> napi::Result<Self::JsValue> {
+        env.to_js_value(&output)
     }
 }
 
-fn request_id(request: &Value) -> EditorResult<&str> {
-    request
-        .get("documentId")
-        .and_then(Value::as_str)
-        .filter(|value| !value.is_empty())
+fn require_document_id(document_id: &str) -> EditorResult<&str> {
+    (!document_id.is_empty())
+        .then_some(document_id)
         .ok_or_else(|| "documentId is required".to_string())
 }
 
-fn with_document(
+fn with_document<Response>(
     state: &ResourceEditorState,
-    request: &Value,
-    operation: impl FnOnce(&EditorDocument) -> EditorResult<Value>,
-) -> EditorResult<Value> {
-    let id = request_id(request)?;
+    document_id: &str,
+    operation: impl FnOnce(&EditorDocument) -> EditorResult<Response>,
+) -> EditorResult<Response> {
+    let id = require_document_id(document_id)?;
     let document = {
         let documents = state
             .documents
@@ -294,12 +823,12 @@ fn with_document(
     operation(&document)
 }
 
-fn with_document_mut(
+fn with_document_mut<Response>(
     state: &ResourceEditorState,
-    request: &Value,
-    operation: impl FnOnce(&mut EditorDocument) -> EditorResult<Value>,
-) -> EditorResult<Value> {
-    let id = request_id(request)?;
+    document_id: &str,
+    operation: impl FnOnce(&mut EditorDocument) -> EditorResult<Response>,
+) -> EditorResult<Response> {
+    let id = require_document_id(document_id)?;
     let document = {
         let documents = state
             .documents
@@ -317,33 +846,36 @@ fn with_document_mut(
     operation(&mut document)
 }
 
-fn close_document(state: &ResourceEditorState, request: &Value) -> EditorResult<Value> {
-    let id = request_id(request)?;
+fn close_document(
+    state: &ResourceEditorState,
+    request: NativeResourceDocumentIdRequest,
+) -> EditorResult<ResourceCloseResult> {
+    let id = require_document_id(&request.document_id)?;
     let mut documents = state
         .documents
         .lock()
         .map_err(|error| format!("resource document map is poisoned: {error}"))?;
     documents.remove(id);
-    Ok(json!({ "closed": true }))
+    Ok(ResourceCloseResult {
+        closed: true
+    })
 }
 
-fn open_document(state: &ResourceEditorState, request: Value) -> EditorResult<Value> {
-    let id = request_id(&request)?.to_string();
-    let path = required_path(&request, "path")?;
-    let read_only_origin = request
-        .get("readOnlyOrigin")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    let backup_path = request
-        .get("backupPath")
-        .and_then(Value::as_str)
-        .map(PathBuf::from);
+fn open_document(
+    state: &ResourceEditorState,
+    request: NativeResourceOpenRequest,
+) -> EditorResult<ResourceSnapshot> {
+    let id = require_document_id(&request.document_id)?.to_string();
+    let path = required_nonempty_path(&request.path, "path")?;
+    let read_only_origin = request.read_only_origin.unwrap_or(false);
+    let text_context = resource_text_context(&path, request.language.as_deref())?;
+    let backup_path = request.backup_path.map(PathBuf::from);
     let mut document = if let Some(backup_path) = backup_path {
-        EditorDocument::from_backup(path, backup_path, read_only_origin)?
+        EditorDocument::from_backup(path, backup_path, read_only_origin, text_context)?
     } else {
-        EditorDocument::open(path, read_only_origin)?
+        EditorDocument::open(path, read_only_origin, text_context)?
     };
-    let response = document.snapshot(&request)?;
+    let response = document.snapshot(&ResourceViewOptions::default())?;
     let mut documents = state
         .documents
         .lock()
@@ -352,13 +884,15 @@ fn open_document(state: &ResourceEditorState, request: Value) -> EditorResult<Va
     Ok(response)
 }
 
-fn open_document_bytes(state: &ResourceEditorState, request: Value) -> EditorResult<Value> {
-    let id = request_id(&request)?.to_string();
-    let path = required_path(&request, "path")?;
-    let bytes = BASE64
-        .decode(required_string(&request, "contents")?)
-        .map_err(|error| format!("invalid resource payload: {error}"))?;
-    let content = EditorContent::parse(&path, &bytes)?;
+fn open_document_bytes(
+    state: &ResourceEditorState,
+    request: ResourceOpenBytesRequest,
+) -> EditorResult<ResourceSnapshot> {
+    let id = require_document_id(&request.request.document_id)?.to_string();
+    let path = required_nonempty_path(&request.request.path, "path")?;
+    let text_context = resource_text_context(&path, request.request.language.as_deref())?;
+    let bytes = request.contents;
+    let content = EditorContent::parse(&path, &bytes, text_context)?;
     let fingerprint = FileFingerprint {
         size:           u64::try_from(bytes.len()).unwrap_or(u64::MAX),
         modified_nanos: 0,
@@ -371,14 +905,173 @@ fn open_document_bytes(state: &ResourceEditorState, request: Value) -> EditorRes
         related_fingerprints: BTreeMap::new(),
         revision: 0,
         content,
+        binary_inverses: HashMap::new(),
+        next_binary_token: 1,
+        text_context,
     };
-    let response = document.snapshot(&request)?;
+    let response = document.snapshot(&ResourceViewOptions::default())?;
     let mut documents = state
         .documents
         .lock()
         .map_err(|error| format!("resource document map is poisoned: {error}"))?;
     documents.insert(id, Arc::new(Mutex::new(document)));
     Ok(response)
+}
+
+#[derive(Clone, Debug, Default)]
+struct ResourceViewOptions {
+    offset: usize,
+    limit:  Option<usize>,
+    query:  String,
+}
+
+impl ResourceViewOptions {
+    fn from_snapshot(request: &NativeResourceSnapshotRequest) -> Self {
+        Self {
+            offset: usize::try_from(request.offset.unwrap_or(0)).unwrap_or(usize::MAX),
+            limit:  request
+                .limit
+                .map(|value| usize::try_from(value).unwrap_or(usize::MAX)),
+            query:  request.query.clone().unwrap_or_default(),
+        }
+    }
+
+    fn legacy_value(&self) -> Value {
+        json!({
+            "offset": self.offset,
+            "limit": self.limit,
+            "query": self.query,
+        })
+    }
+}
+
+fn typed_value<T: DeserializeOwned>(value: Value, context: &str) -> EditorResult<T> {
+    serde_json::from_value(value)
+        .map_err(|error| format!("failed to decode typed {context} response: {error}"))
+}
+
+fn required_nonempty_path(value: &str, field: &str) -> EditorResult<PathBuf> {
+    (!value.is_empty())
+        .then(|| PathBuf::from(value))
+        .ok_or_else(|| format!("{field} is required"))
+}
+
+fn snapshot_document(
+    state: &ResourceEditorState,
+    request: NativeResourceSnapshotRequest,
+) -> EditorResult<ResourceSnapshot> {
+    let options = ResourceViewOptions::from_snapshot(&request);
+    with_document_mut(state, &request.document_id, |document| {
+        document.snapshot(&options)
+    })
+}
+
+fn gff_document_node(
+    state: &ResourceEditorState,
+    request: NativeResourceGffNodeRequest,
+) -> EditorResult<JsonValue> {
+    with_document(state, &request.document_id, |document| {
+        document.gff_node(&request)
+    })
+}
+
+fn configure_script_debug(
+    state: &ResourceEditorState,
+    request: ResourceScriptDebugRequest,
+) -> EditorResult<ResourceSnapshot> {
+    with_document_mut(state, &request.document_id, |document| {
+        document.configure_script_debug(&request.configuration)?;
+        document.snapshot(&ResourceViewOptions::default())
+    })
+}
+
+fn apply_resource_edit(
+    state: &ResourceEditorState,
+    request: ResourceApplyEditRequest,
+) -> EditorResult<ResourceEditResult> {
+    with_document_mut(state, &request.document_id, |document| {
+        document.apply_edit(&request.edit)
+    })
+}
+
+fn apply_binary_resource_edit(
+    state: &ResourceEditorState,
+    request: ResourceBinaryMutationRequest,
+) -> EditorResult<ResourceBinaryEditResult> {
+    with_document_mut(state, &request.document_id, |document| {
+        document.apply_binary_edit(&request.edit)
+    })
+}
+
+fn remove_archive_entry(
+    state: &ResourceEditorState,
+    request: NativeResourceArchiveEntryRequest,
+) -> EditorResult<ResourceBinaryEditResult> {
+    with_document_mut(state, &request.document_id, |document| {
+        document.apply_binary_edit(&json!({
+            "action": "removeEntry",
+            "resource": request.resource,
+            "bifIndex": request.bif_index,
+        }))
+    })
+}
+
+fn apply_binary_resource_undo(
+    state: &ResourceEditorState,
+    request: NativeResourceBinaryUndoRequest,
+) -> EditorResult<ResourceBinaryEditResult> {
+    with_document_mut(state, &request.document_id, |document| {
+        document.apply_binary_undo(&request.token)
+    })
+}
+
+fn save_document(
+    state: &ResourceEditorState,
+    request: NativeResourceSaveRequest,
+) -> EditorResult<ResourceSaveResult> {
+    with_document_mut(state, &request.document_id, |document| {
+        document.save(request.force.unwrap_or(false))
+    })
+}
+
+fn plan_save_document_as(
+    state: &ResourceEditorState,
+    request: NativeResourcePathRequest,
+) -> EditorResult<ResourceSaveAsPlan> {
+    let path = required_nonempty_path(&request.path, "path")?;
+    with_document(state, &request.document_id, |document| {
+        document.plan_save_as(&path)
+    })
+}
+
+fn save_document_as(
+    state: &ResourceEditorState,
+    request: NativeResourceSaveAsRequest,
+) -> EditorResult<ResourceSaveResult> {
+    let path = required_nonempty_path(&request.path, "path")?;
+    with_document_mut(state, &request.document_id, |document| {
+        document.save_as(path, request.confirmation_token.as_deref())
+    })
+}
+
+fn backup_document(
+    state: &ResourceEditorState,
+    request: NativeResourcePathRequest,
+) -> EditorResult<ResourceBackupResult> {
+    let path = required_nonempty_path(&request.path, "path")?;
+    with_document_mut(state, &request.document_id, |document| {
+        document.backup(path)
+    })
+}
+
+fn revert_document(
+    state: &ResourceEditorState,
+    request: NativeResourceSnapshotRequest,
+) -> EditorResult<ResourceSnapshot> {
+    let options = ResourceViewOptions::from_snapshot(&request);
+    with_document_mut(state, &request.document_id, |document| {
+        document.revert(&options)
+    })
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -463,6 +1156,14 @@ struct EditorDocument {
     related_fingerprints: BTreeMap<PathBuf, FileFingerprint>,
     revision:             u64,
     content:              EditorContent,
+    binary_inverses:      HashMap<u64, StoredBinaryInverse>,
+    next_binary_token:    u64,
+    text_context:         NwnTextContext,
+}
+
+struct StoredBinaryInverse {
+    expected_revision: u64,
+    edit:              Value,
 }
 
 enum EditorContent {
@@ -504,11 +1205,15 @@ struct ScriptDebugDocument {
 }
 
 impl EditorDocument {
-    fn open(path: PathBuf, read_only_origin: bool) -> EditorResult<Self> {
+    fn open(
+        path: PathBuf,
+        read_only_origin: bool,
+        text_context: NwnTextContext,
+    ) -> EditorResult<Self> {
         let bytes = fs::read(&path)
             .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
         let fingerprint = FileFingerprint::from_bytes(&path, &bytes)?;
-        let content = EditorContent::parse(&path, &bytes)?;
+        let content = EditorContent::parse(&path, &bytes, text_context)?;
         let related_fingerprints = content.related_fingerprints(&path)?;
         Ok(Self {
             path,
@@ -517,6 +1222,9 @@ impl EditorDocument {
             related_fingerprints,
             revision: 0,
             content,
+            binary_inverses: HashMap::new(),
+            next_binary_token: 1,
+            text_context,
         })
     }
 
@@ -524,6 +1232,7 @@ impl EditorDocument {
         path: PathBuf,
         backup_path: PathBuf,
         read_only_origin: bool,
+        text_context: NwnTextContext,
     ) -> EditorResult<Self> {
         let mut backup = File::open(&backup_path)
             .map_err(|error| format!("failed to read backup {}: {error}", backup_path.display()))?;
@@ -535,7 +1244,9 @@ impl EditorDocument {
         if is_streaming_backup {
             let header = read_backup_header(&mut backup)?;
             let content = match &header.payload {
-                BackupPayload::Single => EditorContent::parse_streaming_backup(&path, &mut backup)?,
+                BackupPayload::Single => {
+                    EditorContent::parse_streaming_backup(&path, &mut backup, text_context)?
+                }
                 BackupPayload::KeyBundle {
                     files,
                 } => EditorContent::parse_streaming_key_backup(&mut backup, files)?,
@@ -548,6 +1259,9 @@ impl EditorDocument {
                 related_fingerprints: header.related_fingerprints,
                 revision: header.revision,
                 content,
+                binary_inverses: HashMap::new(),
+                next_binary_token: 1,
+                text_context,
             });
         }
 
@@ -564,7 +1278,7 @@ impl EditorDocument {
         let bytes = BASE64
             .decode(envelope.contents)
             .map_err(|error| format!("invalid resource backup payload: {error}"))?;
-        let content = EditorContent::parse_backup(&path, &bytes)?;
+        let content = EditorContent::parse_backup(&path, &bytes, text_context)?;
         Ok(Self {
             path,
             read_only_origin,
@@ -572,24 +1286,33 @@ impl EditorDocument {
             related_fingerprints: envelope.related_fingerprints,
             revision: envelope.revision,
             content,
+            binary_inverses: HashMap::new(),
+            next_binary_token: 1,
+            text_context,
         })
     }
 
-    fn snapshot(&mut self, request: &Value) -> EditorResult<Value> {
-        let data = self.content.snapshot(request)?;
-        Ok(json!({
-            "path": self.path,
-            "kind": self.content.kind(),
-            "readOnlyOrigin": self.read_only_origin,
-            "revision": self.revision,
-            "fingerprint": self.fingerprint,
-            "data": data,
-        }))
+    fn snapshot(&mut self, options: &ResourceViewOptions) -> EditorResult<ResourceSnapshot> {
+        let data = self.content.snapshot(&options.legacy_value())?;
+        typed_value(
+            json!({
+                "path": self.path,
+                "kind": self.content.kind(),
+                "readOnlyOrigin": self.read_only_origin,
+                "revision": self.revision,
+                "fingerprint": self.fingerprint,
+                "data": data,
+            }),
+            "resource snapshot",
+        )
     }
 
-    fn configure_script_debug(&mut self, request: &Value) -> EditorResult<()> {
+    fn configure_script_debug(
+        &mut self,
+        configuration: &ResourceScriptDebugConfiguration,
+    ) -> EditorResult<()> {
         match &mut self.content {
-            EditorContent::ScriptDebug(value) => value.configure(request),
+            EditorContent::ScriptDebug(value) => value.configure(configuration),
             _ => Err(format!(
                 "{} is not an NCS/NDB document",
                 self.content.kind()
@@ -597,45 +1320,112 @@ impl EditorDocument {
         }
     }
 
-    fn gff_node(&self, request: &Value) -> EditorResult<Value> {
+    fn gff_node(&self, request: &NativeResourceGffNodeRequest) -> EditorResult<JsonValue> {
+        let path = request
+            .path
+            .iter()
+            .map(|segment| match segment {
+                Either::A(field) => Value::String(field.clone()),
+                Either::B(index) => Value::from(*index),
+            })
+            .collect::<Vec<_>>();
+        let value = json!({
+            "path": path,
+            "offset": request.offset.unwrap_or(0),
+            "limit": request.limit,
+        });
         match &self.content {
-            EditorContent::Gff(value) => gff_node_page(&value.root, request),
+            EditorContent::Gff(document) => {
+                typed_value(gff_node_page(&document.root, &value)?, "GFF node")
+            }
             _ => Err(format!("{} is not a GFF document", self.content.kind())),
         }
     }
 
-    fn apply_edit(&mut self, request: &Value) -> EditorResult<Value> {
-        let edit = request
-            .get("edit")
-            .ok_or_else(|| "edit is required".to_string())?;
+    fn apply_edit(&mut self, edit: &ResourceEdit) -> EditorResult<ResourceEditResult> {
+        let edit = serde_json::to_value(edit).map_err(display_error)?;
+        let (label, inverse) = self.content.apply_edit(&edit)?;
+        self.revision = self.revision.saturating_add(1);
+        Ok(ResourceEditResult {
+            label,
+            inverse: typed_value(inverse, "inverse resource edit")?,
+            revision: self.revision,
+            snapshot: self.snapshot(&ResourceViewOptions::default())?,
+        })
+    }
+
+    fn apply_binary_edit(&mut self, edit: &Value) -> EditorResult<ResourceBinaryEditResult> {
+        let token_id = self.next_binary_token;
+        let next_token = token_id
+            .checked_add(1)
+            .ok_or_else(|| "binary undo token space is exhausted".to_string())?;
+        let previous_revision = self.revision;
         let (label, inverse) = self.content.apply_edit(edit)?;
         self.revision = self.revision.saturating_add(1);
-        let snapshot = self.snapshot(request)?;
-        Ok(json!({
-            "label": label,
-            "inverse": inverse,
-            "revision": self.revision,
-            "snapshot": snapshot,
-        }))
+        let snapshot = match self.snapshot(&ResourceViewOptions::default()) {
+            Ok(snapshot) => snapshot,
+            Err(error) => {
+                let rollback = self.content.apply_edit(&inverse);
+                self.revision = previous_revision;
+                return match rollback {
+                    Ok(_) => Err(error),
+                    Err(rollback_error) => Err(format!(
+                        "{error}; additionally failed to roll back binary edit: {rollback_error}"
+                    )),
+                };
+            }
+        };
+        let inverse_token = format!("{token_id:016x}");
+        self.binary_inverses.insert(
+            token_id,
+            StoredBinaryInverse {
+                expected_revision: self.revision,
+                edit:              inverse,
+            },
+        );
+        self.next_binary_token = next_token;
+        Ok(ResourceBinaryEditResult {
+            label,
+            inverse_token,
+            revision: self.revision,
+            snapshot,
+        })
     }
 
-    fn read_entry(&self, request: &Value) -> EditorResult<Value> {
-        let resource = required_string(request, "resource")?;
-        let bytes = self.content.read_entry(resource)?;
-        Ok(json!({ "resource": resource, "contents": BASE64.encode(bytes) }))
+    fn apply_binary_undo(&mut self, token: &str) -> EditorResult<ResourceBinaryEditResult> {
+        let token_id = u64::from_str_radix(token, 16)
+            .ok()
+            .filter(|_| token.len() == 16)
+            .ok_or_else(|| "binary undo token is malformed".to_string())?;
+        let stored = self
+            .binary_inverses
+            .remove(&token_id)
+            .ok_or_else(|| "binary undo token is unknown or was already consumed".to_string())?;
+        if stored.expected_revision != self.revision {
+            let expected = stored.expected_revision;
+            self.binary_inverses.insert(token_id, stored);
+            return Err(format!(
+                "binary undo token belongs to revision {expected}, but the document is at \
+                 revision {}",
+                self.revision
+            ));
+        }
+        match self.apply_binary_edit(&stored.edit) {
+            Ok(result) => Ok(result),
+            Err(error) => {
+                self.binary_inverses.insert(token_id, stored);
+                Err(error)
+            }
+        }
     }
 
-    fn save(&mut self, request: &Value) -> EditorResult<Value> {
+    fn save(&mut self, force: bool) -> EditorResult<ResourceSaveResult> {
         if self.read_only_origin {
             return Err(
                 "READ_ONLY_ORIGIN: installed game resources must be saved as an override"
                     .to_string(),
             );
         }
-        let force = request
-            .get("force")
-            .and_then(Value::as_bool)
-            .unwrap_or(false);
         if !force {
             if self.path.exists() && !self.fingerprint.matches_path(&self.path)? {
                 return Err(
@@ -652,28 +1442,38 @@ impl EditorDocument {
             }
         }
         self.persist_to(self.path.clone())?;
-        Ok(json!({ "saved": true, "path": self.path, "fingerprint": self.fingerprint }))
+        typed_value(
+            json!({ "saved": true, "path": self.path, "fingerprint": self.fingerprint }),
+            "resource save",
+        )
     }
 
-    fn save_as(&mut self, request: &Value) -> EditorResult<Value> {
-        let path = required_path(request, "path")?;
+    fn save_as(
+        &mut self,
+        path: PathBuf,
+        confirmation_token: Option<&str>,
+    ) -> EditorResult<ResourceSaveResult> {
         let plan = self.build_save_as_plan(&path)?;
-        if let Some(expected) = plan.confirmation_token.as_deref() {
-            let supplied = request.get("confirmationToken").and_then(Value::as_str);
-            if supplied != Some(expected) {
-                let encoded = serde_json::to_string(&plan).map_err(display_error)?;
-                return Err(format!("SAVE_AS_CONFIRMATION_REQUIRED:{encoded}"));
-            }
+        if let Some(expected) = plan.confirmation_token.as_deref()
+            && confirmation_token != Some(expected)
+        {
+            let encoded = serde_json::to_string(&plan).map_err(display_error)?;
+            return Err(format!("SAVE_AS_CONFIRMATION_REQUIRED:{encoded}"));
         }
         self.persist_to(path.clone())?;
         self.path = path;
         self.read_only_origin = false;
-        Ok(json!({ "saved": true, "path": self.path, "fingerprint": self.fingerprint }))
+        typed_value(
+            json!({ "saved": true, "path": self.path, "fingerprint": self.fingerprint }),
+            "resource save-as",
+        )
     }
 
-    fn plan_save_as(&self, request: &Value) -> EditorResult<Value> {
-        let path = required_path(request, "path")?;
-        serde_json::to_value(self.build_save_as_plan(&path)?).map_err(display_error)
+    fn plan_save_as(&self, path: &Path) -> EditorResult<ResourceSaveAsPlan> {
+        typed_value(
+            serde_json::to_value(self.build_save_as_plan(path)?).map_err(display_error)?,
+            "resource save-as plan",
+        )
     }
 
     fn build_save_as_plan(&self, path: &Path) -> EditorResult<SaveAsPlan> {
@@ -724,7 +1524,9 @@ impl EditorDocument {
     fn persist_to(&mut self, path: PathBuf) -> EditorResult<()> {
         match &mut self.content {
             EditorContent::Key(key) => key.write_atomic(&path)?,
-            content => atomic_write_with(&path, |output| content.write_for_path(&path, output))?,
+            content => atomic_write_with(&path, |output| {
+                content.write_for_path(&path, output, self.text_context)
+            })?,
         }
         self.content.update_path_encoding(&path)?;
         self.fingerprint = FileFingerprint::read(&path)?;
@@ -732,8 +1534,7 @@ impl EditorDocument {
         Ok(())
     }
 
-    fn backup(&mut self, request: &Value) -> EditorResult<Value> {
-        let path = required_path(request, "path")?;
+    fn backup(&mut self, path: PathBuf) -> EditorResult<ResourceBackupResult> {
         match &mut self.content {
             EditorContent::Key(key) => key.write_backup(
                 &path,
@@ -750,20 +1551,23 @@ impl EditorDocument {
                 };
                 atomic_write_with(&path, |output| {
                     write_backup_header(output, &header)?;
-                    content.write_backup_payload(output)
+                    content.write_backup_payload(output, self.text_context)
                 })?;
             }
         }
-        Ok(json!({ "backedUp": true, "path": path }))
+        Ok(ResourceBackupResult {
+            backed_up: true,
+            path:      nwnrs_nwscript::physical_path_display(&path),
+        })
     }
 
-    fn revert(&mut self, request: &Value) -> EditorResult<Value> {
-        let replacement = Self::open(self.path.clone(), self.read_only_origin)?;
+    fn revert(&mut self, options: &ResourceViewOptions) -> EditorResult<ResourceSnapshot> {
+        let replacement = Self::open(self.path.clone(), self.read_only_origin, self.text_context)?;
         self.fingerprint = replacement.fingerprint;
         self.related_fingerprints = replacement.related_fingerprints;
         self.content = replacement.content;
         self.revision = self.revision.saturating_add(1);
-        self.snapshot(request)
+        self.snapshot(options)
     }
 }
 
@@ -812,7 +1616,7 @@ impl Drop for TemporaryStorage {
 }
 
 impl EditorContent {
-    fn parse(path: &Path, bytes: &[u8]) -> EditorResult<Self> {
+    fn parse(path: &Path, bytes: &[u8], text_context: NwnTextContext) -> EditorResult<Self> {
         let extension = path
             .extension()
             .and_then(|value| value.to_str())
@@ -821,7 +1625,9 @@ impl EditorContent {
         let mut cursor = Cursor::new(bytes.to_vec());
         if let Some(encoding) = gff_source_encoding(path) {
             let root = match encoding {
-                GffSourceEncoding::Binary => read_gff_root(&mut cursor).map_err(display_error)?,
+                GffSourceEncoding::Binary => {
+                    read_gff_root(&mut cursor, text_context).map_err(display_error)?
+                }
                 GffSourceEncoding::Json => {
                     gff_root_from_json_bytes(bytes).map_err(display_error)?
                 }
@@ -832,7 +1638,7 @@ impl EditorContent {
             }));
         }
         match resource_handler(&extension) {
-            Some("2da") => read_twoda(&mut cursor)
+            Some("2da") => read_twoda(&mut cursor, text_context)
                 .map(Self::TwoDa)
                 .map_err(display_error),
             Some("tlk") => read_single_tlk(cursor, CachePolicy::Use)
@@ -858,7 +1664,7 @@ impl EditorContent {
         }
     }
 
-    fn parse_backup(path: &Path, bytes: &[u8]) -> EditorResult<Self> {
+    fn parse_backup(path: &Path, bytes: &[u8], text_context: NwnTextContext) -> EditorResult<Self> {
         if path
             .extension()
             .and_then(|value| value.to_str())
@@ -910,10 +1716,14 @@ impl EditorContent {
             let _ = fs::remove_dir_all(&temporary);
             return result;
         }
-        Self::parse(path, bytes)
+        Self::parse(path, bytes, text_context)
     }
 
-    fn parse_streaming_backup(path: &Path, backup: &mut File) -> EditorResult<Self> {
+    fn parse_streaming_backup(
+        path: &Path,
+        backup: &mut File,
+        text_context: NwnTextContext,
+    ) -> EditorResult<Self> {
         if path
             .extension()
             .and_then(|value| value.to_str())
@@ -959,7 +1769,7 @@ impl EditorContent {
         backup
             .read_to_end(&mut bytes)
             .map_err(|error| format!("failed to read resource backup payload: {error}"))?;
-        Self::parse(path, &bytes)
+        Self::parse(path, &bytes, text_context)
     }
 
     fn parse_streaming_key_backup(backup: &mut File, files: &[BackupFile]) -> EditorResult<Self> {
@@ -1072,7 +1882,6 @@ impl EditorContent {
             Self::Dds(value) => texture_snapshot(
                 value.width,
                 value.height,
-                &value.decode_rgba8().map_err(display_error)?,
                 json!({
                     "format": match value.format { DdsFormat::Dxt1 => "DXT1", DdsFormat::Dxt5 => "DXT5" },
                     "mipCount": value.mip_count(),
@@ -1082,7 +1891,6 @@ impl EditorContent {
             Self::Tga(value) => texture_snapshot(
                 u32::from(value.width),
                 u32::from(value.height),
-                &value.decode_rgba8().map_err(display_error)?,
                 json!({
                     "pixelDepth": value.pixel_depth,
                     "imageType": format!("{:?}", value.image_type),
@@ -1090,18 +1898,7 @@ impl EditorContent {
                 }),
             ),
             Self::Plt(value) => {
-                let rgba = value.render_rgba8(&PltRenderSpec::default()).map_err(display_error)?;
-                let pixel_data = value
-                    .pixels
-                    .iter()
-                    .flat_map(|pixel| [pixel.value, pixel.layer_id])
-                    .collect::<Vec<_>>();
-                texture_snapshot(
-                    value.width,
-                    value.height,
-                    &rgba,
-                    json!({ "pixelData": BASE64.encode(pixel_data), "format": "PLT" }),
-                )
+                texture_snapshot(value.width, value.height, json!({ "format": "PLT" }))
             }
             Self::Erf(value) => Ok(value.snapshot(request)),
             Self::Key(value) => Ok(value.snapshot(request)),
@@ -1188,18 +1985,63 @@ impl EditorContent {
         }
     }
 
-    fn serialize(&mut self) -> EditorResult<Vec<u8>> {
+    fn texture_pixels(&self) -> EditorResult<Vec<u8>> {
+        let (width, height, pixels) = match self {
+            Self::Dds(value) => (
+                value.width,
+                value.height,
+                value.decode_rgba8().map_err(display_error)?,
+            ),
+            Self::Tga(value) => (
+                u32::from(value.width),
+                u32::from(value.height),
+                value.decode_rgba8().map_err(display_error)?,
+            ),
+            Self::Plt(value) => (
+                value.width,
+                value.height,
+                value
+                    .render_rgba8(&PltRenderSpec::default())
+                    .map_err(display_error)?,
+            ),
+            _ => return Err(format!("{} is not a texture document", self.kind())),
+        };
+        let expected = texture_byte_length(width, height)?;
+        if pixels.len() != expected {
+            return Err(format!(
+                "texture expected {expected} RGBA bytes, got {}",
+                pixels.len()
+            ));
+        }
+        Ok(pixels)
+    }
+
+    fn plt_pixels(&self) -> EditorResult<Vec<u8>> {
+        let Self::Plt(value) = self else {
+            return Err(format!("{} is not a PLT document", self.kind()));
+        };
+        Ok(value
+            .pixels
+            .iter()
+            .flat_map(|pixel| [pixel.value, pixel.layer_id])
+            .collect())
+    }
+
+    fn serialize(&mut self, text_context: NwnTextContext) -> EditorResult<Vec<u8>> {
         let mut cursor = Cursor::new(Vec::new());
         match self {
             Self::Gff(value) => match value.encoding {
                 GffSourceEncoding::Binary => {
-                    write_gff_root(&mut cursor, &value.root).map_err(display_error)?;
+                    write_gff_root(&mut cursor, &value.root, text_context)
+                        .map_err(display_error)?;
                 }
                 GffSourceEncoding::Json => {
                     return gff_root_to_json_bytes(&value.root).map_err(display_error)
                 }
             },
-            Self::TwoDa(value) => write_twoda(&mut cursor, value, false).map_err(display_error)?,
+            Self::TwoDa(value) => {
+                write_twoda(&mut cursor, value, false, text_context).map_err(display_error)?;
+            }
             Self::Tlk(value) => write_single_tlk(&mut cursor, value).map_err(display_error)?,
             Self::Dds(value) => write_dds(&mut cursor, value).map_err(display_error)?,
             Self::Tga(value) => write_tga(&mut cursor, value).map_err(display_error)?,
@@ -1213,13 +2055,18 @@ impl EditorContent {
         Ok(cursor.into_inner())
     }
 
-    fn write_for_path(&mut self, path: &Path, output: &mut File) -> EditorResult<()> {
+    fn write_for_path(
+        &mut self,
+        path: &Path,
+        output: &mut File,
+        text_context: NwnTextContext,
+    ) -> EditorResult<()> {
         match self {
             Self::Gff(value) => match gff_source_encoding(path)
                 .ok_or_else(|| format!("{} is not a supported GFF destination", path.display()))?
             {
                 GffSourceEncoding::Binary => {
-                    write_gff_root(output, &value.root).map_err(display_error)
+                    write_gff_root(output, &value.root, text_context).map_err(display_error)
                 }
                 GffSourceEncoding::Json => output
                     .write_all(&gff_root_to_json_bytes(&value.root).map_err(display_error)?)
@@ -1230,7 +2077,9 @@ impl EditorContent {
                 self.kind(),
                 path.display()
             )),
-            Self::TwoDa(value) => write_twoda(output, value, false).map_err(display_error),
+            Self::TwoDa(value) => {
+                write_twoda(output, value, false, text_context).map_err(display_error)
+            }
             Self::Tlk(value) => write_single_tlk(output, value).map_err(display_error),
             Self::Dds(value) => write_dds(output, value).map_err(display_error),
             Self::Tga(value) => write_tga(output, value).map_err(display_error),
@@ -1251,17 +2100,23 @@ impl EditorContent {
         Ok(())
     }
 
-    fn write_backup_payload(&mut self, output: &mut File) -> EditorResult<()> {
+    fn write_backup_payload(
+        &mut self,
+        output: &mut File,
+        text_context: NwnTextContext,
+    ) -> EditorResult<()> {
         match self {
             Self::Gff(value) => match value.encoding {
                 GffSourceEncoding::Binary => {
-                    write_gff_root(output, &value.root).map_err(display_error)
+                    write_gff_root(output, &value.root, text_context).map_err(display_error)
                 }
                 GffSourceEncoding::Json => output
                     .write_all(&gff_root_to_json_bytes(&value.root).map_err(display_error)?)
                     .map_err(display_error),
             },
-            Self::TwoDa(value) => write_twoda(output, value, false).map_err(display_error),
+            Self::TwoDa(value) => {
+                write_twoda(output, value, false, text_context).map_err(display_error)
+            }
             Self::Tlk(value) => write_single_tlk(output, value).map_err(display_error),
             Self::Dds(value) => write_dds(output, value).map_err(display_error),
             Self::Tga(value) => write_tga(output, value).map_err(display_error),
@@ -1301,40 +2156,26 @@ impl ScriptDebugDocument {
         })
     }
 
-    fn configure(&mut self, request: &Value) -> EditorResult<()> {
-        if let Some(encoded) = request.get("ncs").and_then(Value::as_str) {
-            let bytes = BASE64
-                .decode(encoded)
-                .map_err(|error| format!("invalid NCS companion payload: {error}"))?;
-            decode_ncs_header(&bytes).map_err(display_error)?;
-            decode_ncs_instructions(&bytes).map_err(display_error)?;
-            self.ncs = Some(bytes);
+    fn configure(&mut self, configuration: &ResourceScriptDebugConfiguration) -> EditorResult<()> {
+        if let Some(bytes) = &configuration.ncs {
+            decode_ncs_header(bytes).map_err(display_error)?;
+            decode_ncs_instructions(bytes).map_err(display_error)?;
+            self.ncs = Some(bytes.clone());
         }
-        if let Some(encoded) = request.get("ndb").and_then(Value::as_str) {
-            let bytes = BASE64
-                .decode(encoded)
-                .map_err(|error| format!("invalid NDB companion payload: {error}"))?;
+        if let Some(bytes) = &configuration.ndb {
             self.ndb = Some(read_ndb(&mut Cursor::new(bytes)).map_err(display_error)?);
         }
-        if let Some(encoded) = request.get("langspec").and_then(Value::as_str) {
-            let bytes = BASE64
-                .decode(encoded)
-                .map_err(|error| format!("invalid nwscript.nss payload: {error}"))?;
+        if let Some(bytes) = &configuration.langspec {
             self.langspec =
-                Some(parse_langspec_bytes("nwscript.nss", &bytes).map_err(display_error)?);
+                Some(parse_langspec_bytes("nwscript.nss", bytes).map_err(display_error)?);
         }
-        if let Some(source_values) = request.get("sources").and_then(Value::as_object) {
+        if let Some(source_values) = &configuration.sources {
             self.sources.clear();
-            for (name, encoded) in source_values {
-                let encoded = encoded
-                    .as_str()
-                    .ok_or_else(|| format!("source payload for {name} must be base64 text"))?;
-                let bytes = BASE64
-                    .decode(encoded)
-                    .map_err(|error| format!("invalid source payload for {name}: {error}"))?;
+            for (name, bytes) in source_values {
                 self.sources.insert(
                     name.clone(),
-                    String::from_utf8_lossy(&bytes)
+                    NwnText::decode(bytes, LegacyEncoding::Windows1252)
+                        .display_text()
                         .lines()
                         .map(str::to_string)
                         .collect(),
@@ -1882,10 +2723,6 @@ fn required_string<'a>(value: &'a Value, field: &str) -> EditorResult<&'a str> {
         .ok_or_else(|| format!("{field} is required"))
 }
 
-fn required_path(value: &Value, field: &str) -> EditorResult<PathBuf> {
-    required_string(value, field).map(PathBuf::from)
-}
-
 fn page_limit(request: &Value) -> usize {
     request
         .get("limit")
@@ -2077,8 +2914,17 @@ fn portable_relative_path(path: &Path) -> EditorResult<String> {
     Ok(parts.join("/"))
 }
 
-fn texture_snapshot(width: u32, height: u32, rgba: &[u8], metadata: Value) -> EditorResult<Value> {
-    let expected = usize::try_from(width)
+fn texture_snapshot(width: u32, height: u32, metadata: Value) -> EditorResult<Value> {
+    texture_byte_length(width, height)?;
+    Ok(json!({
+        "width": width,
+        "height": height,
+        "metadata": metadata,
+    }))
+}
+
+fn texture_byte_length(width: u32, height: u32) -> EditorResult<usize> {
+    usize::try_from(width)
         .ok()
         .and_then(|width| {
             usize::try_from(height)
@@ -2086,19 +2932,7 @@ fn texture_snapshot(width: u32, height: u32, rgba: &[u8], metadata: Value) -> Ed
                 .and_then(|height| width.checked_mul(height))
         })
         .and_then(|pixels| pixels.checked_mul(4))
-        .ok_or_else(|| "texture dimensions overflow".to_string())?;
-    if rgba.len() != expected {
-        return Err(format!(
-            "texture expected {expected} RGBA bytes, got {}",
-            rgba.len()
-        ));
-    }
-    Ok(json!({
-        "width": width,
-        "height": height,
-        "rgba": BASE64.encode(rgba),
-        "metadata": metadata,
-    }))
+        .ok_or_else(|| "texture dimensions overflow".to_string())
 }
 
 fn decode_texture_edit(edit: &Value) -> EditorResult<(u32, u32, Vec<u8>)> {
@@ -2117,15 +2951,7 @@ fn decode_texture_edit(edit: &Value) -> EditorResult<(u32, u32, Vec<u8>)> {
     let rgba = BASE64
         .decode(required_string(edit, "rgba")?)
         .map_err(|error| format!("invalid RGBA payload: {error}"))?;
-    let expected = usize::try_from(width)
-        .ok()
-        .and_then(|width| {
-            usize::try_from(height)
-                .ok()
-                .and_then(|height| width.checked_mul(height))
-        })
-        .and_then(|pixels| pixels.checked_mul(4))
-        .ok_or_else(|| "texture dimensions overflow".to_string())?;
+    let expected = texture_byte_length(width, height)?;
     if rgba.len() != expected {
         return Err(format!(
             "texture expected {expected} RGBA bytes, got {}",
@@ -2208,18 +3034,44 @@ fn apply_plt_edit(value: &mut PltTexture, edit: &Value) -> EditorResult<(String,
 }
 
 fn twoda_to_json(value: &TwoDa) -> Value {
+    let encoding = value.encoding();
     let rows = value
         .rows
         .iter()
         .enumerate()
         .map(|(index, row)| {
             json!({
-                "label": value.row_label(index).unwrap_or(""),
-                "cells": row,
+                "label": display_legacy_preserving(
+                    encoding,
+                    value.row_label(index).unwrap_or(""),
+                ),
+                "cells": row.iter().map(|cell| cell.as_ref().map(|text| {
+                    display_legacy_preserving(encoding, text)
+                })).collect::<Vec<_>>(),
+                "nativeCells": row.iter().map(|cell| cell.as_ref().map(|text| {
+                    native_text_from_internal(encoding, text)
+                })).collect::<Vec<_>>(),
             })
         })
         .collect::<Vec<_>>();
-    json!({ "columns": value.columns(), "default": value.default(), "rows": rows })
+    json!({
+        "columns": value.columns().iter().map(|column| {
+            display_legacy_preserving(encoding, column)
+        }).collect::<Vec<_>>(),
+        "default": value.default().map(|text| display_legacy_preserving(encoding, &text)),
+        "rows": rows,
+    })
+}
+
+fn native_text_from_internal(encoding: LegacyEncoding, value: &str) -> Value {
+    match nwnrs_types::encoding::encode_legacy_preserving(encoding, value) {
+        Ok(bytes) => nwn_text_to_json(&NwnText::decode(&bytes, encoding)),
+        Err(error) => json!({
+            "encoding": encoding.label(),
+            "display": value,
+            "segments": [{ "kind": "encodingError", "message": error.to_string() }],
+        }),
+    }
 }
 
 fn apply_twoda_edit(
@@ -2339,10 +3191,13 @@ fn apply_tlk_edit(
                 .and_then(|v| u32::try_from(v).ok())
                 .ok_or_else(|| "strRef must be a 32-bit unsigned integer".to_string())?;
             let had_override = value.has_override(str_ref);
-            let before = value
-                .get(str_ref)
-                .map_err(display_error)?
-                .map(|entry| tlk_entry_to_json(str_ref, &entry));
+            let before = value.get(str_ref).map_err(display_error)?.map(|entry| {
+                tlk_entry_to_json(
+                    str_ref,
+                    &entry,
+                    LegacyEncoding::for_language_id(value.language.id()),
+                )
+            });
             match edit.get("entry") {
                 None | Some(Value::Null) => {
                     value.remove_override(str_ref);
@@ -2362,10 +3217,13 @@ fn apply_tlk_edit(
                 .and_then(Value::as_u64)
                 .and_then(|v| u32::try_from(v).ok())
                 .ok_or_else(|| "strRef must be a 32-bit unsigned integer".to_string())?;
-            let before = value
-                .get(str_ref)
-                .map_err(display_error)?
-                .map(|entry| tlk_entry_to_json(str_ref, &entry));
+            let before = value.get(str_ref).map_err(display_error)?.map(|entry| {
+                tlk_entry_to_json(
+                    str_ref,
+                    &entry,
+                    LegacyEncoding::for_language_id(value.language.id()),
+                )
+            });
             value.remove_override(str_ref);
             Ok((
                 "Restore TLK entry".to_string(),
@@ -2411,7 +3269,11 @@ fn tlk_snapshot(value: &mut SingleTlk, request: &Value) -> EditorResult<Value> {
             let str_ref = u32::try_from(index)
                 .map_err(|error| format!("TLK string reference exceeds 32-bit range: {error}"))?;
             if let Some(entry) = value.get(str_ref).map_err(display_error)? {
-                entries.push(tlk_entry_to_json(str_ref, &entry));
+                entries.push(tlk_entry_to_json(
+                    str_ref,
+                    &entry,
+                    LegacyEncoding::for_language_id(value.language.id()),
+                ));
             }
         }
         return Ok(json!({
@@ -2437,7 +3299,11 @@ fn tlk_snapshot(value: &mut SingleTlk, request: &Value) -> EditorResult<Value> {
                 continue;
             }
             if matched >= offset && entries.len() < limit {
-                entries.push(tlk_entry_to_json(str_ref, &entry));
+                entries.push(tlk_entry_to_json(
+                    str_ref,
+                    &entry,
+                    LegacyEncoding::for_language_id(value.language.id()),
+                ));
             }
             matched = matched.saturating_add(1);
         }
@@ -2452,15 +3318,38 @@ fn tlk_snapshot(value: &mut SingleTlk, request: &Value) -> EditorResult<Value> {
     }))
 }
 
-fn tlk_entry_to_json(str_ref: u32, entry: &TlkEntry) -> Value {
+fn tlk_entry_to_json(str_ref: u32, entry: &TlkEntry, encoding: LegacyEncoding) -> Value {
     json!({
         "strRef": str_ref,
         "text": entry.text,
+        "nativeText": nwn_text_to_json(&entry.native_text(encoding)),
         "soundResRef": entry.sound_res_ref,
         "soundLength": entry.sound_length,
         "flags": entry.flags,
         "volumeVariance": entry.volume_variance,
         "pitchVariance": entry.pitch_variance,
+    })
+}
+
+fn nwn_text_to_json(text: &NwnText) -> Value {
+    let segments = text
+        .segments()
+        .iter()
+        .map(|segment| match segment {
+            NwnTextSegment::Text(value) => json!({ "kind": "text", "text": value }),
+            NwnTextSegment::Opaque(bytes) => {
+                json!({ "kind": "opaque", "bytes": BASE64.encode(bytes) })
+            }
+            NwnTextSegment::ColorStart(rgb) => {
+                json!({ "kind": "colorStart", "rgb": rgb })
+            }
+            NwnTextSegment::ColorEnd => json!({ "kind": "colorEnd" }),
+        })
+        .collect::<Vec<_>>();
+    json!({
+        "encoding": text.encoding().label(),
+        "display": text.display_text(),
+        "segments": segments,
     })
 }
 
@@ -2475,6 +3364,9 @@ fn tlk_entry_from_json(value: &Value) -> EditorResult<TlkEntry> {
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_string();
+    if !sound_res_ref.is_ascii() {
+        return Err("TLK sound resource references must be ASCII".to_string());
+    }
     if sound_res_ref.len() > 16 {
         return Err("TLK sound resource references cannot exceed 16 bytes".to_string());
     }
@@ -2485,7 +3377,15 @@ fn tlk_entry_from_json(value: &Value) -> EditorResult<TlkEntry> {
             .unwrap_or(0.0),
         "TLK sound length",
     )?;
-    let mut entry = TlkEntry::new(text, sound_res_ref, sound_length);
+    let native_text = value
+        .get("nativeText")
+        .map(nwn_text_from_json)
+        .transpose()?
+        .filter(|native| native.display_text() == text);
+    let mut entry = native_text.map_or_else(
+        || TlkEntry::new(text, sound_res_ref.clone(), sound_length),
+        |native| TlkEntry::new_native(native, sound_res_ref.clone(), sound_length),
+    );
     entry.flags = value
         .get("flags")
         .and_then(Value::as_i64)
@@ -2502,6 +3402,66 @@ fn tlk_entry_from_json(value: &Value) -> EditorResult<TlkEntry> {
         .and_then(|v| i32::try_from(v).ok())
         .unwrap_or(0);
     Ok(entry)
+}
+
+fn nwn_text_from_json(value: &Value) -> EditorResult<NwnText> {
+    let encoding = value
+        .get("encoding")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "nativeText.encoding must be a string".to_string())
+        .and_then(|label| LegacyEncoding::from_label(label).map_err(display_error))?;
+    let segments = value
+        .get("segments")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "nativeText.segments must be an array".to_string())?
+        .iter()
+        .map(|segment| {
+            let kind = segment
+                .get("kind")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "native text segment kind must be a string".to_string())?;
+            match kind {
+                "text" => Ok(NwnTextSegment::Text(
+                    segment
+                        .get("text")
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| "native text segment text must be a string".to_string())?
+                        .to_string(),
+                )),
+                "opaque" => {
+                    Ok(NwnTextSegment::Opaque(
+                        BASE64
+                            .decode(segment.get("bytes").and_then(Value::as_str).ok_or_else(
+                                || "opaque native text bytes must be base64".to_string(),
+                            )?)
+                            .map_err(|error| {
+                                format!("invalid opaque native text bytes: {error}")
+                            })?,
+                    ))
+                }
+                "colorStart" => {
+                    let values = segment
+                        .get("rgb")
+                        .and_then(Value::as_array)
+                        .ok_or_else(|| "colorStart.rgb must be an array".to_string())?;
+                    if values.len() != 3 {
+                        return Err("colorStart.rgb must contain exactly three bytes".to_string());
+                    }
+                    let mut rgb = [0_u8; 3];
+                    for (target, value) in rgb.iter_mut().zip(values) {
+                        *target = value
+                            .as_u64()
+                            .and_then(|value| u8::try_from(value).ok())
+                            .ok_or_else(|| "colorStart.rgb values must be bytes".to_string())?;
+                    }
+                    Ok(NwnTextSegment::ColorStart(rgb))
+                }
+                "colorEnd" => Ok(NwnTextSegment::ColorEnd),
+                _ => Err(format!("unknown native text segment kind {kind:?}")),
+            }
+        })
+        .collect::<EditorResult<Vec<_>>>()?;
+    Ok(NwnText::from_segments(segments, encoding))
 }
 
 fn json_usize(value: &Value, field: &str) -> EditorResult<usize> {
@@ -2640,6 +3600,7 @@ fn gff_struct_page(structure: &GffStruct, path: &[Value], offset: usize, limit: 
                 "label": label,
                 "kind": gff_kind_name(field.value()),
                 "value": value,
+                "nativeText": field.native_text().iter().map(nwn_text_to_json).collect::<Vec<_>>(),
                 "child": child,
             })
         })
@@ -3275,7 +4236,11 @@ impl ErfDocument {
             "buildDay": self.metadata.build_day,
             "strRef": self.metadata.str_ref,
             "oid": self.metadata.oid(),
-            "localizedStrings": self.metadata.loc_strings().iter().map(|(language, text)| json!({ "language": language, "text": text })).collect::<Vec<_>>(),
+            "localizedStrings": self.metadata.loc_strings().iter().map(|(language, text)| json!({
+                "language": language,
+                "text": text,
+                "nativeText": self.metadata.localized_native_text(*language).map(nwn_text_to_json),
+            })).collect::<Vec<_>>(),
             "entries": entries,
             "total": total,
             "offset": offset,
@@ -3315,7 +4280,7 @@ impl ErfDocument {
                 exocomp = ExoResFileCompressionType::CompressedBuf;
             }
         }
-        write_erf_with_options(
+        write_erf_with_native_text(
             cursor,
             &self.metadata.file_type,
             self.metadata.file_version,
@@ -3326,6 +4291,7 @@ impl ErfDocument {
             exocomp,
             Algorithm::None,
             self.metadata.loc_strings(),
+            self.metadata.localized_native_texts(),
             self.metadata.str_ref,
             &entries,
             self.metadata.oid(),
@@ -4321,18 +5287,23 @@ mod tests {
         .expect("write dialog JSON");
 
         let mut document =
-            EditorDocument::open(source_path.clone(), false).expect("open dialog JSON document");
-        let snapshot = document.snapshot(&json!({})).expect("snapshot dialog");
+            EditorDocument::open(source_path.clone(), false, NwnTextContext::default())
+                .expect("open dialog JSON document");
+        let snapshot = document
+            .snapshot(&ResourceViewOptions::default())
+            .expect("snapshot dialog");
+        let snapshot = serde_json::to_value(snapshot).expect("encode typed snapshot");
         let mut edited = snapshot.get("data").expect("snapshot data").clone();
         *edited
             .pointer_mut("/root/fields/0/value")
             .expect("dialog field") = json!("after");
-        document
-            .apply_edit(&json!({
-                "edit": { "action": "replaceGff", "root": edited }
-            }))
-            .expect("edit dialog JSON");
-        document.save(&json!({})).expect("save dialog JSON");
+        let edit = serde_json::from_value(json!({
+            "action": "replaceGff",
+            "root": edited,
+        }))
+        .expect("decode typed dialog edit");
+        document.apply_edit(&edit).expect("edit dialog JSON");
+        document.save(false).expect("save dialog JSON");
         let saved = fs::read(&source_path).expect("read saved dialog JSON");
         let saved_json: Value = serde_json::from_slice(&saved).expect("parse saved dialog JSON");
         assert_eq!(
@@ -4347,12 +5318,16 @@ mod tests {
         );
 
         document
-            .save_as(&json!({ "path": binary_path }))
+            .save_as(binary_path, None)
             .expect("save dialog as binary");
         let binary = fs::read(directory.join("conversation.dlg")).expect("read binary dialog");
         assert_eq!(binary.get(..4), Some(b"DLG ".as_slice()));
-        let reopened = EditorDocument::open(directory.join("conversation.dlg"), false)
-            .expect("reopen binary dialog");
+        let reopened = EditorDocument::open(
+            directory.join("conversation.dlg"),
+            false,
+            NwnTextContext::default(),
+        )
+        .expect("reopen binary dialog");
         let EditorContent::Gff(reopened) = reopened.content else {
             panic!("binary dialog did not reopen as GFF");
         };
@@ -4371,7 +5346,7 @@ mod tests {
             .base()
             .clone();
         let mut encoded = Cursor::new(Vec::new());
-        write_erf_with_options(
+        nwnrs_types::erf::write_erf_with_options(
             &mut encoded,
             "ERF ",
             ErfVersion::V1,
@@ -4490,8 +5465,8 @@ mod tests {
         );
 
         let key_path = directory.join("demo.key");
-        let mut editor =
-            EditorDocument::open(key_path.clone(), false).expect("open key editor document");
+        let mut editor = EditorDocument::open(key_path.clone(), false, NwnTextContext::default())
+            .expect("open key editor document");
         let plan = editor
             .build_save_as_plan(&key_path)
             .expect("build KEY save plan");
@@ -4501,19 +5476,19 @@ mod tests {
             .confirmation_token
             .expect("existing KEY set requires confirmation");
         let error = editor
-            .save_as(&json!({ "path": key_path }))
+            .save_as(key_path.clone(), None)
             .expect_err("unconfirmed KEY overwrite must fail");
         assert!(error.contains("SAVE_AS_CONFIRMATION_REQUIRED"));
         editor
-            .save_as(&json!({
-                "path": directory.join("demo.key"),
-                "confirmationToken": confirmation_token,
-            }))
+            .save_as(
+                directory.join("demo.key"),
+                Some(confirmation_token.as_str()),
+            )
             .expect("confirmed KEY overwrite");
 
         let backup_path = directory.join("demo.resource-backup");
         editor
-            .backup(&json!({ "path": backup_path }))
+            .backup(backup_path.clone())
             .expect("stream KEY/BIF backup");
         let backup_bytes = fs::read(&backup_path).expect("read backup header");
         assert_eq!(
@@ -4523,8 +5498,13 @@ mod tests {
         drop(editor);
         fs::remove_file(directory.join("demo.key")).expect("remove source KEY");
         fs::remove_file(directory.join("demo.bif")).expect("remove source BIF");
-        let restored = EditorDocument::from_backup(directory.join("demo.key"), backup_path, false)
-            .expect("restore streaming KEY/BIF backup");
+        let restored = EditorDocument::from_backup(
+            directory.join("demo.key"),
+            backup_path,
+            false,
+            NwnTextContext::default(),
+        )
+        .expect("restore streaming KEY/BIF backup");
         assert_eq!(
             restored
                 .content
@@ -4542,19 +5522,18 @@ mod tests {
         let backup_path = directory.join("demo.resource-backup");
         fs::write(&source_path, b"2DA V2.0\n\nValue\n0 before\n").expect("write source");
         let mut document =
-            EditorDocument::open(source_path.clone(), false).expect("open 2DA document");
+            EditorDocument::open(source_path.clone(), false, NwnTextContext::default())
+                .expect("open 2DA document");
+        let edit = serde_json::from_value(json!({
+            "action": "set2daCell",
+            "row": 0,
+            "column": "Value",
+            "value": "after",
+        }))
+        .expect("decode typed 2DA edit");
+        document.apply_edit(&edit).expect("edit 2DA");
         document
-            .apply_edit(&json!({
-                "edit": {
-                    "action": "set2daCell",
-                    "row": 0,
-                    "column": "Value",
-                    "value": "after",
-                }
-            }))
-            .expect("edit 2DA");
-        document
-            .backup(&json!({ "path": backup_path }))
+            .backup(backup_path.clone())
             .expect("write streaming backup");
         let backup = fs::read(&backup_path).expect("read backup");
         assert_eq!(
@@ -4564,10 +5543,12 @@ mod tests {
         assert!(!backup.windows(10).any(|window| window == b"contents\":"));
 
         let mut restored =
-            EditorDocument::from_backup(source_path, backup_path, false).expect("restore backup");
+            EditorDocument::from_backup(source_path, backup_path, false, NwnTextContext::default())
+                .expect("restore backup");
         let snapshot = restored
-            .snapshot(&json!({}))
+            .snapshot(&ResourceViewOptions::default())
             .expect("snapshot restored 2DA");
+        let snapshot = serde_json::to_value(snapshot).expect("encode typed snapshot");
         assert_eq!(
             snapshot
                 .pointer("/data/rows/0/cells/0")
@@ -4641,7 +5622,7 @@ mod tests {
 
         let error = result.expect_err("commit must report rollback failure");
         assert!(error.contains("Rollback was incomplete"));
-        assert!(error.contains(staging.to_string_lossy().as_ref()));
+        assert!(error.contains(&nwnrs_nwscript::physical_path_display(&staging)));
         assert!(staging.exists());
         assert_eq!(
             fs::read(&original).expect("recovery backup must remain"),

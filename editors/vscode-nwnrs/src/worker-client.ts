@@ -17,6 +17,33 @@ export interface WorkerRequestOptions {
   readonly sessionKey?: string;
   readonly contents?: Uint8Array;
   readonly transferList?: readonly Transferable[];
+  readonly onProgress?: (event: WorkerProgressEvent) => void;
+}
+
+export interface WorkerProgressEvent {
+  readonly phase: string;
+  readonly message: string;
+}
+
+export interface WorkerOperationError {
+  readonly code: string;
+  readonly message: string;
+  readonly path?: string;
+  readonly manifestField: readonly string[];
+}
+
+export class WorkerRequestError extends Error {
+  public readonly code: string;
+  public readonly path: string | undefined;
+  public readonly manifestField: readonly string[];
+
+  public constructor(error: WorkerOperationError) {
+    super(error.message);
+    this.name = 'WorkerRequestError';
+    this.code = error.code;
+    this.path = error.path;
+    this.manifestField = error.manifestField;
+  }
 }
 
 interface PendingRequest<T = unknown> {
@@ -24,6 +51,7 @@ interface PendingRequest<T = unknown> {
   readonly reject: (reason: Error) => void;
   readonly cancellation?: Disposable;
   readonly method: string;
+  readonly onProgress?: (event: WorkerProgressEvent) => void;
 }
 
 interface ReadyMessage {
@@ -34,16 +62,22 @@ interface ResponseMessage {
   readonly type: 'response';
   readonly id: number;
   readonly response?: unknown;
-  readonly error?: string;
+  readonly error?: WorkerOperationError | string;
 }
 
-type IncomingWorkerMessage = ReadyMessage | ResponseMessage;
+interface ProgressMessage {
+  readonly type: 'progress';
+  readonly id: number;
+  readonly event: WorkerProgressEvent;
+}
+
+type IncomingWorkerMessage = ReadyMessage | ResponseMessage | ProgressMessage;
 
 function isIncomingWorkerMessage(value: unknown): value is IncomingWorkerMessage {
   if (typeof value !== 'object' || value === null || !('type' in value)) return false;
   const type = (value as { type?: unknown }).type;
   if (type === 'ready') return true;
-  return type === 'response'
+  return (type === 'response' || type === 'progress')
     && 'id' in value
     && Number.isInteger((value as { id?: unknown }).id);
 }
@@ -101,9 +135,15 @@ export class WorkerClient {
         this.worker?.postMessage({ type: 'cancel', id });
         reject(new Error(`${method} cancelled`));
       });
-      const pending: PendingRequest<TResponse> = { resolve, reject, cancellation, method };
+      const pending: PendingRequest<TResponse> = {
+        resolve,
+        reject,
+        cancellation,
+        method,
+        onProgress: extra.onProgress,
+      };
       this.pending.set(id, pending as PendingRequest);
-      const { transferList = [], ...messageExtra } = extra;
+      const { transferList = [], onProgress: _onProgress, ...messageExtra } = extra;
       this.worker?.postMessage(
         { type: 'request', id, method, request, ...messageExtra },
         [...transferList],
@@ -111,8 +151,8 @@ export class WorkerClient {
     });
   }
 
-  protected post(message: unknown): void {
-    this.worker?.postMessage(message);
+  protected post(message: unknown, transferList: readonly Transferable[] = []): void {
+    this.worker?.postMessage(message, [...transferList]);
   }
 
   public async restart(): Promise<void> {
@@ -169,15 +209,24 @@ export class WorkerClient {
         this.healthyTimer = undefined;
         this.restartAttempts = 0;
       }, 30_000);
+      this.onWorkerReady();
+      return;
+    }
+    if (message.type === 'progress') {
+      this.pending.get(message.id)?.onProgress?.(message.event);
       return;
     }
     const pending = this.pending.get(message.id);
     if (!pending) return;
     this.pending.delete(message.id);
     pending.cancellation?.dispose();
-    if (message.error) pending.reject(new Error(message.error));
+    if (typeof message.error === 'string') pending.reject(new Error(message.error));
+    else if (message.error) pending.reject(new WorkerRequestError(message.error));
     else pending.resolve(message.response);
   }
+
+  /** Called after a newly started persistent worker reports readiness. */
+  protected onWorkerReady(): void {}
 
   private rejectPending(error: Error): void {
     for (const pending of this.pending.values()) {

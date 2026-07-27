@@ -7,24 +7,6 @@ compile_error!("nwnrs requires the supervisor feature, the tooling feature, or b
 mod args;
 #[cfg(feature = "tooling")]
 mod compile;
-#[cfg(feature = "tooling")]
-pub use compile::{
-    NwScriptCheckOptions, check_nwscript, check_nwscript_with_cancellation,
-    deduplicate_nwscript_project_roots, nwscript_watch_roots,
-};
-#[cfg(feature = "tooling")]
-mod symbols;
-#[cfg(feature = "tooling")]
-pub use symbols::{
-    NwScriptDefinitionQuery, NwScriptDocumentSymbol, NwScriptDocumentSymbolKind,
-    NwScriptIncludeCandidate, NwScriptInlayHint, NwScriptOutgoingCall, NwScriptProjectDocuments,
-    NwScriptProjectIndex, NwScriptReference, NwScriptResolvedSource, NwScriptSemanticToken,
-    NwScriptSemanticTokenKind, NwScriptSourceRange, NwScriptSymbolDefinition, NwScriptSymbolKind,
-    NwScriptVirtualSource, analyze_nwscript_document, find_nwscript_definitions,
-    find_nwscript_include_candidates, find_nwscript_outgoing_calls, find_nwscript_references,
-    list_nwscript_document_symbols, list_nwscript_project_sources, load_nwscript_builtin_source,
-    load_nwscript_virtual_source, resolve_nwscript_source,
-};
 #[cfg(all(feature = "supervisor", target_os = "linux"))]
 mod container;
 #[cfg(feature = "tooling")]
@@ -34,6 +16,8 @@ mod expand;
 #[cfg(feature = "tooling")]
 mod inspect;
 mod logging;
+#[cfg(feature = "tooling")]
+mod nwpkg;
 #[cfg(feature = "tooling")]
 mod nwsync;
 #[cfg(feature = "tooling")]
@@ -51,9 +35,9 @@ mod util;
 
 use std::process::ExitCode;
 
-#[cfg(feature = "tooling")]
-use args::NwsyncCommand;
 use args::{Cli, Command};
+#[cfg(feature = "tooling")]
+use args::{NwpkgCommand, NwsyncCommand};
 use tracing::{error, instrument};
 
 /// Runs the CLI process entrypoint and returns one process exit code.
@@ -108,6 +92,12 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             NwsyncCommand::Fetch(cmd) => nwsync::run_nwsync_fetch(cmd).map(|()| ExitCode::SUCCESS),
             NwsyncCommand::Prune(cmd) => nwsync::run_nwsync_prune(cmd).map(|()| ExitCode::SUCCESS),
             NwsyncCommand::Write(cmd) => nwsync::run_nwsync_write(cmd).map(|()| ExitCode::SUCCESS),
+        },
+        #[cfg(feature = "tooling")]
+        Command::Nwpkg(cmd) => match cmd.command {
+            NwpkgCommand::Fetch(cmd) => nwpkg::run_fetch(cmd).map(|()| ExitCode::SUCCESS),
+            NwpkgCommand::Update(cmd) => nwpkg::run_update(cmd).map(|()| ExitCode::SUCCESS),
+            NwpkgCommand::Clean(cmd) => nwpkg::run_clean(cmd).map(|()| ExitCode::SUCCESS),
         },
     }
 }

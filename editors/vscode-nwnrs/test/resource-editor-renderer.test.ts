@@ -692,8 +692,9 @@ test('animation scope, transitions, events, Bezier timing, and chunk ordering ar
   assert.equal(sandbox.dispatchAnimationEvents({
     length: 1,
     events: [{ time: 0, name: 'start' }, { time: 0.5, name: 'middle' }],
-  }, -Number.EPSILON, 1.1, (event: PacketAnimationEvent) =>
-    events.push([event.name, event.cycle])), 3);
+  }, -Number.EPSILON, 1.1, (
+    event: PacketAnimationEvent & { readonly cycle?: number },
+  ) => events.push([event.name, event.cycle])), 3);
   assert.deepEqual(events, [['start', 0], ['middle', 0], ['start', 1]]);
 
   const binary = new Uint8Array(16);
@@ -848,24 +849,24 @@ test('installed start area completes a full renderer draw with every resolved em
   const service = new binding.ViewerService();
   let packet;
   try {
-    packet = Buffer.from(await service.loadScene(JSON.stringify({
-      session_key: path.join(moduleRoot, 'nwpkg.toml'),
+    packet = Buffer.from(await service.loadScene({
+      sessionKey: path.join(moduleRoot, 'nwpkg.toml'),
       path: path.join(moduleRoot, 'start.are'),
-      project_root: moduleRoot,
-      area: null,
-      root: null,
-      user: null,
+      projectRoot: moduleRoot,
+      area: undefined,
+      root: undefined,
+      user: undefined,
       language: 'english',
-      load_ovr: false,
+      loadOvr: false,
       archives: [],
-      include_project_resources: true,
-      authored_area: {
+      includeProjectResources: true,
+      authoredArea: {
         resref: 'start',
         are: path.join(moduleRoot, 'start.are.json'),
         git: path.join(moduleRoot, 'start.git.json'),
         gic: path.join(moduleRoot, 'start.gic.json'),
       },
-    })));
+    }));
   } catch (error) {
     if (/installation|root|language directory/iu.test(String(error))) {
       context.skip('Neverwinter Nights installation was not discovered');
@@ -1036,32 +1037,29 @@ test('authoritative installed resources open through the worker and render their
   );
   const moduleRoot = path.join(repositoryRoot, 'module');
   const request = {
-    session_key: path.join(moduleRoot, 'nwpkg.toml'),
+    sessionKey: path.join(moduleRoot, 'nwpkg.toml'),
     path: path.join(moduleRoot, '.nwnrs-resource-catalog'),
-    project_root: moduleRoot,
-    area: null,
-    root: null,
-    user: null,
+    projectRoot: moduleRoot,
     language: 'english',
-    load_ovr: false,
+    loadOvr: false,
     archives: [],
-    include_project_resources: true,
+    includeProjectResources: true,
   };
   try {
     for (const [index, [name, expectedKind]] of installedAcceptanceResources.entries()) {
       const resourceRequest = { ...request, path: path.join(moduleRoot, name) };
       const resolved = await viewerClient.resolveResource(resourceRequest);
       assert.equal(resolved.resource, name);
-      assert.equal(resolved.file_path, null);
+      assert.equal(resolved.filePath, undefined);
       assert.match(resolved.origin, /KeyTable:/u, name);
       const contents: Uint8Array = await viewerClient.readResource(resourceRequest);
       const documentId = `installed-acceptance-${index}`;
       let opened = false;
       try {
-        const snapshot = await resourceClient.request('openDocumentBytes', {
+        const snapshot = await resourceClient.requestResource('openDocumentBytes', {
           documentId,
           path: `/${name}`,
-          contents: Buffer.from(contents).toString('base64'),
+          contents,
         });
         opened = true;
         assert.equal(snapshot.kind, expectedKind, name);
@@ -1088,7 +1086,7 @@ test('authoritative installed resources open through the worker and render their
           name,
         );
       } finally {
-        if (opened) await resourceClient.request('closeDocument', { documentId });
+        if (opened) await resourceClient.requestResource('closeDocument', { documentId });
       }
     }
   } catch (error) {

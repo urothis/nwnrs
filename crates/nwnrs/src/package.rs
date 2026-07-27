@@ -40,12 +40,12 @@ pub(crate) fn run_package(options: PackageOptions) -> Result<(), String> {
     let root_override = options
         .root
         .as_ref()
-        .map(|path| path.to_string_lossy().into_owned())
+        .map(|path| nwnrs_nwscript::physical_path_display(path))
         .unwrap_or_default();
     let user_override = options
         .userdirectory
         .as_ref()
-        .map(|path| path.to_string_lossy().into_owned())
+        .map(|path| nwnrs_nwscript::physical_path_display(path))
         .unwrap_or_default();
 
     let root = install::find_nwnrs_root(&root_override).map_err(|error| error.to_string())?;

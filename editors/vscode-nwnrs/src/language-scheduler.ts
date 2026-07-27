@@ -11,7 +11,14 @@ export interface LanguageSchedulerResponse {
   readonly type: 'response';
   readonly id: number;
   readonly response?: unknown;
-  readonly error?: string;
+  readonly error?: LanguageSchedulerError;
+}
+
+export interface LanguageSchedulerError {
+  readonly code: string;
+  readonly message: string;
+  readonly path?: string;
+  readonly manifestField: readonly string[];
 }
 
 export interface LanguageSchedulerOptions {
@@ -267,8 +274,8 @@ export class LanguageRequestScheduler {
         id: entry.id,
         response: stale ? undefined : response,
         error: stale
-          ? `${entry.method} invalidated before completion`
-          : error instanceof Error ? error.message : error ? String(error) : undefined,
+          ? schedulerError(`${entry.method} invalidated before completion`)
+          : error === undefined ? undefined : operationError(error),
       });
     }
     this.pump();
@@ -311,6 +318,35 @@ export class LanguageRequestScheduler {
   }
 
   private respondError(id: number, error: string): void {
-    this.respond({ type: 'response', id, error });
+    this.respond({ type: 'response', id, error: schedulerError(error) });
   }
+}
+
+function schedulerError(message: string): LanguageSchedulerError {
+  return {
+    code: 'language.scheduler',
+    message,
+    manifestField: [],
+  };
+}
+
+export function operationError(error: unknown): LanguageSchedulerError {
+  if (typeof error === 'object'
+    && error !== null
+    && 'code' in error
+    && typeof error.code === 'string'
+    && 'message' in error
+    && typeof error.message === 'string') {
+    const path = 'path' in error && typeof error.path === 'string' ? error.path : undefined;
+    const manifestField = 'manifestField' in error && Array.isArray(error.manifestField)
+      ? error.manifestField.filter((part): part is string => typeof part === 'string')
+      : [];
+    return {
+      code: error.code,
+      message: error.message,
+      ...(path === undefined ? {} : { path }),
+      manifestField,
+    };
+  }
+  return schedulerError(error instanceof Error ? error.message : String(error));
 }

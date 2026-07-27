@@ -82,10 +82,17 @@ struct WriteFieldEntry {
 /// root.put_value("Tag", nwnrs_types::gff::GffValue::CExoString("demo".to_string()))?;
 ///
 /// let mut bytes = std::io::Cursor::new(Vec::new());
-/// nwnrs_types::gff::write_gff_root(&mut bytes, &root)?;
+/// nwnrs_types::gff::write_gff_root(
+///     &mut bytes,
+///     &root,
+///     nwnrs_types::encoding::NwnTextContext::default(),
+/// )?;
 /// bytes.set_position(0);
 ///
-/// let reparsed = nwnrs_types::gff::read_gff_root(&mut bytes)?;
+/// let reparsed = nwnrs_types::gff::read_gff_root(
+///     &mut bytes,
+///     nwnrs_types::encoding::NwnTextContext::default(),
+/// )?;
 /// let tag = reparsed.root.get_field("Tag").unwrap();
 /// assert!(matches!(
 ///     tag.value(),
@@ -94,7 +101,10 @@ struct WriteFieldEntry {
 /// # Ok::<(), nwnrs_types::gff::GffError>(())
 /// ```
 #[instrument(level = "debug", skip_all, err)]
-pub fn read_gff_root<R: Read + Seek>(reader: &mut R) -> GffResult<GffRoot> {
+pub fn read_gff_root<R: Read + Seek>(
+    reader: &mut R,
+    context: NwnTextContext,
+) -> GffResult<GffRoot> {
     let start = reader.stream_position()?;
     reader.seek(SeekFrom::Start(start))?;
     let mut bytes = Vec::new();
@@ -102,8 +112,8 @@ pub fn read_gff_root<R: Read + Seek>(reader: &mut R) -> GffResult<GffRoot> {
     let mut reader = io::Cursor::new(bytes.clone());
     let start = 0;
 
-    let file_type = read_str_or_err(&mut reader, 4)?;
-    let file_version = read_str_or_err(&mut reader, 4)?;
+    let file_type = read_ascii_or_err(&mut reader, 4)?;
+    let file_version = read_ascii_or_err(&mut reader, 4)?;
     expect(file_type.len() == 4, "GFF file type must be 4 bytes")?;
     expect(
         file_version == "V3.2",
@@ -154,6 +164,7 @@ pub fn read_gff_root<R: Read + Seek>(reader: &mut R) -> GffResult<GffRoot> {
         &field_indices,
         &list_indices,
         &structs,
+        context,
     )?;
 
     let mut root = GffRoot {
@@ -181,7 +192,11 @@ pub fn read_gff_root<R: Read + Seek>(reader: &mut R) -> GffResult<GffRoot> {
 /// root.put_value("Tag", nwnrs_types::gff::GffValue::CExoString("demo".to_string()))?;
 ///
 /// let mut bytes = std::io::Cursor::new(Vec::new());
-/// nwnrs_types::gff::write_gff_root(&mut bytes, &root)?;
+/// nwnrs_types::gff::write_gff_root(
+///     &mut bytes,
+///     &root,
+///     nwnrs_types::encoding::NwnTextContext::default(),
+/// )?;
 /// assert!(!bytes.get_ref().is_empty());
 /// # Ok::<(), nwnrs_types::gff::GffError>(())
 /// ```
@@ -191,11 +206,18 @@ pub fn read_gff_root<R: Read + Seek>(reader: &mut R) -> GffResult<GffRoot> {
     err,
     fields(file_type = %root.file_type, version = %root.file_version)
 )]
-pub fn write_gff_root<W: Write + Seek>(writer: &mut W, root: &GffRoot) -> GffResult<()> {
-    expect(root.file_type.len() == 4, "GFF file type must be 4 bytes")?;
+pub fn write_gff_root<W: Write + Seek>(
+    writer: &mut W,
+    root: &GffRoot,
+    context: NwnTextContext,
+) -> GffResult<()> {
     expect(
-        root.file_version.len() == 4,
-        "GFF file version must be 4 bytes",
+        root.file_type.len() == 4 && root.file_type.is_ascii(),
+        "GFF file type must be 4 ASCII bytes",
+    )?;
+    expect(
+        root.file_version.len() == 4 && root.file_version.is_ascii(),
+        "GFF file version must be 4 ASCII bytes",
     )?;
     expect(root.root.id == -1, "root struct id must be -1")?;
     if let (Some(source_bytes), Some(source_snapshot)) = (&root.source_bytes, &root.source_snapshot)
@@ -206,7 +228,7 @@ pub fn write_gff_root<W: Write + Seek>(writer: &mut W, root: &GffRoot) -> GffRes
     }
 
     let mut state = WriteState::default();
-    let root_idx = collect_struct(&root.root, &mut state)?;
+    let root_idx = collect_struct(&root.root, &mut state, context)?;
     expect(root_idx == 0, "root struct must serialize as struct 0")?;
 
     let start = writer.stream_position()?;
@@ -324,6 +346,7 @@ fn parse_struct<R: Read + Seek>(
     field_indices: &[i32],
     list_indices: &[i32],
     structs: &[RawStructEntry],
+    context: NwnTextContext,
 ) -> GffResult<GffStruct> {
     let entry = structs
         .get(struct_idx)
@@ -373,6 +396,7 @@ fn parse_struct<R: Read + Seek>(
             field_indices,
             list_indices,
             structs,
+            context,
         )?;
         gff_struct.put_field(label, field)?;
     }
@@ -394,11 +418,13 @@ fn parse_field<R: Read + Seek>(
     field_indices: &[i32],
     list_indices: &[i32],
     structs: &[RawStructEntry],
+    context: NwnTextContext,
 ) -> GffResult<GffField> {
     let label_bytes = labels
         .get(to_usize(raw.label_index, "label index")?)
         .ok_or_else(|| GffError::msg("invalid label index"))?
         .bytes;
+    let mut native_text = Vec::new();
     let (value, raw_field_data) = match raw.field_kind {
         GffFieldKind::Byte => (
             GffValue::Byte(
@@ -467,8 +493,9 @@ fn parse_field<R: Read + Seek>(
             seek_field_data(reader, start, header, raw.data_or_offset)?;
             let size = read_i32(reader)?;
             let bytes = read_bytes_or_err(reader, to_usize(size, "CExoString length")?)?;
-            let decoded =
-                from_nwnrs_encoding(&bytes).map_err(|error| GffError::msg(error.to_string()))?;
+            let decoded_text = NwnText::decode(&bytes, context.encoding());
+            let decoded = decoded_text.display_text();
+            native_text.push(decoded_text);
             let mut raw_bytes = size.to_le_bytes().to_vec();
             raw_bytes.extend_from_slice(&bytes);
             (GffValue::CExoString(decoded), Some(raw_bytes))
@@ -481,10 +508,10 @@ fn parse_field<R: Read + Seek>(
             let mut raw_bytes =
                 vec![u8::try_from(size).map_err(|_error| GffError::msg("ResRef too long"))?];
             raw_bytes.extend_from_slice(&bytes);
-            (
-                GffValue::ResRef(String::from_utf8_lossy(&bytes).to_string()),
-                Some(raw_bytes),
-            )
+            expect(bytes.is_ascii(), "GFF ResRef contains non-ASCII bytes")?;
+            let value = String::from_utf8(bytes)
+                .map_err(|error| GffError::msg(format!("invalid ASCII GFF ResRef: {error}")))?;
+            (GffValue::ResRef(value), Some(raw_bytes))
         }
         GffFieldKind::CExoLocString => {
             seek_field_data(reader, start, header, raw.data_or_offset)?;
@@ -497,8 +524,10 @@ fn parse_field<R: Read + Seek>(
                 let language = read_i32(reader)?;
                 let size = read_i32(reader)?;
                 let bytes = read_bytes_or_err(reader, to_usize(size, "locstring entry length")?)?;
-                let decoded = from_nwnrs_encoding(&bytes)
-                    .map_err(|error| GffError::msg(error.to_string()))?;
+                let entry_encoding = localized_string_encoding(language)?;
+                let decoded_text = NwnText::decode(&bytes, entry_encoding);
+                let decoded = decoded_text.display_text();
+                native_text.push(decoded_text);
                 entries.push((language, decoded));
             }
             let consumed = reader.stream_position()? - payload_start;
@@ -546,6 +575,7 @@ fn parse_field<R: Read + Seek>(
                 field_indices,
                 list_indices,
                 structs,
+                context,
             )?),
             None,
         ),
@@ -571,6 +601,7 @@ fn parse_field<R: Read + Seek>(
                         field_indices,
                         list_indices,
                         structs,
+                        context,
                     )
                 })
                 .collect::<GffResult<Vec<_>>>()?;
@@ -585,12 +616,17 @@ fn parse_field<R: Read + Seek>(
             original_value,
             raw_data_or_offset: raw.data_or_offset,
             raw_field_data,
+            native_text,
         },
     ))
 }
 
 #[allow(clippy::too_many_lines)]
-fn collect_struct(structure: &GffStruct, state: &mut WriteState) -> GffResult<i32> {
+fn collect_struct(
+    structure: &GffStruct,
+    state: &mut WriteState,
+    context: NwnTextContext,
+) -> GffResult<i32> {
     let struct_idx = to_i32_len(state.structs.len(), "GFF struct index")?;
     state.structs.push(WriteStructEntry {
         id: structure.id,
@@ -647,8 +683,13 @@ fn collect_struct(structure: &GffStruct, state: &mut WriteState) -> GffResult<i3
                     offset
                 } else {
                     let offset = to_i32_len(state.field_data.len(), "GFF field data offset")?;
-                    let encoded = to_nwnrs_encoding(value)
-                        .map_err(|error| GffError::msg(error.to_string()))?;
+                    let encoded = field
+                        .native_text()
+                        .first()
+                        .filter(|native| native.display_text() == *value)
+                        .map(NwnText::encode)
+                        .transpose()?
+                        .unwrap_or(encode_legacy(context.encoding(), value)?);
                     state.field_data.extend_from_slice(
                         &to_i32_len(encoded.len(), "CExoString length")?.to_le_bytes(),
                     );
@@ -667,6 +708,7 @@ fn collect_struct(structure: &GffStruct, state: &mut WriteState) -> GffResult<i3
                 } else {
                     let offset = to_i32_len(state.field_data.len(), "GFF field data offset")?;
                     expect(u8::try_from(value.len()).is_ok(), "ResRef too long for GFF")?;
+                    expect(value.is_ascii(), "GFF ResRef must contain only ASCII bytes")?;
                     state.field_data.push(
                         u8::try_from(value.len())
                             .map_err(|_error| GffError::msg("ResRef too long for GFF"))?,
@@ -686,9 +728,14 @@ fn collect_struct(structure: &GffStruct, state: &mut WriteState) -> GffResult<i3
                 } else {
                     let offset = to_i32_len(state.field_data.len(), "GFF field data offset")?;
                     let mut payload = Vec::new();
-                    for (language, text) in &value.entries {
-                        let encoded = to_nwnrs_encoding(text)
-                            .map_err(|error| GffError::msg(error.to_string()))?;
+                    for (index, (language, text)) in value.entries.iter().enumerate() {
+                        let encoded = field
+                            .native_text()
+                            .get(index)
+                            .filter(|native| native.display_text() == *text)
+                            .map(NwnText::encode)
+                            .transpose()?
+                            .unwrap_or(encode_legacy(localized_string_encoding(*language)?, text)?);
                         payload.extend_from_slice(&language.to_le_bytes());
                         payload.extend_from_slice(
                             &to_i32_len(encoded.len(), "CExoLocString entry length")?.to_le_bytes(),
@@ -726,7 +773,7 @@ fn collect_struct(structure: &GffStruct, state: &mut WriteState) -> GffResult<i3
                     offset
                 }
             }
-            GffValue::Struct(child) => collect_struct(child, state)?,
+            GffValue::Struct(child) => collect_struct(child, state, context)?,
             GffValue::List(list) => {
                 let offset = to_i32_len(
                     state
@@ -760,7 +807,7 @@ fn collect_struct(structure: &GffStruct, state: &mut WriteState) -> GffResult<i3
                         .list_indices
                         .get_mut(list_start + idx + 1)
                         .ok_or_else(|| GffError::msg("GFF list child slot out of range"))? =
-                        collect_struct(child, state)?;
+                        collect_struct(child, state, context)?;
                 }
                 offset
             }
@@ -809,7 +856,9 @@ fn get_or_insert_label(
         idx
     } else {
         let bytes = provenance
-            .filter(|provenance| trim_trailing_nuls(&provenance.label_bytes) == label)
+            .filter(|provenance| {
+                trim_trailing_nuls(&provenance.label_bytes).is_ok_and(|value| value == label)
+            })
             .map_or_else(
                 || {
                     let mut padded = [0_u8; 16];
@@ -840,8 +889,10 @@ fn read_labels<R: Read + Seek>(
             let bytes = read_bytes_or_err(reader, 16)?;
             let mut raw = [0_u8; 16];
             raw.copy_from_slice(&bytes);
+            let text = trim_trailing_nuls(&bytes)?;
+            ensure_label(&text)?;
             Ok(RawLabelEntry {
-                text:  trim_trailing_nuls(&bytes),
+                text,
                 bytes: raw,
             })
         })
@@ -918,12 +969,15 @@ fn seek_field_data<R: Seek>(
     Ok(())
 }
 
-fn trim_trailing_nuls(bytes: &[u8]) -> String {
+fn trim_trailing_nuls(bytes: &[u8]) -> GffResult<String> {
     let end = bytes
         .iter()
         .position(|byte| *byte == 0)
         .unwrap_or(bytes.len());
-    String::from_utf8_lossy(bytes.get(..end).unwrap_or(&[])).to_string()
+    let value = bytes.get(..end).unwrap_or(&[]);
+    expect(value.is_ascii(), "GFF label contains non-ASCII bytes")?;
+    String::from_utf8(value.to_vec())
+        .map_err(|error| GffError::msg(format!("invalid ASCII GFF label: {error}")))
 }
 
 fn to_usize(value: i32, what: &str) -> GffResult<usize> {
@@ -964,12 +1018,21 @@ fn write_i32<W: Write>(writer: &mut W, value: i32) -> io::Result<()> {
     writer.write_all(&value.to_le_bytes())
 }
 
+fn localized_string_encoding(id: i32) -> GffResult<LegacyEncoding> {
+    let string_id = u32::try_from(id)
+        .map_err(|_error| GffError::msg(format!("negative localized string id {id}")))?;
+    Ok(LegacyEncoding::for_language_id(string_id / 2))
+}
+
 #[cfg(test)]
 mod tests {
     use std::io::Cursor;
 
     use super::{read_gff_root, write_gff_root};
-    use crate::gff::{GffRoot, GffStruct, GffValue};
+    use crate::{
+        encoding::NwnTextContext,
+        gff::{GffRoot, GffStruct, GffValue},
+    };
 
     #[test]
     fn malformed_gff_index_offsets_are_rejected() {
@@ -978,7 +1041,7 @@ mod tests {
             panic!("seed list: {error}");
         }
         let mut encoded = Cursor::new(Vec::new());
-        if let Err(error) = write_gff_root(&mut encoded, &original) {
+        if let Err(error) = write_gff_root(&mut encoded, &original, NwnTextContext::default()) {
             panic!("encode gff: {error}");
         }
         let mut bytes = encoded.into_inner();
@@ -997,7 +1060,7 @@ mod tests {
             panic!("fixture list index offset should exist");
         }
 
-        let error = match read_gff_root(&mut Cursor::new(bytes)) {
+        let error = match read_gff_root(&mut Cursor::new(bytes), NwnTextContext::default()) {
             Ok(_root) => panic!("malformed gff should fail"),
             Err(error) => error,
         };

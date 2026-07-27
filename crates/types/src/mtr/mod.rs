@@ -4,12 +4,16 @@
 use std::{
     collections::BTreeMap,
     fmt,
+    fmt::Write as _,
     fs::File,
     io::{self, Read, Write},
     path::Path,
 };
 
-use nwnrs_types::resman::{CachePolicy, Res, ResManError, ResType};
+use nwnrs_types::{
+    encoding::prelude::*,
+    resman::{CachePolicy, Res, ResManError, ResType},
+};
 use tracing::instrument;
 
 /// NWN resource type id for `mtr`.
@@ -28,6 +32,8 @@ pub enum MtrError {
     Io(io::Error),
     /// Resource-manager access failed.
     ResMan(ResManError),
+    /// Native text could not be encoded.
+    Encoding(EncodingConversionError),
     /// The payload was otherwise invalid or unsupported.
     Message(String),
 }
@@ -51,6 +57,7 @@ impl fmt::Display for MtrError {
         match self {
             Self::Io(error) => error.fmt(f),
             Self::ResMan(error) => error.fmt(f),
+            Self::Encoding(error) => error.fmt(f),
             Self::Message(message) => f.write_str(message),
         }
     }
@@ -64,9 +71,21 @@ impl From<io::Error> for MtrError {
     }
 }
 
+impl From<fmt::Error> for MtrError {
+    fn from(value: fmt::Error) -> Self {
+        Self::Message(format!("failed to render MTR text: {value}"))
+    }
+}
+
 impl From<ResManError> for MtrError {
     fn from(value: ResManError) -> Self {
         Self::ResMan(value)
+    }
+}
+
+impl From<EncodingConversionError> for MtrError {
+    fn from(value: EncodingConversionError) -> Self {
+        Self::Encoding(value)
     }
 }
 
@@ -132,11 +151,14 @@ impl MtrMaterial {
     /// # Examples
     ///
     /// ```rust,no_run
-    /// let _ = nwnrs_types::mtr::MtrMaterial::from_file(std::path::Path::new("test.mtr"));
+    /// let _ = nwnrs_types::mtr::MtrMaterial::from_file(
+    ///     std::path::Path::new("test.mtr"),
+    ///     nwnrs_types::encoding::NwnTextContext::english(),
+    /// );
     /// ```
-    pub fn from_file(path: impl AsRef<Path>) -> MtrResult<Self> {
+    pub fn from_file(path: impl AsRef<Path>, context: NwnTextContext) -> MtrResult<Self> {
         let mut file = File::open(path.as_ref())?;
-        read_mtr(&mut file)
+        read_mtr(&mut file, context)
     }
 
     /// Reads a typed MTR material from a [`Res`].
@@ -151,7 +173,11 @@ impl MtrMaterial {
     /// ```rust,no_run
     /// let _ = nwnrs_types::mtr::MtrMaterial::from_res;
     /// ```
-    pub fn from_res(res: &Res, cache_policy: CachePolicy) -> MtrResult<Self> {
+    pub fn from_res(
+        res: &Res,
+        cache_policy: CachePolicy,
+        context: NwnTextContext,
+    ) -> MtrResult<Self> {
         if res.resref().res_type() != MTR_RES_TYPE {
             return Err(MtrError::msg(format!(
                 "expected mtr resource, got {}",
@@ -160,8 +186,7 @@ impl MtrMaterial {
         }
 
         let bytes = res.read_all(cache_policy)?;
-        let text = String::from_utf8(bytes)
-            .map_err(|error| MtrError::msg(format!("MTR payload is not valid UTF-8: {error}")))?;
+        let text = decode_legacy_preserving(context.encoding(), &bytes);
         parse_mtr(&text)
     }
 }
@@ -176,12 +201,16 @@ impl MtrMaterial {
 ///
 /// ```rust,no_run
 /// let mut reader = std::io::Cursor::new(Vec::<u8>::new());
-/// let _ = nwnrs_types::mtr::read_mtr(&mut reader);
+/// let _ = nwnrs_types::mtr::read_mtr(
+///     &mut reader,
+///     nwnrs_types::encoding::NwnTextContext::english(),
+/// );
 /// ```
 #[instrument(level = "debug", skip_all, err)]
-pub fn read_mtr<R: Read>(reader: &mut R) -> MtrResult<MtrMaterial> {
-    let mut text = String::new();
-    reader.read_to_string(&mut text)?;
+pub fn read_mtr<R: Read>(reader: &mut R, context: NwnTextContext) -> MtrResult<MtrMaterial> {
+    let mut bytes = Vec::new();
+    reader.read_to_end(&mut bytes)?;
+    let text = decode_legacy_preserving(context.encoding(), &bytes);
     parse_mtr(&text)
 }
 
@@ -274,33 +303,43 @@ pub fn parse_mtr(text: &str) -> MtrResult<MtrMaterial> {
 /// ```rust,no_run
 /// let material = nwnrs_types::mtr::parse_mtr("")?;
 /// let mut writer = Vec::new();
-/// nwnrs_types::mtr::write_mtr(&mut writer, &material)?;
+/// nwnrs_types::mtr::write_mtr(
+///     &mut writer,
+///     &material,
+///     nwnrs_types::encoding::NwnTextContext::english(),
+/// )?;
 /// # Ok::<(), nwnrs_types::mtr::MtrError>(())
 /// ```
 #[instrument(level = "debug", skip_all, err)]
-pub fn write_mtr<W: Write>(writer: &mut W, material: &MtrMaterial) -> MtrResult<()> {
+pub fn write_mtr<W: Write>(
+    writer: &mut W,
+    material: &MtrMaterial,
+    context: NwnTextContext,
+) -> MtrResult<()> {
+    let mut text = String::new();
     if let Some(shader) = &material.custom_shader_vs {
-        writeln!(writer, "customshaderVS {shader}")?;
+        writeln!(text, "customshaderVS {shader}")?;
     }
     if let Some(shader) = &material.custom_shader_fs {
-        writeln!(writer, "customshaderFS {shader}")?;
+        writeln!(text, "customshaderFS {shader}")?;
     }
     if let Some(shader) = &material.custom_shader_gs {
-        writeln!(writer, "customshaderGS {shader}")?;
+        writeln!(text, "customshaderGS {shader}")?;
     }
     if let Some(render_hint) = &material.render_hint {
-        writeln!(writer, "renderhint {render_hint}")?;
+        writeln!(text, "renderhint {render_hint}")?;
     }
     for (index, texture) in &material.textures {
-        writeln!(writer, "texture{index} {texture}")?;
+        writeln!(text, "texture{index} {texture}")?;
     }
     for (name, parameter) in &material.parameters {
-        write!(writer, "parameter {} {}", parameter.param_type, name)?;
+        write!(text, "parameter {} {}", parameter.param_type, name)?;
         for value in &parameter.values {
-            write!(writer, " {value}")?;
+            write!(text, " {value}")?;
         }
-        writeln!(writer)?;
+        writeln!(text)?;
     }
+    writer.write_all(&encode_legacy_preserving(context.encoding(), &text)?)?;
     Ok(())
 }
 
@@ -335,6 +374,7 @@ mod tests {
     use std::io::Cursor;
 
     use super::{MTR_RES_TYPE, parse_mtr, read_mtr, write_mtr};
+    use crate::encoding::NwnTextContext;
 
     #[test]
     fn parses_mtr_texture_and_shader_fields() {
@@ -381,10 +421,12 @@ parameter int Envmap 1
         .unwrap_or_else(|error| panic!("parse original mtr: {error}"));
 
         let mut encoded = Vec::new();
-        write_mtr(&mut encoded, &original).unwrap_or_else(|error| panic!("write mtr: {error}"));
+        write_mtr(&mut encoded, &original, NwnTextContext::english())
+            .unwrap_or_else(|error| panic!("write mtr: {error}"));
 
         let mut cursor = Cursor::new(encoded);
-        let decoded = read_mtr(&mut cursor).unwrap_or_else(|error| panic!("read mtr: {error}"));
+        let decoded = read_mtr(&mut cursor, NwnTextContext::english())
+            .unwrap_or_else(|error| panic!("read mtr: {error}"));
         assert_eq!(decoded, original);
     }
 }

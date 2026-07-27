@@ -129,10 +129,17 @@ where
     let mut bifs = Vec::with_capacity(bif_count);
     for (_, filename_offset, filename_size, drives) in &file_table {
         reader.seek(SeekFrom::Start(io_start + u64::from(*filename_offset)))?;
-        let filename = trim_trailing_nuls(&read_bytes(&mut reader, usize::from(*filename_size))?);
-        let resolver_filename = safe_bif_relative_path(&filename)?
-            .to_string_lossy()
-            .into_owned();
+        let filename = trim_trailing_nuls(&read_bytes(&mut reader, usize::from(*filename_size))?)?;
+        let resolver_path = safe_bif_relative_path(&filename)?;
+        let resolver_filename = resolver_path
+            .to_str()
+            .ok_or_else(|| {
+                KeyError::msg(format!(
+                    "BIF filename is not valid UTF-8: {}",
+                    crate::native_path::display(&resolver_path)
+                ))
+            })?
+            .to_string();
         bifs.push(crate::key::BifHandle {
             filename,
             resolver_filename,
@@ -147,7 +154,7 @@ where
     let mut resref_id_lookup = indexmap::IndexMap::with_hasher(RandomState::new());
     reader.seek(SeekFrom::Start(io_start + offset_to_key_table))?;
     for _ in 0..key_count {
-        let res_ref_raw = trim_trailing_nuls(&read_bytes(&mut reader, 16)?);
+        let res_ref_raw = trim_trailing_nuls(&read_bytes(&mut reader, 16)?)?;
         let res_type = read_u16(&mut reader)?;
         let res_id = read_u32(&mut reader)?;
         let bif_idx = (res_id >> 20) as usize;
@@ -339,6 +346,11 @@ where
 
     for (bif, relative_path) in bifs.iter().zip(&bif_relative_paths) {
         let filename_for_bif = build_bif_filename(bif_prefix, bif);
+        if !filename_for_bif.is_ascii() {
+            return Err(KeyError::msg(format!(
+                "BIF filename must contain only ASCII bytes: {filename_for_bif:?}"
+            )));
+        }
         let bif_path = dest_dir.join(relative_path);
         if let Some(parent) = bif_path.parent() {
             fs::create_dir_all(parent)?;
@@ -608,7 +620,7 @@ pub fn write_key_table_archive(
         let directory = path
             .parent()
             .filter(|parent| !parent.as_os_str().is_empty())
-            .map(|parent| parent.to_string_lossy().replace('\\', "/"))
+            .map(|parent| crate::native_path::display(parent).replace('\\', "/"))
             .unwrap_or_default();
 
         bifs.push(crate::key::KeyBifEntry {
@@ -660,6 +672,11 @@ fn normalize_bif_filename(filename: &str) -> String {
 
 fn safe_bif_relative_path(filename: &str) -> KeyResult<PathBuf> {
     let normalized = normalize_bif_filename(filename);
+    if !normalized.is_ascii() {
+        return Err(KeyError::msg(format!(
+            "BIF path must contain only ASCII bytes: {filename:?}"
+        )));
+    }
     let windows_drive = normalized
         .as_bytes()
         .get(0..2)
@@ -718,7 +735,13 @@ pub fn key_bif_relative_path(bif: &crate::key::KeyBifEntry) -> KeyResult<PathBuf
     } else {
         Path::new(&bif.directory).join(filename)
     };
-    safe_bif_relative_path(&path.to_string_lossy())
+    let path = path.to_str().ok_or_else(|| {
+        KeyError::msg(format!(
+            "BIF path is not valid UTF-8: {}",
+            crate::native_path::display(&path)
+        ))
+    })?;
+    safe_bif_relative_path(path)
 }
 
 fn infer_key_exocomp(value: &KeyTable) -> KeyResult<ExoResFileCompressionType> {
@@ -747,12 +770,17 @@ fn infer_key_algorithm(value: &KeyTable) -> KeyResult<Algorithm> {
     Ok(Algorithm::None)
 }
 
-fn trim_trailing_nuls(bytes: &[u8]) -> String {
+fn trim_trailing_nuls(bytes: &[u8]) -> KeyResult<String> {
     let end = bytes
         .iter()
         .position(|byte| *byte == 0)
         .unwrap_or(bytes.len());
-    String::from_utf8_lossy(bytes.get(..end).unwrap_or(bytes)).to_string()
+    let value = bytes.get(..end).unwrap_or(bytes);
+    if !value.is_ascii() {
+        return Err(KeyError::msg("KEY identifier contains non-ASCII bytes"));
+    }
+    String::from_utf8(value.to_vec())
+        .map_err(|error| KeyError::msg(format!("invalid ASCII KEY identifier: {error}")))
 }
 
 fn read_bytes<R: Read + ?Sized>(reader: &mut R, size: usize) -> io::Result<Vec<u8>> {
@@ -763,6 +791,12 @@ fn read_bytes<R: Read + ?Sized>(reader: &mut R, size: usize) -> io::Result<Vec<u
 
 fn read_fixed_string<R: Read + ?Sized>(reader: &mut R, size: usize) -> io::Result<String> {
     let bytes = read_bytes(reader, size)?;
+    if !bytes.is_ascii() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "KEY fixed identifier contains non-ASCII bytes",
+        ));
+    }
     String::from_utf8(bytes).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
 }
 
@@ -975,9 +1009,13 @@ mod tests {
                 outside
                     .file_name()
                     .expect("outside filename")
-                    .to_string_lossy()
+                    .to_str()
+                    .expect("test filename is valid UTF-8")
             ),
-            outside.to_string_lossy().into_owned(),
+            outside
+                .to_str()
+                .expect("test path is valid UTF-8")
+                .to_string(),
             "C:\\outside\\game.bif".to_string(),
         ] {
             let result = write_key_and_bif(

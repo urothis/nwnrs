@@ -1,6 +1,7 @@
 use std::{f32::consts::FRAC_PI_2, io::Cursor};
 
 use nwnrs_types::{
+    encoding::NwnTextContext,
     gff::{
         AreFile, GffCExoLocString, GffRoot, GffStruct, GitFile, GitTransform, ModuleInfo,
         read_gff_root,
@@ -26,8 +27,9 @@ use crate::scene::{
 
 /// Stateful scene assembler over one layered NWN resource view.
 pub struct SceneLoader<'a> {
-    resman:    &'a mut ResMan,
-    cancelled: Option<&'a dyn Fn() -> bool>,
+    resman:       &'a mut ResMan,
+    text_context: NwnTextContext,
+    cancelled:    Option<&'a dyn Fn() -> bool>,
 }
 
 /// Builds the stable logical-object catalog shared by area packets and editor
@@ -193,8 +195,10 @@ impl<'a> SceneLoader<'a> {
     /// Creates a scene loader over the provided precedence-aware resource
     /// manager.
     pub fn new(resman: &'a mut ResMan) -> Self {
+        let text_context = resman.text_context();
         Self {
             resman,
+            text_context,
             cancelled: None,
         }
     }
@@ -202,8 +206,10 @@ impl<'a> SceneLoader<'a> {
     /// Creates a scene loader that cooperatively stops between resource and
     /// model assembly steps when `cancelled` returns true.
     pub fn with_cancellation(resman: &'a mut ResMan, cancelled: &'a dyn Fn() -> bool) -> Self {
+        let text_context = resman.text_context();
         Self {
             resman,
+            text_context,
             cancelled: Some(cancelled),
         }
     }
@@ -255,8 +261,13 @@ impl<'a> SceneLoader<'a> {
             let bytes = root
                 .read_all(CachePolicy::Use)
                 .map_err(|error| SceneError::invalid(format!("read {resource}: {error}")))?;
-            let scene = parse_scene_resource_auto(kind, resource.base().res_ref(), &bytes)
-                .map_err(|error| SceneError::invalid(format!("parse {resource}: {error}")))?;
+            let scene = parse_scene_resource_auto(
+                kind,
+                resource.base().res_ref(),
+                &bytes,
+                self.text_context,
+            )
+            .map_err(|error| SceneError::invalid(format!("parse {resource}: {error}")))?;
             self.check_cancelled()?;
             let source = match kind {
                 ModelResourceKind::Model => SceneSource::Model,
@@ -300,11 +311,13 @@ impl<'a> SceneLoader<'a> {
                 let bytes = companion
                     .read_all(CachePolicy::Use)
                     .map_err(|error| SceneError::invalid(format!("read {filename}: {error}")))?;
-                let scene =
-                    parse_scene_resource_auto(companion_kind, resource.base().res_ref(), &bytes)
-                        .map_err(|error| {
-                            SceneError::invalid(format!("parse {filename}: {error}"))
-                        })?;
+                let scene = parse_scene_resource_auto(
+                    companion_kind,
+                    resource.base().res_ref(),
+                    &bytes,
+                    self.text_context,
+                )
+                .map_err(|error| SceneError::invalid(format!("parse {filename}: {error}")))?;
                 let collision_id = dependencies.record(
                     filename,
                     DependencyKind::Walkmesh,
@@ -608,6 +621,7 @@ impl<'a> SceneLoader<'a> {
                                 ModelResourceKind::Walkmesh,
                                 walkmesh_name,
                                 &bytes,
+                                self.text_context,
                             ) {
                                 Ok(scene) => {
                                     let dependency_id = dependencies.record(
@@ -923,7 +937,7 @@ impl<'a> SceneLoader<'a> {
                 return;
             }
         };
-        let table = match read_twoda(&mut Cursor::new(table_bytes)) {
+        let table = match read_twoda(&mut Cursor::new(table_bytes), self.text_context) {
             Ok(table) => table,
             Err(error) => {
                 diagnostics.push(SceneDiagnostic {
@@ -1027,7 +1041,8 @@ impl<'a> SceneLoader<'a> {
             let bytes = resource
                 .read_all(CachePolicy::Use)
                 .map_err(|error| error.to_string())?;
-            let table = read_twoda(&mut Cursor::new(bytes)).map_err(|error| error.to_string())?;
+            let table = read_twoda(&mut Cursor::new(bytes), self.text_context)
+                .map_err(|error| error.to_string())?;
             Ok::<_, String>(
                 (0..table.rows.len())
                     .map(|row| {
@@ -1192,8 +1207,13 @@ impl<'a> SceneLoader<'a> {
                     .read_all(CachePolicy::Use)
                     .map_err(|error| error.to_string())
                     .and_then(|bytes| {
-                        parse_scene_resource_auto(resource_kind, model_name, &bytes)
-                            .map_err(|error| error.to_string())
+                        parse_scene_resource_auto(
+                            resource_kind,
+                            model_name,
+                            &bytes,
+                            self.text_context,
+                        )
+                        .map_err(|error| error.to_string())
                     }) {
                     Ok(scene) => {
                         let id = dependencies.record(
@@ -1274,7 +1294,7 @@ impl<'a> SceneLoader<'a> {
             let bytes = resource
                 .read_all(CachePolicy::Use)
                 .map_err(|error| SceneError::invalid(error.to_string()))?;
-            read_gff_root(&mut Cursor::new(bytes))
+            read_gff_root(&mut Cursor::new(bytes), self.text_context)
                 .map_err(|error| SceneError::invalid(error.to_string()))?
         } else {
             GffRoot::new(match kind {
@@ -1682,6 +1702,7 @@ mod tests {
     use std::{io::Cursor, sync::Arc};
 
     use nwnrs_types::{
+        encoding::NwnTextContext,
         gff::{GffRoot, GffStruct, GffValue, GitFile, write_gff_root, write_git},
         resman::{ResContainer, ResMan, ResolvedResRef, read_resmemfile},
     };
@@ -1690,7 +1711,7 @@ mod tests {
 
     #[test]
     fn loads_model_resource_through_shared_scene_assembler() {
-        let mut manager = ResMan::new(1);
+        let mut manager = ResMan::new(1, NwnTextContext::english());
         add_resource(
             &mut manager,
             "demo.mdl",
@@ -1711,7 +1732,7 @@ mod tests {
 
     #[test]
     fn resolves_explosion_emitters_as_chunk_models_not_sprite_textures() {
-        let mut manager = ResMan::new(1);
+        let mut manager = ResMan::new(1, NwnTextContext::english());
         add_resource(
             &mut manager,
             "emitter.mdl",
@@ -1740,7 +1761,7 @@ mod tests {
 
     #[test]
     fn assembles_area_tiles_and_volume_overlays() {
-        let mut manager = ResMan::new(1);
+        let mut manager = ResMan::new(1, NwnTextContext::english());
         add_resource(
             &mut manager,
             "tilemodel.mdl",
@@ -1807,7 +1828,8 @@ WalkMesh=tilewalk
         area.put_value("Tile_List", GffValue::List(vec![tile]))
             .unwrap_or_else(|error| panic!("tile list: {error}"));
         let mut area_bytes = Cursor::new(Vec::new());
-        write_gff_root(&mut area_bytes, &area).unwrap_or_else(|error| panic!("write ARE: {error}"));
+        write_gff_root(&mut area_bytes, &area, NwnTextContext::default())
+            .unwrap_or_else(|error| panic!("write ARE: {error}"));
         add_resource(&mut manager, "testarea.are", area_bytes.get_ref());
 
         let mut git = GitFile::default();
@@ -1839,7 +1861,8 @@ WalkMesh=tilewalk
             ],
         });
         let mut git_bytes = Cursor::new(Vec::new());
-        write_git(&mut git_bytes, &git).unwrap_or_else(|error| panic!("write GIT: {error}"));
+        write_git(&mut git_bytes, &git, NwnTextContext::english())
+            .unwrap_or_else(|error| panic!("write GIT: {error}"));
         add_resource(&mut manager, "testarea.git", git_bytes.get_ref());
 
         let scene = SceneLoader::new(&mut manager)

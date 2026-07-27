@@ -3,7 +3,7 @@ use std::{collections::HashSet, fmt, sync::Arc};
 use nwnrs_types::lru::prelude::*;
 use tracing::instrument;
 
-use crate::resman::prelude::*;
+use crate::{encoding::NwnTextContext, resman::prelude::*};
 
 /// Layered resource manager.
 ///
@@ -86,7 +86,10 @@ use crate::resman::prelude::*;
 ///     entries: HashMap::from([(shared.clone(), make_res("shared", 2027, b"newer", "newer"))]),
 /// };
 ///
-/// let mut manager = ResMan::new(1);
+/// let mut manager = ResMan::new(
+///     1,
+///     nwnrs_types::encoding::NwnTextContext::english(),
+/// );
 /// manager.add(Arc::new(older));
 /// manager.add(Arc::new(newer));
 ///
@@ -101,6 +104,7 @@ pub struct ResMan {
     containers:           Vec<Arc<dyn ResContainer>>,
     cache:                Option<WeightedLru<ResRef, Res>>,
     cache_capacity_bytes: usize,
+    text_context:         NwnTextContext,
 }
 
 impl fmt::Debug for ResMan {
@@ -119,12 +123,12 @@ impl ResMan {
     /// value of `0` disables the manager-level cache. Newly added containers
     /// will be searched before earlier ones.
     #[must_use]
-    pub fn new(cache_size_mb: usize) -> Self {
+    pub fn new(cache_size_mb: usize, text_context: NwnTextContext) -> Self {
         Self {
-            containers:           Vec::new(),
-            cache:                (cache_size_mb > 0)
-                .then(|| WeightedLru::new(cache_size_mb * 1024 * 1024, 1)),
+            containers: Vec::new(),
+            cache: (cache_size_mb > 0).then(|| WeightedLru::new(cache_size_mb * 1024 * 1024, 1)),
             cache_capacity_bytes: cache_size_mb * 1024 * 1024,
+            text_context,
         }
     }
 
@@ -140,7 +144,15 @@ impl ResMan {
             cache:                (self.cache_capacity_bytes > 0)
                 .then(|| WeightedLru::new(self.cache_capacity_bytes, 1)),
             cache_capacity_bytes: self.cache_capacity_bytes,
+            text_context:         self.text_context,
         }
+    }
+
+    /// Returns the immutable native-text policy for resources resolved by
+    /// this manager.
+    #[must_use]
+    pub const fn text_context(&self) -> NwnTextContext {
+        self.text_context
     }
 
     /// Returns whether any container can resolve `rr`.
@@ -281,7 +293,11 @@ impl ResMan {
 mod tests {
     use std::{collections::HashMap, io::Cursor, sync::Arc, time::SystemTime};
 
-    use nwnrs_types::{checksums::EMPTY_SHA1_DIGEST, exo::ExoResFileCompressionType};
+    use nwnrs_types::{
+        checksums::EMPTY_SHA1_DIGEST,
+        encoding::{LegacyEncoding, NwnTextContext},
+        exo::ExoResFileCompressionType,
+    };
 
     use crate::resman::{
         CachePolicy, Res, ResContainer, ResMan, ResManError, ResManResult, ResRef, ResType,
@@ -340,6 +356,14 @@ mod tests {
     }
 
     #[test]
+    fn fork_preserves_the_immutable_text_context() {
+        let manager = ResMan::new(1, NwnTextContext::for_language_id(5));
+        let fork = manager.fork();
+        assert_eq!(fork.text_context().language_id(), 5);
+        assert_eq!(fork.text_context().encoding(), LegacyEncoding::Windows1250);
+    }
+
+    #[test]
     fn resolves_latest_container_first_and_unions_contents() {
         let shared = ResRef::new("shared", ResType(2027)).unwrap_or_else(|error| {
             panic!("shared rr: {error}");
@@ -361,7 +385,7 @@ mod tests {
             entries: HashMap::from([(shared.clone(), make_res("shared", 2027, b"newer", "newer"))]),
         };
 
-        let mut manager = ResMan::new(1);
+        let mut manager = ResMan::new(1, crate::encoding::NwnTextContext::english());
         manager.add(Arc::new(older));
         manager.add(Arc::new(newer));
 
@@ -386,7 +410,7 @@ mod tests {
             label:   "single",
             entries: HashMap::from([(rr.clone(), make_res("alpha", 2027, b"alpha", "single"))]),
         };
-        let mut manager = ResMan::new(1);
+        let mut manager = ResMan::new(1, crate::encoding::NwnTextContext::english());
         manager.add(Arc::new(container));
 
         let resolved = ResolvedResRef::from_filename("alpha.utc").unwrap_or_else(|error| {
@@ -408,7 +432,7 @@ mod tests {
             label:   "newer",
             entries: HashMap::from([(rr.clone(), make_res("shared", 2027, b"newer", "newer"))]),
         };
-        let mut manager = ResMan::new(1);
+        let mut manager = ResMan::new(1, crate::encoding::NwnTextContext::english());
         manager.add(Arc::new(older));
         let cached = manager
             .demand(&rr, CachePolicy::Use)

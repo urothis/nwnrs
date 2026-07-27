@@ -1,8 +1,12 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import type { NativeDefinition } from './native-types';
-
-export const PROJECT_MANIFEST = 'nwpkg.toml';
+import type {
+  NativeCheckRequest,
+  NativeDefinition,
+  NativeDefinitionRequest,
+  NativePackageConfiguration,
+  NativeRange,
+} from './generated/native';
 
 export interface PathVariableContext {
   readonly workspaceFolder?: string;
@@ -10,16 +14,10 @@ export interface PathVariableContext {
   readonly fileDirname?: string;
 }
 
-export interface SourceOverlay {
-  readonly path: string;
-  readonly contents: string;
-}
-
 export interface CompilerRequestOptions {
   readonly noEntrypointCheck?: boolean;
   readonly langspecPath?: string | null;
   readonly includeDirectories?: readonly string[];
-  readonly overlays?: readonly SourceOverlay[];
   readonly maxIncludeDepth?: number;
   readonly maxDiagnosticsPerFile?: number;
   readonly recurse?: boolean;
@@ -27,61 +25,17 @@ export interface CompilerRequestOptions {
   readonly userPath?: string | null;
   readonly language?: string;
   readonly loadOvr?: boolean;
+  readonly gitExecutable?: string | null;
+  readonly packageCache?: string | null;
   readonly qualifier?: string | null;
   readonly projectRoot?: string | null;
   readonly resource?: string | null;
 }
 
-export interface NativeCheckRequest {
-  readonly paths: string[];
-  readonly no_entrypoint_check: boolean;
-  readonly langspec: string | null;
-  readonly include_dirs: string[];
-  readonly overlays: SourceOverlay[];
-  readonly max_include_depth: number;
-  readonly max_diagnostics_per_input: number;
-  readonly recurse: boolean;
-  readonly root: string | null;
-  readonly user: string | null;
-  readonly language: string;
-  readonly load_ovr: boolean;
-}
-
-export interface NativeDefinitionRequest {
-  readonly source_path: string;
-  readonly symbol: string;
-  readonly qualifier: string | null;
-  readonly project_root: string | null;
-  readonly include_dirs: string[];
-  readonly overlays: SourceOverlay[];
-  readonly langspec: string | null;
-  readonly max_include_depth: number;
-  readonly root: string | null;
-  readonly user: string | null;
-  readonly language: string;
-  readonly load_ovr: boolean;
-}
-
-export interface NativeDocumentSymbolsRequest {
-  readonly source_path: string;
-  readonly resource: string | null;
-  readonly project_root: string | null;
-  readonly include_dirs: string[];
-  readonly overlays: SourceOverlay[];
-  readonly langspec: string | null;
-  readonly max_include_depth: number;
-  readonly root: string | null;
-  readonly user: string | null;
-  readonly language: string;
-  readonly load_ovr: boolean;
-}
-
-export interface NativeDiagnosticRecord {
-  readonly start_line?: number | null;
-  readonly start_column?: number | null;
-  readonly end_line?: number | null;
-  readonly end_column?: number | null;
-}
+export type { NativeCheckRequest, NativeDefinitionRequest };
+export type NativeDocumentSymbolsRequest = NativePackageConfiguration & {
+  readonly resource?: string;
+};
 
 interface DocumentationEntry {
   description: string;
@@ -93,27 +47,6 @@ interface DocumentationParameter extends DocumentationEntry {
 
 export function isNssPath(filePath: string): boolean {
   return path.extname(filePath).toLowerCase() === '.nss';
-}
-
-export function findProjectRoot(filePath: string): string {
-  const resolved = path.resolve(filePath);
-  let current;
-  try {
-    current = fs.statSync(resolved).isDirectory() ? resolved : path.dirname(resolved);
-  } catch {
-    current = path.extname(resolved) ? path.dirname(resolved) : resolved;
-  }
-  const fallback = current;
-  for (;;) {
-    if (fs.existsSync(path.join(current, PROJECT_MANIFEST))) {
-      return current;
-    }
-    const parent = path.dirname(current);
-    if (parent === current) {
-      return fallback;
-    }
-    current = parent;
-  }
 }
 
 export function expandPathVariables(value: string | undefined, context: PathVariableContext): string {
@@ -142,20 +75,26 @@ export function buildCheckRequest(
   targets: readonly string[],
   options: CompilerRequestOptions = {},
 ): NativeCheckRequest {
-  return {
+  const request: NativeCheckRequest = {
     paths: [...targets],
-    no_entrypoint_check: options.noEntrypointCheck !== false,
-    langspec: options.langspecPath || null,
-    include_dirs: [...(options.includeDirectories || [])],
-    overlays: [...(options.overlays || [])],
-    max_include_depth: options.maxIncludeDepth || 16,
-    max_diagnostics_per_input: options.maxDiagnosticsPerFile || 50,
+    noEntrypointCheck: options.noEntrypointCheck !== false,
+    langspec: options.langspecPath || undefined,
+    includeDirectories: [...(options.includeDirectories || [])],
+    optimization: 'O0',
+    optimizationFlags: [],
+    maxIncludeDepth: options.maxIncludeDepth || 16,
+    maxDiagnosticsPerInput: options.maxDiagnosticsPerFile || 50,
     recurse: options.recurse === true,
-    root: options.rootPath || null,
-    user: options.userPath || null,
+    followSymlinks: false,
+    jobs: undefined,
+    root: options.rootPath || undefined,
+    user: options.userPath || undefined,
     language: options.language || 'english',
-    load_ovr: options.loadOvr === true,
+    loadOvr: options.loadOvr === true,
   };
+  if (options.gitExecutable) request.gitExecutable = options.gitExecutable;
+  if (options.packageCache) request.packageCache = options.packageCache;
+  return request;
 }
 
 export function buildDefinitionRequest(
@@ -164,18 +103,9 @@ export function buildDefinitionRequest(
   options: CompilerRequestOptions = {},
 ): NativeDefinitionRequest {
   return {
-    source_path: sourcePath,
+    package: buildDocumentSymbolsRequest(sourcePath, options),
     symbol,
-    qualifier: options.qualifier || null,
-    project_root: options.projectRoot || null,
-    include_dirs: [...(options.includeDirectories || [])],
-    overlays: [...(options.overlays || [])],
-    langspec: options.langspecPath || null,
-    max_include_depth: options.maxIncludeDepth || 16,
-    root: options.rootPath || null,
-    user: options.userPath || null,
-    language: options.language || 'english',
-    load_ovr: options.loadOvr === true,
+    qualifier: options.qualifier || undefined,
   };
 }
 
@@ -183,19 +113,21 @@ export function buildDocumentSymbolsRequest(
   sourcePath: string,
   options: CompilerRequestOptions = {},
 ): NativeDocumentSymbolsRequest {
-  return {
-    source_path: sourcePath,
-    resource: options.resource || null,
-    project_root: options.projectRoot || null,
-    include_dirs: [...(options.includeDirectories || [])],
-    overlays: [...(options.overlays || [])],
-    langspec: options.langspecPath || null,
-    max_include_depth: options.maxIncludeDepth || 16,
-    root: options.rootPath || null,
-    user: options.userPath || null,
+  const request: NativeDocumentSymbolsRequest = {
+    sourcePath: options.resource || sourcePath,
+    resource: options.resource || undefined,
+    projectRoot: options.projectRoot || undefined,
+    includeDirectories: [...(options.includeDirectories || [])],
+    langspec: options.langspecPath || undefined,
+    maxIncludeDepth: options.maxIncludeDepth || 16,
+    root: options.rootPath || undefined,
+    user: options.userPath || undefined,
     language: options.language || 'english',
-    load_ovr: options.loadOvr === true,
+    loadOvr: options.loadOvr === true,
   };
+  if (options.gitExecutable) request.gitExecutable = options.gitExecutable;
+  if (options.packageCache) request.packageCache = options.packageCache;
+  return request;
 }
 
 export function selectHoverDefinition(
@@ -205,9 +137,9 @@ export function selectHoverDefinition(
     return undefined;
   }
   return definitions.find((definition) =>
-    definition.is_implementation && definition.documentation)
+    definition.isImplementation && definition.documentation)
     || definitions.find((definition) => definition.documentation)
-    || definitions.find((definition) => definition.is_implementation)
+    || definitions.find((definition) => definition.isImplementation)
     || definitions[0];
 }
 
@@ -291,31 +223,37 @@ export function nativeBindingPath(
   platform: NodeJS.Platform = process.platform,
   architecture = process.arch,
 ): string {
-  if (platform !== 'darwin' || architecture !== 'arm64') {
+  const target = `${platform}-${architecture}`;
+  const supported = new Set([
+    'darwin-arm64',
+    'linux-x64',
+    'win32-x64',
+  ]);
+  if (!supported.has(target)) {
     throw new Error(
-      `the bundled nwnrs compiler does not yet support ${platform}-${architecture}; `
-      + 'Windows, Linux, and other macOS architectures are tracked in VSCODE_TODO.md',
+      `the bundled nwnrs native service does not support ${target}; supported targets are `
+      + [...supported].join(', '),
     );
   }
-  return path.join(extensionPath, 'native', 'nwnrs-vscode.darwin-arm64.node');
+  const binding = path.join(extensionPath, 'native', `nwnrs-vscode.${target}.node`);
+  if (!fs.existsSync(binding)) {
+    throw new Error(`the bundled native service is missing for ${target}: ${binding}`);
+  }
+  return binding;
 }
 
-export function diagnosticRange(record: NativeDiagnosticRecord): {
+export function diagnosticRange(record: NativeRange): {
   startLine: number;
   startColumn: number;
   endLine: number;
   endColumn: number;
 } {
-  const startLine = positiveInteger(record.start_line, 1) - 1;
-  const startColumn = positiveInteger(record.start_column, 1) - 1;
-  const endLine = Math.max(startLine, positiveInteger(record.end_line, startLine + 1) - 1);
-  let endColumn = positiveInteger(record.end_column, startColumn + 2) - 1;
+  const startLine = record.start.line;
+  const startColumn = record.start.character;
+  const endLine = Math.max(startLine, record.end.line);
+  let endColumn = record.end.character;
   if (endLine === startLine && endColumn <= startColumn) {
     endColumn = startColumn + 1;
   }
   return { startLine, startColumn, endLine, endColumn };
-}
-
-function positiveInteger(value: unknown, fallback: number): number {
-  return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : fallback;
 }

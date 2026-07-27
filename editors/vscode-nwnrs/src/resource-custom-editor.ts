@@ -3,6 +3,11 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { ResourceEditorWorkerClient } from './resource-editor-worker-client';
+import type {
+  ResourceEditorWorkerMethod,
+  ResourceEditorWorkerRequest,
+  ResourceEditorWorkerResponse,
+} from './resource-editor-protocol';
 import { ViewerWorkerClient } from './viewer-worker-client';
 import {
   attachResourceEditorView,
@@ -10,16 +15,34 @@ import {
   type ResourceEditorView,
 } from './resource-editor-view';
 import {
-  findProjectRoot,
   nativeBindingPath,
   resolveConfiguredPath,
 } from './compiler';
-import type { NativePackageSourceArea } from './native-types';
+import type {
+  ResourceBinaryEditResult,
+  ResourceEdit,
+  ResourceEditResult,
+  ResourceSnapshot,
+} from './generated';
+import type {
+  NativeViewerLoadRequest,
+  NativeViewerPackageSourceArea as NativePackageSourceArea,
+} from './generated/native';
 import {
   isCustomEditorResource,
   isTextResource,
   isViewerResource,
 } from './resource-capabilities.generated';
+
+interface ViewerSnapshot {
+  readonly path: string;
+  readonly kind: 'viewer';
+  readonly readOnlyOrigin: true;
+  readonly revision: number;
+  readonly data: Readonly<Record<string, never>>;
+}
+
+type EditorSnapshot = ResourceSnapshot | ViewerSnapshot;
 
 export const VIEW_TYPE = 'nwnrs.resourceEditor';
 export const RESOURCE_SCHEME = 'nwnrs-resource';
@@ -34,51 +57,7 @@ export const RESOURCE_EDITOR_WEBVIEW_ASSETS = {
   script: ['dist', 'media', 'resource-editor.js'],
   style: ['media', 'resource-editor.css'],
 } as const;
-interface ResourceSnapshotData {
-  sourceFiles?: readonly { readonly name?: string }[];
-  diagnostics?: string[];
-  [key: string]: unknown;
-}
-
-interface ResourceSnapshot {
-  readonly kind: string;
-  readonly path?: string;
-  readonly readOnlyOrigin?: boolean;
-  readonly revision?: number;
-  data: ResourceSnapshotData;
-  [key: string]: unknown;
-}
-
-interface ResourceEntryPayload {
-  readonly contents: string;
-}
-
-interface ResourceEditResult {
-  readonly snapshot: ResourceSnapshot;
-  readonly inverse: unknown;
-  readonly label?: string;
-}
-
-interface AuthoredArea {
-  readonly resref: string;
-  readonly are: string;
-  readonly git: string;
-  readonly gic: string | null;
-}
-
-interface ViewerRequest {
-  session_key: string;
-  path: string;
-  project_root: string;
-  area: string | null;
-  root?: string | null;
-  user?: string | null;
-  language?: string;
-  load_ovr?: boolean;
-  archives?: readonly string[];
-  include_project_resources?: boolean;
-  authored_area?: AuthoredArea;
-}
+type ViewerRequest = NativeViewerLoadRequest;
 
 interface ViewerResource {
   readonly contents?: Uint8Array;
@@ -128,14 +107,6 @@ interface SceneManifest {
   };
 }
 
-interface SaveAsPlan {
-  readonly targets: readonly string[];
-  readonly conflicts: readonly {
-    readonly path: string;
-  }[];
-  readonly confirmationToken?: string;
-}
-
 type ResourceDocumentChangeEvent =
   | vscode.CustomDocumentEditEvent<ResourceCustomDocument>
   | vscode.CustomDocumentContentChangeEvent<ResourceCustomDocument>;
@@ -144,14 +115,18 @@ class ResourceCustomDocument implements vscode.CustomDocument {
   public readonly uri: vscode.Uri;
   public readonly worker?: ResourceEditorWorkerClient;
   public readonly id: string;
-  public snapshot: ResourceSnapshot;
+  public snapshot: EditorSnapshot;
   public readonly parent?: ResourceCustomDocument;
   public readonly resource?: string;
+  public readonly language: string;
+  public readonly projectRoot: string;
   public readonly views: Set<ResourceEditorView>;
   public dirty: boolean;
   public disposed: boolean;
   public viewer?: boolean;
   public viewerContents?: Uint8Array;
+  public texturePixels?: Uint8Array;
+  public pltPixels?: Uint8Array;
   public viewerRequestOverride?: ViewerRequest;
   public selectedAreaObjectKey?: string;
   public viewerSourcePaths?: string[];
@@ -173,9 +148,11 @@ class ResourceCustomDocument implements vscode.CustomDocument {
     uri: vscode.Uri,
     worker: ResourceEditorWorkerClient | undefined,
     id: string,
-    snapshot: ResourceSnapshot,
+    snapshot: EditorSnapshot,
     parent?: ResourceCustomDocument,
     resource?: string,
+    language = 'english',
+    projectRoot = '',
   ) {
     this.uri = uri;
     this.worker = worker;
@@ -183,6 +160,8 @@ class ResourceCustomDocument implements vscode.CustomDocument {
     this.snapshot = snapshot;
     this.parent = parent;
     this.resource = resource;
+    this.language = language;
+    this.projectRoot = projectRoot;
     this.views = new Set();
     this.dirty = false;
     this.disposed = false;
@@ -190,13 +169,17 @@ class ResourceCustomDocument implements vscode.CustomDocument {
     this.onDidDispose = this._onDidDispose.event;
   }
 
-  request<TResponse>(
-    method: string,
-    request: Readonly<Record<string, unknown>> = {},
+  request<Method extends ResourceEditorWorkerMethod>(
+    method: Method,
+    request: Omit<ResourceEditorWorkerRequest<Method>, 'documentId'>,
     cancellationToken?: vscode.CancellationToken,
-  ): Promise<TResponse> {
+  ): Promise<ResourceEditorWorkerResponse<Method>> {
     if (!this.worker) return Promise.reject(new Error('3D viewer documents are read-only.'));
-    return this.worker.request(method, { documentId: this.id, ...request }, cancellationToken);
+    return this.worker.requestResource(
+      method,
+      { documentId: this.id, ...request } as ResourceEditorWorkerRequest<Method>,
+      cancellationToken,
+    );
   }
 
   readEntryBytes(
@@ -211,19 +194,82 @@ class ResourceCustomDocument implements vscode.CustomDocument {
     options: Readonly<Record<string, unknown>> = {},
     cancellationToken?: vscode.CancellationToken,
   ): Promise<ResourceSnapshot> {
-    this.snapshot = await this.request<ResourceSnapshot>('snapshot', options, cancellationToken);
+    this.snapshot = await this.request('snapshot', options, cancellationToken);
+    await this.refreshTexturePixels(cancellationToken);
     return this.snapshot;
   }
 
-  async apply(edit: unknown): Promise<ResourceEditResult> {
-    const result = await this.request<ResourceEditResult>('applyEdit', { edit });
+  async apply(edit: ResourceEdit): Promise<ResourceEditResult> {
+    const result = await this.request('applyEdit', { edit });
+    this.snapshot = result.snapshot;
+    await this.refreshTexturePixels();
+    this.dirty = true;
+    return result;
+  }
+
+  async replaceArchiveEntry(
+    resource: string,
+    contents: Uint8Array,
+    bifIndex: number | null = null,
+  ): Promise<ResourceBinaryEditResult> {
+    if (!this.worker) throw new Error('This document is not an editable archive.');
+    const result = await this.worker.requestResource('replaceArchiveEntry', {
+      documentId: this.id,
+      resource,
+      contents,
+      bifIndex: bifIndex ?? undefined,
+    });
     this.snapshot = result.snapshot;
     this.dirty = true;
     return result;
   }
 
-  async export(): Promise<ResourceEntryPayload> {
-    return this.request<ResourceEntryPayload>('exportDocument');
+  async addArchiveEntry(
+    resource: string,
+    contents: Uint8Array,
+    bifIndex: number | null,
+  ): Promise<ResourceBinaryEditResult> {
+    if (!this.worker) throw new Error('This document is not an editable archive.');
+    const result = await this.worker.requestResource('addArchiveEntry', {
+      documentId: this.id,
+      resource,
+      contents,
+      bifIndex: bifIndex ?? undefined,
+    });
+    this.snapshot = result.snapshot;
+    this.dirty = true;
+    return result;
+  }
+
+  async removeArchiveEntry(
+    resource: string,
+    bifIndex: number | null = null,
+  ): Promise<ResourceBinaryEditResult> {
+    if (!this.worker) throw new Error('This document is not an editable archive.');
+    const result = await this.worker.requestResource('removeArchiveEntry', {
+      documentId: this.id,
+      resource,
+      bifIndex: bifIndex ?? undefined,
+    });
+    this.snapshot = result.snapshot;
+    this.dirty = true;
+    return result;
+  }
+
+  async applyBinaryUndo(token: string): Promise<ResourceBinaryEditResult> {
+    if (!this.worker) throw new Error('This document is not editable.');
+    const result = await this.worker.requestResource('applyBinaryUndo', {
+      documentId: this.id,
+      token,
+    });
+    this.snapshot = result.snapshot;
+    await this.refreshTexturePixels();
+    this.dirty = true;
+    return result;
+  }
+
+  async export(): Promise<Uint8Array> {
+    return this.request('exportDocument', {});
   }
 
   async revert(cancellationToken?: vscode.CancellationToken): Promise<ResourceSnapshot> {
@@ -231,31 +277,53 @@ class ResourceCustomDocument implements vscode.CustomDocument {
       if (!this.resource || !this.worker) {
         throw new Error('The nested resource no longer has an owning archive.');
       }
-      const payload = await this.parent.request<ResourceEntryPayload>(
-        'readEntry',
-        { resource: this.resource },
-      );
-      await this.request<unknown>('closeDocument');
-      this.snapshot = await this.worker.request<ResourceSnapshot>('openDocumentBytes', {
+      const payload = await this.parent.readEntryBytes(this.resource, cancellationToken);
+      await this.request('closeDocument', {});
+      this.snapshot = await this.worker.requestResource('openDocumentBytes', {
         documentId: this.id,
         path: this.uri.path,
-        contents: payload.contents,
+        contents: payload,
+        language: this.language,
       }, cancellationToken);
     } else {
-      this.snapshot = await this.request<ResourceSnapshot>(
+      this.snapshot = await this.request(
         'revertDocument',
         {},
         cancellationToken,
       );
     }
+    await this.refreshTexturePixels(cancellationToken);
     this.dirty = false;
     return this.snapshot;
+  }
+
+  async refreshTexturePixels(
+    cancellationToken?: vscode.CancellationToken,
+  ): Promise<void> {
+    if (!this.worker || this.viewer) return;
+    if (!['dds', 'tga', 'plt'].includes(this.snapshot.kind)) {
+      this.texturePixels = undefined;
+      this.pltPixels = undefined;
+      return;
+    }
+    this.texturePixels = await this.worker.requestResource(
+      'readTexturePixels',
+      { documentId: this.id },
+      cancellationToken,
+    );
+    this.pltPixels = this.snapshot.kind === 'plt'
+      ? await this.worker.requestResource(
+        'readPltPixels',
+        { documentId: this.id },
+        cancellationToken,
+      )
+      : undefined;
   }
 
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
-    if (!this.viewer) void this.request<unknown>('closeDocument').catch(() => {});
+    if (!this.viewer) void this.request('closeDocument', {}).catch(() => {});
     this._onDidDispose.fire();
     this._onDidDispose.dispose();
   }
@@ -276,14 +344,20 @@ implements vscode.CustomEditorProvider<ResourceCustomDocument> {
   private readonly _onDidSelectAreaObject: vscode.EventEmitter<AreaObjectSelection>;
   public readonly onDidSelectAreaObject: vscode.Event<AreaObjectSelection>;
   private readonly worker: ResourceEditorWorkerClient;
+  private readonly resolveProjectRoot: (sourcePath: string) => Promise<string>;
   private viewerRefreshTimer?: NodeJS.Timeout;
   private viewerRefreshPromise?: Promise<void>;
   private scriptDebugRefreshTimer?: NodeJS.Timeout;
   private scriptDebugRefreshPromise?: Promise<void>;
 
-  public constructor(context: vscode.ExtensionContext, output: vscode.OutputChannel) {
+  public constructor(
+    context: vscode.ExtensionContext,
+    output: vscode.OutputChannel,
+    resolveProjectRoot: (sourcePath: string) => Promise<string>,
+  ) {
     this.context = context;
     this.output = output;
+    this.resolveProjectRoot = resolveProjectRoot;
     this.documents = new Map();
     this.documentsById = new Map();
     this.viewerResources = new Map();
@@ -376,11 +450,11 @@ implements vscode.CustomEditorProvider<ResourceCustomDocument> {
       throw new Error('This virtual nwnrs text tab predates restart-safe resources. Close it and open the dependency again.');
     }
     const resourceBytes = await this.viewerWorker.readResource(descriptor.request);
-    const contents = Buffer.from(
-      resourceBytes.buffer,
-      resourceBytes.byteOffset,
-      resourceBytes.byteLength,
-    ).toString('utf8');
+    const contents = await decodeNativeTextResource(
+      descriptor.resource,
+      resourceBytes,
+      descriptor.request.language,
+    );
     this.viewerTextResources.set(id, contents);
     return contents;
   }
@@ -395,7 +469,7 @@ implements vscode.CustomEditorProvider<ResourceCustomDocument> {
       throw new Error('This virtual nwnrs tab predates restart-safe resources. Close it and open the resource again.');
     }
     let contents;
-    if (!descriptor.request.authored_area) {
+    if (!descriptor.request.authoredArea) {
       const resourceBytes = await this.viewerWorker.readResource(descriptor.request);
       contents = Buffer.from(
         resourceBytes.buffer,
@@ -450,7 +524,7 @@ implements vscode.CustomEditorProvider<ResourceCustomDocument> {
         );
       }
     }
-    const sessions = new Set(affected.map((document) => this.viewerRequest(document).session_key));
+    const sessions = new Set(affected.map((document) => this.viewerRequest(document).sessionKey));
     for (const sessionKey of sessions) this.viewerWorker.invalidate(sessionKey);
     for (const document of affected) {
       try {
@@ -476,7 +550,10 @@ implements vscode.CustomEditorProvider<ResourceCustomDocument> {
     const existing = this.documents.get(key);
     if (existing) return existing;
     const id = crypto.randomUUID();
-    let snapshot: ResourceSnapshot;
+    const configuredLanguage = vscode.workspace
+      .getConfiguration('nwnrs', uri)
+      .get('language', 'english');
+    let snapshot: EditorSnapshot;
     let parent: ResourceCustomDocument | undefined;
     let resource: string | undefined;
     let viewerContents: Uint8Array | undefined;
@@ -494,10 +571,11 @@ implements vscode.CustomEditorProvider<ResourceCustomDocument> {
         if (!viewerContents) {
           throw new Error('The virtual resource did not provide document bytes.');
         }
-        snapshot = await this.worker.request<ResourceSnapshot>('openDocumentBytes', {
+        snapshot = await this.worker.requestResource('openDocumentBytes', {
           documentId: id,
           path: uri.path,
-          contents: Buffer.from(viewerContents).toString('base64'),
+          contents: viewerContents,
+          language: configuredLanguage,
         }, cancellationToken);
       }
     } else if (uri.scheme === RESOURCE_SCHEME) {
@@ -510,22 +588,20 @@ implements vscode.CustomEditorProvider<ResourceCustomDocument> {
         viewerContents = Buffer.from(await parent.readEntryBytes(resource, cancellationToken));
         snapshot = viewerSnapshot(uri.path);
       } else if (openContext.backupId) {
-        snapshot = await this.worker.request<ResourceSnapshot>('openDocument', {
+        snapshot = await this.worker.requestResource('openDocument', {
           documentId: id,
           path: uri.path,
           backupPath: vscode.Uri.parse(openContext.backupId).fsPath,
           readOnlyOrigin: true,
+          language: parent.language,
         }, cancellationToken);
       } else {
-        const payload = await parent.request<ResourceEntryPayload>(
-          'readEntry',
-          { resource },
-          cancellationToken,
-        );
-        snapshot = await this.worker.request<ResourceSnapshot>('openDocumentBytes', {
+        const payload = await parent.readEntryBytes(resource, cancellationToken);
+        snapshot = await this.worker.requestResource('openDocumentBytes', {
           documentId: id,
           path: uri.path,
-          contents: payload.contents,
+          contents: payload,
+          language: parent.language,
         }, cancellationToken);
       }
     } else {
@@ -534,13 +610,18 @@ implements vscode.CustomEditorProvider<ResourceCustomDocument> {
         : undefined;
       snapshot = viewer
         ? viewerSnapshot(uri.fsPath)
-        : await this.worker.request<ResourceSnapshot>('openDocument', {
+        : await this.worker.requestResource('openDocument', {
           documentId: id,
           path: uri.fsPath,
           backupPath,
           readOnlyOrigin: uri.scheme !== 'file',
+          language: configuredLanguage,
         }, cancellationToken);
     }
+    const anchorPath = parent?.uri.fsPath || uri.fsPath;
+    const projectRoot = viewerRequestOverride?.projectRoot
+      || parent?.projectRoot
+      || await this.resolveProjectRoot(anchorPath);
     const document = new ResourceCustomDocument(
       uri,
       viewer ? undefined : this.worker,
@@ -548,13 +629,15 @@ implements vscode.CustomEditorProvider<ResourceCustomDocument> {
       snapshot,
       parent,
       resource,
+      parent?.language ?? configuredLanguage,
+      projectRoot,
     );
     document.viewer = viewer;
     document.viewerContents = viewerContents;
     document.viewerRequestOverride = viewerRequestOverride;
     document.selectedAreaObjectKey = selectedAreaObjectKey;
     document.viewerSourcePaths = Object.values(
-      viewerRequestOverride?.authored_area || {},
+      viewerRequestOverride?.authoredArea || {},
     ).filter((value): value is string => typeof value === 'string' && path.isAbsolute(value));
     document.scenePacket = undefined;
     document.scenePacketPromise = undefined;
@@ -565,6 +648,7 @@ implements vscode.CustomEditorProvider<ResourceCustomDocument> {
     document.virtualResourceId = uri.scheme === VIEWER_RESOURCE_SCHEME
       ? new URLSearchParams(uri.query).get('id') || undefined
       : undefined;
+    await document.refreshTexturePixels(cancellationToken);
     if (snapshot.kind === 'ncs' || snapshot.kind === 'ndb') {
       await this.enrichScriptDebugDocument(document, cancellationToken);
     }
@@ -655,17 +739,17 @@ implements vscode.CustomEditorProvider<ResourceCustomDocument> {
           }
           break;
         case 'selectAreaObject':
-          if (document.viewerRequestOverride?.authored_area) {
+          if (document.viewerRequestOverride?.authoredArea) {
             document.selectedAreaObjectKey = typeof message.objectKey === 'string'
               ? message.objectKey
               : undefined;
             const request = this.viewerRequest(document);
-            const authoredArea = request.authored_area;
+            const authoredArea = request.authoredArea;
             if (!authoredArea) {
               break;
             }
             this._onDidSelectAreaObject.fire({
-              manifestPath: request.session_key,
+              manifestPath: request.sessionKey,
               resref: authoredArea.resref,
               objectKey: document.selectedAreaObjectKey,
             });
@@ -685,7 +769,7 @@ implements vscode.CustomEditorProvider<ResourceCustomDocument> {
             const objectKey = String(message.objectKey || '');
             try {
               const inspection = await this.viewerWorker.inspectAreaObject({
-                sessionKey: this.viewerRequest(document).session_key,
+                sessionKey: this.viewerRequest(document).sessionKey,
                 assetKey,
                 objectKey,
               });
@@ -718,7 +802,7 @@ implements vscode.CustomEditorProvider<ResourceCustomDocument> {
             let packet;
             try {
               packet = await this.viewerWorker.loadAnimation({
-                sessionKey: this.viewerRequest(document).session_key,
+                sessionKey: this.viewerRequest(document).sessionKey,
                 assetKey: String(message.assetKey || ''),
                 modelIndex: Number(message.modelIndex),
                 animationIndex: Number(message.animationIndex),
@@ -742,7 +826,7 @@ implements vscode.CustomEditorProvider<ResourceCustomDocument> {
             let packet;
             try {
               packet = await this.viewerWorker.loadTexture({
-                sessionKey: this.viewerRequest(document).session_key,
+                sessionKey: this.viewerRequest(document).sessionKey,
                 assetKey: String(message.assetKey || ''),
                 textureIndex: Number(message.textureIndex),
                 preferCompressed: message.preferCompressed === true,
@@ -769,7 +853,7 @@ implements vscode.CustomEditorProvider<ResourceCustomDocument> {
           }
           break;
         case 'edit':
-          await this.recordEdit(document, message.edit);
+          await this.recordEdit(document, message.edit as ResourceEdit);
           break;
         case 'refresh':
           await document.refresh(isRecord(message.options) ? message.options : {});
@@ -811,6 +895,14 @@ implements vscode.CustomEditorProvider<ResourceCustomDocument> {
         case 'addEntry':
           await this.addEntryFromDisk(document, message.bifIndex);
           break;
+        case 'removeEntry':
+          if (typeof message.resource === 'string') {
+            await this.recordBinaryEdit(
+              document,
+              () => document.removeArchiveEntry(message.resource as string),
+            );
+          }
+          break;
         case 'exportEntry':
           if (typeof message.resource === 'string') {
             await this.exportEntry(document, message.resource);
@@ -840,10 +932,10 @@ implements vscode.CustomEditorProvider<ResourceCustomDocument> {
     }
   }
 
-  async recordEdit(document: ResourceCustomDocument, edit: unknown): Promise<void> {
+  async recordEdit(document: ResourceCustomDocument, edit: ResourceEdit): Promise<void> {
     const result = await document.apply(edit);
     let undoEdit = result.inverse;
-    let redoEdit: unknown;
+    let redoEdit: ResourceEdit | undefined;
     this._onDidChangeCustomDocument.fire({
       document,
       label: result.label || 'Edit NWN resource',
@@ -867,18 +959,52 @@ implements vscode.CustomEditorProvider<ResourceCustomDocument> {
     await this.reloadNestedChildren(document);
   }
 
+  async recordBinaryEdit(
+    document: ResourceCustomDocument,
+    apply: () => Promise<ResourceBinaryEditResult>,
+  ): Promise<void> {
+    const result = await apply();
+    let undoToken = result.inverseToken;
+    let redoToken: string | undefined;
+    this._onDidChangeCustomDocument.fire({
+      document,
+      label: result.label || 'Edit binary NWN resource',
+      undo: async () => {
+        const undoResult = await document.applyBinaryUndo(undoToken);
+        redoToken = undoResult.inverseToken;
+        await this.broadcast(document);
+        await this.reloadNestedChildren(document);
+      },
+      redo: async () => {
+        if (!redoToken) {
+          throw new Error('Cannot redo a binary resource edit before undo has completed.');
+        }
+        const redoResult = await document.applyBinaryUndo(redoToken);
+        undoToken = redoResult.inverseToken;
+        await this.broadcast(document);
+        await this.reloadNestedChildren(document);
+      },
+    });
+    await this.broadcast(document);
+    await this.reloadNestedChildren(document);
+  }
+
   async saveCustomDocument(
     document: ResourceCustomDocument,
     cancellationToken: vscode.CancellationToken,
   ): Promise<void> {
     if (document.viewer) throw new Error('3D viewer documents are read-only.');
     if (document.parent) {
+      if (!document.resource) {
+        throw new Error('The nested resource no longer has an archive entry identity.');
+      }
+      const parent = document.parent;
+      const resource = document.resource;
       const payload = await document.export();
-      await this.recordEdit(document.parent, {
-        action: 'replaceEntry',
-        resource: document.resource,
-        contents: payload.contents,
-      });
+      await this.recordBinaryEdit(
+        parent,
+        () => parent.replaceArchiveEntry(resource, payload),
+      );
       document.dirty = false;
       return;
     }
@@ -931,7 +1057,7 @@ implements vscode.CustomEditorProvider<ResourceCustomDocument> {
       if (cancellationToken.isCancellationRequested) {
         throw new Error('Save was cancelled.');
       }
-      const plan = await document.request<SaveAsPlan>(
+      const plan = await document.request(
         'planSaveDocumentAs',
         { path: destination.fsPath },
         cancellationToken,
@@ -950,7 +1076,7 @@ implements vscode.CustomEditorProvider<ResourceCustomDocument> {
           'Replace All',
         );
         if (choice !== 'Replace All') throw new Error('Save was cancelled.');
-        confirmationToken = plan.confirmationToken;
+        confirmationToken = plan.confirmationToken ?? undefined;
       }
       try {
         await document.request(
@@ -976,7 +1102,7 @@ implements vscode.CustomEditorProvider<ResourceCustomDocument> {
     cancellationToken: vscode.CancellationToken,
   ): Promise<void> {
     if (document.viewer) {
-      this.viewerWorker.invalidate(this.viewerRequest(document).session_key);
+      this.viewerWorker.invalidate(this.viewerRequest(document).sessionKey);
       this.invalidateScene(document);
       await this.broadcast(document);
       return;
@@ -1081,11 +1207,11 @@ implements vscode.CustomEditorProvider<ResourceCustomDocument> {
     if (document.viewerRequestOverride) {
       return {
         ...document.viewerRequestOverride,
-        area: document.sceneArea || null,
+        area: document.sceneArea || undefined,
       };
     }
     const anchorPath = document.parent?.uri.fsPath || document.uri.fsPath;
-    const projectRoot = findProjectRoot(anchorPath);
+    const projectRoot = document.projectRoot;
     const configuration = vscode.workspace.getConfiguration('nwnrs', document.uri);
     const workspaceFolder = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath || '';
     const context = {
@@ -1098,14 +1224,14 @@ implements vscode.CustomEditorProvider<ResourceCustomDocument> {
     const archivePath = document.parent?.uri.fsPath;
     const archiveExtension = path.extname(archivePath || '').toLowerCase();
     return {
-      session_key: path.join(projectRoot, 'nwpkg.toml'),
+      sessionKey: path.join(projectRoot, 'nwpkg.toml'),
       path: document.resource ? path.join(projectRoot, document.resource) : document.uri.fsPath,
-      project_root: projectRoot,
-      area: document.sceneArea || null,
-      root: root || null,
-      user: user || null,
+      projectRoot,
+      area: document.sceneArea || undefined,
+      root: root || undefined,
+      user: user || undefined,
       language: configuration.get('language', 'english'),
-      load_ovr: configuration.get('loadOvr', false),
+      loadOvr: configuration.get('loadOvr', false),
       archives: archivePath && ['.mod', '.erf', '.hak', '.nwm'].includes(archiveExtension)
         ? [archivePath]
         : [],
@@ -1118,13 +1244,16 @@ implements vscode.CustomEditorProvider<ResourceCustomDocument> {
   ): Promise<void> {
     const diagnostics: string[] = [];
     const primary = document.snapshot.kind;
+    if (primary !== 'ncs' && primary !== 'ndb') {
+      throw new Error('Script-debug configuration requires an NCS or NDB document.');
+    }
     const base = path.basename(document.uri.path, path.extname(document.uri.path));
     const companion = primary === 'ncs' ? `${base}.ndb` : `${base}.ncs`;
     const companionBytes = await this.readScriptDebugResource(document, companion, cancellationToken);
     if (companionBytes) {
       try {
         document.snapshot = await document.request('configureScriptDebug', {
-          [primary === 'ncs' ? 'ndb' : 'ncs']: companionBytes.toString('base64'),
+          [primary === 'ncs' ? 'ndb' : 'ncs']: companionBytes,
         }, cancellationToken);
       } catch (error) {
         diagnostics.push(`Could not use ${companion}: ${errorMessage(error)}`);
@@ -1134,31 +1263,40 @@ implements vscode.CustomEditorProvider<ResourceCustomDocument> {
     if (langspec) {
       try {
         document.snapshot = await document.request('configureScriptDebug', {
-          langspec: langspec.toString('base64'),
+          langspec,
         }, cancellationToken);
       } catch (error) {
         diagnostics.push(`Could not use nwscript.nss: ${errorMessage(error)}`);
       }
     }
-    const sourceFiles = document.snapshot.data?.sourceFiles || [];
-    const sources: Record<string, string> = {};
-    await Promise.all(sourceFiles.map(async (source) => {
+    if (document.snapshot.kind !== 'ncs' && document.snapshot.kind !== 'ndb') {
+      throw new Error('Script-debug configuration changed the document to an invalid kind.');
+    }
+    const sourceFiles = document.snapshot.data.sourceFiles;
+    const sourcePayloads = (await Promise.all(sourceFiles.map(async (source) => {
       const name = String(source.name || '');
-      if (!validScriptDebugResref(name)) return;
+      if (!validScriptDebugResref(name)) return undefined;
       const resource = name.toLowerCase().endsWith('.nss') ? name : `${name}.nss`;
       const bytes = await this.readScriptDebugResource(document, resource, cancellationToken);
-      if (bytes) sources[name] = bytes.toString('base64');
-    }));
-    if (Object.keys(sources).length > 0) {
+      return bytes ? { name, bytes } : undefined;
+    }))).filter((payload): payload is { name: string; bytes: Buffer } => Boolean(payload));
+    const sourceNames = sourcePayloads.map((payload) => payload.name);
+    const sourceContents = sourcePayloads.map((payload) => payload.bytes);
+    if (sourceNames.length > 0) {
       try {
-        document.snapshot = await document.request('configureScriptDebug', { sources }, cancellationToken);
+        document.snapshot = await document.request(
+          'configureScriptDebug',
+          { sourceNames, sourceContents },
+          cancellationToken,
+        );
       } catch (error) {
         diagnostics.push(`Could not map NDB source files: ${errorMessage(error)}`);
       }
     }
-    if (diagnostics.length > 0 && document.snapshot.data) {
+    if (diagnostics.length > 0
+      && (document.snapshot.kind === 'ncs' || document.snapshot.kind === 'ndb')) {
       document.snapshot.data.diagnostics = [
-        ...(document.snapshot.data.diagnostics || []),
+        ...document.snapshot.data.diagnostics,
         ...diagnostics,
       ];
     }
@@ -1188,8 +1326,8 @@ implements vscode.CustomEditorProvider<ResourceCustomDocument> {
     }
     try {
       const request = this.viewerRequest(document);
-      request.path = path.join(request.project_root, resource);
-      request.area = null;
+      request.path = path.join(request.projectRoot, resource);
+      request.area = undefined;
       const bytes = await this.viewerWorker.readResource(request);
       return Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
     } catch {
@@ -1223,8 +1361,8 @@ implements vscode.CustomEditorProvider<ResourceCustomDocument> {
       }
     }
     const request = this.viewerRequest(document);
-    request.path = path.join(request.project_root, resource);
-    request.area = null;
+    request.path = path.join(request.projectRoot, resource);
+    request.area = undefined;
     if (document.parent) {
       try {
         const bytes = Buffer.from(await document.parent.readEntryBytes(resource));
@@ -1236,8 +1374,8 @@ implements vscode.CustomEditorProvider<ResourceCustomDocument> {
       }
     }
     const resolved = await this.viewerWorker.resolveResource(request);
-    if (resolved.file_path) {
-      const textDocument = await vscode.workspace.openTextDocument(vscode.Uri.file(resolved.file_path));
+    if (resolved.filePath) {
+      const textDocument = await vscode.workspace.openTextDocument(vscode.Uri.file(resolved.filePath));
       await vscode.window.showTextDocument(textDocument, { preview: true, selection });
       return;
     }
@@ -1257,7 +1395,10 @@ implements vscode.CustomEditorProvider<ResourceCustomDocument> {
     selection: vscode.Range,
   ): Promise<void> {
     const id = crypto.randomUUID();
-    this.viewerTextResources.set(id, Buffer.from(contents).toString('utf8'));
+    this.viewerTextResources.set(
+      id,
+      await decodeNativeTextResource(resource, contents, request.language),
+    );
     const uri = vscode.Uri.from({
       scheme: VIEWER_TEXT_SCHEME,
       authority: 'game',
@@ -1288,12 +1429,12 @@ implements vscode.CustomEditorProvider<ResourceCustomDocument> {
   async openResolvedResource(baseRequest: ViewerRequest, resource: string): Promise<void> {
     if (!resource || path.basename(resource) !== resource) return;
     const request = { ...baseRequest };
-    request.path = path.join(request.project_root, resource);
-    request.area = null;
+    request.path = path.join(request.projectRoot, resource);
+    request.area = undefined;
     const resolved = await this.viewerWorker.resolveResource(request);
     const extension = path.extname(resource).toLowerCase();
-    if (resolved.file_path) {
-      const uri = vscode.Uri.file(resolved.file_path);
+    if (resolved.filePath) {
+      const uri = vscode.Uri.file(resolved.filePath);
       if (isTextResource(resource) || !isCustomEditorResource(resource)) {
         await vscode.commands.executeCommand('vscode.open', uri);
       } else {
@@ -1312,7 +1453,10 @@ implements vscode.CustomEditorProvider<ResourceCustomDocument> {
     );
     const id = crypto.randomUUID();
     if (isTextResource(resource)) {
-      this.viewerTextResources.set(id, contents.toString('utf8'));
+      this.viewerTextResources.set(
+        id,
+        await decodeNativeTextResource(resource, contents, request.language),
+      );
       const uri = vscode.Uri.from({
         scheme: VIEWER_TEXT_SCHEME,
         authority: 'game',
@@ -1399,7 +1543,7 @@ implements vscode.CustomEditorProvider<ResourceCustomDocument> {
           }
           child.viewerContents = Buffer.from(await parent.readEntryBytes(child.resource));
           this.invalidateScene(child);
-          this.viewerWorker.invalidate(this.viewerRequest(child).session_key);
+          this.viewerWorker.invalidate(this.viewerRequest(child).sessionKey);
         } else {
           await child.revert();
           if (child.snapshot?.kind === 'ncs' || child.snapshot?.kind === 'ndb') {
@@ -1433,23 +1577,24 @@ implements vscode.CustomEditorProvider<ResourceCustomDocument> {
     }) || [];
     if (!uri) return;
     const contents = await vscode.workspace.fs.readFile(uri);
-    await this.recordEdit(document, {
-      action: 'replaceEntry',
-      resource,
-      contents: Buffer.from(contents).toString('base64'),
-    });
+    await this.recordBinaryEdit(
+      document,
+      () => document.replaceArchiveEntry(resource, contents),
+    );
   }
 
   async addEntryFromDisk(document: ResourceCustomDocument, bifIndex: unknown): Promise<void> {
     const [uri] = await vscode.window.showOpenDialog({ canSelectMany: false, openLabel: 'Add Resource' }) || [];
     if (!uri) return;
     const contents = await vscode.workspace.fs.readFile(uri);
-    await this.recordEdit(document, {
-      action: 'addEntry',
-      resource: path.basename(uri.fsPath),
-      contents: Buffer.from(contents).toString('base64'),
-      bifIndex,
-    });
+    await this.recordBinaryEdit(
+      document,
+      () => document.addArchiveEntry(
+        path.basename(uri.fsPath),
+        contents,
+        typeof bifIndex === 'number' && Number.isSafeInteger(bifIndex) ? bifIndex : null,
+      ),
+    );
   }
 
   async exportEntry(document: ResourceCustomDocument, resource: string): Promise<void> {
@@ -1458,8 +1603,8 @@ implements vscode.CustomEditorProvider<ResourceCustomDocument> {
       saveLabel: 'Export Resource',
     });
     if (!destination) return;
-    const payload = await document.request<ResourceEntryPayload>('readEntry', { resource });
-    await vscode.workspace.fs.writeFile(destination, Buffer.from(payload.contents, 'base64'));
+    const payload = await document.readEntryBytes(resource);
+    await vscode.workspace.fs.writeFile(destination, payload);
   }
 
   async pickOverrideDestination(document: ResourceCustomDocument): Promise<vscode.Uri | undefined> {
@@ -1518,6 +1663,23 @@ function virtualResourceQuery(id: string, resource: string, request: ViewerReque
   return new URLSearchParams({ id, context: descriptor }).toString();
 }
 
+async function decodeNativeTextResource(
+  resource: string,
+  contents: Uint8Array,
+  language: string | undefined,
+): Promise<string> {
+  const extension = path.extname(resource).toLowerCase();
+  const normalizedLanguage = language?.trim().toLowerCase();
+  const encoding = extension === '.nss'
+    ? 'windows1252'
+    : normalizedLanguage === 'polish'
+      || normalizedLanguage === 'pl'
+      || normalizedLanguage === '5'
+      ? 'windows1250'
+      : 'windows1252';
+  return vscode.workspace.decode(contents, { encoding });
+}
+
 function decodeVirtualResourceDescriptor(
   uri: vscode.Uri,
 ): VirtualResourceDescriptor | undefined {
@@ -1545,15 +1707,15 @@ function decodeVirtualResourceDescriptor(
 
 function validVirtualViewerRequest(request: unknown, resource: string): request is ViewerRequest {
   if (!isRecord(request)) return false;
-  if (typeof request.session_key !== 'string' || request.session_key.length === 0) return false;
+  if (typeof request.sessionKey !== 'string' || request.sessionKey.length === 0) return false;
   if (typeof request.path !== 'string' || !path.isAbsolute(request.path)) return false;
-  if (typeof request.project_root !== 'string' || !path.isAbsolute(request.project_root)) return false;
+  if (typeof request.projectRoot !== 'string' || !path.isAbsolute(request.projectRoot)) return false;
   if (path.basename(request.path).toLowerCase() !== resource.toLowerCase()) return false;
   if (request.area != null && typeof request.area !== 'string') return false;
   if (request.language != null && (typeof request.language !== 'string' || !request.language)) return false;
-  if (request.load_ovr != null && typeof request.load_ovr !== 'boolean') return false;
-  if (request.include_project_resources != null
-      && typeof request.include_project_resources !== 'boolean') return false;
+  if (request.loadOvr != null && typeof request.loadOvr !== 'boolean') return false;
+  if (request.includeProjectResources != null
+      && typeof request.includeProjectResources !== 'boolean') return false;
   for (const optionalPath of ['root', 'user'] as const) {
     const value = request[optionalPath];
     if (value != null && (typeof value !== 'string' || !path.isAbsolute(value))) return false;
@@ -1562,8 +1724,8 @@ function validVirtualViewerRequest(request: unknown, resource: string): request 
       || request.archives.some((value) => typeof value !== 'string' || !path.isAbsolute(value)))) {
     return false;
   }
-  if (request.authored_area != null) {
-    const area = request.authored_area;
+  if (request.authoredArea != null) {
+    const area = request.authoredArea;
     if (!isRecord(area)
         || typeof area.resref !== 'string' || !area.resref
         || `${area.resref}.are`.toLowerCase() !== resource.toLowerCase()
@@ -1576,12 +1738,14 @@ function validVirtualViewerRequest(request: unknown, resource: string): request 
   return true;
 }
 
-function authoredAreaVirtualId(request: ViewerRequest & { authored_area: AuthoredArea }): string {
-  const identity = `${request.session_key}\0${request.authored_area.resref.toLowerCase()}`;
+function authoredAreaVirtualId(
+  request: ViewerRequest & { authoredArea: NonNullable<ViewerRequest['authoredArea']> },
+): string {
+  const identity = `${request.sessionKey}\0${request.authoredArea.resref.toLowerCase()}`;
   return `area-${crypto.createHash('sha256').update(identity).digest('hex').slice(0, 24)}`;
 }
 
-function viewerSnapshot(resourcePath: string): ResourceSnapshot {
+function viewerSnapshot(resourcePath: string): ViewerSnapshot {
   return {
     path: resourcePath,
     kind: 'viewer',
@@ -1652,7 +1816,7 @@ function viewerAffectedByPaths(
 function authoredAreaRequest(
   baseRequest: ViewerRequest,
   area: NativePackageSourceArea,
-): ViewerRequest & { authored_area: AuthoredArea } {
+): ViewerRequest & { authoredArea: NonNullable<ViewerRequest['authoredArea']> } {
   if (!area?.resref) throw new Error('Area preview is missing its resource name.');
   const byKind = new Map<string, string>();
   for (const file of area.files || []) {
@@ -1674,12 +1838,12 @@ function authoredAreaRequest(
   return {
     ...baseRequest,
     path: path.join(path.dirname(baseRequest.path), `${area.resref}.are`),
-    area: null,
-    authored_area: {
+    area: undefined,
+    authoredArea: {
       resref: area.resref,
       are,
       git,
-      gic: byKind.get('gic') || null,
+      gic: byKind.get('gic') || undefined,
     },
   };
 }

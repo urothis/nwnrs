@@ -8,6 +8,7 @@ use std::{
 };
 
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -22,7 +23,44 @@ struct ResourceCapability {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     napi_build::setup();
-    generate_resource_capabilities()
+    generate_resource_capabilities()?;
+    generate_contract_fingerprint()
+}
+
+fn generate_contract_fingerprint() -> Result<(), Box<dyn std::error::Error>> {
+    let manifest_dir = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::NotFound,
+            "Cargo did not provide CARGO_MANIFEST_DIR",
+        )
+    })?);
+    let list_path = manifest_dir.join("contract-files.txt");
+    writeln!(
+        io::stdout().lock(),
+        "cargo:rerun-if-changed={}",
+        list_path.display()
+    )?;
+    let list = fs::read_to_string(&list_path)?;
+    let mut digest = Sha256::new();
+    for relative in list.lines().map(str::trim).filter(|line| !line.is_empty()) {
+        let path = manifest_dir.join(relative);
+        writeln!(
+            io::stdout().lock(),
+            "cargo:rerun-if-changed={}",
+            path.display()
+        )?;
+        digest.update(relative.as_bytes());
+        digest.update([0]);
+        digest.update(fs::read(path)?);
+        digest.update([0xff]);
+    }
+    let fingerprint = digest
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    println!("cargo:rustc-env=NWNRS_CONTRACT_FINGERPRINT={fingerprint}");
+    Ok(())
 }
 
 fn generate_resource_capabilities() -> Result<(), Box<dyn std::error::Error>> {

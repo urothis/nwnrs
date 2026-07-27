@@ -9,6 +9,7 @@ use crate::scene::DependencyGraph;
 
 /// Original resource category used to assemble a scene.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub enum SceneSource {
     /// MDL model.
@@ -35,6 +36,7 @@ pub enum SceneSource {
 
 /// Severity of a scene diagnostic.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub enum SceneDiagnosticSeverity {
     /// Informational note.
@@ -47,6 +49,7 @@ pub enum SceneDiagnosticSeverity {
 
 /// A resource-aware scene diagnostic.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct SceneDiagnostic {
     /// Diagnostic severity.
@@ -61,6 +64,7 @@ pub struct SceneDiagnostic {
 
 /// Viewer environment policy.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub enum SceneEnvironment {
     /// Neutral studio lighting and background.
@@ -71,6 +75,7 @@ pub enum SceneEnvironment {
 
 /// Serializable ARE environment projection consumed by frontends.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct SceneAreaEnvironment {
     /// Whether the day/night cycle is active.
@@ -144,6 +149,7 @@ impl From<&AreEnvironment> for SceneAreaEnvironment {
 
 /// Kind of one positioned render instance.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub enum SceneInstanceKind {
     /// Standalone model.
@@ -176,6 +182,7 @@ pub enum SceneInstanceKind {
 
 /// One model or overlay positioned in scene space.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct SceneInstance {
     /// Stable instance id.
@@ -206,6 +213,7 @@ pub struct SceneInstance {
 
 /// One logical authored object from an area's GIT resource.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct SceneAreaObject {
     /// Stable identity used across the sidebar, viewer, and scene reloads.
@@ -237,6 +245,7 @@ pub enum SceneModel {
 
 /// Decoded texture storage kind.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub enum SceneTextureKind {
     /// NWN compact DDS.
@@ -249,6 +258,7 @@ pub enum SceneTextureKind {
 
 /// GPU compression used by an authored texture payload.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub enum SceneTextureCompression {
     /// BC1 / DXT1 blocks.
@@ -298,6 +308,7 @@ pub struct SceneTexture {
 
 /// One TXI directive retained for material inspection and renderer behavior.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct SceneTxiDirective {
     /// Directive name.
@@ -310,6 +321,7 @@ pub struct SceneTxiDirective {
 
 /// One MTR parameter row.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct SceneMtrParameter {
     /// Parameter name.
@@ -322,6 +334,7 @@ pub struct SceneMtrParameter {
 
 /// Resolved MTR metadata for a scene material.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct SceneMtr {
     /// Resolved material resource.
@@ -340,6 +353,7 @@ pub struct SceneMtr {
 
 /// One effective material texture slot.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct SceneMaterialTexture {
     /// Renderer-neutral role label.
@@ -356,6 +370,7 @@ pub struct SceneMaterialTexture {
 
 /// Resolved assets for one scene material.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct SceneMaterialAssets {
     /// Material index in the model scene.
@@ -372,6 +387,7 @@ pub struct SceneMaterialAssets {
 
 /// Asset resolution tree corresponding to one model and its attachments.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct SceneModelAssets {
     /// Model name.
@@ -386,6 +402,7 @@ pub struct SceneModelAssets {
 
 /// One resolved texture owned by a non-mesh scene node.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct SceneNodeTexture {
     /// Owning scene node index.
@@ -402,6 +419,7 @@ pub struct SceneNodeTexture {
 
 /// Custom shader stage.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub enum SceneShaderStage {
     /// Vertex stage.
@@ -414,6 +432,7 @@ pub enum SceneShaderStage {
 
 /// Resolved custom shader source retained for inspection and translation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct SceneShaderSource {
     /// Resolved SHD resource.
@@ -440,6 +459,7 @@ pub struct SceneArea {
 /// Module area catalog and entry-point metadata used by the viewport's area
 /// selector.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct SceneModule {
     /// Areas declared by the IFO in authored order.

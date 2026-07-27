@@ -52,12 +52,12 @@ test('viewer scheduler cancels queued and running native work', async () => {
   scheduler.enqueue({
     id: 1,
     method: 'loadScene',
-    request: { session_key: 'demo' },
+    request: { sessionKey: 'demo' },
   });
   scheduler.enqueue({
     id: 2,
     method: 'loadScene',
-    request: { session_key: 'demo' },
+    request: { sessionKey: 'demo' },
   });
   scheduler.cancel(2);
   scheduler.cancel(1);
@@ -90,17 +90,17 @@ test('viewer scheduler preserves scene order without blocking interactive resour
   scheduler.enqueue({
     id: 1,
     method: 'loadScene',
-    request: { session_key: 'demo' },
+    request: { sessionKey: 'demo' },
   });
   scheduler.enqueue({
     id: 2,
     method: 'resolveResource',
-    request: { session_key: 'demo' },
+    request: { sessionKey: 'demo' },
   });
   scheduler.enqueue({
     id: 3,
     method: 'loadScene',
-    request: { session_key: 'demo' },
+    request: { sessionKey: 'demo' },
   });
 
   assert.deepEqual(calls, [1, 2]);
@@ -124,9 +124,9 @@ test('viewer scheduler enforces its queue safety bound without dropping a reques
     { maxRunning: 1, maxQueued: 1 },
   );
 
-  scheduler.enqueue({ id: 1, method: 'loadScene', request: { session_key: 'demo' } });
-  scheduler.enqueue({ id: 2, method: 'loadScene', request: { session_key: 'other' } });
-  scheduler.enqueue({ id: 3, method: 'loadScene', request: { session_key: 'third' } });
+  scheduler.enqueue({ id: 1, method: 'loadScene', request: { sessionKey: 'demo' } });
+  scheduler.enqueue({ id: 2, method: 'loadScene', request: { sessionKey: 'other' } });
+  scheduler.enqueue({ id: 3, method: 'loadScene', request: { sessionKey: 'third' } });
 
   assert.equal(scheduler.runningCount, 1);
   assert.equal(scheduler.queuedCount, 1);

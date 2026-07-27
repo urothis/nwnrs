@@ -57,7 +57,7 @@ Compiler attributes use the same erasure rule. The first project-wide NSS
 macro implements native module-load registration:
 
 ```nss
-#[nwnrs::events(module_load)]
+#[nwnrs::event::module_load::before]
 void ProjectStart(json jEvent)
 {
     // Receives the immutable event snapshot from _nwnrs_onload.
@@ -69,6 +69,11 @@ receives the module source token streams, validates these attributes, and
 quotes the virtual `_nwnrs_onload.nss` source. The frontend removes the
 complete `#[...]` syntax after macro expansion, so extended text cannot leak
 into the ordinary parser or NCS.
+
+Project-wide macros are loaded generically from resolved nwpkg include
+dependencies. Exporting files may use any name and are processed through their
+normal include and object-define graph before their qualified macro paths are
+registered.
 
 Fixed declarative transformations can live directly in source:
 
@@ -210,6 +215,10 @@ compiler-only language specification exposes these operations inside a
   collection for project finalizers.
 - `__NWNRS_TokenGroupContents(group)` exposes the inner stream of one balanced
   delimiter group without reparsing rendered source.
+- `__NWNRS_OrderingGraphNew()`, `...AddNode`, `...Contains`, `...AddEdge`,
+  `...Sort`, and `...Cycle` provide a generic bounded directed graph. Stable
+  topological sorting uses caller-supplied source ranks; cycle output repeats
+  the first diagnostic node to expose the complete chain.
 - `__NWNRS_TokenCursorNew(stream)` creates a mutable parser cursor;
   `...Position`, `...IsEnd`, `...Peek`, `...Next`, `...Consume`, `...Expect`,
   and `...Remaining` provide lossless navigation.
@@ -221,7 +230,20 @@ compiler-only language specification exposes these operations inside a
 
 Execution is deterministic and isolated from the game runtime: the compiler
 VM only registers these token operations, and enforces instruction, recursion,
-stack, expansion-depth, and output-token limits.
+stack, expansion-depth, and output-token limits. It also caps retained token
+copies, estimated token bytes, arena handles, and aggregate token-list plus
+ordering-graph items,
+so a macro cannot bypass the output limit by accumulating compiler-only data.
+Stack growth is validated for four-byte alignment and against the configured
+cell budget before allocation. Integer edge operations use defined wrapping
+semantics, including `i32::MIN`, rather than relying on debug/release overflow
+behavior.
+
+Cancellation is cooperative through the full pipeline: source loading,
+preprocessing, macro collection and VM execution, lexing, parsing, semantic
+analysis, index construction, HIR lowering, optimization/code generation, and
+batch orchestration all observe the same token. Cancellation therefore does
+not merely stop between files.
 
 The Rust host surface consists of `NwTokenStream`, `NwTokenTree`,
 `MacroRegistry`, `BangMacro`, `NwScriptMacro`, `expand_source_macros`,
@@ -283,10 +305,12 @@ The Rust host surface consists of `NwTokenStream`, `NwTokenTree`,
 - `NamedItem`
 - `ScriptString`
 
-`ScriptString` stores the exact bytes carried by source literals, NCS
-constants, folded expressions, and VM string values. It deliberately does not
-select UTF-8 or a legacy code page; callers can request UTF-8 with
-`ScriptString::as_str` when their boundary requires text.
+`ScriptString` stores the exact Windows-1252 bytes carried by NSS source
+literals, NCS constants, folded expressions, hashes, and VM string values.
+NWScript compilation is byte-oriented: UTF-8 is never accepted as an alternate
+NSS encoding, and `\xNN` is the explicit source spelling for an arbitrary
+runtime byte. Text decoding is only a presentation boundary; it never changes
+the compiler input.
 
 ### Semantic and lowered representations
 
@@ -439,6 +463,13 @@ This is the same public batch path consumed by the `nwnrs compile` command.
 Graphviz output can remain DOT source or be rendered through the `dot`
 executable as SVG, PNG, or PDF while preserving the same directory hierarchy.
 
+`FileSystemScriptResolver` has no implicit current-directory fallback.
+Relative names are confined to explicitly configured roots; `..` components
+are rejected; absolute requests must remain under a configured root; and the
+canonical resolved target is checked again to prevent symbolic-link escapes.
+Case-insensitive candidates use deterministic lexical tie-breaking on
+case-sensitive filesystems.
+
 ### Graphviz
 
 - `render_script_graphviz`
@@ -471,7 +502,8 @@ surface also supports single-step execution plus `step_over`, `step_out`,
 `run_until_offset`, `run_until_function`, and `run_until_line` when attached
 `NDB` metadata is available. `VmRunOptions` can bound instructions, recursion,
 and stack cells; budget failures and division by zero map back to the matching
-native `CompilerErrorCode` through `VmError::code()`.
+native `CompilerErrorCode` through `VmError::code()`. A cancellation token can
+stop long-running compiler-macro VM execution between opcodes.
 
 ## VM Spec
 

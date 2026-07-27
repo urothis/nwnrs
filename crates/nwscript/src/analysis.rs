@@ -181,13 +181,36 @@ pub fn build_semantic_index(
     SemanticIndexBuilder::new(script, semantic, hir, langspec, sources).build()
 }
 
+pub(crate) fn build_semantic_index_with_cancellation(
+    script: &Script,
+    semantic: &SemanticModel,
+    hir: &HirModule,
+    langspec: Option<&LangSpec>,
+    sources: &SourceMap,
+    cancellation: &crate::CancellationToken,
+) -> Result<SemanticIndex, crate::Cancelled> {
+    cancellation.check()?;
+    let index = SemanticIndexBuilder::new_with_cancellation(
+        script,
+        semantic,
+        hir,
+        langspec,
+        sources,
+        cancellation,
+    )
+    .build();
+    cancellation.check()?;
+    Ok(index)
+}
+
 struct SemanticIndexBuilder<'a> {
-    script:   &'a Script,
-    semantic: &'a SemanticModel,
-    hir:      &'a HirModule,
-    langspec: Option<&'a LangSpec>,
-    tokens:   HashMap<SourceId, Vec<Token>>,
-    index:    SemanticIndex,
+    script:       &'a Script,
+    semantic:     &'a SemanticModel,
+    hir:          &'a HirModule,
+    langspec:     Option<&'a LangSpec>,
+    tokens:       HashMap<SourceId, Vec<Token>>,
+    index:        SemanticIndex,
+    cancellation: Option<&'a crate::CancellationToken>,
 }
 
 impl<'a> SemanticIndexBuilder<'a> {
@@ -198,15 +221,37 @@ impl<'a> SemanticIndexBuilder<'a> {
         langspec: Option<&'a LangSpec>,
         sources: &'a SourceMap,
     ) -> Self {
-        let tokens = sources
-            .iter()
-            .filter_map(|source| {
-                Lexer::new(source.id, source.bytes())
-                    .lex_all()
-                    .ok()
-                    .map(|tokens| (source.id, tokens))
-            })
-            .collect();
+        Self::new_impl(script, semantic, hir, langspec, sources, None)
+    }
+
+    fn new_with_cancellation(
+        script: &'a Script,
+        semantic: &'a SemanticModel,
+        hir: &'a HirModule,
+        langspec: Option<&'a LangSpec>,
+        sources: &'a SourceMap,
+        cancellation: &'a crate::CancellationToken,
+    ) -> Self {
+        Self::new_impl(script, semantic, hir, langspec, sources, Some(cancellation))
+    }
+
+    fn new_impl(
+        script: &'a Script,
+        semantic: &'a SemanticModel,
+        hir: &'a HirModule,
+        langspec: Option<&'a LangSpec>,
+        sources: &'a SourceMap,
+        cancellation: Option<&'a crate::CancellationToken>,
+    ) -> Self {
+        let mut tokens = HashMap::new();
+        for source in sources.iter() {
+            if cancellation.is_some_and(crate::CancellationToken::is_cancelled) {
+                break;
+            }
+            if let Ok(lexed) = Lexer::new(source.id, source.bytes()).lex_all() {
+                tokens.insert(source.id, lexed);
+            }
+        }
         Self {
             script,
             semantic,
@@ -214,17 +259,35 @@ impl<'a> SemanticIndexBuilder<'a> {
             langspec,
             tokens,
             index: SemanticIndex::default(),
+            cancellation,
         }
+    }
+
+    fn should_stop(&self) -> bool {
+        self.cancellation
+            .is_some_and(crate::CancellationToken::is_cancelled)
     }
 
     fn build(mut self) -> SemanticIndex {
         self.record_top_level_definitions();
+        if self.should_stop() {
+            return self.index;
+        }
         self.record_builtin_definitions();
+        if self.should_stop() {
+            return self.index;
+        }
         self.record_type_references();
         for function in &self.hir.functions {
+            if self.should_stop() {
+                return self.index;
+            }
             self.record_function(function);
         }
         for global in &self.hir.globals {
+            if self.should_stop() {
+                return self.index;
+            }
             if let Some(initializer) = &global.initializer {
                 self.record_expr(initializer, None);
             }
@@ -470,6 +533,9 @@ impl<'a> SemanticIndexBuilder<'a> {
     }
 
     fn record_stmt(&mut self, statement: &HirStmt, function: &HirFunction) {
+        if self.should_stop() {
+            return;
+        }
         match statement {
             HirStmt::Block(block) => self.record_block(block, function),
             HirStmt::Declare(declaration) => {
@@ -524,6 +590,9 @@ impl<'a> SemanticIndexBuilder<'a> {
     }
 
     fn record_expr(&mut self, expression: &HirExpr, function: Option<&HirFunction>) {
+        if self.should_stop() {
+            return;
+        }
         match &expression.kind {
             HirExprKind::Value(value) => {
                 let target = match value {

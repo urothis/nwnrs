@@ -1,8 +1,8 @@
 use std::{fs, io::Cursor, path::Path};
 
 use nwnrs_nwpkg::{
-    ProjectKind, write_erf_pack_metadata, write_key_pack_metadata, write_project_manifest,
-    write_resource_pack_metadata,
+    ProjectKind, ProjectLanguage, write_erf_pack_metadata, write_key_pack_metadata,
+    write_project_manifest_with_language, write_resource_pack_metadata,
 };
 use nwnrs_nwscript as nwscript;
 use nwnrs_types::{
@@ -39,25 +39,59 @@ pub(crate) fn run_unpack(cmd: UnpackCmd) -> Result<(), String> {
             .map_err(|error| format!("failed to create {}: {error}", cmd.directory.display()))?;
     }
 
+    let language = project_language(&cmd.language)?;
+    let text_context = nwnrs_types::encoding::NwnTextContext::for_language_id(language.id());
     match detect_kind(&cmd.input) {
-        Some(Kind::Erf) => unpack_erf_to_dir(&cmd.input, &cmd.directory, cmd.force),
+        Some(Kind::Erf) => unpack_erf_to_dir(
+            &cmd.input,
+            &cmd.directory,
+            cmd.force,
+            language,
+            text_context,
+        ),
         Some(Kind::Key) => run_key_unpack(KeyUnpackCmd {
-            force:       cmd.force,
-            key:         cmd.input,
+            force: cmd.force,
+            key: cmd.input,
             destination: cmd.directory,
+            language,
         }),
-        Some(Kind::Ncs) => unpack_ncs_to_dir(&cmd.input, &cmd.directory, cmd.force),
-        Some(Kind::Gff) => unpack_resource_to_dir(&cmd.input, &cmd.directory, "gff", cmd.force),
-        Some(Kind::TwoDa) => unpack_resource_to_dir(&cmd.input, &cmd.directory, "2da", cmd.force),
-        Some(Kind::Tlk) => unpack_resource_to_dir(&cmd.input, &cmd.directory, "tlk", cmd.force),
-        Some(Kind::Ssf) => unpack_resource_to_dir(&cmd.input, &cmd.directory, "ssf", cmd.force),
-        Some(Kind::Model) => unpack_resource_to_dir(&cmd.input, &cmd.directory, "mdl", cmd.force),
+        Some(Kind::Ncs) => unpack_ncs_to_dir(&cmd.input, &cmd.directory, cmd.force, language),
+        Some(Kind::Gff) => {
+            unpack_resource_to_dir(&cmd.input, &cmd.directory, "gff", cmd.force, language)
+        }
+        Some(Kind::TwoDa) => {
+            unpack_resource_to_dir(&cmd.input, &cmd.directory, "2da", cmd.force, language)
+        }
+        Some(Kind::Tlk) => {
+            unpack_resource_to_dir(&cmd.input, &cmd.directory, "tlk", cmd.force, language)
+        }
+        Some(Kind::Ssf) => {
+            unpack_resource_to_dir(&cmd.input, &cmd.directory, "ssf", cmd.force, language)
+        }
+        Some(Kind::Model) => {
+            unpack_resource_to_dir(&cmd.input, &cmd.directory, "mdl", cmd.force, language)
+        }
         Some(Kind::Texture) => {
-            unpack_resource_to_dir(&cmd.input, &cmd.directory, "texture", cmd.force)
+            unpack_resource_to_dir(&cmd.input, &cmd.directory, "texture", cmd.force, language)
         }
         None => Err(format!(
             "unsupported file type for generic unpack: {}",
             cmd.input.display()
+        )),
+    }
+}
+
+fn project_language(value: &str) -> Result<ProjectLanguage, String> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "english" => Ok(ProjectLanguage::English),
+        "french" => Ok(ProjectLanguage::French),
+        "german" => Ok(ProjectLanguage::German),
+        "italian" => Ok(ProjectLanguage::Italian),
+        "spanish" => Ok(ProjectLanguage::Spanish),
+        "polish" => Ok(ProjectLanguage::Polish),
+        _ => Err(format!(
+            "unsupported language {value:?}; expected english, french, german, italian, spanish, \
+             or polish"
         )),
     }
 }
@@ -122,17 +156,23 @@ pub(crate) fn run_key_unpack(cmd: KeyUnpackCmd) -> Result<(), String> {
     }
 
     write_key_pack_metadata(&cmd.destination, &cmd.key, &key, cmd.force)?;
-    write_project_manifest(
+    write_project_manifest_with_language(
         &cmd.destination,
         ProjectKind::Key,
         project_name_from_input(&cmd.key),
         ".",
+        cmd.language,
         cmd.force,
     )?;
     Ok(())
 }
 
-fn unpack_ncs_to_dir(input: &Path, destination: &Path, force: bool) -> Result<(), String> {
+fn unpack_ncs_to_dir(
+    input: &Path,
+    destination: &Path,
+    force: bool,
+    language: ProjectLanguage,
+) -> Result<(), String> {
     let file_name = input
         .file_name()
         .and_then(|name| name.to_str())
@@ -159,11 +199,12 @@ fn unpack_ncs_to_dir(input: &Path, destination: &Path, force: bool) -> Result<()
         &format!("{file_name}.asm"),
         force,
     )?;
-    write_project_manifest(
+    write_project_manifest_with_language(
         destination,
         ProjectKind::Ncs,
         project_name_from_input(input),
         &format!("{file_name}.asm"),
+        language,
         force,
     )?;
     Ok(())
@@ -179,6 +220,8 @@ pub(crate) fn unpack_erf_to_dir(
     input: &Path,
     destination: &Path,
     force: bool,
+    language: ProjectLanguage,
+    text_context: nwnrs_types::encoding::NwnTextContext,
 ) -> Result<(), String> {
     let erf = erf::read_erf_from_file(input)
         .map_err(|error| format!("failed to parse {} as ERF/MOD: {error}", input.display()))?;
@@ -195,7 +238,7 @@ pub(crate) fn unpack_erf_to_dir(
             }
         };
         debug!(resource = %rr, size = data.len(), "extracted archive entry");
-        write_unpacked_archive_entry(&rr, &data, destination, force)?;
+        write_unpacked_archive_entry(&rr, &data, destination, force, text_context)?;
         extracted += 1;
     }
     if extracted == 0 {
@@ -205,11 +248,12 @@ pub(crate) fn unpack_erf_to_dir(
         ));
     }
     write_erf_pack_metadata(destination, input, &erf, force)?;
-    write_project_manifest(
+    write_project_manifest_with_language(
         destination,
         file_extension_kind(input)?,
         project_name_from_input(input),
         ".",
+        language,
         force,
     )?;
     Ok(())
@@ -220,6 +264,7 @@ fn unpack_resource_to_dir(
     destination: &Path,
     source_kind: &str,
     force: bool,
+    language: ProjectLanguage,
 ) -> Result<(), String> {
     let file_name = input
         .file_name()
@@ -235,11 +280,12 @@ fn unpack_resource_to_dir(
         )
     })?;
     write_resource_pack_metadata(destination, input, source_kind, file_name, force)?;
-    write_project_manifest(
+    write_project_manifest_with_language(
         destination,
         file_extension_kind(input)?,
         project_name_from_input(input),
         file_name,
+        language,
         force,
     )?;
     Ok(())
@@ -270,6 +316,7 @@ fn write_unpacked_archive_entry(
     data: &[u8],
     destination: &Path,
     force: bool,
+    text_context: nwnrs_types::encoding::NwnTextContext,
 ) -> Result<(), String> {
     let Some(resolved) = rr.resolve() else {
         let target = destination.join(rr.to_string());
@@ -301,7 +348,7 @@ fn write_unpacked_archive_entry(
     if detect_kind(Path::new(&resolved.to_file())) == Some(Kind::Gff) {
         let target = destination.join(format!("{}.json", resolved.to_file()));
         ensure_output_file_ready(&target, force)?;
-        let root = gff::read_gff_root(&mut Cursor::new(data))
+        let root = gff::read_gff_root(&mut Cursor::new(data), text_context)
             .map_err(|error| format!("failed to parse archive entry {rr} as GFF: {error}"))?;
         let rendered = gff::gff_root_to_json_bytes(&root)
             .map_err(|error| format!("failed to serialize archive entry {rr}: {error}"))?;
@@ -347,12 +394,18 @@ mod tests {
         fs::create_dir_all(&source_dir).expect("create source dir");
         let source = source_dir.join("fixture.utc");
         let mut bytes = Cursor::new(Vec::new());
-        gff::write_gff_root(&mut bytes, &gff::GffRoot::new("UTC ")).expect("write gff fixture");
+        gff::write_gff_root(
+            &mut bytes,
+            &gff::GffRoot::new("UTC "),
+            nwnrs_types::encoding::NwnTextContext::default(),
+        )
+        .expect("write gff fixture");
         fs::write(&source, bytes.into_inner()).expect("write source fixture");
 
         run_unpack(UnpackCmd {
             directory: directory.clone(),
             force:     false,
+            language:  "english".into(),
             input:     source.clone(),
         })
         .expect("unpack gff resource");
@@ -377,6 +430,7 @@ mod tests {
         run_unpack(UnpackCmd {
             directory: directory.clone(),
             force:     false,
+            language:  "english".into(),
             input:     source.clone(),
         })
         .expect("unpack twoda resource");
@@ -399,12 +453,14 @@ mod tests {
             opcode:  nwscript::NcsOpcode::Ret,
             auxcode: nwscript::NcsAuxCode::None,
             extra:   Vec::new(),
-        }]);
+        }])
+        .expect("encode ncs fixture");
         fs::write(&input, &bytes).expect("write ncs fixture");
 
         run_unpack(UnpackCmd {
             directory: directory.clone(),
             force:     true,
+            language:  "english".into(),
             input:     input.clone(),
         })
         .expect("unpack ncs resource");

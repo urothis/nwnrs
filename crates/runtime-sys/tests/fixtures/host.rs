@@ -1138,12 +1138,22 @@ pub extern "C" fn nwnrs_fixture_run_script(
             )
         );
         if SUBSCRIBE_EVENTS.load(Ordering::Relaxed) {
-            for identity in fixture_event_identities() {
-                vm.stack.push(Value::String(identity.clone()));
-                assert_eq!(call(&mut commands, NWNX_PUSH_STRING), 0);
-                let supported = call_integer(&mut commands, vm, "GetEventSupported");
+            for (subject, phase) in fixture_event_routes() {
+                let supported = call_with_two_strings(
+                    &mut commands,
+                    vm,
+                    "GetEventSupported",
+                    &subject,
+                    &phase,
+                );
                 assert_eq!(supported, 1);
-                call_with_string(&mut commands, vm, "SubscribeEvent", &identity);
+                let _result = call_with_two_strings(
+                    &mut commands,
+                    vm,
+                    "SubscribeEvent",
+                    &subject,
+                    &phase,
+                );
             }
         }
         MODULE_ONLOAD_CALLS.fetch_add(1, Ordering::Relaxed);
@@ -1618,17 +1628,22 @@ fn empty_exo_string() -> CExoString {
     }
 }
 
-fn fixture_event_identities() -> Vec<String> {
+fn fixture_event_routes() -> Vec<(String, String)> {
     let path = std::env::var_os(EVENT_MANIFEST_ENVIRONMENT)
         .unwrap_or_else(|| panic!("{EVENT_MANIFEST_ENVIRONMENT} is not set"));
     let contents = fs::read_to_string(path).expect("read generated fixture event manifest");
-    let identities = contents
+    let routes = contents
         .lines()
-        .filter(|identity| !identity.is_empty())
-        .map(str::to_string)
+        .filter(|route| !route.is_empty())
+        .map(|route| {
+            let (subject, phase) = route
+                .split_once("::")
+                .unwrap_or_else(|| panic!("invalid fixture event route `{route}`"));
+            (subject.to_string(), phase.to_string())
+        })
         .collect::<Vec<_>>();
-    assert!(!identities.is_empty(), "fixture event manifest is empty");
-    identities
+    assert!(!routes.is_empty(), "fixture event manifest is empty");
+    routes
 }
 
 fn assert_fixture_layout() {
@@ -1759,7 +1774,7 @@ fn main() {
     };
     // SAFETY: the C++ fixture initializes the three CExoString fields using
     // the same exact layout asserted by the runtime ABI probe.
-    let server_vault_text = server_vault.to_string_lossy();
+    let server_vault_text = nwnrs_runtime::display_native_path(&server_vault);
     unsafe {
         nwnrs_fixture_admin_init(
             (&raw mut net_layer).cast(),

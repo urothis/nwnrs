@@ -8,6 +8,8 @@ export interface ResourceEditorView {
 
 export interface ResourceEditorDocumentLike {
   readonly snapshot: unknown;
+  readonly texturePixels?: Uint8Array;
+  readonly pltPixels?: Uint8Array;
   readonly views: Set<ResourceEditorView>;
 }
 
@@ -67,5 +69,16 @@ export function postResourceSnapshot(
   view: ResourceEditorView,
 ): Thenable<boolean> {
   if (!view.ready) return Promise.resolve(false);
-  return view.webview.postMessage({ type: 'snapshot', snapshot: document.snapshot });
+  const message: {
+    type: 'snapshot';
+    snapshot: unknown;
+    texturePixels?: Uint8Array;
+    pltPixels?: Uint8Array;
+  } = {
+    type: 'snapshot',
+    snapshot: document.snapshot,
+  };
+  if (document.texturePixels) message.texturePixels = document.texturePixels;
+  if (document.pltPixels) message.pltPixels = document.pltPixels;
+  return view.webview.postMessage(message);
 }

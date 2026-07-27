@@ -75,10 +75,8 @@ function recordString(value: unknown, ...keys: readonly string[]): string | unde
 function sessionKey(request: ViewerScheduledRequest): string {
   return recordString(
     request.request,
-    'session_key',
     'sessionKey',
     'manifestPath',
-    'project_root',
     'projectRoot',
     'path',
   ) ?? `request:${request.id}`;
@@ -91,7 +89,7 @@ function concurrencyKey(
 ): string {
   if (className === 'scene') return `scene:${session}`;
   if (className === 'catalog') return `catalog:${session}`;
-  const assetKey = recordString(request.request, 'asset_key', 'assetKey');
+  const assetKey = recordString(request.request, 'assetKey');
   return assetKey ? `asset:${session}:${assetKey}` : `resource:${session}`;
 }
 

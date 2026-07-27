@@ -21,6 +21,7 @@ default = ["supervisor", "tooling"]
 supervisor = ["dep:nix", "dep:nwnrs-runtime", "dep:nwnrs-runtime-sys", "dep:tokio"]
 tooling = [
     "dep:image",
+    "dep:nwnrs-language",
     "dep:nwnrs-nwpkg",
     "dep:nwnrs-nwscript",
     "dep:nwnrs-types",
@@ -33,6 +34,7 @@ tooling = [
 [dependencies]
 argh.workspace = true
 image = { workspace = true, optional = true }
+nwnrs-language = { path = "../language", version = "0.0.1", optional = true }
 nwnrs-nwpkg = { package = "nwnrs-nwpkg", path = "../nwpkg", version = "0.0.1", optional = true }
 nwnrs-nwscript = { package = "nwnrs-nwscript", path = "../nwscript", version = "0.0.1", optional = true }
 nwnrs-runtime = { path = "../runtime", version = "0.0.1", optional = true }

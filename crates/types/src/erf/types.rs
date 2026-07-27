@@ -139,6 +139,7 @@ pub struct Erf {
     /// Localized string reference stored in the archive header.
     pub str_ref: i32,
     pub(crate) loc_strings: BTreeMap<i32, String>,
+    pub(crate) loc_native_text: BTreeMap<i32, NwnText>,
     pub(crate) entries: IndexMap<ResRef, Res, RandomState>,
     pub(crate) oid: Option<String>,
     pub(crate) resource_list_padding: u64,
@@ -155,6 +156,18 @@ impl Erf {
     #[must_use]
     pub fn loc_strings(&self) -> &BTreeMap<i32, String> {
         &self.loc_strings
+    }
+
+    /// Returns byte-preserving native localized text for archive entries.
+    #[must_use]
+    pub fn localized_native_text(&self, id: i32) -> Option<&NwnText> {
+        self.loc_native_text.get(&id)
+    }
+
+    /// Returns all byte-preserving localized archive strings.
+    #[must_use]
+    pub fn localized_native_texts(&self) -> &BTreeMap<i32, NwnText> {
+        &self.loc_native_text
     }
 
     /// Returns the archive entries in stored order.

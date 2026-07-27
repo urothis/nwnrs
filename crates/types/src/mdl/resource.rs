@@ -2,7 +2,7 @@ use nwnrs_types::resman::ResType;
 
 use crate::mdl::{
     MODEL_RES_TYPE, ModelEncoding, ModelError, ModelResult, NwnScene, detect_model_encoding,
-    parse_scene_model_auto,
+    parse_scene_model, parse_scene_model_auto,
 };
 
 /// NWN resource type id for tile walkmeshes (`WOK`).
@@ -77,22 +77,21 @@ pub fn parse_scene_resource_auto(
     kind: ModelResourceKind,
     resource_name: &str,
     bytes: &[u8],
+    context: nwnrs_types::encoding::NwnTextContext,
 ) -> ModelResult<NwnScene> {
     if kind == ModelResourceKind::Model || detect_model_encoding(bytes) == ModelEncoding::Compiled {
-        return parse_scene_model_auto(bytes);
+        return parse_scene_model_auto(bytes, context);
     }
 
-    let text = std::str::from_utf8(bytes).map_err(|error| {
-        ModelError::msg(format!("ASCII {} is not UTF-8: {error}", kind.extension()))
-    })?;
+    let text = nwnrs_types::encoding::decode_legacy_preserving(context.encoding(), bytes);
     let wrapped = match kind {
         ModelResourceKind::Model => text.to_string(),
-        ModelResourceKind::Walkmesh => wrap_tile_walkmesh(text, resource_name)?,
+        ModelResourceKind::Walkmesh => wrap_tile_walkmesh(&text, resource_name)?,
         ModelResourceKind::DoorWalkmesh | ModelResourceKind::PlaceableWalkmesh => {
-            wrap_object_walkmesh(text, resource_name, kind)
+            wrap_object_walkmesh(&text, resource_name, kind)
         }
     };
-    parse_scene_model_auto(wrapped.as_bytes())
+    parse_scene_model(&wrapped)
 }
 
 fn wrap_tile_walkmesh(text: &str, resource_name: &str) -> ModelResult<String> {
@@ -189,6 +188,7 @@ node aabb walkmesh
 endnode
 endwalkmeshgeom tno01_w01_01
 "#,
+            nwnrs_types::encoding::NwnTextContext::english(),
         )
         .unwrap_or_else(|error| panic!("parse WOK fragment: {error}"));
 
@@ -214,6 +214,7 @@ node trimesh use01
     0 1 2 0 0 1 2 0
 endnode
 "#,
+            nwnrs_types::encoding::NwnTextContext::english(),
         )
         .unwrap_or_else(|error| panic!("parse PWK fragment: {error}"));
 
@@ -228,6 +229,7 @@ endnode
             ModelResourceKind::Walkmesh,
             "broken",
             b"beginwalkmeshgeom broken\n",
+            nwnrs_types::encoding::NwnTextContext::english(),
         );
         assert!(result.is_err());
     }

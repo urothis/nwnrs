@@ -238,7 +238,7 @@ fn prepare_native_defaults(mut command: RunCmd) -> Result<RunCmd, String> {
         info!(target: "nwnrs::launcher", path = %server.display(), "discovered native NWServer executable");
         command
             .arguments
-            .insert(0, server.to_string_lossy().into_owned());
+            .insert(0, nwnrs_nwscript::physical_path_display(&server));
     }
     Ok(command)
 }
@@ -396,7 +396,7 @@ fn prepare_container_command(
     command.runtime = Some(launch.runtime);
     command.targets = Some(launch.targets);
     command.working_directory = Some(launch.working_directory);
-    command.arguments = std::iter::once(launch.server.to_string_lossy().into_owned())
+    command.arguments = std::iter::once(nwnrs_nwscript::physical_path_display(&launch.server))
         .chain(launch.server_args)
         .collect();
     command.no_tail_logs |= !launch.tail_logs;
@@ -1778,7 +1778,7 @@ mod tests {
             targets: Some(root.clone()),
             working_directory: Some(root.clone()),
             arguments: vec![
-                server.to_string_lossy().into_owned(),
+                nwnrs_nwscript::physical_path_display(&server),
                 "-module".to_string(),
                 "nwnrs".to_string(),
             ],

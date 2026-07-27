@@ -1,6 +1,7 @@
 use std::{error::Error, io};
 
 use nwnrs_types::{
+    encoding::NwnTextContext,
     mdl::{
         MODEL_RES_TYPE, ModelDiagnosticKind, ModelEncoding, ParsedModel, compile_ascii_model,
         compile_semantic_model, detect_model_encoding, lower_ascii_model, lower_binary_model,
@@ -83,7 +84,7 @@ struct ExerciseCoverage {
 }
 
 fn exercise_ascii_model(bytes: &[u8]) -> Result<ExerciseCoverage, Box<dyn Error>> {
-    let ParsedModel::Ascii(ascii) = parse_model_bytes(bytes)? else {
+    let ParsedModel::Ascii(ascii) = parse_model_bytes(bytes, NwnTextContext::english())? else {
         return Err(test_error(
             "ASCII corpus entry was detected as compiled MDL",
         ));

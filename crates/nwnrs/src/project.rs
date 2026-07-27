@@ -8,7 +8,7 @@ use nwnrs_nwpkg::{
     ProjectKind, ProjectLayout, write_new_erf_pack_metadata, write_new_key_pack_metadata,
     write_new_resource_pack_metadata, write_project_manifest,
 };
-use nwnrs_types::prelude::*;
+use nwnrs_types::{encoding::NwnTextContext, prelude::*};
 
 use crate::{
     args::{InitCmd, NewCmd},
@@ -49,7 +49,8 @@ fn scaffold_include_project(target: &Path, project_name: &str) -> Result<(), Str
     ensure_output_file_ready(&file_path, false)?;
     fs::write(&file_path, format!("/// {project_name} include library.\n"))
         .map_err(|error| format!("failed to write {}: {error}", file_path.display()))?;
-    write_project_manifest(target, ProjectKind::Include, project_name, ".", false)
+    write_project_manifest(target, ProjectKind::Include, project_name, ".", false)?;
+    Ok(())
 }
 
 fn resolve_project_kind(kind: Option<String>) -> Result<ProjectKind, String> {
@@ -151,7 +152,8 @@ fn scaffold_resource_project(
     } else {
         kind.as_str()
     };
-    write_new_resource_pack_metadata(target, source_kind, &file_name, false)
+    write_new_resource_pack_metadata(target, source_kind, &file_name, false)?;
+    Ok(())
 }
 
 fn scaffold_erf_project(
@@ -168,7 +170,8 @@ fn scaffold_erf_project(
         &infer_erf_type(Path::new(&format!("placeholder.{kind}")), None),
         erf::ErfVersion::V1,
         false,
-    )
+    )?;
+    Ok(())
 }
 
 fn scaffold_key_project(
@@ -180,7 +183,8 @@ fn scaffold_key_project(
     fs::create_dir_all(&source_root)
         .map_err(|error| format!("failed to create {}: {error}", source_root.display()))?;
     write_project_manifest(target, kind, project_name, "data", false)?;
-    write_new_key_pack_metadata(target, false)
+    write_new_key_pack_metadata(target, false)?;
+    Ok(())
 }
 
 fn write_resource_starter(
@@ -194,7 +198,7 @@ fn write_resource_starter(
         Kind::Gff => {
             let mut bytes = Cursor::new(Vec::new());
             let root = gff::GffRoot::new(gff_file_type_from_extension(manifest_kind));
-            gff::write_gff_root(&mut bytes, &root)
+            gff::write_gff_root(&mut bytes, &root, NwnTextContext::default())
                 .map_err(|error| format!("failed to write {}: {error}", path.display()))?;
             fs::write(path, bytes.into_inner())
                 .map_err(|error| format!("failed to write {}: {error}", path.display()))
@@ -206,7 +210,7 @@ fn write_resource_starter(
                 .set_columns(vec!["Label".to_string()])
                 .map_err(|error| format!("failed to build {}: {error}", path.display()))?;
             table.set_row(0, vec![Some(project_name.to_string())]);
-            twoda::write_twoda(&mut bytes, &table, false)
+            twoda::write_twoda(&mut bytes, &table, false, NwnTextContext::default())
                 .map_err(|error| format!("failed to write {}: {error}", path.display()))?;
             fs::write(path, bytes)
                 .map_err(|error| format!("failed to write {}: {error}", path.display()))

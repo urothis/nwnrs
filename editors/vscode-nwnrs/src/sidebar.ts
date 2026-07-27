@@ -8,41 +8,47 @@ import {
 } from './resource-custom-editor';
 import type { ViewerWorkerClient } from './viewer-worker-client';
 import type {
-  NativeAreaObject,
-  NativePackageDependency,
-  NativePackageInfo,
-  NativePackageSourceArea,
-  NativePackageSourceFile,
-  NativePackageSourceInfo,
-  NativeResourceCatalogItem,
-} from './native-types';
+  NativeViewerAreaObject as NativeAreaObject,
+  NativeViewerPackageDependency as NativePackageDependency,
+  NativeViewerPackageInfo as NativePackageInfo,
+  NativeViewerPackageSourceArea as NativePackageSourceArea,
+  NativeViewerPackageSourceFile as NativePackageSourceFile,
+  NativeViewerPackageSourceInfo as NativePackageSourceInfo,
+  NativeViewerLoadRequest,
+  NativeDependencyStatus,
+  NativeDependencySource,
+  NativeViewerResourceCatalogItem as NativeResourceCatalogItem,
+  NativeViewerResourceCatalogRequest,
+} from './generated/native';
 
 interface SidebarCompilerController {
   reindexCurrentPackage(): Promise<void>;
   restartLanguageService(): Promise<void>;
   clearDiagnostics(): void;
+  listWorkspacePackageManifests(): Promise<readonly string[]>;
+  listPackageDependencies(manifestPath: string): Promise<readonly NativeDependencyStatus[]>;
+  fetchPackageDependencies(
+    manifestPath?: string,
+    dependency?: string,
+  ): Promise<readonly NativeDependencyStatus[]>;
+  updatePackageDependencies(
+    manifestPath?: string,
+    dependency?: string,
+  ): Promise<unknown>;
+  listPackageDependencySources(
+    manifestPath: string,
+    route: string,
+    token?: vscode.CancellationToken,
+  ): Promise<readonly NativeDependencySource[]>;
+  dependencySourceUri(
+    manifestPath: string,
+    route: string,
+    relativePath: string,
+  ): vscode.Uri;
 }
 
-interface ResourceRequest {
-  readonly session_key: string;
-  readonly path: string;
-  readonly project_root: string;
-  readonly area: null;
-  readonly root: string | null;
-  readonly user: string | null;
-  readonly language: string;
-  readonly load_ovr: boolean;
-  readonly archives: readonly string[];
-  readonly include_project_resources: boolean;
-}
-
-interface ResourceQuery {
-  readonly stage: string;
-  readonly layer?: string;
-  readonly family?: string;
-  readonly extension?: string;
-  readonly prefix?: string;
-}
+type ResourceRequest = NativeViewerLoadRequest;
+type ResourceQuery = Omit<NativeViewerResourceCatalogRequest, 'viewer'>;
 
 interface AreaObjectSelection {
   readonly manifestPath: string;
@@ -56,6 +62,10 @@ interface SidebarTreeNode {
   package?: NativePackageInfo;
   packageRoot?: string;
   dependencies?: readonly NativePackageDependency[];
+  dependencyStatuses?: readonly NativeDependencyStatus[];
+  dependency?: NativeDependencyStatus;
+  dependencySource?: NativeDependencySource;
+  manifestPath?: string;
   file?: NativePackageSourceFile;
   area?: NativePackageSourceArea;
   object?: NativeAreaObject;
@@ -88,6 +98,11 @@ interface DirectoryEntry {
 interface DirectoryBranch {
   readonly directories: Map<string, DirectoryBranch>;
   readonly leaves: SidebarTreeNode[];
+}
+
+interface DependencySourceBranch {
+  readonly directories: Map<string, DependencySourceBranch>;
+  readonly files: NativeDependencySource[];
 }
 
 const PINNED_PACKAGE_KEY = 'nwnrs.sidebar.pinnedPackage';
@@ -158,6 +173,7 @@ export class NwnrsSidebarController {
 
   register(): void {
     const manifestWatcher = vscode.workspace.createFileSystemWatcher('**/nwpkg.toml');
+    const lockWatcher = vscode.workspace.createFileSystemWatcher('**/nwpkg.lock');
     const manifestChanged = () => this.schedulePackageRefresh();
     this.packageView = vscode.window.createTreeView('nwnrs.packages', {
       treeDataProvider: this.packageProvider,
@@ -186,6 +202,26 @@ export class NwnrsSidebarController {
         this.openSourceArea(node)),
       vscode.commands.registerCommand('nwnrs.sidebar.openSourceAreaObject', (node: SidebarTreeNode) =>
         this.openSourceArea(node)),
+      vscode.commands.registerCommand('nwnrs.sidebar.fetchDependency', async (node: SidebarTreeNode) => {
+        if (!node.manifestPath) return;
+        await this.compilerController.fetchPackageDependencies(
+          node.manifestPath,
+          node.dependency?.route,
+        );
+        await this.refreshPackages();
+      }),
+      vscode.commands.registerCommand('nwnrs.sidebar.updateDependency', async (node: SidebarTreeNode) => {
+        if (!node.manifestPath) return;
+        await this.compilerController.updatePackageDependencies(
+          node.manifestPath,
+          node.dependency?.route,
+        );
+        await this.refreshPackages();
+      }),
+      vscode.commands.registerCommand('nwnrs.sidebar.copyDependencySource', async (node: SidebarTreeNode) => {
+        const value = dependencySourceText(node.dependency);
+        if (value) await vscode.env.clipboard.writeText(value);
+      }),
       vscode.commands.registerCommand('nwnrs.reindexCurrentPackage', () =>
         this.compilerController.reindexCurrentPackage()),
       vscode.commands.registerCommand('nwnrs.restartLanguageService', () =>
@@ -205,9 +241,13 @@ export class NwnrsSidebarController {
         }
       }),
       manifestWatcher,
+      lockWatcher,
       manifestWatcher.onDidCreate(manifestChanged),
       manifestWatcher.onDidChange(manifestChanged),
       manifestWatcher.onDidDelete(manifestChanged),
+      lockWatcher.onDidCreate(manifestChanged),
+      lockWatcher.onDidChange(manifestChanged),
+      lockWatcher.onDidDelete(manifestChanged),
       this.resourceEditors.onDidSelectAreaObject((selection: AreaObjectSelection) => {
         void this.revealAreaObject(selection);
       }),
@@ -261,25 +301,31 @@ export class NwnrsSidebarController {
   }
 
   async discoverPackages(): Promise<NativePackageInfo[]> {
-    const uris = await vscode.workspace.findFiles(
-      '**/nwpkg.toml',
-      '**/{.git,node_modules,target}/**',
-    );
+    const manifests = await this.compilerController.listWorkspacePackageManifests();
     const results = await Promise.allSettled(
-      uris.map((uri) => this.viewerWorker.inspectPackage(uri.fsPath)),
+      manifests.map((manifest) => {
+        const configuration = vscode.workspace.getConfiguration(
+          'nwnrs',
+          vscode.Uri.file(manifest),
+        );
+        return this.viewerWorker.inspectPackage(manifest, {
+          gitPath: configuration.get<string>('git.path', '').trim() || undefined,
+          cachePath: configuration.get<string>('packageCachePath', '').trim() || undefined,
+        });
+      }),
     );
     const packages: NativePackageInfo[] = [];
     for (let index = 0; index < results.length; index += 1) {
       const result = results[index];
-      const uri = uris[index];
-      if (!result || !uri) {
+      const manifest = manifests[index];
+      if (!result || !manifest) {
         continue;
       }
       if (result.status === 'fulfilled') {
         packages.push(result.value);
       } else {
         this.output.appendLine(
-          `Could not inspect ${uri.fsPath}: ${errorMessage(result.reason)}`,
+          `Could not inspect ${manifest}: ${errorMessage(result.reason)}`,
         );
       }
     }
@@ -427,25 +473,27 @@ export class NwnrsSidebarController {
       fileDirname: projectRoot,
     };
     return {
-      session_key: packageInfo?.manifestPath || `nwnrs-sidebar:${normalizePath(projectRoot)}`,
+      sessionKey: packageInfo?.manifestPath || `nwnrs-sidebar:${normalizePath(projectRoot)}`,
       path: path.join(sourceRoot, '.nwnrs-resource-catalog'),
-      project_root: projectRoot,
-      area: null,
-      root: resolveConfiguredPath(configuration.get('rootPath', ''), context, projectRoot) || null,
-      user: resolveConfiguredPath(configuration.get('userPath', ''), context, projectRoot) || null,
+      projectRoot,
+      area: undefined,
+      root: resolveConfiguredPath(configuration.get('rootPath', ''), context, projectRoot)
+        || undefined,
+      user: resolveConfiguredPath(configuration.get('userPath', ''), context, projectRoot)
+        || undefined,
       language: configuration.get('language', 'english'),
-      load_ovr: configuration.get('loadOvr', false),
+      loadOvr: configuration.get('loadOvr', false),
       archives: [],
-      include_project_resources: Boolean(packageInfo),
+      includeProjectResources: Boolean(packageInfo),
     };
   }
 
   async listResources(query: ResourceQuery): Promise<readonly NativeResourceCatalogItem[]> {
     const request = this.resourceRequest();
-    const cacheKey = `${this.resourceGeneration}:${request.session_key}:${JSON.stringify(query)}`;
+    const cacheKey = `${this.resourceGeneration}:${request.sessionKey}:${JSON.stringify(query)}`;
     let pending = this.resourceQueries.get(cacheKey);
     if (!pending) {
-      pending = this.viewerWorker.listResources({ ...request, ...query })
+      pending = this.viewerWorker.listResources({ viewer: request, ...query })
         .then((response) => response?.items || [])
         .catch((error) => {
           this.resourceQueries.delete(cacheKey);
@@ -590,13 +638,73 @@ class PackageTreeProvider implements vscode.TreeDataProvider<SidebarTreeNode> {
       return item;
     }
     if (node.kind === 'dependencyGroup') {
-      const dependencies = node.dependencies || [];
+      const dependencies = node.dependencyStatuses || [];
       const item = new vscode.TreeItem(
         'Dependencies',
-        dependencies.length ? state.Collapsed : state.None,
+        state.Collapsed,
       );
-      item.description = String(dependencies.length);
+      item.description = dependencies.length ? String(dependencies.length) : undefined;
       item.iconPath = new vscode.ThemeIcon('references');
+      item.contextValue = 'nwnrsDependencyGroup';
+      return item;
+    }
+    if (node.kind === 'dependency' && node.dependency) {
+      const dependency = node.dependency;
+      const hasChildren = Boolean(
+        dependency.root
+        || node.dependencyStatuses?.some((candidate) => candidate.parent === dependency.route),
+      );
+      const item = new vscode.TreeItem(
+        dependency.name,
+        hasChildren ? state.Collapsed : state.None,
+      );
+      const details = [dependency.sourceKind, dependency.selector, dependency.state];
+      item.description = details.filter(Boolean).join(' · ');
+      item.tooltip = [
+        dependency.route,
+        dependency.commit ? `Commit: ${dependency.commit}` : '',
+        dependency.root ? `Root: ${dependency.root}` : '',
+        dependency.message || '',
+      ].filter(Boolean).join('\n');
+      item.iconPath = new vscode.ThemeIcon(dependencyIcon(dependency));
+      item.contextValue = `nwnrsDependency.${dependency.sourceKind}.${dependency.state}`;
+      return item;
+    }
+    if (node.kind === 'dependencySourceRoot') {
+      const item = new vscode.TreeItem('Source', state.Collapsed);
+      item.iconPath = new vscode.ThemeIcon('folder-library');
+      return item;
+    }
+    if (node.kind === 'dependencySourceFolder') {
+      const item = new vscode.TreeItem(node.label, state.Collapsed);
+      item.iconPath = new vscode.ThemeIcon('folder');
+      return item;
+    }
+    if (node.kind === 'dependencySourceFile' && node.dependencySource) {
+      const item = new vscode.TreeItem(node.label, state.None);
+      const source = node.dependencySource;
+      const dependency = node.dependency;
+      const manifestPath = node.manifestPath;
+      if (dependency && manifestPath) {
+        const uri = dependency.sourceKind === 'git'
+          ? this.controller.compilerController.dependencySourceUri(
+            manifestPath,
+            dependency.route,
+            source.relativePath,
+          )
+          : vscode.Uri.file(source.physicalPath);
+        item.resourceUri = uri;
+        item.command = {
+          command: 'vscode.open',
+          title: 'Open Dependency Source',
+          arguments: [uri],
+        };
+      }
+      item.tooltip = source.physicalPath;
+      item.iconPath = new vscode.ThemeIcon('file-code');
+      item.contextValue = dependency?.sourceKind === 'git'
+        ? 'nwnrsDependencySource.readonly'
+        : 'nwnrsDependencySource.local';
       return item;
     }
     if (node.kind === 'sourceRoot' && node.package) {
@@ -747,7 +855,7 @@ class PackageTreeProvider implements vscode.TreeDataProvider<SidebarTreeNode> {
         kind: 'dependencyGroup',
         label: 'Dependencies',
         packageRoot: packageInfo.root,
-        dependencies: packageInfo.dependencies || [],
+        manifestPath: packageInfo.manifestPath,
       });
       node.loadedChildren = attachParents(children, node);
       return node.loadedChildren;
@@ -773,15 +881,84 @@ class PackageTreeProvider implements vscode.TreeDataProvider<SidebarTreeNode> {
       return attachParents(node.children || [], node);
     }
     if (node.kind === 'dependencyGroup') {
-      return (node.dependencies || []).map((dependency) => ({
-        kind: 'file',
-        label: dependency.name,
-        description: relativeDisplay(node.packageRoot, dependency.root),
-        tooltip: dependency.root,
-        icon: 'package',
-        uri: vscode.Uri.file(dependency.manifestPath),
-        command: 'vscode.open',
-      }));
+      if (!node.dependencyStatuses) {
+        node.dependencyStatuses = node.manifestPath
+          ? await this.controller.compilerController.listPackageDependencies(node.manifestPath)
+          : [];
+      }
+      return attachParents(
+        node.dependencyStatuses
+          .filter((dependency) => !dependency.parent)
+          .map((dependency) => ({
+            kind: 'dependency',
+            label: dependency.name,
+            dependency,
+            dependencyStatuses: node.dependencyStatuses,
+            manifestPath: node.manifestPath,
+          })),
+        node,
+      );
+    }
+    if (node.kind === 'dependency' && node.dependency) {
+      const children: SidebarTreeNode[] = [];
+      if (node.dependency.manifestPath) {
+        const manifestUri = node.dependency.sourceKind === 'git' && node.manifestPath
+          ? this.controller.compilerController.dependencySourceUri(
+            node.manifestPath,
+            node.dependency.route,
+            'nwpkg.toml',
+          )
+          : vscode.Uri.file(node.dependency.manifestPath);
+        children.push({
+          kind: 'file',
+          label: 'Manifest',
+          description: 'nwpkg.toml',
+          tooltip: node.dependency.manifestPath,
+          icon: 'settings-gear',
+          uri: manifestUri,
+          command: 'vscode.open',
+        });
+      }
+      if (node.dependency.root) {
+        children.push({
+          kind: 'dependencySourceRoot',
+          label: 'Source',
+          dependency: node.dependency,
+          manifestPath: node.manifestPath,
+        });
+      }
+      for (const dependency of node.dependencyStatuses || []) {
+        if (dependency.parent === node.dependency.route) {
+          children.push({
+            kind: 'dependency',
+            label: dependency.name,
+            dependency,
+            dependencyStatuses: node.dependencyStatuses,
+            manifestPath: node.manifestPath,
+          });
+        }
+      }
+      return attachParents(children, node);
+    }
+    if (node.kind === 'dependencySourceRoot' && node.dependency && node.manifestPath) {
+      if (!node.loadedChildren) {
+        const sources = await this.controller.compilerController.listPackageDependencySources(
+          node.manifestPath,
+          node.dependency.route,
+        );
+        node.loadedChildren = attachParents(
+          dependencySourceTree(
+            sources.filter((source) => source.relativePath !== 'nwpkg.toml'),
+            node.dependency,
+            node.manifestPath,
+          ),
+          node,
+        );
+      }
+      return node.loadedChildren;
+    }
+    if (node.kind === 'dependencySourceFolder') {
+      return attachParents(node.children || [], node);
     }
     return [];
   }
@@ -1187,6 +1364,66 @@ function resourceIcon(node: SidebarTreeNode): string {
 
 function formatCount(count: number | undefined): string {
   return Number(count || 0).toLocaleString();
+}
+
+function dependencyIcon(dependency: NativeDependencyStatus): string {
+  if (dependency.state === 'missing' || dependency.state === 'invalid') return 'error';
+  if (dependency.state === 'stale') return 'warning';
+  return dependency.sourceKind === 'git' ? 'repo' : 'folder-library';
+}
+
+function dependencySourceText(dependency: NativeDependencyStatus | undefined): string | undefined {
+  if (!dependency) return undefined;
+  return [
+    dependency.route,
+    dependency.selector,
+    dependency.commit,
+    dependency.root,
+  ].filter(Boolean).join('\n');
+}
+
+function dependencySourceTree(
+  sources: readonly NativeDependencySource[],
+  dependency: NativeDependencyStatus,
+  manifestPath: string,
+): SidebarTreeNode[] {
+  const root: DependencySourceBranch = { directories: new Map(), files: [] };
+  for (const source of sources) {
+    const segments = source.relativePath.split('/').filter(Boolean);
+    const fileName = segments.pop();
+    if (!fileName) continue;
+    let branch = root;
+    for (const segment of segments) {
+      let child = branch.directories.get(segment);
+      if (!child) {
+        child = { directories: new Map(), files: [] };
+        branch.directories.set(segment, child);
+      }
+      branch = child;
+    }
+    branch.files.push(source);
+  }
+  const nodes = (branch: DependencySourceBranch): SidebarTreeNode[] => [
+    ...[...branch.directories.entries()]
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([label, child]) => ({
+        kind: 'dependencySourceFolder',
+        label,
+        dependency,
+        manifestPath,
+        children: nodes(child),
+      })),
+    ...branch.files
+      .sort((left, right) => left.relativePath.localeCompare(right.relativePath))
+      .map((source) => ({
+        kind: 'dependencySourceFile',
+        label: path.basename(source.relativePath),
+        dependency,
+        dependencySource: source,
+        manifestPath,
+      })),
+  ];
+  return nodes(root);
 }
 
 function errorMessage(error: unknown): string {

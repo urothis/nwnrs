@@ -5,7 +5,7 @@ use std::{
     path::Path,
 };
 
-use nwnrs_types::resman::prelude::*;
+use nwnrs_types::{encoding::NwnTextContext, resman::prelude::*};
 use tracing::instrument;
 
 use crate::mdl::{
@@ -104,12 +104,15 @@ impl SemanticModel {
     /// # Examples
     ///
     /// ```no_run
-    /// let model = nwnrs_types::mdl::SemanticModel::from_file("model.mdl")?;
+    /// let model = nwnrs_types::mdl::SemanticModel::from_file(
+    ///     "model.mdl",
+    ///     nwnrs_types::encoding::NwnTextContext::english(),
+    /// )?;
     /// # Ok::<(), nwnrs_types::mdl::ModelError>(())
     /// ```
-    pub fn from_file(path: impl AsRef<Path>) -> ModelResult<Self> {
+    pub fn from_file(path: impl AsRef<Path>, context: NwnTextContext) -> ModelResult<Self> {
         let mut file = File::open(path.as_ref())?;
-        read_semantic_model(&mut file)
+        read_semantic_model(&mut file, context)
     }
 
     /// Reads and lowers a semantic model from disk using automatic
@@ -122,12 +125,15 @@ impl SemanticModel {
     /// # Examples
     ///
     /// ```no_run
-    /// let model = nwnrs_types::mdl::SemanticModel::from_auto_file("model.mdl")?;
+    /// let model = nwnrs_types::mdl::SemanticModel::from_auto_file(
+    ///     "model.mdl",
+    ///     nwnrs_types::encoding::NwnTextContext::english(),
+    /// )?;
     /// # Ok::<(), nwnrs_types::mdl::ModelError>(())
     /// ```
-    pub fn from_auto_file(path: impl AsRef<Path>) -> ModelResult<Self> {
+    pub fn from_auto_file(path: impl AsRef<Path>, context: NwnTextContext) -> ModelResult<Self> {
         let mut file = File::open(path.as_ref())?;
-        read_semantic_model_auto(&mut file)
+        read_semantic_model_auto(&mut file, context)
     }
 
     /// Reads and lowers a semantic model from a [`Res`].
@@ -142,10 +148,18 @@ impl SemanticModel {
     /// ```no_run
     /// # use nwnrs_types::resman::{CachePolicy, Res};
     /// fn parse(res: &Res) -> nwnrs_types::mdl::ModelResult<nwnrs_types::mdl::SemanticModel> {
-    ///     nwnrs_types::mdl::SemanticModel::from_res(res, CachePolicy::Use)
+    ///     nwnrs_types::mdl::SemanticModel::from_res(
+    ///         res,
+    ///         CachePolicy::Use,
+    ///         nwnrs_types::encoding::NwnTextContext::english(),
+    ///     )
     /// }
     /// ```
-    pub fn from_res(res: &Res, cache_policy: CachePolicy) -> ModelResult<Self> {
+    pub fn from_res(
+        res: &Res,
+        cache_policy: CachePolicy,
+        context: NwnTextContext,
+    ) -> ModelResult<Self> {
         if res.resref().res_type() != MODEL_RES_TYPE {
             return Err(ModelError::msg(format!(
                 "expected mdl resource, got {}",
@@ -153,7 +167,7 @@ impl SemanticModel {
             )));
         }
 
-        let ascii = crate::mdl::AsciiModel::from_res(res, cache_policy)?;
+        let ascii = crate::mdl::AsciiModel::from_res(res, cache_policy, context)?;
         lower_ascii_model(&ascii)
     }
 
@@ -170,10 +184,18 @@ impl SemanticModel {
     /// ```no_run
     /// # use nwnrs_types::resman::{CachePolicy, Res};
     /// fn parse(res: &Res) -> nwnrs_types::mdl::ModelResult<nwnrs_types::mdl::SemanticModel> {
-    ///     nwnrs_types::mdl::SemanticModel::from_auto_res(res, CachePolicy::Use)
+    ///     nwnrs_types::mdl::SemanticModel::from_auto_res(
+    ///         res,
+    ///         CachePolicy::Use,
+    ///         nwnrs_types::encoding::NwnTextContext::english(),
+    ///     )
     /// }
     /// ```
-    pub fn from_auto_res(res: &Res, cache_policy: CachePolicy) -> ModelResult<Self> {
+    pub fn from_auto_res(
+        res: &Res,
+        cache_policy: CachePolicy,
+        context: NwnTextContext,
+    ) -> ModelResult<Self> {
         if res.resref().res_type() != MODEL_RES_TYPE {
             return Err(ModelError::msg(format!(
                 "expected mdl resource, got {}",
@@ -182,7 +204,7 @@ impl SemanticModel {
         }
 
         let model = crate::mdl::Model::from_res(res, cache_policy)?;
-        model.parse_semantic_auto()
+        model.parse_semantic_auto(context)
     }
 }
 
@@ -936,8 +958,8 @@ impl Model {
     /// # Errors
     ///
     /// Returns [`ModelError`] if parsing or lowering fails.
-    pub fn parse_semantic(&self) -> ModelResult<SemanticModel> {
-        lower_ascii_model(&self.parse_ascii()?)
+    pub fn parse_semantic(&self, context: NwnTextContext) -> ModelResult<SemanticModel> {
+        lower_ascii_model(&self.parse_ascii(context)?)
     }
 
     /// Parses and lowers the raw payload into a typed semantic model using
@@ -946,8 +968,8 @@ impl Model {
     /// # Errors
     ///
     /// Returns [`ModelError`] if parsing or lowering fails.
-    pub fn parse_semantic_auto(&self) -> ModelResult<SemanticModel> {
-        match self.parse_parsed()? {
+    pub fn parse_semantic_auto(&self, context: NwnTextContext) -> ModelResult<SemanticModel> {
+        match self.parse_parsed(context)? {
             ParsedModel::Ascii(model) => lower_ascii_model(&model),
             ParsedModel::Compiled(model) => lower_binary_model(&model),
         }
@@ -981,12 +1003,18 @@ pub fn parse_semantic_model(text: &str) -> ModelResult<SemanticModel> {
 /// # Examples
 ///
 /// ```
-/// let model = nwnrs_types::mdl::parse_semantic_model_auto(b"beginmodelgeom demo\nendmodelgeom demo\ndonemodel demo\n")?;
+/// let model = nwnrs_types::mdl::parse_semantic_model_auto(
+///     b"beginmodelgeom demo\nendmodelgeom demo\ndonemodel demo\n",
+///     nwnrs_types::encoding::NwnTextContext::english(),
+/// )?;
 /// assert_eq!(model.geometry_name, "demo");
 /// # Ok::<(), nwnrs_types::mdl::ModelError>(())
 /// ```
-pub fn parse_semantic_model_auto(bytes: &[u8]) -> ModelResult<SemanticModel> {
-    match crate::mdl::parse_model_bytes(bytes)? {
+pub fn parse_semantic_model_auto(
+    bytes: &[u8],
+    context: NwnTextContext,
+) -> ModelResult<SemanticModel> {
+    match crate::mdl::parse_model_bytes(bytes, context)? {
         ParsedModel::Ascii(model) => lower_ascii_model(&model),
         ParsedModel::Compiled(model) => lower_binary_model(&model),
     }
@@ -1002,13 +1030,19 @@ pub fn parse_semantic_model_auto(bytes: &[u8]) -> ModelResult<SemanticModel> {
 ///
 /// ```
 /// let mut input = b"beginmodelgeom demo\nendmodelgeom demo\ndonemodel demo\n".as_slice();
-/// let model = nwnrs_types::mdl::read_semantic_model(&mut input)?;
+/// let model = nwnrs_types::mdl::read_semantic_model(
+///     &mut input,
+///     nwnrs_types::encoding::NwnTextContext::english(),
+/// )?;
 /// assert_eq!(model.geometry_name, "demo");
 /// # Ok::<(), nwnrs_types::mdl::ModelError>(())
 /// ```
 #[instrument(level = "debug", skip_all, err)]
-pub fn read_semantic_model<R: Read>(reader: &mut R) -> ModelResult<SemanticModel> {
-    let ascii = read_ascii_model(reader)?;
+pub fn read_semantic_model<R: Read>(
+    reader: &mut R,
+    context: NwnTextContext,
+) -> ModelResult<SemanticModel> {
+    let ascii = read_ascii_model(reader, context)?;
     lower_ascii_model(&ascii)
 }
 
@@ -1023,13 +1057,19 @@ pub fn read_semantic_model<R: Read>(reader: &mut R) -> ModelResult<SemanticModel
 ///
 /// ```
 /// let mut input = b"beginmodelgeom demo\nendmodelgeom demo\ndonemodel demo\n".as_slice();
-/// let model = nwnrs_types::mdl::read_semantic_model_auto(&mut input)?;
+/// let model = nwnrs_types::mdl::read_semantic_model_auto(
+///     &mut input,
+///     nwnrs_types::encoding::NwnTextContext::english(),
+/// )?;
 /// assert_eq!(model.geometry_name, "demo");
 /// # Ok::<(), nwnrs_types::mdl::ModelError>(())
 /// ```
 #[instrument(level = "debug", skip_all, err)]
-pub fn read_semantic_model_auto<R: Read>(reader: &mut R) -> ModelResult<SemanticModel> {
-    match read_parsed_model(reader)? {
+pub fn read_semantic_model_auto<R: Read>(
+    reader: &mut R,
+    context: NwnTextContext,
+) -> ModelResult<SemanticModel> {
+    match read_parsed_model(reader, context)? {
         ParsedModel::Ascii(model) => lower_ascii_model(&model),
         ParsedModel::Compiled(model) => lower_binary_model(&model),
     }
@@ -1047,14 +1087,22 @@ pub fn read_semantic_model_auto<R: Read>(reader: &mut R) -> ModelResult<Semantic
 /// ```
 /// let model = nwnrs_types::mdl::parse_semantic_model("beginmodelgeom demo\nendmodelgeom demo\ndonemodel demo\n")?;
 /// let mut output = Vec::new();
-/// nwnrs_types::mdl::write_semantic_model(&mut output, &model)?;
+/// nwnrs_types::mdl::write_semantic_model(
+///     &mut output,
+///     &model,
+///     nwnrs_types::encoding::NwnTextContext::english(),
+/// )?;
 /// assert!(!output.is_empty());
 /// # Ok::<(), nwnrs_types::mdl::ModelError>(())
 /// ```
 #[instrument(level = "debug", skip_all, err, fields(model_name = %model.geometry_name))]
-pub fn write_semantic_model<W: Write>(writer: &mut W, model: &SemanticModel) -> ModelResult<()> {
+pub fn write_semantic_model<W: Write>(
+    writer: &mut W,
+    model: &SemanticModel,
+    context: NwnTextContext,
+) -> ModelResult<()> {
     let ascii = crate::mdl::ascii::lower_semantic_model_to_ascii(model, None)?;
-    crate::mdl::write_ascii_model(writer, &ascii)
+    crate::mdl::write_ascii_model(writer, &ascii, context)
 }
 
 pub(crate) fn ensure_ascii_representable(model: &SemanticModel) -> ModelResult<()> {

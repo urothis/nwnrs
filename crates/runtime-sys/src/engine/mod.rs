@@ -270,14 +270,15 @@ impl Engine {
     #[allow(dead_code)]
     pub(crate) fn enqueue_pump_event(
         &self,
-        identity: &str,
+        subject: &str,
+        phase: &str,
         target: EventObjectId,
         data: BTreeMap<String, EventValue>,
     ) -> Result<u64, BridgeInstallError> {
         self.event
             .as_ref()
             .ok_or_else(|| BridgeInstallError::new("target pack does not provide event targets"))?
-            .enqueue_pump_record(identity, target, data)
+            .enqueue_pump_record(subject, phase, target, data)
     }
 
     pub(crate) fn process_deferred_administration(
@@ -427,7 +428,7 @@ impl Engine {
             .as_ref()
             .ok_or_else(|| BridgeInstallError::new("target pack does not provide event targets"))?;
         match command {
-            EventCommand::Subscribe(identity) => event.record_subscription(&identity),
+            EventCommand::Subscribe(key) => event.record_subscription(key),
             EventCommand::ToggleIdWhitelist {
                 name,
                 enabled,

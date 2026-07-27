@@ -11,7 +11,6 @@ const {
   buildDocumentSymbolsRequest,
   diagnosticRange,
   expandPathVariables,
-  findProjectRoot,
   formatHoverDocumentation,
   isNssPath,
   nativeBindingPath,
@@ -30,36 +29,27 @@ test('recognizes NSS paths case-insensitively', () => {
   assert.equal(isNssPath('/module/startup.ncs'), false);
 });
 
-test('finds the nearest owning nwpkg manifest', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nwnrs-vscode-project-'));
-  const project = path.join(root, 'module');
-  const nested = path.join(project, 'scripts', 'encounters');
-  fs.mkdirSync(nested, { recursive: true });
-  fs.writeFileSync(path.join(project, 'nwpkg.toml'), '[project]\nname = "fixture"\n');
-  const source = path.join(nested, 'ambush.nss');
-  fs.writeFileSync(source, 'void main() {}\n');
-  try {
-    assert.equal(findProjectRoot(source), project);
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test('accepts a package directory when finding its nwpkg manifest', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nwnrs-vscode-project-root-'));
-  fs.writeFileSync(path.join(root, 'nwpkg.toml'), '[project]\nname = "fixture"\n');
-  try {
-    assert.equal(findProjectRoot(root), root);
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
-  }
+test('contributes mandatory Windows-1252 NWScript editor defaults', () => {
+  const packageJson = JSON.parse(
+    fs.readFileSync(path.resolve(__dirname, '..', 'package.json'), 'utf8'),
+  ) as {
+    readonly contributes?: {
+      readonly configurationDefaults?: Readonly<Record<string, unknown>>;
+    };
+  };
+  assert.deepEqual(
+    packageJson.contributes?.configurationDefaults?.['[nwscript]'],
+    {
+      'files.encoding': 'windows1252',
+      'files.autoGuessEncoding': false,
+    },
+  );
 });
 
 test('builds an in-process compiler request', () => {
   assert.deepEqual(
     buildCheckRequest(['/module/startup.nss'], {
       includeDirectories: ['/shared/include'],
-      overlays: [{ path: '/module/startup.nss', contents: 'void main() {}' }],
       langspecPath: '/game/nwscript.nss',
       maxIncludeDepth: 32,
       noEntrypointCheck: true,
@@ -70,30 +60,43 @@ test('builds an in-process compiler request', () => {
     }),
     {
       paths: ['/module/startup.nss'],
-      no_entrypoint_check: true,
+      noEntrypointCheck: true,
       langspec: '/game/nwscript.nss',
-      include_dirs: ['/shared/include'],
-      overlays: [{ path: '/module/startup.nss', contents: 'void main() {}' }],
-      max_include_depth: 32,
-      max_diagnostics_per_input: 50,
+      includeDirectories: ['/shared/include'],
+      optimization: 'O0',
+      optimizationFlags: [],
+      maxIncludeDepth: 32,
+      maxDiagnosticsPerInput: 50,
       recurse: false,
+      followSymlinks: false,
+      jobs: undefined,
       root: '/game',
       user: '/user',
       language: 'english',
-      load_ovr: true,
+      loadOvr: true,
     },
   );
 });
 
 test('selects the bundled macOS arm64 compiler', () => {
-  assert.equal(
-    nativeBindingPath('/extension', 'darwin', 'arm64'),
-    path.join('/extension', 'native', 'nwnrs-vscode.darwin-arm64.node'),
-  );
-  assert.throws(
-    () => nativeBindingPath('/extension', 'linux', 'x64'),
-    /does not yet support linux-x64/u,
-  );
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nwnrs-native-selection-'));
+  const native = path.join(root, 'native');
+  fs.mkdirSync(native);
+  try {
+    for (const target of ['darwin-arm64', 'linux-x64', 'win32-x64']) {
+      fs.writeFileSync(path.join(native, `nwnrs-vscode.${target}.node`), '');
+    }
+    assert.equal(
+      nativeBindingPath(root, 'darwin', 'arm64'),
+      path.join(native, 'nwnrs-vscode.darwin-arm64.node'),
+    );
+    assert.equal(
+      nativeBindingPath(root, 'linux', 'x64'),
+      path.join(native, 'nwnrs-vscode.linux-x64.node'),
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('builds a project-aware definition request', () => {
@@ -102,7 +105,6 @@ test('builds a project-aware definition request', () => {
       projectRoot: '/module',
       includeDirectories: ['/shared/include'],
       qualifier: 'logging',
-      overlays: [{ path: '/module/startup.nss', contents: 'void main() {}' }],
       langspecPath: '/game/nwscript.nss',
       maxIncludeDepth: 32,
       rootPath: '/game',
@@ -111,18 +113,20 @@ test('builds a project-aware definition request', () => {
       loadOvr: true,
     }),
     {
-      source_path: '/module/startup.nss',
+      package: {
+        sourcePath: '/module/startup.nss',
+        resource: undefined,
+        projectRoot: '/module',
+        includeDirectories: ['/shared/include'],
+        langspec: '/game/nwscript.nss',
+        maxIncludeDepth: 32,
+        root: '/game',
+        user: '/user',
+        language: 'german',
+        loadOvr: true,
+      },
       symbol: 'NWNRS_Log',
       qualifier: 'logging',
-      project_root: '/module',
-      include_dirs: ['/shared/include'],
-      overlays: [{ path: '/module/startup.nss', contents: 'void main() {}' }],
-      langspec: '/game/nwscript.nss',
-      max_include_depth: 32,
-      root: '/game',
-      user: '/user',
-      language: 'german',
-      load_ovr: true,
     },
   );
 });
@@ -133,7 +137,6 @@ test('builds a project-aware document Outline request', () => {
       resource: 'nwscript',
       projectRoot: '/module',
       includeDirectories: ['/shared/include'],
-      overlays: [{ path: '/module/startup.nss', contents: 'void main() {}' }],
       langspecPath: '/game/nwscript.nss',
       maxIncludeDepth: 32,
       rootPath: '/game',
@@ -142,17 +145,16 @@ test('builds a project-aware document Outline request', () => {
       loadOvr: true,
     }),
     {
-      source_path: '/module/startup.nss',
+      sourcePath: 'nwscript',
       resource: 'nwscript',
-      project_root: '/module',
-      include_dirs: ['/shared/include'],
-      overlays: [{ path: '/module/startup.nss', contents: 'void main() {}' }],
+      projectRoot: '/module',
+      includeDirectories: ['/shared/include'],
       langspec: '/game/nwscript.nss',
-      max_include_depth: 32,
+      maxIncludeDepth: 32,
       root: '/game',
       user: '/user',
       language: 'german',
-      load_ovr: true,
+      loadOvr: true,
     },
   );
 });
@@ -161,12 +163,12 @@ test('selects a documented implementation for hover information', () => {
   const declaration = {
     signature: 'void NWNRS_Log(string message);',
     documentation: 'Logs one message.',
-    is_implementation: false,
+    isImplementation: false,
   };
   const implementation = {
     signature: 'void NWNRS_Log(string message)',
     documentation: 'Logs one message.\n@param message Message to emit.',
-    is_implementation: true,
+    isImplementation: true,
   };
   assert.equal(selectHoverDefinition([declaration, implementation]), implementation);
   assert.equal(selectHoverDefinition([]), undefined);
@@ -219,17 +221,18 @@ test('preserves vanilla notes and unrecognized documentation lines', () => {
   );
 });
 
-test('converts one-based compiler spans to VS Code ranges', () => {
+test('preserves compiler-owned zero-based UTF-16 ranges', () => {
   assert.deepEqual(
     diagnosticRange({
-      start_line: 3,
-      start_column: 5,
-      end_line: 3,
-      end_column: 10,
+      start: { line: 2, character: 4 },
+      end: { line: 2, character: 9 },
     }),
     { startLine: 2, startColumn: 4, endLine: 2, endColumn: 9 },
   );
-  assert.deepEqual(diagnosticRange({}), {
+  assert.deepEqual(diagnosticRange({
+    start: { line: 0, character: 0 },
+    end: { line: 0, character: 0 },
+  }), {
     startLine: 0,
     startColumn: 0,
     endLine: 0,

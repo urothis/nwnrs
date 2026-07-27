@@ -387,7 +387,7 @@ fn module_base(process_id: u32, name: &OsStr) -> Result<usize, WindowsLaunchErro
     }
     Err(WindowsLaunchError::new(format!(
         "module {} was not loaded in process {process_id}",
-        name.to_string_lossy()
+        nwnrs_runtime::display_native_path(Path::new(name))
     )))
 }
 

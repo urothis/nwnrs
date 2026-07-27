@@ -9,7 +9,8 @@ use arc_swap::ArcSwap;
 use nwnrs_runtime::{
     EngineClassLayouts, EventCommand, EventControls, EventKey, EventObjectId, EventPayload,
     EventReentrancyPolicy, EventResultKind, EventSourceKind, EventSubscriptionMask, EventTarget,
-    ServerStateTarget, event_definition, keyed_event_definition, keyed_runtime_event_definition,
+    ServerStateTarget, event_definition_by_key, keyed_event_definition,
+    keyed_runtime_event_definition,
 };
 
 use super::{
@@ -63,10 +64,9 @@ impl EventSpec {
         self
     }
 
-    fn identity(identity: &str) -> Result<Self, BridgeInstallError> {
-        let (key, definition) = keyed_event_definition(identity).ok_or_else(|| {
-            BridgeInstallError::new(format!("event {identity} is absent from the catalog"))
-        })?;
+    fn key(key: EventKey) -> Result<Self, BridgeInstallError> {
+        let definition = event_definition_by_key(key)
+            .ok_or_else(|| BridgeInstallError::new("event key is absent from the catalog"))?;
         Ok(Self {
             key,
             name: definition.name,
@@ -275,8 +275,8 @@ impl EventFrames {
 
 #[derive(Default)]
 struct SubscriptionState {
-    active:                BTreeSet<String>,
-    pending:               Option<BTreeSet<String>>,
+    active:                BTreeSet<EventKey>,
+    pending:               Option<BTreeSet<EventKey>>,
     active_id_whitelists:  EventIdWhitelists,
     pending_id_whitelists: Option<EventIdWhitelists>,
 }
@@ -319,13 +319,13 @@ impl SubscriptionState {
 
     fn record(
         &mut self,
-        identity: &str,
+        key: EventKey,
         forced_id_whitelist: Option<&str>,
     ) -> Result<(), BridgeInstallError> {
         self.pending
             .as_mut()
             .ok_or_else(|| BridgeInstallError::new("event subscription update is not active"))?
-            .insert(identity.to_string());
+            .insert(key);
         if let Some(name) = forced_id_whitelist {
             self.pending_id_whitelists
                 .as_mut()
@@ -359,7 +359,7 @@ impl SubscriptionState {
             .unwrap_or(&mut self.active_id_whitelists)
     }
 
-    fn configuration_if_active(&self) -> Option<(&BTreeSet<String>, &EventIdWhitelists)> {
+    fn configuration_if_active(&self) -> Option<(&BTreeSet<EventKey>, &EventIdWhitelists)> {
         self.pending
             .is_none()
             .then_some((&self.active, &self.active_id_whitelists))
@@ -676,18 +676,19 @@ impl EventEngine {
     #[allow(dead_code)]
     pub(crate) fn enqueue_pump_record(
         &self,
-        identity: &str,
+        subject: &str,
+        phase: &str,
         target: EventObjectId,
         data: BTreeMap<String, nwnrs_runtime::EventValue>,
     ) -> Result<u64, BridgeInstallError> {
-        let definition = event_definition(identity)
-            .ok_or_else(|| BridgeInstallError::new("unknown asynchronous event identity"))?;
+        let (key, definition) = keyed_event_definition(subject, phase)
+            .ok_or_else(|| BridgeInstallError::new("unknown asynchronous event route"))?;
         if definition.source_kind != EventSourceKind::EventPump {
             return Err(BridgeInstallError::new(format!(
-                "event {identity} is not produced by the asynchronous event pump"
+                "event {subject}::{phase} is not produced by the asynchronous event pump"
             )));
         }
-        self.pump.enqueue(identity, target, data)
+        self.pump.enqueue(key, target, data)
     }
 
     pub(crate) fn process_pump(
@@ -714,27 +715,24 @@ impl EventEngine {
         thread: &EngineThreadToken,
         record: EventPumpRecord,
     ) -> Result<(), BridgeInstallError> {
-        let definition = event_definition(&record.identity).ok_or_else(|| {
-            BridgeInstallError::new(format!(
-                "queued event {} disappeared from the catalog",
-                record.identity
-            ))
+        let definition = event_definition_by_key(record.key).ok_or_else(|| {
+            BridgeInstallError::new("queued event key disappeared from the catalog")
         })?;
         if definition.source_kind != EventSourceKind::EventPump {
             return Err(BridgeInstallError::new(format!(
-                "queued event {} is not an event-pump route",
-                record.identity
+                "queued event {}::{} is not an event-pump route",
+                definition.subject, definition.phase
             )));
         }
-        let spec = EventSpec::identity(&record.identity)?;
+        let spec = EventSpec::key(record.key)?;
         if !self.should_dispatch(spec) {
             return Ok(());
         }
         let (ran, _frame) = self.dispatch(thread, spec, record.target, record.data)?;
         if !ran {
             return Err(BridgeInstallError::new(format!(
-                "generated event dispatcher did not run for queued event {} sequence {}",
-                record.identity, record.sequence
+                "generated event dispatcher did not run for queued event {}::{} sequence {}",
+                definition.subject, definition.phase, record.sequence
             )));
         }
         Ok(())
@@ -782,8 +780,8 @@ impl EventEngine {
             .lock()
             .map_err(|_error| BridgeInstallError::new("installed event hook lock is poisoned"))?;
         let mut required = BTreeSet::new();
-        for identity in pending {
-            let event = event_definition(identity)
+        for key in pending {
+            let event = event_definition_by_key(*key)
                 .ok_or_else(|| BridgeInstallError::new("unknown event subscription"))?;
             self.hook_target(event.hook).ok_or_else(|| {
                 BridgeInstallError::new(format!("event hook {} is unavailable", event.hook))
@@ -795,29 +793,29 @@ impl EventEngine {
         Ok(required)
     }
 
-    pub(crate) fn record_subscription(&self, identity: &str) -> Result<(), BridgeInstallError> {
-        let forced_id_whitelist = event_definition(identity)
+    pub(crate) fn record_subscription(&self, key: EventKey) -> Result<(), BridgeInstallError> {
+        let forced_id_whitelist = event_definition_by_key(key)
             .and_then(|definition| definition.filter_policy.required_whitelist());
         let mut subscriptions = self
             .subscriptions
             .lock()
             .map_err(|_error| BridgeInstallError::new("event subscription lock is poisoned"))?;
-        subscriptions.record(identity, forced_id_whitelist)
+        subscriptions.record(key, forced_id_whitelist)
     }
 
     fn build_published_configuration(
         &self,
-        active: &BTreeSet<String>,
+        active: &BTreeSet<EventKey>,
         id_whitelists: &EventIdWhitelists,
     ) -> Result<PublishedEventConfiguration, BridgeInstallError> {
         let mut subscriptions = EventSubscriptionMask::empty();
-        for identity in active {
-            let (key, _event) = keyed_event_definition(identity).ok_or_else(|| {
-                BridgeInstallError::new(format!(
-                    "event subscription {identity} disappeared from the catalog"
-                ))
-            })?;
-            if !subscriptions.insert(key) {
+        for key in active {
+            if event_definition_by_key(*key).is_none() {
+                return Err(BridgeInstallError::new(
+                    "event subscription key disappeared from the catalog",
+                ));
+            }
+            if !subscriptions.insert(*key) {
                 return Err(BridgeInstallError::new(
                     "event subscription key exceeds the bitset",
                 ));
@@ -1070,9 +1068,9 @@ mod tests {
         }
     }
 
-    fn event_key(identity: &str) -> EventKey {
-        keyed_event_definition(identity)
-            .expect("fixture event identity exists")
+    fn event_key(subject: &str, phase: &str) -> EventKey {
+        keyed_event_definition(subject, phase)
+            .expect("fixture event route exists")
             .0
     }
 
@@ -1087,12 +1085,12 @@ mod tests {
                     result:    true,
                 },
             ),
-            event_key("module_load"),
+            event_key("module_load", "before"),
             EventResultKind::Boolean,
         )?;
         assert_eq!(frames.current()?.map(|event| event.depth), Some(1));
-        assert!(frames.contains(event_key("module_load")));
-        assert!(!frames.contains(event_key("associate_add_before")));
+        assert!(frames.contains(event_key("module_load", "before")));
+        assert!(!frames.contains(event_key("associate_add", "before")));
         frames.control(EventCommand::SetResult(b"true".to_vec()))?;
 
         let inner = frames.enter(
@@ -1103,11 +1101,11 @@ mod tests {
                     result:    false,
                 },
             ),
-            event_key("associate_add_before"),
+            event_key("associate_add", "before"),
             EventResultKind::None,
         )?;
         assert_eq!(frames.current()?.map(|event| event.depth), Some(2));
-        assert!(frames.contains(event_key("associate_add_before")));
+        assert!(frames.contains(event_key("associate_add", "before")));
         frames.control(EventCommand::Skip)?;
         let inner = inner.finish()?;
         assert!(inner.skipped);
@@ -1121,7 +1119,7 @@ mod tests {
         assert!(!outer.skipped);
         assert_eq!(outer.boolean_result(), Some(true));
         assert!(frames.current()?.is_none());
-        assert!(!frames.contains(event_key("module_load")));
+        assert!(!frames.contains(event_key("module_load", "before")));
         Ok(())
     }
 
@@ -1132,7 +1130,7 @@ mod tests {
         {
             let _scope = frames.enter(
                 payload("fixture.read_only", EventControls::default()),
-                event_key("module_load"),
+                event_key("module_load", "before"),
                 EventResultKind::None,
             )?;
             let error = frames
@@ -1195,33 +1193,35 @@ mod tests {
     fn subscription_updates_commit_or_preserve_the_previous_set() -> Result<(), BridgeInstallError>
     {
         let mut subscriptions = SubscriptionState::default();
-        subscriptions.active.insert("old".to_string());
+        let old = event_key("module_load", "before");
+        let new = event_key("associate_add", "before");
+        subscriptions.active.insert(old);
         subscriptions
             .active_id_whitelists
             .insert("old.filter".to_string(), BTreeSet::from([1]));
         subscriptions.begin()?;
-        subscriptions.record("new", Some("new.filter"))?;
+        subscriptions.record(new, Some("new.filter"))?;
         subscriptions
             .id_whitelists_mut()
             .get_mut("new.filter")
             .expect("forced filter")
             .insert(2);
         subscriptions.abort();
-        assert_eq!(subscriptions.active, BTreeSet::from(["old".to_string()]));
+        assert_eq!(subscriptions.active, BTreeSet::from([old]));
         assert_eq!(
             subscriptions.active_id_whitelists,
             BTreeMap::from([("old.filter".to_string(), BTreeSet::from([1]))])
         );
 
         subscriptions.begin()?;
-        subscriptions.record("new", Some("new.filter"))?;
+        subscriptions.record(new, Some("new.filter"))?;
         subscriptions
             .id_whitelists_mut()
             .get_mut("new.filter")
             .expect("forced filter")
             .insert(2);
         subscriptions.commit()?;
-        assert_eq!(subscriptions.active, BTreeSet::from(["new".to_string()]));
+        assert_eq!(subscriptions.active, BTreeSet::from([new]));
         assert_eq!(
             subscriptions.active_id_whitelists,
             BTreeMap::from([("new.filter".to_string(), BTreeSet::from([2]))])
@@ -1234,7 +1234,7 @@ mod tests {
         let frames = Arc::new(EventFrames::default());
         let scope = frames.enter(
             payload("fixture.owner", EventControls::default()),
-            event_key("module_load"),
+            event_key("module_load", "before"),
             EventResultKind::None,
         )?;
         let other = Arc::clone(&frames);

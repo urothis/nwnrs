@@ -2,7 +2,10 @@ use std::io::{self, Read, Write};
 
 use tracing::instrument;
 
-use crate::streamext::prelude::*;
+use crate::{
+    encoding::{LegacyEncoding, NwnText},
+    streamext::prelude::*,
+};
 
 /// Reads a byte buffer prefixed by a little-endian length.
 ///
@@ -38,27 +41,28 @@ where
     read_bytes(reader, prefix_len)
 }
 
-/// Reads a UTF-8 string prefixed by a little-endian length.
+/// Reads byte-preserving NWN text prefixed by a little-endian length.
 ///
 /// # Errors
 ///
-/// Returns an [`io::Error`] if the bytes cannot be read or are not valid UTF-8.
+/// Returns an [`io::Error`] if the bytes cannot be read.
 #[instrument(
     level = "debug",
     skip_all,
     err,
     fields(expect_fixed_size = expect_fixed_size)
 )]
-pub fn read_size_prefixed_string<P, R>(
+pub fn read_size_prefixed_nwn_text<P, R>(
     reader: &mut R,
     expect_fixed_size: Option<usize>,
-) -> io::Result<String>
+    encoding: LegacyEncoding,
+) -> io::Result<NwnText>
 where
     P: SizePrefix,
     R: Read,
 {
-    let bytes = read_size_prefixed_bytes::<P, _>(reader, expect_fixed_size)?;
-    String::from_utf8(bytes).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+    read_size_prefixed_bytes::<P, _>(reader, expect_fixed_size)
+        .map(|bytes| NwnText::decode(&bytes, encoding))
 }
 
 /// Reads exactly `size` bytes.
@@ -73,16 +77,18 @@ pub fn read_bytes<R: Read>(reader: &mut R, size: usize) -> io::Result<Vec<u8>> {
     Ok(bytes)
 }
 
-/// Reads exactly `size` bytes and decodes them as UTF-8.
+/// Reads exactly `size` bytes as byte-preserving NWN text.
 ///
 /// # Errors
 ///
-/// Returns an [`io::Error`] if the reader cannot supply exactly `size` bytes or
-/// the bytes are not valid UTF-8.
+/// Returns an [`io::Error`] if the reader cannot supply exactly `size` bytes.
 #[instrument(level = "debug", skip_all, err, fields(size))]
-pub fn read_string<R: Read>(reader: &mut R, size: usize) -> io::Result<String> {
-    let bytes = read_bytes(reader, size)?;
-    String::from_utf8(bytes).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+pub fn read_nwn_text<R: Read>(
+    reader: &mut R,
+    size: usize,
+    encoding: LegacyEncoding,
+) -> io::Result<NwnText> {
+    read_bytes(reader, size).map(|bytes| NwnText::decode(&bytes, encoding))
 }
 
 /// Reads and validates a fixed byte sequence.
@@ -97,11 +103,7 @@ pub fn read_fixed_value<R: Read>(reader: &mut R, value: &[u8]) -> io::Result<()>
     if data != value {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
-            format!(
-                "wanted to read fixed value {:?}, but got {:?}",
-                String::from_utf8_lossy(value),
-                String::from_utf8_lossy(&data)
-            ),
+            format!("wanted to read fixed value {:?}, but got {:?}", value, data),
         ));
     }
     Ok(())
@@ -167,19 +169,22 @@ where
     writer.write_all(value)
 }
 
-/// Writes a UTF-8 string prefixed by its byte length.
+/// Writes byte-preserving NWN text prefixed by its byte length.
 ///
 /// # Errors
 ///
-/// Returns an [`io::Error`] if the byte length does not fit the prefix type or
-/// the write fails.
-#[instrument(level = "debug", skip_all, err, fields(size = value.len()))]
-pub fn write_size_prefixed_string<P, W>(writer: &mut W, value: &str) -> io::Result<()>
+/// Returns an [`io::Error`] if the encoded length does not fit the prefix type,
+/// text encoding fails, or the write fails.
+#[instrument(level = "debug", skip_all, err)]
+pub fn write_size_prefixed_nwn_text<P, W>(writer: &mut W, value: &NwnText) -> io::Result<()>
 where
     P: SizePrefix,
     W: Write,
 {
-    write_size_prefixed_bytes::<P, _>(writer, value.as_bytes())
+    let bytes = value
+        .encode()
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    write_size_prefixed_bytes::<P, _>(writer, &bytes)
 }
 
 /// Writes a sequence prefixed by its element count.
@@ -237,8 +242,8 @@ mod tests {
     use std::io::{Cursor, Read, Write};
 
     use crate::streamext::{
-        read_fixed_value, read_size_prefixed_seq, write_size_prefixed_seq,
-        write_size_prefixed_string,
+        read_fixed_value, read_size_prefixed_seq, write_size_prefixed_bytes,
+        write_size_prefixed_seq,
     };
 
     #[test]
@@ -266,7 +271,7 @@ mod tests {
     #[test]
     fn fixed_value_reports_mismatch() {
         let mut bytes = Vec::new();
-        if let Err(error) = write_size_prefixed_string::<u8, _>(&mut bytes, "ok") {
+        if let Err(error) = write_size_prefixed_bytes::<u8, _>(&mut bytes, b"ok") {
             panic!("write string: {error}");
         }
         let error = match read_fixed_value(&mut Cursor::new(bytes), b"no") {

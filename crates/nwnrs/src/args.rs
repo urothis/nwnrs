@@ -66,6 +66,8 @@ pub(crate) enum Command {
     Unpack(UnpackCmd),
     #[cfg(feature = "tooling")]
     Nwsync(NwsyncCmd),
+    #[cfg(feature = "tooling")]
+    Nwpkg(NwpkgCmd),
 }
 
 #[cfg(feature = "supervisor")]
@@ -426,6 +428,11 @@ pub(crate) struct UnpackCmd {
     /// overwrite existing output files
     pub(crate) force: bool,
 
+    #[argh(option, default = "String::from(\"english\")")]
+    /// language used for native resource text without embedded language
+    /// metadata
+    pub(crate) language: String,
+
     #[argh(positional)]
     /// input file to unpack
     pub(crate) input: PathBuf,
@@ -562,6 +569,7 @@ pub(crate) struct KeyUnpackCmd {
     pub(crate) force:       bool,
     pub(crate) key:         PathBuf,
     pub(crate) destination: PathBuf,
+    pub(crate) language:    nwnrs_nwpkg::ProjectLanguage,
 }
 
 #[cfg(feature = "tooling")]
@@ -641,6 +649,89 @@ pub(crate) struct NwsyncWriteCmd {
     #[argh(switch, short = 'f')]
     /// overwrite existing output file
     pub(crate) force: bool,
+}
+
+#[cfg(feature = "tooling")]
+#[derive(FromArgs)]
+#[argh(subcommand, name = "nwpkg")]
+/// resolve and maintain nwpkg dependencies
+pub(crate) struct NwpkgCmd {
+    #[argh(subcommand)]
+    pub(crate) command: NwpkgCommand,
+}
+
+#[cfg(feature = "tooling")]
+#[derive(FromArgs)]
+#[argh(subcommand)]
+pub(crate) enum NwpkgCommand {
+    Fetch(NwpkgFetchCmd),
+    Update(NwpkgUpdateCmd),
+    Clean(NwpkgCleanCmd),
+}
+
+#[cfg(feature = "tooling")]
+#[derive(FromArgs)]
+#[argh(subcommand, name = "fetch")]
+/// fetch missing dependency pins and materialize the locked graph
+pub(crate) struct NwpkgFetchCmd {
+    #[argh(option)]
+    /// resolve only this direct dependency and its transitive graph
+    pub(crate) dependency: Option<String>,
+
+    #[argh(option)]
+    /// system Git executable; defaults to NWNRS_GIT or git
+    pub(crate) git: Option<PathBuf>,
+
+    #[argh(option)]
+    /// immutable dependency cache; defaults to NWNRS_PACKAGE_CACHE or platform
+    /// cache
+    pub(crate) cache: Option<PathBuf>,
+
+    #[argh(positional)]
+    /// package directory; defaults to the current directory
+    pub(crate) path: Option<PathBuf>,
+}
+
+#[cfg(feature = "tooling")]
+#[derive(FromArgs)]
+#[argh(subcommand, name = "update")]
+/// preview or apply updated Git dependency pins
+pub(crate) struct NwpkgUpdateCmd {
+    #[argh(option)]
+    /// update only this direct dependency and its transitive graph
+    pub(crate) dependency: Option<String>,
+
+    #[argh(option)]
+    /// system Git executable; defaults to NWNRS_GIT or git
+    pub(crate) git: Option<PathBuf>,
+
+    #[argh(option)]
+    /// immutable dependency cache; defaults to NWNRS_PACKAGE_CACHE or platform
+    /// cache
+    pub(crate) cache: Option<PathBuf>,
+
+    #[argh(switch)]
+    /// atomically apply the displayed update plan to nwpkg.lock
+    pub(crate) apply: bool,
+
+    #[argh(positional)]
+    /// package directory; defaults to the current directory
+    pub(crate) path: Option<PathBuf>,
+}
+
+#[cfg(feature = "tooling")]
+#[derive(FromArgs)]
+#[argh(subcommand, name = "clean")]
+/// remove dependency cache entries unused by this package lock
+pub(crate) struct NwpkgCleanCmd {
+    #[argh(option)]
+    /// immutable dependency cache; defaults to NWNRS_PACKAGE_CACHE or platform
+    /// cache
+    pub(crate) cache: Option<PathBuf>,
+
+    #[argh(positional)]
+    /// package directory; defaults to the current directory
+    pub(crate) path: Option<PathBuf>,
 }
 
 #[cfg(all(test, feature = "tooling"))]

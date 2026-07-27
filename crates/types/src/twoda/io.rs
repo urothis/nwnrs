@@ -15,13 +15,14 @@ use crate::twoda::{
 /// Returns [`TwoDaError`] if the data cannot be read or does not conform to the
 /// 2DA V2.0 format.
 #[instrument(level = "debug", skip_all, err)]
-pub fn read_twoda<R: Read>(mut reader: R) -> TwoDaResult<TwoDa> {
+pub fn read_twoda<R: Read>(mut reader: R, context: NwnTextContext) -> TwoDaResult<TwoDa> {
     let mut bytes = Vec::new();
     reader.read_to_end(&mut bytes)?;
-    let decoded = from_nwnrs_encoding(&bytes)?;
+    let decoded = decode_legacy_preserving(context.encoding(), &bytes);
     let source_lines = split_source_lines(&decoded);
 
     let mut twoda = TwoDa::new();
+    twoda.encoding = context.encoding();
     let mut next_nonempty = source_lines
         .iter()
         .enumerate()
@@ -148,7 +149,12 @@ pub fn read_twoda<R: Read>(mut reader: R) -> TwoDaResult<TwoDa> {
     err,
     fields(rows = twoda.rows.len(), columns = twoda.headers.len(), minify)
 )]
-pub fn write_twoda<W: Write>(writer: &mut W, twoda: &TwoDa, minify: bool) -> TwoDaResult<()> {
+pub fn write_twoda<W: Write>(
+    writer: &mut W,
+    twoda: &TwoDa,
+    minify: bool,
+    context: NwnTextContext,
+) -> TwoDaResult<()> {
     if twoda.headers.is_empty() {
         return Err(TwoDaError::msg("no columns configured"));
     }
@@ -161,10 +167,18 @@ pub fn write_twoda<W: Write>(writer: &mut W, twoda: &TwoDa, minify: bool) -> Two
             return Ok(());
         }
         if let Some(source_layout) = &twoda.source_layout {
-            return write_twoda_with_layout(writer, twoda, source_layout);
+            let mut rendered = Vec::new();
+            write_twoda_with_layout(&mut rendered, twoda, source_layout)?;
+            return write_legacy_render(writer, &rendered, context);
         }
     }
 
+    let mut rendered = Vec::new();
+    render_twoda(&mut rendered, twoda, minify)?;
+    write_legacy_render(writer, &rendered, context)
+}
+
+fn render_twoda<W: Write>(writer: &mut W, twoda: &TwoDa, minify: bool) -> TwoDaResult<()> {
     let max_col_width: Vec<usize> = twoda
         .headers
         .iter()
@@ -236,7 +250,7 @@ pub fn write_twoda<W: Write>(writer: &mut W, twoda: &TwoDa, minify: bool) -> Two
 
         for (cell_idx, cell) in row.iter().enumerate() {
             let formatted = escape_field(cell)?;
-            writer.write_all(&to_nwnrs_encoding(&formatted)?)?;
+            writer.write_all(formatted.as_bytes())?;
             if cell_idx != twoda.headers.len() - 1 {
                 let width = max_col_width
                     .get(cell_idx)
@@ -270,8 +284,23 @@ pub fn write_twoda<W: Write>(writer: &mut W, twoda: &TwoDa, minify: bool) -> Two
 /// Returns [`TwoDaError`] if the resource bytes cannot be parsed as a 2DA
 /// table.
 #[instrument(level = "debug", skip_all, err)]
-pub fn as_2da(res: &Res) -> TwoDaResult<TwoDa> {
-    read_twoda(std::io::Cursor::new(res.read_all(CachePolicy::Bypass)?))
+pub fn as_2da(res: &Res, context: NwnTextContext) -> TwoDaResult<TwoDa> {
+    read_twoda(
+        std::io::Cursor::new(res.read_all(CachePolicy::Bypass)?),
+        context,
+    )
+}
+
+fn write_legacy_render<W: Write>(
+    writer: &mut W,
+    rendered: &[u8],
+    context: NwnTextContext,
+) -> TwoDaResult<()> {
+    let text = std::str::from_utf8(rendered).map_err(|error| {
+        TwoDaError::msg(format!("internal 2DA renderer emitted UTF-8: {error}"))
+    })?;
+    writer.write_all(&encode_legacy_preserving(context.encoding(), text)?)?;
+    Ok(())
 }
 
 /// Formats a cell for textual 2DA output.

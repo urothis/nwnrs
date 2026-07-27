@@ -125,14 +125,15 @@ pub fn write_single_tlk<W: Write + Seek>(writer: &mut W, tlk: &mut SingleTlk) ->
         .map_err(|_error| TlkError::msg("TLK entries table exceeds usize"))?;
     let mut entries_table = Cursor::new(Vec::with_capacity(entries_capacity));
     let mut offset = 0_i32;
+    let encoding = LegacyEncoding::for_language_id(tlk.language.id());
     for index in 0..entry_count {
         if let Some(entry) = tlk.get(index)?.filter(TlkEntry::has_value) {
-            write_i32(&mut entries_table, entry.stored_flags())?;
+            write_i32(&mut entries_table, entry.stored_flags(encoding)?)?;
             entries_table.write_all(&entry.stored_sound_res_ref_bytes()?)?;
             write_i32(&mut entries_table, entry.volume_variance)?;
             write_i32(&mut entries_table, entry.pitch_variance)?;
 
-            let text = entry.stored_text_bytes()?;
+            let text = entry.stored_text_bytes(encoding)?;
             write_i32(&mut entries_table, offset)?;
             let text_len = i32::try_from(text.len())
                 .map_err(|_error| TlkError::msg("TLK text length exceeds 32-bit range"))?;
@@ -243,7 +244,7 @@ pub(crate) fn get_from_io(tlk: &SingleTlk, str_ref: StrRef) -> TlkResult<(usize,
     let string_size = usize::try_from(read_i32(stream.as_mut())?)
         .map_err(|_error| TlkError::msg("invalid negative tlk string size"))?;
     let sound_length_bits = read_u32(stream.as_mut())?;
-    let stored_sound_res_ref = decode_sound_res_ref(&raw_sound_res_ref);
+    let stored_sound_res_ref = decode_sound_res_ref(&raw_sound_res_ref)?;
     let sound_length = f32::from_bits(sound_length_bits);
     let sound_res_ref = if flags & 0x2 != 0 {
         stored_sound_res_ref.clone()
@@ -272,11 +273,13 @@ pub(crate) fn get_from_io(tlk: &SingleTlk, str_ref: StrRef) -> TlkResult<(usize,
     } else {
         None
     };
+    let native_text = raw_text
+        .as_ref()
+        .map(|bytes| NwnText::decode(bytes, LegacyEncoding::for_language_id(tlk.language.id())));
     let text = if flags & 0x1 != 0 {
-        raw_text
+        native_text
             .as_ref()
-            .map(|bytes| from_nwnrs_encoding(bytes))
-            .transpose()?
+            .map(NwnText::display_text)
             .unwrap_or_default()
     } else {
         String::new()
@@ -284,6 +287,7 @@ pub(crate) fn get_from_io(tlk: &SingleTlk, str_ref: StrRef) -> TlkResult<(usize,
     let entry = TlkEntry {
         text,
         raw_text,
+        native_text,
         sound_res_ref,
         raw_sound_res_ref,
         sound_length,
@@ -303,9 +307,7 @@ fn expect_header<R: Read + ?Sized>(reader: &mut R, expected: &[u8]) -> TlkResult
         Ok(())
     } else {
         Err(TlkError::msg(format!(
-            "invalid tlk header: expected {:?}, got {:?}",
-            String::from_utf8_lossy(expected),
-            String::from_utf8_lossy(&actual)
+            "invalid TLK header: expected {expected:02x?}, got {actual:02x?}"
         )))
     }
 }
@@ -338,7 +340,11 @@ fn write_f32<W: Write + ?Sized>(writer: &mut W, value: f32) -> io::Result<()> {
 mod tests {
     use std::io::Cursor;
 
-    use nwnrs_types::{localization::Gender, resman::CachePolicy};
+    use nwnrs_types::{
+        encoding::{LegacyEncoding, NwnText},
+        localization::Gender,
+        resman::CachePolicy,
+    };
 
     use super::{TlkLayerWriteTarget, read_single_tlk, write_single_tlk, write_tlk_chain};
     use crate::tlk::{SingleTlk, Tlk, TlkEntry, TlkPair};
@@ -361,6 +367,41 @@ mod tests {
         assert_eq!(entry.volume_variance, 0);
         assert_eq!(entry.pitch_variance, 0);
         assert_eq!(entry.sound_length, 1.25);
+    }
+
+    #[test]
+    fn tlk_preserves_opaque_and_color_bytes() {
+        let expected = b"Hello\x81<c\x01\x80\xff>world</c>";
+        let native = NwnText::decode(expected, LegacyEncoding::Windows1252);
+        let mut tlk = SingleTlk::new();
+        tlk.set_entry(0, TlkEntry::new_native(native, "", 0.0));
+
+        let mut encoded = Cursor::new(Vec::new());
+        write_single_tlk(&mut encoded, &mut tlk).expect("encode tlk");
+        let original = encoded.into_inner();
+        let mut parsed =
+            read_single_tlk(Cursor::new(original), CachePolicy::Bypass).expect("parse tlk");
+        let entry = parsed.get(0).expect("load entry").expect("entry present");
+        assert!(entry.text.contains("\\x81"));
+        assert_eq!(
+            entry.native_text(LegacyEncoding::Windows1252).encode(),
+            Ok(expected.to_vec())
+        );
+
+        let mut reencoded = Cursor::new(Vec::new());
+        write_single_tlk(&mut reencoded, &mut parsed).expect("reencode tlk");
+        let mut reparsed =
+            read_single_tlk(Cursor::new(reencoded.into_inner()), CachePolicy::Bypass)
+                .expect("reparse tlk");
+        assert_eq!(
+            reparsed
+                .get(0)
+                .expect("load reparsed entry")
+                .expect("reparsed entry")
+                .native_text(LegacyEncoding::Windows1252)
+                .encode(),
+            Ok(expected.to_vec())
+        );
     }
 
     #[test]

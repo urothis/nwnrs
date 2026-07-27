@@ -276,7 +276,7 @@ fn record_error(error: BridgeError) -> i32 {
 }
 
 fn emit_script_log(log: &ScriptLog) {
-    let message = String::from_utf8_lossy(&log.message);
+    let message = nwnrs_runtime::display_engine_text(&log.message);
     if message.is_empty() {
         emit_script_log_line(log.level, "");
         return;

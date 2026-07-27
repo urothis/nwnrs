@@ -672,7 +672,7 @@ impl AdministrationEngine {
         tracing::info!(
             target: "nwnrs::administration",
             player_id = command.player_id,
-            character = %String::from_utf8_lossy(&command.character_name),
+            character = %nwnrs_runtime::display_engine_text(&command.character_name),
             file = %command.file.display(),
             backup = backup.as_ref().map(|path| path.display().to_string()),
             turd_removed,

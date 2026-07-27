@@ -8,7 +8,7 @@ use std::{
     path::Path,
 };
 
-use nwnrs_types::resman::prelude::*;
+use nwnrs_types::{encoding::prelude::*, resman::prelude::*};
 use tracing::instrument;
 
 /// NWN resource type id for `txi`.
@@ -27,6 +27,8 @@ pub enum TxiError {
     Io(io::Error),
     /// Resource-manager access failed.
     ResMan(ResManError),
+    /// Native text could not be encoded.
+    Encoding(EncodingConversionError),
     /// The payload was otherwise invalid or unsupported.
     Message(String),
 }
@@ -50,6 +52,7 @@ impl fmt::Display for TxiError {
         match self {
             Self::Io(error) => error.fmt(f),
             Self::ResMan(error) => error.fmt(f),
+            Self::Encoding(error) => error.fmt(f),
             Self::Message(message) => f.write_str(message),
         }
     }
@@ -66,6 +69,12 @@ impl From<io::Error> for TxiError {
 impl From<ResManError> for TxiError {
     fn from(value: ResManError) -> Self {
         Self::ResMan(value)
+    }
+}
+
+impl From<EncodingConversionError> for TxiError {
+    fn from(value: EncodingConversionError) -> Self {
+        Self::Encoding(value)
     }
 }
 
@@ -142,11 +151,14 @@ impl TxiFile {
     /// # Examples
     ///
     /// ```rust,no_run
-    /// let _ = nwnrs_types::txi::TxiFile::from_file(std::path::Path::new("texture.txi"));
+    /// let _ = nwnrs_types::txi::TxiFile::from_file(
+    ///     std::path::Path::new("texture.txi"),
+    ///     nwnrs_types::encoding::NwnTextContext::english(),
+    /// );
     /// ```
-    pub fn from_file(path: impl AsRef<Path>) -> TxiResult<Self> {
+    pub fn from_file(path: impl AsRef<Path>, context: NwnTextContext) -> TxiResult<Self> {
         let mut file = File::open(path.as_ref())?;
-        read_txi(&mut file)
+        read_txi(&mut file, context)
     }
 
     /// Reads a typed `TXI` payload from a [`Res`].
@@ -161,7 +173,11 @@ impl TxiFile {
     /// ```rust,no_run
     /// let _ = nwnrs_types::txi::TxiFile::from_res;
     /// ```
-    pub fn from_res(res: &Res, cache_policy: CachePolicy) -> TxiResult<Self> {
+    pub fn from_res(
+        res: &Res,
+        cache_policy: CachePolicy,
+        context: NwnTextContext,
+    ) -> TxiResult<Self> {
         if res.resref().res_type() != TXI_RES_TYPE {
             return Err(TxiError::msg(format!(
                 "expected txi resource, got {}",
@@ -169,8 +185,7 @@ impl TxiFile {
             )));
         }
         let bytes = res.read_all(cache_policy)?;
-        let text = String::from_utf8(bytes)
-            .map_err(|error| TxiError::msg(format!("TXI payload is not valid UTF-8: {error}")))?;
+        let text = decode_legacy_preserving(context.encoding(), &bytes);
         parse_txi(&text)
     }
 
@@ -196,7 +211,7 @@ impl TxiFile {
         let res = resman
             .get_resolved(&resolved)
             .ok_or_else(|| TxiError::msg(format!("txi not found in ResMan: {resolved}")))?;
-        Self::from_res(&res, cache_policy)
+        Self::from_res(&res, cache_policy, resman.text_context())
     }
 
     /// Reads an optional typed `TXI` payload from a [`ResMan`] by texture name.
@@ -220,7 +235,7 @@ impl TxiFile {
         let Some(res) = resman.get_resolved(&resolved) else {
             return Ok(None);
         };
-        Self::from_res(&res, cache_policy).map(Some)
+        Self::from_res(&res, cache_policy, resman.text_context()).map(Some)
     }
 }
 
@@ -286,12 +301,16 @@ impl TxiDirective {
 ///
 /// ```rust,no_run
 /// let mut reader = std::io::Cursor::new(Vec::<u8>::new());
-/// let _ = nwnrs_types::txi::read_txi(&mut reader);
+/// let _ = nwnrs_types::txi::read_txi(
+///     &mut reader,
+///     nwnrs_types::encoding::NwnTextContext::english(),
+/// );
 /// ```
 #[instrument(level = "debug", skip_all, err)]
-pub fn read_txi(reader: &mut dyn Read) -> TxiResult<TxiFile> {
-    let mut text = String::new();
-    reader.read_to_string(&mut text)?;
+pub fn read_txi(reader: &mut dyn Read, context: NwnTextContext) -> TxiResult<TxiFile> {
+    let mut bytes = Vec::new();
+    reader.read_to_end(&mut bytes)?;
+    let text = decode_legacy_preserving(context.encoding(), &bytes);
     parse_txi(&text)
 }
 
@@ -413,12 +432,20 @@ pub fn build_txi_text(txi_file: &TxiFile) -> TxiResult<String> {
 /// ```rust,no_run
 /// let txi_file = nwnrs_types::txi::TxiFile::default();
 /// let mut writer = Vec::new();
-/// nwnrs_types::txi::write_txi(&mut writer, &txi_file)?;
+/// nwnrs_types::txi::write_txi(
+///     &mut writer,
+///     &txi_file,
+///     nwnrs_types::encoding::NwnTextContext::english(),
+/// )?;
 /// # Ok::<(), nwnrs_types::txi::TxiError>(())
 /// ```
-pub fn write_txi<W: Write>(writer: &mut W, txi_file: &TxiFile) -> TxiResult<()> {
+pub fn write_txi<W: Write>(
+    writer: &mut W,
+    txi_file: &TxiFile,
+    context: NwnTextContext,
+) -> TxiResult<()> {
     let text = build_txi_text(txi_file)?;
-    writer.write_all(text.as_bytes())?;
+    writer.write_all(&encode_legacy_preserving(context.encoding(), &text)?)?;
     Ok(())
 }
 
@@ -556,6 +583,7 @@ mod tests {
     };
 
     use super::{TXI_RES_TYPE, TxiDirective, TxiFile, build_txi_text, parse_txi, write_txi};
+    use crate::encoding::NwnTextContext;
 
     #[test]
     fn parses_water_txi_directives_and_channel_blocks() {
@@ -623,7 +651,7 @@ channeltranslate 4
             Ok(container) => container,
             Err(_error) => return,
         };
-        let mut resman = ResMan::new(0);
+        let mut resman = ResMan::new(0, NwnTextContext::english());
         resman.add(std::sync::Arc::new(container) as std::sync::Arc<dyn ResContainer>);
 
         let parsed_result = TxiFile::from_resman(&mut resman, "water01", CachePolicy::Use);
@@ -643,7 +671,7 @@ channeltranslate 4
 
     #[test]
     fn missing_txi_from_resman_is_optional() {
-        let mut resman = ResMan::new(0);
+        let mut resman = ResMan::new(0, NwnTextContext::english());
         let parsed_result =
             TxiFile::optional_from_resman(&mut resman, "missing_water", CachePolicy::Use);
         assert!(
@@ -824,7 +852,7 @@ channeltranslate 4
             Err(_error) => return,
         };
         let mut bytes = Vec::new();
-        let write_result = write_txi(&mut bytes, &txi);
+        let write_result = write_txi(&mut bytes, &txi, NwnTextContext::english());
         assert!(
             write_result.is_ok(),
             "write txi: {:?}",

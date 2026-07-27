@@ -80,7 +80,7 @@ impl ContainerLaunch {
             targets: PathBuf::from(TARGETS_DIRECTORY),
             working_directory,
             server_args: build_server_args(forwarded_args)?,
-            tail_logs: env_value("NWN_TAIL_LOGS").is_none_or(|value| value == "y"),
+            tail_logs: env_value("NWN_TAIL_LOGS")?.is_none_or(|value| value == "y"),
         })
     }
 }
@@ -201,7 +201,7 @@ fn bundled_server_path() -> Result<PathBuf, String> {
 }
 
 fn build_server_args(forwarded_args: &[String]) -> Result<Vec<String>, String> {
-    let mut args: Vec<String> = env_value("NWN_EXTRA_ARGS")
+    let mut args: Vec<String> = env_value("NWN_EXTRA_ARGS")?
         .map(|value| value.split_whitespace().map(str::to_string).collect())
         .unwrap_or_default();
     for (option, variable, default) in [
@@ -224,7 +224,7 @@ fn build_server_args(forwarded_args: &[String]) -> Result<Vec<String>, String> {
         ("-reloadwhenempty", "NWN_RELOADWHENEMPTY", "0"),
     ] {
         args.push(option.to_string());
-        args.push(env_value(variable).unwrap_or_else(|| default.to_string()));
+        args.push(env_value(variable)?.unwrap_or_else(|| default.to_string()));
     }
     args.extend([
         "-userdirectory".to_string(),
@@ -237,7 +237,7 @@ fn build_server_args(forwarded_args: &[String]) -> Result<Vec<String>, String> {
         ("-dmpassword", "NWN_DMPASSWORD_FILE"),
         ("-adminpassword", "NWN_ADMINPASSWORD_FILE"),
     ] {
-        if let Some(path) = env_value(variable) {
+        if let Some(path) = env_value(variable)? {
             let secret = fs::read_to_string(&path)
                 .map_err(|error| format!("{variable} must name a readable UTF-8 file: {error}"))?;
             args.extend([
@@ -250,7 +250,7 @@ fn build_server_args(forwarded_args: &[String]) -> Result<Vec<String>, String> {
         ("-nwsyncurl", "NWN_NWSYNCURL"),
         ("-nwsynchash", "NWN_NWSYNCHASH"),
     ] {
-        if let Some(value) = env_value(variable) {
+        if let Some(value) = env_value(variable)? {
             args.extend([option.to_string(), value]);
         }
     }
@@ -258,10 +258,16 @@ fn build_server_args(forwarded_args: &[String]) -> Result<Vec<String>, String> {
     Ok(args)
 }
 
-fn env_value(name: &str) -> Option<String> {
-    env::var_os(name)
-        .filter(|value| !value.is_empty())
-        .map(|value| value.to_string_lossy().into_owned())
+fn env_value(name: &str) -> Result<Option<String>, String> {
+    let Some(value) = env::var_os(name).filter(|value| !value.is_empty()) else {
+        return Ok(None);
+    };
+    value.into_string().map(Some).map_err(|value| {
+        format!(
+            "{name} is not valid UTF-8: {}",
+            nwnrs_types::native_path::display(Path::new(&value))
+        )
+    })
 }
 
 fn ensure_symlink(source: &Path, destination: &Path) -> Result<(), String> {

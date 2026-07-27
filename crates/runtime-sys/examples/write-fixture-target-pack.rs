@@ -16,7 +16,7 @@ use nwnrs_runtime::{
     VectorLayout,
 };
 
-const EVENT_MANIFEST_NAME: &str = "fixture-event-identities.txt";
+const EVENT_MANIFEST_NAME: &str = "fixture-event-routes.txt";
 
 fn main() -> Result<(), Box<dyn Error>> {
     let mut arguments = std::env::args_os().skip(1);
@@ -225,7 +225,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         target_root.join(EVENT_MANIFEST_NAME),
         EVENT_CATALOG
             .iter()
-            .map(|event| event.identity)
+            .map(|event| format!("{}::{}", event.subject, event.phase))
             .collect::<Vec<_>>()
             .join("\n"),
     )?;

@@ -11,7 +11,7 @@ pub const FEAT_HAS_ID_WHITELIST: &str = "feat.has.feat_id";
 ///
 /// Keys are process-local runtime identifiers, not persisted target-pack data.
 /// They allow native hot paths to use subscription bitsets without hashing
-/// event identity strings.
+/// event subject strings.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct EventKey(u16);
 
@@ -274,11 +274,11 @@ const NO_REQUIREMENTS: EventRequirements = EventRequirements {
     server_state: false,
 };
 
-/// One supported NWScript event annotation.
+/// One supported NWScript event route.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct EventDefinition {
-    /// Identifier used by `#[nwnrs::events(...)]`.
-    pub identity:       &'static str,
+    /// Canonical snake-case event subject used in `nwnrs::event` attributes.
+    pub subject:        &'static str,
     /// Logical runtime event name.
     pub name:           &'static str,
     /// Runtime phase (`before` or `after`).
@@ -306,9 +306,9 @@ pub struct EventDefinition {
 }
 
 macro_rules! event {
-    ($identity:literal, $name:literal, $phase:literal, $hook:literal) => {
+    ($subject:literal, $name:literal, $phase:literal, $hook:literal) => {
         EventDefinition {
-            identity:       $identity,
+            subject:        $subject,
             name:           $name,
             phase:          $phase,
             hook:           $hook,
@@ -323,9 +323,9 @@ macro_rules! event {
             requirements:   NO_REQUIREMENTS,
         }
     };
-    ($identity:literal, $name:literal, $phase:literal, $hook:literal,helper = $helper:literal) => {
+    ($subject:literal, $name:literal, $phase:literal, $hook:literal,helper = $helper:literal) => {
         EventDefinition {
-            identity:       $identity,
+            subject:        $subject,
             name:           $name,
             phase:          $phase,
             hook:           $hook,
@@ -340,9 +340,9 @@ macro_rules! event {
             requirements:   NO_REQUIREMENTS,
         }
     };
-    ($identity:literal, $name:literal, $phase:literal, $hook:literal,result = $result:ident) => {
+    ($subject:literal, $name:literal, $phase:literal, $hook:literal,result = $result:ident) => {
         EventDefinition {
-            identity:       $identity,
+            subject:        $subject,
             name:           $name,
             phase:          $phase,
             hook:           $hook,
@@ -468,20 +468,20 @@ const OBJECT_LOOKUP_REQUIREMENTS: EventRequirements = EventRequirements {
 };
 
 macro_rules! skippable_event {
-    ($identity:literal, $name:literal, $phase:literal, $hook:literal) => {{
-        let mut definition = event!($identity, $name, $phase, $hook);
+    ($subject:literal, $name:literal, $phase:literal, $hook:literal) => {{
+        let mut definition = event!($subject, $name, $phase, $hook);
         definition.skippable = true;
         definition.control_policy = EventControlPolicy::SuppressOriginal;
         definition
     }};
-    ($identity:literal, $name:literal, $phase:literal, $hook:literal,helper = $helper:literal) => {{
-        let mut definition = event!($identity, $name, $phase, $hook, helper = $helper);
+    ($subject:literal, $name:literal, $phase:literal, $hook:literal,helper = $helper:literal) => {{
+        let mut definition = event!($subject, $name, $phase, $hook, helper = $helper);
         definition.skippable = true;
         definition.control_policy = EventControlPolicy::SuppressOriginal;
         definition
     }};
-    ($identity:literal, $name:literal, $phase:literal, $hook:literal,result = $result:ident) => {{
-        let mut definition = event!($identity, $name, $phase, $hook, result = $result);
+    ($subject:literal, $name:literal, $phase:literal, $hook:literal,result = $result:ident) => {{
+        let mut definition = event!($subject, $name, $phase, $hook, result = $result);
         definition.skippable = true;
         definition.control_policy =
             EventControlPolicy::TypedResult(EventResultRole::CancellationReturn);
@@ -492,189 +492,169 @@ macro_rules! skippable_event {
 /// Complete event catalog currently implemented by the runtime.
 pub const EVENT_CATALOG: &[EventDefinition] = &[
     event!("module_load", "module.load", "before", "module_load"),
+    event!("associate_add", "associate.add", "before", "associate_add"),
+    event!("associate_add", "associate.add", "after", "associate_add"),
     event!(
-        "associate_add_before",
-        "associate.add",
-        "before",
-        "associate_add"
-    ),
-    event!(
-        "associate_add_after",
-        "associate.add",
-        "after",
-        "associate_add"
-    ),
-    event!(
-        "associate_remove_before",
+        "associate_remove",
         "associate.remove",
         "before",
         "associate_remove"
     ),
     event!(
-        "associate_remove_after",
+        "associate_remove",
         "associate.remove",
         "after",
         "associate_remove"
     ),
     skippable_event!(
-        "associate_possess_familiar_before",
+        "associate_possess_familiar",
         "associate.possess_familiar",
         "before",
         "associate_possess_familiar",
         helper = "associate_get_id"
     ),
     event!(
-        "associate_possess_familiar_after",
+        "associate_possess_familiar",
         "associate.possess_familiar",
         "after",
         "associate_possess_familiar",
         helper = "associate_get_id"
     ),
     skippable_event!(
-        "associate_unpossess_familiar_before",
+        "associate_unpossess_familiar",
         "associate.unpossess_familiar",
         "before",
         "associate_unpossess_familiar",
         helper = "associate_get_id"
     ),
     event!(
-        "associate_unpossess_familiar_after",
+        "associate_unpossess_familiar",
         "associate.unpossess_familiar",
         "after",
         "associate_unpossess_familiar",
         helper = "associate_get_id"
     ),
-    skippable_event!("object_lock_before", "object.lock", "before", "object_lock"),
-    event!("object_lock_after", "object.lock", "after", "object_lock"),
+    skippable_event!("object_lock", "object.lock", "before", "object_lock"),
+    event!("object_lock", "object.lock", "after", "object_lock"),
+    skippable_event!("object_unlock", "object.unlock", "before", "object_unlock"),
+    event!("object_unlock", "object.unlock", "after", "object_unlock"),
+    skippable_event!("object_use", "object.use", "before", "object_use"),
+    event!("object_use", "object.use", "after", "object_use"),
     skippable_event!(
-        "object_unlock_before",
-        "object.unlock",
-        "before",
-        "object_unlock"
-    ),
-    event!(
-        "object_unlock_after",
-        "object.unlock",
-        "after",
-        "object_unlock"
-    ),
-    skippable_event!("object_use_before", "object.use", "before", "object_use"),
-    event!("object_use_after", "object.use", "after", "object_use"),
-    skippable_event!(
-        "placeable_open_before",
+        "placeable_open",
         "placeable.open",
         "before",
         "placeable_open"
     ),
     event!(
-        "placeable_open_after",
+        "placeable_open",
         "placeable.open",
         "after",
         "placeable_open"
     ),
     event!(
-        "placeable_close_before",
+        "placeable_close",
         "placeable.close",
         "before",
         "placeable_close"
     ),
     event!(
-        "placeable_close_after",
+        "placeable_close",
         "placeable.close",
         "after",
         "placeable_close"
     ),
     skippable_event!(
-        "inventory_add_gold_before",
+        "inventory_add_gold",
         "inventory.add_gold",
         "before",
         "inventory_add_gold"
     ),
     event!(
-        "inventory_add_gold_after",
+        "inventory_add_gold",
         "inventory.add_gold",
         "after",
         "inventory_add_gold"
     ),
     skippable_event!(
-        "inventory_remove_gold_before",
+        "inventory_remove_gold",
         "inventory.remove_gold",
         "before",
         "inventory_remove_gold"
     ),
     event!(
-        "inventory_remove_gold_after",
+        "inventory_remove_gold",
         "inventory.remove_gold",
         "after",
         "inventory_remove_gold"
     ),
-    skippable_event!("feat_use_before", "feat.use", "before", "feat_use"),
-    event!("feat_use_after", "feat.use", "after", "feat_use"),
+    skippable_event!("feat_use", "feat.use", "before", "feat_use"),
+    event!("feat_use", "feat.use", "after", "feat_use"),
     event!(
-        "journal_open_before",
+        "journal_open",
         "journal.open",
         "before",
         "journal_message",
         helper = "player_get_game_object"
     ),
     event!(
-        "journal_open_after",
+        "journal_open",
         "journal.open",
         "after",
         "journal_message",
         helper = "player_get_game_object"
     ),
     event!(
-        "journal_close_before",
+        "journal_close",
         "journal.close",
         "before",
         "journal_message",
         helper = "player_get_game_object"
     ),
     event!(
-        "journal_close_after",
+        "journal_close",
         "journal.close",
         "after",
         "journal_message",
         helper = "player_get_game_object"
     ),
     event!(
-        "timing_bar_start_before",
+        "timing_bar_start",
         "timing_bar.start",
         "before",
         "timing_bar_send",
         helper = "player_get_game_object"
     ),
     event!(
-        "timing_bar_start_after",
+        "timing_bar_start",
         "timing_bar.start",
         "after",
         "timing_bar_send",
         helper = "player_get_game_object"
     ),
     event!(
-        "timing_bar_stop_before",
+        "timing_bar_stop",
         "timing_bar.stop",
         "before",
         "timing_bar_send",
         helper = "player_get_game_object"
     ),
     event!(
-        "timing_bar_stop_after",
+        "timing_bar_stop",
         "timing_bar.stop",
         "after",
         "timing_bar_send",
         helper = "player_get_game_object"
     ),
     event!(
-        "timing_bar_cancel_before",
+        "timing_bar_cancel",
         "timing_bar.cancel",
         "before",
         "timing_bar_cancel",
         helper = "player_get_game_object"
     ),
     event!(
-        "timing_bar_cancel_after",
+        "timing_bar_cancel",
         "timing_bar.cancel",
         "after",
         "timing_bar_cancel",
@@ -682,7 +662,7 @@ pub const EVENT_CATALOG: &[EventDefinition] = &[
     ),
     hot_event!(optional_whitelists!(
         skippable_event!(
-            "object_broadcast_safe_projectile_before",
+            "object_broadcast_safe_projectile",
             "object.broadcast_safe_projectile",
             "before",
             "object_broadcast_safe_projectile"
@@ -691,103 +671,93 @@ pub const EVENT_CATALOG: &[EventDefinition] = &[
     )),
     hot_event!(optional_whitelists!(
         event!(
-            "object_broadcast_safe_projectile_after",
+            "object_broadcast_safe_projectile",
             "object.broadcast_safe_projectile",
             "after",
             "object_broadcast_safe_projectile"
         ),
         &[PROJECTILE_TYPE_ID_WHITELIST, PROJECTILE_SPELL_ID_WHITELIST]
     )),
-    skippable_event!("skill_use_before", "skill.use", "before", "skill_use"),
-    event!("skill_use_after", "skill.use", "after", "skill_use"),
+    skippable_event!("skill_use", "skill.use", "before", "skill_use"),
+    event!("skill_use", "skill.use", "after", "skill_use"),
     skippable_event!(
-        "item_use_before",
+        "item_use",
         "item.use",
         "before",
         "item_use",
         result = Boolean
     ),
-    event!("item_use_after", "item.use", "after", "item_use"),
+    event!("item_use", "item.use", "after", "item_use"),
     skippable_event!(
-        "item_inventory_open_before",
+        "item_inventory_open",
         "item.inventory_open",
         "before",
         "item_inventory_open"
     ),
     event!(
-        "item_inventory_open_after",
+        "item_inventory_open",
         "item.inventory_open",
         "after",
         "item_inventory_open"
     ),
     skippable_event!(
-        "item_inventory_close_before",
+        "item_inventory_close",
         "item.inventory_close",
         "before",
         "item_inventory_close"
     ),
     event!(
-        "item_inventory_close_after",
+        "item_inventory_close",
         "item.inventory_close",
         "after",
         "item_inventory_close"
     ),
     skippable_event!(
-        "item_scroll_learn_before",
+        "item_scroll_learn",
         "item.scroll_learn",
         "before",
         "item_scroll_learn"
     ),
     event!(
-        "item_scroll_learn_after",
+        "item_scroll_learn",
         "item.scroll_learn",
         "after",
         "item_scroll_learn"
     ),
+    skippable_event!("item_use_lore", "item.use_lore", "before", "item_use_lore"),
+    event!("item_use_lore", "item.use_lore", "after", "item_use_lore"),
     skippable_event!(
-        "item_use_lore_before",
-        "item.use_lore",
-        "before",
-        "item_use_lore"
-    ),
-    event!(
-        "item_use_lore_after",
-        "item.use_lore",
-        "after",
-        "item_use_lore"
-    ),
-    skippable_event!(
-        "item_pay_to_identify_before",
+        "item_pay_to_identify",
         "item.pay_to_identify",
         "before",
         "item_pay_to_identify"
     ),
     event!(
-        "item_pay_to_identify_after",
+        "item_pay_to_identify",
         "item.pay_to_identify",
         "after",
         "item_pay_to_identify"
     ),
     skippable_event!(
-        "item_destroy_before",
+        "item_destroy",
         "item.destroy",
         "before",
         "item_event_handler"
     ),
     event!(
-        "item_destroy_after",
+        "item_destroy",
         "item.destroy",
         "after",
         "item_event_handler"
     ),
     skippable_event!(
-        "item_decrement_stack_size_before",
+        "item_decrement_stack_size",
         "item.decrement_stack_size",
         "before",
         "item_event_handler"
     ),
     event!(
-        "item_decrement_stack_size_after",
+        "item_decrement_stack_size",
         "item.decrement_stack_size",
         "after",
         "item_event_handler"
@@ -795,7 +765,7 @@ pub const EVENT_CATALOG: &[EventDefinition] = &[
     requiring!(
         replacing_argument!(
             skippable_event!(
-                "object_set_experience_before",
+                "object_set_experience",
                 "object.set_experience",
                 "before",
                 "object_set_experience",
@@ -807,7 +777,7 @@ pub const EVENT_CATALOG: &[EventDefinition] = &[
     ),
     requiring!(
         event!(
-            "object_set_experience_after",
+            "object_set_experience",
             "object.set_experience",
             "after",
             "object_set_experience"
@@ -816,7 +786,7 @@ pub const EVENT_CATALOG: &[EventDefinition] = &[
     ),
     requiring!(
         skippable_event!(
-            "feat_decrement_remaining_uses_before",
+            "feat_decrement_remaining_uses",
             "feat.decrement_remaining_uses",
             "before",
             "feat_decrement_remaining_uses"
@@ -825,7 +795,7 @@ pub const EVENT_CATALOG: &[EventDefinition] = &[
     ),
     requiring!(
         event!(
-            "feat_decrement_remaining_uses_after",
+            "feat_decrement_remaining_uses",
             "feat.decrement_remaining_uses",
             "after",
             "feat_decrement_remaining_uses"
@@ -835,7 +805,7 @@ pub const EVENT_CATALOG: &[EventDefinition] = &[
     requiring!(
         hot_event!(forcing_whitelist!(
             skippable_event!(
-                "feat_has_before",
+                "feat_has",
                 "feat.has",
                 "before",
                 "feat_has",
@@ -847,14 +817,14 @@ pub const EVENT_CATALOG: &[EventDefinition] = &[
     ),
     requiring!(
         hot_event!(forcing_whitelist!(
-            event!("feat_has_after", "feat.has", "after", "feat_has"),
+            event!("feat_has", "feat.has", "after", "feat_has"),
             FEAT_HAS_ID_WHITELIST
         )),
         STATS_REQUIREMENTS
     ),
     requiring!(
         skippable_event!(
-            "inventory_open_before",
+            "inventory_open",
             "inventory.open",
             "before",
             "inventory_message"
@@ -863,7 +833,7 @@ pub const EVENT_CATALOG: &[EventDefinition] = &[
     ),
     requiring!(
         event!(
-            "inventory_open_after",
+            "inventory_open",
             "inventory.open",
             "after",
             "inventory_message"
@@ -872,7 +842,7 @@ pub const EVENT_CATALOG: &[EventDefinition] = &[
     ),
     requiring!(
         skippable_event!(
-            "inventory_select_panel_before",
+            "inventory_select_panel",
             "inventory.select_panel",
             "before",
             "inventory_message"
@@ -881,7 +851,7 @@ pub const EVENT_CATALOG: &[EventDefinition] = &[
     ),
     requiring!(
         event!(
-            "inventory_select_panel_after",
+            "inventory_select_panel",
             "inventory.select_panel",
             "after",
             "inventory_message"
@@ -890,7 +860,7 @@ pub const EVENT_CATALOG: &[EventDefinition] = &[
     ),
     requiring!(
         skippable_event!(
-            "inventory_add_item_before",
+            "inventory_add_item",
             "inventory.add_item",
             "before",
             "inventory_add_item"
@@ -899,7 +869,7 @@ pub const EVENT_CATALOG: &[EventDefinition] = &[
     ),
     requiring!(
         event!(
-            "inventory_add_item_after",
+            "inventory_add_item",
             "inventory.add_item",
             "after",
             "inventory_add_item"
@@ -908,7 +878,7 @@ pub const EVENT_CATALOG: &[EventDefinition] = &[
     ),
     requiring!(
         event!(
-            "inventory_remove_item_before",
+            "inventory_remove_item",
             "inventory.remove_item",
             "before",
             "inventory_remove_item"
@@ -917,7 +887,7 @@ pub const EVENT_CATALOG: &[EventDefinition] = &[
     ),
     requiring!(
         event!(
-            "inventory_remove_item_after",
+            "inventory_remove_item",
             "inventory.remove_item",
             "after",
             "inventory_remove_item"
@@ -925,14 +895,14 @@ pub const EVENT_CATALOG: &[EventDefinition] = &[
         REPOSITORY_REQUIREMENTS
     ),
     skippable_event!(
-        "item_validate_use_before",
+        "item_validate_use",
         "item.validate_use",
         "before",
         "item_validate_use",
         result = Boolean
     ),
     event!(
-        "item_validate_use_after",
+        "item_validate_use",
         "item.validate_use",
         "after",
         "item_validate_use",
@@ -940,7 +910,7 @@ pub const EVENT_CATALOG: &[EventDefinition] = &[
     ),
     requiring!(
         skippable_event!(
-            "item_ammo_reload_before",
+            "item_ammo_reload",
             "item.ammo_reload",
             "before",
             "item_ammo_reload",
@@ -950,7 +920,7 @@ pub const EVENT_CATALOG: &[EventDefinition] = &[
     ),
     requiring!(
         event!(
-            "item_ammo_reload_after",
+            "item_ammo_reload",
             "item.ammo_reload",
             "after",
             "item_ammo_reload",
@@ -959,75 +929,55 @@ pub const EVENT_CATALOG: &[EventDefinition] = &[
         AMMO_REQUIREMENTS
     ),
     skippable_event!(
-        "item_validate_equip_before",
+        "item_validate_equip",
         "item.validate_equip",
         "before",
         "item_validate_equip",
         result = Boolean
     ),
     event!(
-        "item_validate_equip_after",
+        "item_validate_equip",
         "item.validate_equip",
         "after",
         "item_validate_equip",
         result = Boolean
     ),
     requiring!(
-        skippable_event!("item_equip_before", "item.equip", "before", "item_equip"),
+        skippable_event!("item_equip", "item.equip", "before", "item_equip"),
         EQUIPMENT_REQUIREMENTS
     ),
     requiring!(
-        event!("item_equip_after", "item.equip", "after", "item_equip"),
+        event!("item_equip", "item.equip", "after", "item_equip"),
         EQUIPMENT_REQUIREMENTS
     ),
     requiring!(
-        skippable_event!(
-            "item_unequip_before",
-            "item.unequip",
-            "before",
-            "item_unequip"
-        ),
+        skippable_event!("item_unequip", "item.unequip", "before", "item_unequip"),
         EQUIPMENT_REQUIREMENTS
     ),
     requiring!(
-        event!(
-            "item_unequip_after",
-            "item.unequip",
-            "after",
-            "item_unequip"
-        ),
+        event!("item_unequip", "item.unequip", "after", "item_unequip"),
         EQUIPMENT_REQUIREMENTS
     ),
-    skippable_event!("item_split_before", "item.split", "before", "item_split"),
-    event!("item_split_after", "item.split", "after", "item_split"),
+    skippable_event!("item_split", "item.split", "before", "item_split"),
+    event!("item_split", "item.split", "after", "item_split"),
     requiring!(
-        skippable_event!("item_merge_before", "item.merge", "before", "item_merge"),
+        skippable_event!("item_merge", "item.merge", "before", "item_merge"),
         OBJECT_LOOKUP_REQUIREMENTS
     ),
     requiring!(
-        event!("item_merge_after", "item.merge", "after", "item_merge"),
+        event!("item_merge", "item.merge", "after", "item_merge"),
         OBJECT_LOOKUP_REQUIREMENTS
     ),
-    skippable_event!(
-        "item_acquire_before",
-        "item.acquire",
-        "before",
-        "item_acquire"
-    ),
-    event!(
-        "item_acquire_after",
-        "item.acquire",
-        "after",
-        "item_acquire"
-    ),
+    skippable_event!("item_acquire", "item.acquire", "before", "item_acquire"),
+    event!("item_acquire", "item.acquire", "after", "item_acquire"),
 ];
 
-/// Looks up one annotation identity.
+/// Looks up one canonical event subject and phase.
 #[must_use]
-pub fn event_definition(identity: &str) -> Option<&'static EventDefinition> {
+pub fn event_definition(subject: &str, phase: &str) -> Option<&'static EventDefinition> {
     EVENT_CATALOG
         .iter()
-        .find(|event| event.identity == identity)
+        .find(|event| event.subject == subject && event.phase == phase)
 }
 
 /// Looks up one logical event and phase.
@@ -1038,13 +988,16 @@ pub fn runtime_event_definition(name: &str, phase: &str) -> Option<&'static Even
         .find(|event| event.name == name && event.phase == phase)
 }
 
-/// Looks up one annotation identity and its stable runtime key.
+/// Looks up one canonical event subject and phase with its stable runtime key.
 #[must_use]
-pub fn keyed_event_definition(identity: &str) -> Option<(EventKey, &'static EventDefinition)> {
+pub fn keyed_event_definition(
+    subject: &str,
+    phase: &str,
+) -> Option<(EventKey, &'static EventDefinition)> {
     EVENT_CATALOG
         .iter()
         .enumerate()
-        .find(|(_key, event)| event.identity == identity)
+        .find(|(_key, event)| event.subject == subject && event.phase == phase)
         .and_then(|(key, event)| u16::try_from(key).ok().map(|key| (EventKey(key), event)))
 }
 
@@ -1080,11 +1033,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn catalog_identities_and_runtime_pairs_are_unique() {
-        let mut identities = BTreeSet::new();
+    fn catalog_subject_phase_and_runtime_pairs_are_unique() {
+        let mut subject_phases = BTreeSet::new();
         let mut runtime_pairs = BTreeSet::new();
         for event in EVENT_CATALOG {
-            assert!(identities.insert(event.identity));
+            assert!(subject_phases.insert((event.subject, event.phase)));
             assert!(runtime_pairs.insert((event.name, event.phase)));
             assert_eq!(
                 event.skippable,
@@ -1105,7 +1058,7 @@ mod tests {
                 assert!(
                     !matches!(event.filter_policy, EventFilterPolicy::SubscriptionOnly),
                     "{} is hot but has no pre-decode filter",
-                    event.identity
+                    event.subject
                 );
             }
         }
@@ -1115,15 +1068,15 @@ mod tests {
     #[test]
     fn catalog_keys_round_trip() {
         for (index, event) in EVENT_CATALOG.iter().enumerate() {
-            let (identity_key, identity) =
-                keyed_event_definition(event.identity).expect("identity has a key");
+            let (subject_key, subject) =
+                keyed_event_definition(event.subject, event.phase).expect("route has a key");
             let (runtime_key, runtime) = keyed_runtime_event_definition(event.name, event.phase)
                 .expect("runtime pair has a key");
-            assert_eq!(identity_key, runtime_key);
-            assert_eq!(identity_key.index(), index);
-            assert_eq!(identity, event);
+            assert_eq!(subject_key, runtime_key);
+            assert_eq!(subject_key.index(), index);
+            assert_eq!(subject, event);
             assert_eq!(runtime, event);
-            assert_eq!(event_definition_by_key(identity_key), Some(event));
+            assert_eq!(event_definition_by_key(subject_key), Some(event));
         }
     }
 
@@ -1132,7 +1085,7 @@ mod tests {
         let mut mask = EventSubscriptionMask::empty();
         for (index, event) in EVENT_CATALOG.iter().enumerate() {
             let (key, _definition) =
-                keyed_event_definition(event.identity).expect("catalog key exists");
+                keyed_event_definition(event.subject, event.phase).expect("catalog key exists");
             assert!(!mask.contains(key));
             if index == 0 || index % 3 != 0 {
                 assert!(mask.insert(key));
@@ -1153,7 +1106,7 @@ mod tests {
                 assert!(
                     physical_hook_definition(event.hook).is_some(),
                     "{} references unknown physical hook {}",
-                    event.identity,
+                    event.subject,
                     event.hook
                 );
             }

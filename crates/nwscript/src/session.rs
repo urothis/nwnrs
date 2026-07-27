@@ -4,11 +4,12 @@ use crate::{
     CancellationToken, Cancelled, CompileArtifacts, CompileError, CompileOptions,
     DEFAULT_LANGSPEC_SCRIPT_NAME, HirModule, LangSpec, LangSpecError, OptimizationFlags,
     OptimizationLevel, PreprocessError, Script, ScriptResolver, SemanticIndex, SemanticModel,
-    SourceBundle, SourceError, SourceLoadOptions, analyze_script_with_options,
-    build_semantic_index, compile_script, compile_script_with_source_map,
-    graphviz::render_script_graphviz, load_langspec, load_source_bundle,
-    load_source_bundle_with_cancellation, lower_to_hir, parse_source_bundle,
-    parse_source_bundle_with_cancellation,
+    SourceBundle, SourceError, SourceLoadOptions, analysis::build_semantic_index_with_cancellation,
+    analyze_script_with_options, build_semantic_index, codegen::compile_script_with_cancellation,
+    compile_script, compile_script_with_source_map, graphviz::render_script_graphviz,
+    hir::lower_to_hir_with_cancellation, load_langspec, load_langspec_with_cancellation,
+    load_source_bundle, load_source_bundle_with_cancellation, lower_to_hir, parse_source_bundle,
+    parse_source_bundle_with_cancellation, sema::analyze_script_with_cancellation,
 };
 
 /// Configuration for one reusable NWScript compiler session.
@@ -66,19 +67,28 @@ impl Error for CompilerSessionError {}
 
 impl From<LangSpecError> for CompilerSessionError {
     fn from(value: LangSpecError) -> Self {
-        Self::LangSpec(value)
+        match value {
+            LangSpecError::Cancelled(error) => Self::Cancelled(error),
+            other => Self::LangSpec(other),
+        }
     }
 }
 
 impl From<SourceError> for CompilerSessionError {
     fn from(value: SourceError) -> Self {
-        Self::Source(value)
+        match value {
+            SourceError::Cancelled => Self::Cancelled(Cancelled),
+            other => Self::Source(other),
+        }
     }
 }
 
 impl From<PreprocessError> for CompilerSessionError {
     fn from(value: PreprocessError) -> Self {
-        Self::Preprocess(value)
+        match value {
+            PreprocessError::Cancelled(error) => Self::Cancelled(error),
+            other => Self::Preprocess(other),
+        }
     }
 }
 
@@ -280,7 +290,9 @@ impl<'a> CompilerSession<'a> {
         cancellation: &CancellationToken,
     ) -> Result<CompilerAnalysis, CompilerSessionError> {
         cancellation.check()?;
-        let langspec = self.ensure_langspec_loaded()?.clone();
+        let langspec = self
+            .ensure_langspec_loaded_with_cancellation(cancellation)?
+            .clone();
         cancellation.check()?;
         let bundle = load_source_bundle_with_cancellation(
             self.resolver,
@@ -293,19 +305,37 @@ impl<'a> CompilerSession<'a> {
             .map_err(CompileError::from)
             .map_err(CompilerSessionError::Compile)?;
         cancellation.check()?;
-        let semantic =
-            analyze_script_with_options(&script, Some(&langspec), self.options.compile.semantic)
-                .map_err(CompileError::from)?;
+        let semantic = analyze_script_with_cancellation(
+            &script,
+            Some(&langspec),
+            self.options.compile.semantic,
+            cancellation,
+        )
+        .map_err(|error| {
+            if cancellation.is_cancelled() {
+                CompilerSessionError::Cancelled(Cancelled)
+            } else {
+                CompilerSessionError::Compile(CompileError::from(error))
+            }
+        })?;
         cancellation.check()?;
-        let hir = lower_to_hir(&script, &semantic, Some(&langspec)).map_err(CompileError::from)?;
+        let hir = lower_to_hir_with_cancellation(&script, &semantic, Some(&langspec), cancellation)
+            .map_err(|error| {
+                if cancellation.is_cancelled() {
+                    CompilerSessionError::Cancelled(Cancelled)
+                } else {
+                    CompilerSessionError::Compile(CompileError::from(error))
+                }
+            })?;
         cancellation.check()?;
-        let index = build_semantic_index(
+        let index = build_semantic_index_with_cancellation(
             &script,
             &semantic,
             &hir,
             Some(&langspec),
             &bundle.source_map,
-        );
+            cancellation,
+        )?;
         cancellation.check()?;
         Ok(CompilerAnalysis {
             langspec,
@@ -350,6 +380,28 @@ impl<'a> CompilerSession<'a> {
         })
     }
 
+    fn ensure_langspec_loaded_with_cancellation(
+        &mut self,
+        cancellation: &CancellationToken,
+    ) -> Result<&LangSpec, CompilerSessionError> {
+        cancellation.check()?;
+        if self.cached_langspec.is_none() {
+            let langspec = load_langspec_with_cancellation(
+                self.resolver,
+                &self.options.langspec_script_name,
+                self.options.source_load,
+                cancellation,
+            )?;
+            cancellation.check()?;
+            self.cached_langspec = Some(langspec);
+        }
+        self.cached_langspec.as_ref().ok_or_else(|| {
+            CompilerSessionError::Source(SourceError::resolver(
+                "failed to cache langspec after successful load",
+            ))
+        })
+    }
+
     pub(crate) fn prepare_script_name(
         &mut self,
         script_name: &str,
@@ -372,7 +424,9 @@ impl<'a> CompilerSession<'a> {
         cancellation: &CancellationToken,
     ) -> Result<PreparedScript, CompilerSessionError> {
         cancellation.check()?;
-        let langspec = self.ensure_langspec_loaded()?.clone();
+        let langspec = self
+            .ensure_langspec_loaded_with_cancellation(cancellation)?
+            .clone();
         cancellation.check()?;
         let bundle = load_source_bundle_with_cancellation(
             self.resolver,
@@ -411,6 +465,36 @@ impl<'a> CompilerSession<'a> {
                 self.options.compile,
             )
         }
+    }
+
+    pub(crate) fn compile_prepared_with_cancellation(
+        &self,
+        prepared: &PreparedScript,
+        cancellation: &CancellationToken,
+    ) -> Result<CompileArtifacts, CompilerSessionError> {
+        let (source_map, root_id) = if self.options.emit_debug {
+            (
+                Some(&prepared.bundle.source_map),
+                Some(prepared.bundle.root_id),
+            )
+        } else {
+            (None, None)
+        };
+        compile_script_with_cancellation(
+            &prepared.script,
+            source_map,
+            root_id,
+            Some(&prepared.langspec),
+            self.options.compile,
+            cancellation,
+        )
+        .map_err(|error| {
+            if cancellation.is_cancelled() {
+                CompilerSessionError::Cancelled(Cancelled)
+            } else {
+                CompilerSessionError::Compile(error)
+            }
+        })
     }
 }
 

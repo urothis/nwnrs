@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use nwnrs_types::{
     dds::{DdsFormat, DdsTexture},
+    encoding::{NwnText, NwnTextContext},
     mdl::{
         NwnAppearanceOverrides, NwnComposedScene, NwnMaterialTextureRole, NwnMaterialTextureSource,
         NwnPropertyValue, NwnScene, NwnTextureRef, NwnTextureSlot, TextureResolverOptions,
@@ -31,6 +32,7 @@ pub(crate) fn resolve_model_assets(
     Vec<SceneTexture>,
     Vec<SceneShaderSource>,
 )> {
+    let text_context = resman.text_context();
     let mut context = AssetContext {
         resman,
         dependencies,
@@ -39,6 +41,7 @@ pub(crate) fn resolve_model_assets(
         texture_indices: BTreeMap::new(),
         shaders: Vec::new(),
         shader_indices: BTreeSet::new(),
+        text_context,
     };
     let assets = models
         .iter()
@@ -60,6 +63,7 @@ struct AssetContext<'a> {
     texture_indices: BTreeMap<String, usize>,
     shaders:         Vec<SceneShaderSource>,
     shader_indices:  BTreeSet<(String, SceneShaderStage)>,
+    text_context:    NwnTextContext,
 }
 
 impl AssetContext<'_> {
@@ -549,38 +553,37 @@ impl AssetContext<'_> {
         let key = (filename.to_ascii_lowercase(), stage);
         if self.shader_indices.insert(key) {
             match resource.read_all(CachePolicy::Use) {
-                Ok(bytes) => match String::from_utf8(bytes) {
-                    Ok(source) => {
-                        self.shaders.push(SceneShaderSource {
-                            resource: filename.clone(),
-                            origin: resource.origin().to_string(),
-                            stage,
-                            source,
-                        });
+                Ok(bytes) => {
+                    let source = NwnText::decode(&bytes, self.text_context.encoding());
+                    if source.has_opaque_bytes() {
                         self.diagnostics.push(SceneDiagnostic {
                             severity: SceneDiagnosticSeverity::Warning,
-                            code:     "shader.webgl.compatibility".into(),
+                            code:     "shader.encoding.opaque".into(),
                             message:  format!(
-                                "{filename} is preserved and inspectable, but NWN OpenGL shader \
-                                 stages cannot be executed directly by a WebGL 2 host; the \
-                                 standard material channel mapping is used"
+                                "custom shader {filename} contains bytes undefined in {}; they \
+                                 are shown as escaped byte values",
+                                self.text_context.encoding().label()
                             ),
                             resource: Some(filename.clone()),
                         });
                     }
-                    Err(error) => {
-                        if let Some(node) = self.dependencies.nodes.get_mut(id) {
-                            node.state = DependencyState::Invalid;
-                            node.message = Some(error.to_string());
-                        }
-                        self.diagnostics.push(SceneDiagnostic {
-                            severity: SceneDiagnosticSeverity::Error,
-                            code:     "shader.encoding.invalid".into(),
-                            message:  format!("custom shader {filename} is not UTF-8: {error}"),
-                            resource: Some(filename.clone()),
-                        });
-                    }
-                },
+                    self.shaders.push(SceneShaderSource {
+                        resource: filename.clone(),
+                        origin: resource.origin().to_string(),
+                        stage,
+                        source: source.display_text(),
+                    });
+                    self.diagnostics.push(SceneDiagnostic {
+                        severity: SceneDiagnosticSeverity::Warning,
+                        code:     "shader.webgl.compatibility".into(),
+                        message:  format!(
+                            "{filename} is preserved and inspectable, but NWN OpenGL shader \
+                             stages cannot be executed directly by a WebGL 2 host; the standard \
+                             material channel mapping is used"
+                        ),
+                        resource: Some(filename.clone()),
+                    });
+                }
                 Err(error) => self.diagnostics.push(SceneDiagnostic {
                     severity: SceneDiagnosticSeverity::Error,
                     code:     "shader.read.failed".into(),

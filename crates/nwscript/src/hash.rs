@@ -8,12 +8,6 @@ pub fn nwscript_string_hash_bytes(bytes: &[u8]) -> i32 {
     i32::from_ne_bytes(hash.to_ne_bytes())
 }
 
-/// Returns the exact `NWScript` runtime hash for a UTF-8 string slice.
-#[must_use]
-pub fn nwscript_string_hash(input: &str) -> i32 {
-    nwscript_string_hash_bytes(input.as_bytes())
-}
-
 fn xxh32(input: &[u8], seed: u32) -> u32 {
     const PRIME32_1: u32 = 2_654_435_761;
     const PRIME32_2: u32 = 2_246_822_519;
@@ -48,7 +42,14 @@ fn xxh32(input: &[u8], seed: u32) -> u32 {
         seed.wrapping_add(PRIME32_5)
     };
 
-    h32 = h32.wrapping_add(u32::try_from(len).ok().unwrap_or(u32::MAX));
+    let length_bytes = len.to_le_bytes();
+    let length_low = [
+        length_bytes.first().copied().unwrap_or(0),
+        length_bytes.get(1).copied().unwrap_or(0),
+        length_bytes.get(2).copied().unwrap_or(0),
+        length_bytes.get(3).copied().unwrap_or(0),
+    ];
+    h32 = h32.wrapping_add(u32::from_le_bytes(length_low));
 
     while index + 4 <= len {
         h32 = h32.wrapping_add(read_le_u32(input, index).wrapping_mul(PRIME32_3));
@@ -100,12 +101,12 @@ fn rotate_left(value: u32, amount: u32) -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{nwscript_string_hash, nwscript_string_hash_bytes};
+    use super::nwscript_string_hash_bytes;
 
     #[test]
     fn matches_upstream_known_hash_values() {
-        assert_eq!(nwscript_string_hash(""), 0);
-        assert_eq!(nwscript_string_hash("hello"), -104060164);
+        assert_eq!(nwscript_string_hash_bytes(b""), 0);
+        assert_eq!(nwscript_string_hash_bytes(b"hello"), -104060164);
     }
 
     #[test]

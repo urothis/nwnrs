@@ -1,8 +1,6 @@
 /// @file nwnrs.nss
 /// @brief Server identity, live state, administration, JSON events, and structured logging.
 
-#include "nwnrs_macros"
-
 /// Internal NWNX namespace used by every nwnrs bridge call.
 /// @private
 const string NWNRS_NAMESPACE = "NWNRS";
@@ -47,6 +45,14 @@ enum NwnrsLogLevel {
     #[alias(NWNRS_LOG_LEVEL_WARN)] Warn,
     /// Error structured logging level.
     #[alias(NWNRS_LOG_LEVEL_ERROR)] Error,
+}
+
+/// Engine phase of one canonical nwnrs event route.
+enum NwnrsEventPhase : string {
+    /// Runs before the underlying engine operation.
+    #[default] Before = "before",
+    /// Runs after the underlying engine operation.
+    After = "after",
 }
 
 /// Server play-option identifier accepted by the administration bridge.
@@ -293,15 +299,10 @@ void NWNRS_SkipCurrentEvent();
 /// @param jResult Replacement result matching the current event schema.
 void NWNRS_SetCurrentEventResult(json jResult);
 
-/// Returns TRUE when this exact server target supports an event annotation.
-/// @param sEventIdentity Event annotation identity to query.
-int NWNRS_GetEventSupported(string sEventIdentity);
-
-/// Internal: generated dispatchers register subscriptions during module.load.
-/// Unsupported target-pack events emit a warning and remain unsubscribed.
-/// @param sEventIdentity Event annotation identity to subscribe.
-/// @private
-void NWNRS_SubscribeEvent(string sEventIdentity);
+/// Returns TRUE when this exact server target supports an event route.
+/// @param sEvent Canonical snake-case event subject.
+/// @param phase Engine phase of the route.
+int NWNRS_GetEventSupported(string sEvent, NwnrsEventPhase phase);
 
 /// Enables or disables a named integer whitelist. Enabling starts with no IDs.
 /// @param sWhitelist One NWNRS_EVENT_ID_WHITELIST_* name.
@@ -695,23 +696,15 @@ void NWNRS_SetCurrentEventResult(json jResult)
     NWNXCall(NWNRS_NAMESPACE, "SetCurrentEventResult");
 }
 
-/// Returns TRUE when this exact server target supports an event annotation.
-/// @param sEventIdentity Event annotation identity to query.
-int NWNRS_GetEventSupported(string sEventIdentity)
+/// Returns TRUE when this exact server target supports an event route.
+/// @param sEvent Canonical snake-case event subject.
+/// @param phase Engine phase of the route.
+int NWNRS_GetEventSupported(string sEvent, NwnrsEventPhase phase)
 {
-    NWNXPushString(sEventIdentity);
+    NWNXPushString(string(phase));
+    NWNXPushString(sEvent);
     NWNXCall(NWNRS_NAMESPACE, "GetEventSupported");
     return NWNXPopInt();
-}
-
-/// Internal: generated dispatchers register subscriptions during module.load.
-/// Unsupported target-pack events emit a warning and remain unsubscribed.
-/// @param sEventIdentity Event annotation identity to subscribe.
-/// @private
-void NWNRS_SubscribeEvent(string sEventIdentity)
-{
-    NWNXPushString(sEventIdentity);
-    NWNXCall(NWNRS_NAMESPACE, "SubscribeEvent");
 }
 
 /// Enables or disables a named integer whitelist. Enabling starts with no IDs.

@@ -61,7 +61,7 @@ test('nwnrs contributes an always-visible Activity Bar container with package an
     ['nwnrs.packages', 'nwnrs.resources'],
   );
   assert.ok(manifest.contributes.viewsWelcome.every(({ contents }) => contents.length > 0));
-  assert.deepEqual(manifest.activationEvents, ['workspaceContains:**/*.nss']);
+  assert.equal(manifest.activationEvents, undefined);
   const viewTitleMenu = manifest.contributes.menus['view/title'] ?? [];
   const customEditor = required(
     manifest.contributes.customEditors[0],

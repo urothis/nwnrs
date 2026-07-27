@@ -610,7 +610,9 @@ pub(crate) fn normalize_relative_path(input: &str) -> PathBuf {
 }
 
 pub(crate) fn expand_tilde(path: &Path) -> PathBuf {
-    let path_str = path.to_string_lossy();
+    let Some(path_str) = path.to_str() else {
+        return path.to_path_buf();
+    };
     if path_str == "~" {
         current_home_dir().unwrap_or_else(|| path.to_path_buf())
     } else if let Some(rest) = path_str.strip_prefix("~/") {

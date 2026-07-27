@@ -9,9 +9,10 @@ const test = require('node:test');
 type UnknownRecord = Record<string, unknown>;
 
 interface ScriptDebugConfiguration {
-  readonly ndb?: string;
-  readonly langspec?: string;
-  readonly sources?: Readonly<Record<string, string>>;
+  readonly ndb?: Uint8Array;
+  readonly langspec?: Uint8Array;
+  readonly sourceNames?: readonly string[];
+  readonly sourceContents?: readonly Uint8Array[];
 }
 
 interface ScriptDebugSnapshot {
@@ -55,7 +56,21 @@ function loadResourceEditorWithoutVsCodeHost() {
       parent: NodeModule | null | undefined,
       isMain: boolean,
     ) {
-      if (request === 'vscode') return {};
+      if (request === 'vscode') {
+        return {
+          workspace: {
+            decode: async (
+              bytes: Uint8Array,
+              options: { readonly encoding: string },
+            ) => {
+              const encoding = options.encoding === 'windows1250'
+                ? 'windows-1250'
+                : 'windows-1252';
+              return new TextDecoder(encoding).decode(bytes);
+            },
+          },
+        };
+      }
       return originalLoad.call(this, request, parent, isMain);
     };
     return require('../dist/src/resource-custom-editor');
@@ -123,7 +138,7 @@ test('NCS workbench enrichment resolves matching debug, language, and source res
       if (configuration.ndb) snapshot = {
         kind: 'ncs', data: { sourceFiles: [{ name: 'demo', available: false }], diagnostics: [] },
       };
-      if (configuration.sources) snapshot = {
+      if (configuration.sourceNames) snapshot = {
         kind: 'ncs', data: { sourceFiles: [{ name: 'demo', available: true }], diagnostics: [] },
       };
       return snapshot;
@@ -135,7 +150,7 @@ test('NCS workbench enrichment resolves matching debug, language, and source res
   assert.deepEqual(requestedResources, ['demo.ndb', 'nwscript.nss', 'demo.nss']);
   assert.ok(configurations.some((configuration) => configuration.ndb));
   assert.ok(configurations.some((configuration) => configuration.langspec));
-  assert.ok(configurations.some((configuration) => configuration.sources?.demo));
+  assert.ok(configurations.some((configuration) => configuration.sourceNames?.includes('demo')));
   assert.equal(document.snapshot.data.sourceFiles[0]?.available, true);
 });
 
@@ -162,7 +177,7 @@ test('area inspection requests use the cached scene identity and return only to 
   const provider = Object.create(ResourceCustomEditorProvider.prototype);
   const requests: AreaInspectionRequest[] = []; const posted: unknown[] = [];
   provider.output = { appendLine: (message: string) => assert.fail(message) };
-  provider.viewerRequest = () => ({ session_key: '/workspace/nwpkg.toml' });
+  provider.viewerRequest = () => ({ sessionKey: '/workspace/nwpkg.toml' });
   provider.viewerWorker = {
     inspectAreaObject: async (request: AreaInspectionRequest) => {
       requests.push(request);
@@ -212,7 +227,7 @@ test('automatic viewer refresh reloads changed archives and replaces cached entr
   const broadcasts: unknown[] = [];
   provider.documents = new Map<string, unknown>([['parent', parent], ['viewer', viewer]]);
   provider.viewerWorker = { invalidate: () => { invalidated += 1; } };
-  provider.viewerRequest = () => ({ session_key: '/workspace/nwpkg.toml', project_root: '/workspace' });
+  provider.viewerRequest = () => ({ sessionKey: '/workspace/nwpkg.toml', projectRoot: '/workspace' });
   provider.output = { appendLine: (message: string) => assert.fail(message) };
   provider.broadcast = async (document: unknown) => { broadcasts.push(document); };
 
@@ -236,7 +251,7 @@ test('concurrent scene posts share one generation-safe worker request', async ()
       return new Promise<Buffer>((resolve) => { completeLoad = resolve; });
     },
   };
-  provider.viewerRequest = () => ({ session_key: '/workspace/nwpkg.toml' });
+  provider.viewerRequest = () => ({ sessionKey: '/workspace/nwpkg.toml' });
   const document: {
     scenePacket: Uint8Array | undefined;
     scenePacketPromise: Promise<unknown> | undefined;
@@ -264,10 +279,10 @@ test('virtual viewer documents retain their package resolution path', () => {
   const ResourceCustomEditorProvider = loadProviderWithoutVsCodeHost();
   const provider = Object.create(ResourceCustomEditorProvider.prototype);
   const request = {
-    session_key: '/workspace/nwpkg.toml',
+    sessionKey: '/workspace/nwpkg.toml',
     path: '/workspace/a_ba.mdl',
-    project_root: '/workspace',
-    area: null,
+    projectRoot: '/workspace',
+    area: undefined,
   };
   const document = {
     uri: { path: '/a_ba.mdl' },
@@ -278,7 +293,7 @@ test('virtual viewer documents retain their package resolution path', () => {
   const resolved = provider.viewerRequest(document);
 
   assert.equal(resolved.path, '/workspace/a_ba.mdl');
-  assert.equal(resolved.project_root, '/workspace');
+  assert.equal(resolved.projectRoot, '/workspace');
   assert.notEqual(resolved, request);
 });
 
@@ -288,17 +303,16 @@ test('virtual resource URIs retain enough validated context to survive extension
     virtualResourceQuery,
   } = loadResourceEditorWithoutVsCodeHost();
   const request = {
-    session_key: '/workspace/module/nwpkg.toml',
+    sessionKey: '/workspace/module/nwpkg.toml',
     path: '/workspace/module/start.are',
-    project_root: '/workspace/module',
-    area: null,
+    projectRoot: '/workspace/module',
     root: '/game',
     user: '/user',
     language: 'english',
-    load_ovr: false,
+    loadOvr: false,
     archives: [],
-    include_project_resources: true,
-    authored_area: {
+    includeProjectResources: true,
+    authoredArea: {
       resref: 'start',
       are: '/workspace/module/start.are.json',
       git: '/workspace/module/start.git.json',
@@ -328,16 +342,16 @@ test('virtual binary and text resources rehydrate from their self-contained URI 
   provider.viewerTextResources = new Map();
   let reads = 0;
   provider.viewerWorker = {
-    readResource: async (request: { readonly session_key: string }) => {
+    readResource: async (request: { readonly sessionKey: string }) => {
       reads += 1;
-      assert.equal(request.session_key, '/workspace/nwpkg.toml');
+      assert.equal(request.sessionKey, '/workspace/nwpkg.toml');
       return Uint8Array.from([110, 119, 110, 114, 115]);
     },
   };
   const request = {
-    session_key: '/workspace/nwpkg.toml',
+    sessionKey: '/workspace/nwpkg.toml',
     path: '/workspace/a_ba.mdl',
-    project_root: '/workspace',
+    projectRoot: '/workspace',
     archives: [],
   };
   const binaryUri = {
@@ -360,8 +374,8 @@ test('virtual binary and text resources rehydrate from their self-contained URI 
 test('authored areas become one in-memory ARE/GIT/GIC viewer request', () => {
   const { authoredAreaRequest, authoredAreaVirtualId } = loadResourceEditorWithoutVsCodeHost();
   const base = {
-    session_key: '/workspace/module/nwpkg.toml',
-    project_root: '/workspace/module',
+    sessionKey: '/workspace/module/nwpkg.toml',
+    projectRoot: '/workspace/module',
     path: '/workspace/module/.catalog',
   };
   const area = {
@@ -377,8 +391,8 @@ test('authored areas become one in-memory ARE/GIT/GIC viewer request', () => {
   assert.deepEqual(request, {
     ...base,
     path: '/workspace/module/start.are',
-    area: null,
-    authored_area: {
+    area: undefined,
+    authoredArea: {
       resref: 'start',
       are: '/workspace/module/areas/start.are.json',
       git: '/workspace/module/areas/start.git.json',
@@ -391,7 +405,7 @@ test('authored areas become one in-memory ARE/GIT/GIC viewer request', () => {
   }));
   assert.notEqual(authoredAreaVirtualId(request), authoredAreaVirtualId({
     ...request,
-    authored_area: { ...request.authored_area, resref: 'another' },
+    authoredArea: { ...request.authoredArea, resref: 'another' },
   }));
   assert.throws(
     () => authoredAreaRequest(base, { resref: 'broken', files: [area.files[0]] }),
@@ -410,20 +424,20 @@ test('viewport area selection is retained and emitted for sidebar reveal', async
   provider.output = { appendLine: (message: string) => assert.fail(message) };
   provider._onDidSelectAreaObject = { fire: (selection: unknown) => emitted.push(selection) };
   provider.viewerRequest = () => ({
-    session_key: '/workspace/nwpkg.toml',
-    authored_area: { resref: 'start' },
+    sessionKey: '/workspace/nwpkg.toml',
+    authoredArea: { resref: 'start' },
   });
   const currentView = { ready: true, webview: { postMessage: async () => {} } };
   const otherMessages: unknown[] = [];
   const document: {
-    viewerRequestOverride: { readonly authored_area: { readonly resref: string } };
+    viewerRequestOverride: { readonly authoredArea: { readonly resref: string } };
     views: Set<{
       readonly ready: boolean;
       readonly webview: { postMessage(message: unknown): Promise<unknown> };
     }>;
     selectedAreaObjectKey?: string;
   } = {
-    viewerRequestOverride: { authored_area: { resref: 'start' } },
+    viewerRequestOverride: { authoredArea: { resref: 'start' } },
     views: new Set([
       currentView,
       { ready: true, webview: { postMessage: async (message: unknown) => otherMessages.push(message) } },
@@ -460,7 +474,7 @@ test('viewer refresh targets only scenes whose source or dependency changed', as
   const cat = makeViewer('cat', 'cat.dds');
   const dog = makeViewer('dog', 'dog.dds');
   provider.documents = new Map([['cat', cat], ['dog', dog]]);
-  provider.viewerRequest = () => ({ session_key: path.join(root, 'nwpkg.toml'), project_root: root });
+  provider.viewerRequest = () => ({ sessionKey: path.join(root, 'nwpkg.toml'), projectRoot: root });
   const invalidated: string[] = []; const broadcasts: unknown[] = [];
   provider.viewerWorker = { invalidate: (session: string) => invalidated.push(session) };
   provider.broadcast = async (document: unknown) => broadcasts.push(document);
@@ -482,7 +496,7 @@ test('viewer refresh recognizes compound JSON dependency source names outside th
     viewerDependencyOrigins: new Set(),
     viewerSourcePaths: [],
     uri: {},
-  }, new Set([changed]), { project_root: '/workspace/module' }), true);
+  }, new Set([changed]), { projectRoot: '/workspace/module' }), true);
 });
 
 test('hidden custom editors release their webview context', () => {
@@ -501,7 +515,7 @@ test('lazy viewer cache misses transparently rehydrate the scene', async () => {
   provider.viewerWorker = {
     loadAnimation: async () => { throw new Error('viewer scene assets were evicted; reload the scene'); },
   };
-  provider.viewerRequest = () => ({ session_key: '/workspace/nwpkg.toml' });
+  provider.viewerRequest = () => ({ sessionKey: '/workspace/nwpkg.toml' });
   provider.recoverViewerScene = async () => { recovered += 1; };
   provider.output = { appendLine: (message: string) => assert.fail(message) };
   const document = { viewer: true, sceneGeneration: 4 };

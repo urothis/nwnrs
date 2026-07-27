@@ -1,6 +1,7 @@
 use std::{collections::BTreeSet, io::Cursor};
 
 use nwnrs_types::{
+    encoding::NwnTextContext,
     gff::prelude::{GffRoot, GffStruct, GffValue, read_gff_root},
     resman::{CachePolicy, Res, ResMan, ResRef, ResType, ResolvedResRef},
     twoda::prelude::{TwoDa, as_2da},
@@ -200,13 +201,21 @@ pub fn load_composed_scene_from_resman(
     model_name: &str,
     overrides: &NwnAppearanceOverrides,
 ) -> ModelResult<NwnComposedScene> {
-    load_composed_scene_with_stack(resman, model_name, overrides, &mut BTreeSet::new())
+    let text_context = resman.text_context();
+    load_composed_scene_with_stack(
+        resman,
+        model_name,
+        overrides,
+        text_context,
+        &mut BTreeSet::new(),
+    )
 }
 
 fn load_composed_scene_with_stack(
     resman: &mut ResMan,
     model_name: &str,
     overrides: &NwnAppearanceOverrides,
+    text_context: NwnTextContext,
     loading: &mut BTreeSet<String>,
 ) -> ModelResult<NwnComposedScene> {
     let normalized_name = model_name.trim().to_ascii_lowercase();
@@ -215,7 +224,7 @@ fn load_composed_scene_with_stack(
             "reference-model cycle detected while loading {model_name}.mdl"
         )));
     }
-    let scene = load_scene_from_resman_with_overrides(resman, model_name, overrides)?;
+    let scene = load_scene_from_resman_with_overrides(resman, model_name, overrides, text_context)?;
     let mut attachments = Vec::new();
     for node in &scene.nodes {
         let Some(reference_model) = node
@@ -232,6 +241,7 @@ fn load_composed_scene_with_stack(
                 resman,
                 reference_model,
                 overrides,
+                text_context,
                 loading,
             )?),
         });
@@ -258,12 +268,13 @@ pub fn compose_player_creature_from_utc(
     resman: &mut ResMan,
     root: &GffRoot,
 ) -> ModelResult<NwnComposedScene> {
+    let text_context = resman.text_context();
     let Some(appearance) = creature_appearance_row_from_blueprint(resman, root)? else {
         return Err(ModelError::msg(
             "UTC does not resolve to a player appearance row",
         ));
     };
-    let table = load_twoda(resman, "appearance")?;
+    let table = load_twoda(resman, "appearance", text_context)?;
     let Some(row) = twoda_row_index_for_appearance(&table, appearance) else {
         return Err(ModelError::msg(format!(
             "appearance.2da is missing row {appearance}"
@@ -335,7 +346,8 @@ pub fn compose_player_creature_from_resman(
     resman: &mut ResMan,
     blueprint_name: &str,
 ) -> ModelResult<NwnComposedScene> {
-    let root = load_gff_root_from_resman(resman, blueprint_name, "utc")?
+    let text_context = resman.text_context();
+    let root = load_gff_root_from_resman(resman, blueprint_name, "utc", text_context)?
         .ok_or_else(|| ModelError::msg(format!("utc not found in ResMan: {blueprint_name}.utc")))?;
     compose_player_creature_from_utc(resman, &root)
 }
@@ -357,6 +369,7 @@ pub fn compose_blueprint_visual_from_root(
     kind: NwnBlueprintKind,
     root: &GffRoot,
 ) -> ModelResult<NwnBlueprintVisual> {
+    let text_context = resman.text_context();
     let expected_type = match kind {
         NwnBlueprintKind::Creature => "UTC",
         NwnBlueprintKind::Door => "UTD",
@@ -371,7 +384,13 @@ pub fn compose_blueprint_visual_from_root(
     }
 
     let models = match kind {
-        NwnBlueprintKind::Creature => vec![compose_creature_visual_from_utc(resman, root)?],
+        NwnBlueprintKind::Creature => {
+            vec![compose_creature_visual_from_utc(
+                resman,
+                root,
+                text_context,
+            )?]
+        }
         NwnBlueprintKind::Door => {
             let appearance = gff_u32_any(&root.root, &["Appearance"])
                 .ok_or_else(|| ModelError::msg("UTD is missing Appearance"))?;
@@ -381,6 +400,7 @@ pub fn compose_blueprint_visual_from_root(
                 appearance as usize,
                 "Model",
                 &NwnAppearanceOverrides::default(),
+                text_context,
             )?]
         }
         NwnBlueprintKind::Placeable => {
@@ -392,9 +412,10 @@ pub fn compose_blueprint_visual_from_root(
                 appearance as usize,
                 "ModelName",
                 &item_plt_appearance_overrides(&root.root),
+                text_context,
             )?]
         }
-        NwnBlueprintKind::Item => compose_item_visual_from_uti(resman, root)?,
+        NwnBlueprintKind::Item => compose_item_visual_from_uti(resman, root, text_context)?,
     };
 
     Ok(NwnBlueprintVisual {
@@ -415,13 +436,14 @@ pub fn compose_blueprint_visual_from_resman(
     kind: NwnBlueprintKind,
     blueprint_name: &str,
 ) -> ModelResult<NwnBlueprintVisual> {
-    let root =
-        load_gff_root_from_resman(resman, blueprint_name, kind.extension())?.ok_or_else(|| {
-            ModelError::msg(format!(
-                "blueprint not found in ResMan: {blueprint_name}.{}",
-                kind.extension()
-            ))
-        })?;
+    let text_context = resman.text_context();
+    let root = load_gff_root_from_resman(resman, blueprint_name, kind.extension(), text_context)?
+        .ok_or_else(|| {
+        ModelError::msg(format!(
+            "blueprint not found in ResMan: {blueprint_name}.{}",
+            kind.extension()
+        ))
+    })?;
     let mut visual = compose_blueprint_visual_from_root(resman, kind, &root)?;
     visual.resource_name = Some(blueprint_name.to_string());
     Ok(visual)
@@ -430,10 +452,11 @@ pub fn compose_blueprint_visual_from_resman(
 fn compose_creature_visual_from_utc(
     resman: &mut ResMan,
     root: &GffRoot,
+    text_context: NwnTextContext,
 ) -> ModelResult<NwnComposedScene> {
     let appearance = creature_appearance_row_from_blueprint(resman, root)?
         .ok_or_else(|| ModelError::msg("UTC has no resolvable appearance"))?;
-    let table = load_twoda(resman, "appearance")?;
+    let table = load_twoda(resman, "appearance", text_context)?;
     let row = twoda_row_index_for_appearance(&table, appearance)
         .ok_or_else(|| ModelError::msg(format!("appearance.2da is missing row {appearance}")))?;
     let race_token = table
@@ -463,8 +486,9 @@ fn load_appearance_model(
     appearance: usize,
     column: &str,
     overrides: &NwnAppearanceOverrides,
+    text_context: NwnTextContext,
 ) -> ModelResult<NwnComposedScene> {
-    let table = load_twoda(resman, table_name)?;
+    let table = load_twoda(resman, table_name, text_context)?;
     let row = twoda_row_index_for_appearance(&table, appearance)
         .ok_or_else(|| ModelError::msg(format!("{table_name}.2da is missing row {appearance}")))?;
     let model_name = table
@@ -482,13 +506,18 @@ fn load_appearance_model(
 fn compose_item_visual_from_uti(
     resman: &mut ResMan,
     root: &GffRoot,
+    text_context: NwnTextContext,
 ) -> ModelResult<Vec<NwnComposedScene>> {
     let base_item = gff_u32_any(&root.root, &["BaseItem"])
         .ok_or_else(|| ModelError::msg("UTI is missing BaseItem"))?;
     let info = base_item_info(resman, base_item as usize)?
         .ok_or_else(|| ModelError::msg(format!("baseitems.2da is missing row {base_item}")))?;
     if info.model_type == Some(3) {
-        return Ok(vec![compose_armor_item_preview(resman, root)?]);
+        return Ok(vec![compose_armor_item_preview(
+            resman,
+            root,
+            text_context,
+        )?]);
     }
     let item_class = info.item_class.as_deref().ok_or_else(|| {
         ModelError::msg(format!("baseitems.2da row {base_item} has no ItemClass"))
@@ -529,9 +558,10 @@ fn compose_item_visual_from_uti(
 fn compose_armor_item_preview(
     resman: &mut ResMan,
     armor_root: &GffRoot,
+    text_context: NwnTextContext,
 ) -> ModelResult<NwnComposedScene> {
-    let appearance_table = load_twoda(resman, "appearance")?;
-    let phenotype_table = load_twoda(resman, "phenotype")?;
+    let appearance_table = load_twoda(resman, "appearance", text_context)?;
+    let phenotype_table = load_twoda(resman, "phenotype", text_context)?;
     let phenotype_digit = default_player_phenotype_digit(&phenotype_table, 0);
     let mut candidates = (0..appearance_table.len())
         .filter_map(|row| {
@@ -591,15 +621,17 @@ fn load_scene_from_resman_with_overrides(
     resman: &mut ResMan,
     model_name: &str,
     overrides: &NwnAppearanceOverrides,
+    text_context: NwnTextContext,
 ) -> ModelResult<NwnScene> {
     let mut loading = BTreeSet::new();
-    load_scene_with_supermodels(resman, model_name, overrides, &mut loading)
+    load_scene_with_supermodels(resman, model_name, overrides, text_context, &mut loading)
 }
 
 fn load_scene_with_supermodels(
     resman: &mut ResMan,
     model_name: &str,
     overrides: &NwnAppearanceOverrides,
+    text_context: NwnTextContext,
     loading: &mut BTreeSet<String>,
 ) -> ModelResult<NwnScene> {
     let normalized_name = model_name.to_ascii_lowercase();
@@ -613,8 +645,10 @@ fn load_scene_with_supermodels(
     let res = resman
         .get(&resref)
         .ok_or_else(|| ModelError::msg(format!("model not found in ResMan: {model_name}.mdl")))?;
-    let mut scene =
-        apply_appearance_overrides(&NwnScene::from_auto_res(&res, CachePolicy::Use)?, overrides);
+    let mut scene = apply_appearance_overrides(
+        &NwnScene::from_auto_res(&res, CachePolicy::Use, text_context)?,
+        overrides,
+    );
     let supermodel_name = scene
         .supermodel
         .as_deref()
@@ -623,7 +657,13 @@ fn load_scene_with_supermodels(
         .filter(|name| !name.eq_ignore_ascii_case(model_name))
         .map(str::to_string);
     if let Some(supermodel_name) = supermodel_name {
-        let supermodel = load_scene_with_supermodels(resman, &supermodel_name, overrides, loading)?;
+        let supermodel = load_scene_with_supermodels(
+            resman,
+            &supermodel_name,
+            overrides,
+            text_context,
+            loading,
+        )?;
         inherit_supermodel_animations(&mut scene, &supermodel);
     }
     loading.remove(&normalized_name);
@@ -774,7 +814,7 @@ fn player_creature_family_from_blueprint(
 }
 
 fn player_creature_phenotype_digit(resman: &mut ResMan, phenotype: usize) -> ModelResult<u8> {
-    let table = load_twoda(resman, "phenotype")?;
+    let table = load_twoda(resman, "phenotype", resman.text_context())?;
     Ok(default_player_phenotype_digit(&table, phenotype))
 }
 
@@ -812,7 +852,7 @@ fn build_player_creature_part_attachments(
         |armor| merged_appearance_overrides(creature_overrides, &armor.appearance_overrides),
     );
     let equipped_part_overrides = equipped_player_part_overrides(equipped);
-    let capart = load_twoda(resman, "capart")?;
+    let capart = load_twoda(resman, "capart", resman.text_context())?;
     for row in 0..capart.len() {
         let Some(model_stem_value) = capart.cell(row, "MDLNAME") else {
             continue;
@@ -1014,7 +1054,9 @@ fn resolve_equipped_paperdoll(
         ) else {
             continue;
         };
-        let Some(item_root) = load_gff_root_from_resman(resman, resref.as_str(), "uti")? else {
+        let Some(item_root) =
+            load_gff_root_from_resman(resman, resref.as_str(), "uti", resman.text_context())?
+        else {
             continue;
         };
         match entry.id {
@@ -1244,7 +1286,7 @@ fn equipped_cloak_visual_from_item(
     let Some(cloak_appearance) = item_model_part(root, "ModelPart1") else {
         return Ok(None);
     };
-    let cloak_table = load_twoda(resman, "cloakmodel")?;
+    let cloak_table = load_twoda(resman, "cloakmodel", resman.text_context())?;
     let Some(info) = cloak_model_info(&cloak_table, cloak_appearance) else {
         return Ok(None);
     };
@@ -1262,7 +1304,7 @@ fn equipped_cloak_visual_from_item(
 }
 
 fn base_item_info(resman: &mut ResMan, base_item: usize) -> ModelResult<Option<BaseItemInfo>> {
-    let table = load_twoda(resman, "baseitems")?;
+    let table = load_twoda(resman, "baseitems", resman.text_context())?;
     let Some(row) = twoda_row_index_for_appearance(&table, base_item) else {
         return Ok(None);
     };
@@ -1500,20 +1542,21 @@ fn load_gff_root_from_resman(
     resman: &mut ResMan,
     stem: &str,
     extension: &str,
+    text_context: NwnTextContext,
 ) -> ModelResult<Option<GffRoot>> {
     let resolved = ResolvedResRef::from_filename(&format!("{stem}.{extension}"))
         .map_err(|error| ModelError::msg(format!("invalid resref {stem}.{extension}: {error}")))?;
     let Some(res) = resman.get_resolved(&resolved) else {
         return Ok(None);
     };
-    Ok(Some(read_gff_root_from_res(&res)?))
+    Ok(Some(read_gff_root_from_res(&res, text_context)?))
 }
 
-fn read_gff_root_from_res(res: &Res) -> ModelResult<GffRoot> {
+fn read_gff_root_from_res(res: &Res, text_context: NwnTextContext) -> ModelResult<GffRoot> {
     let bytes = res
         .read_all(CachePolicy::Use)
         .map_err(|error| ModelError::msg(format!("read {}: {error}", res.resref())))?;
-    read_gff_root(&mut Cursor::new(bytes))
+    read_gff_root(&mut Cursor::new(bytes), text_context)
         .map_err(|error| ModelError::msg(format!("parse {}: {error}", res.resref())))
 }
 
@@ -1526,7 +1569,7 @@ fn appearance_model_name_from_named_twoda(
     if appearance == 0 {
         return Ok(None);
     }
-    let table = load_twoda(resman, table_name)?;
+    let table = load_twoda(resman, table_name, resman.text_context())?;
     let Some(row) = twoda_row_index_for_appearance(&table, appearance) else {
         return Ok(None);
     };
@@ -1607,7 +1650,7 @@ fn armor_part_field_aliases(model_stem: &str) -> &'static [&'static str] {
 }
 
 fn racialtype_appearance_row(resman: &mut ResMan, race: usize) -> ModelResult<Option<usize>> {
-    let table = load_twoda(resman, "racialtypes")?;
+    let table = load_twoda(resman, "racialtypes", resman.text_context())?;
     let Some(row) = twoda_row_index_for_appearance(&table, race) else {
         return Ok(None);
     };
@@ -1632,13 +1675,18 @@ fn twoda_row_index_for_appearance(table: &TwoDa, appearance: usize) -> Option<us
         .or_else(|| (appearance < table.len()).then_some(appearance))
 }
 
-fn load_twoda(resman: &mut ResMan, table_name: &str) -> ModelResult<TwoDa> {
+fn load_twoda(
+    resman: &mut ResMan,
+    table_name: &str,
+    text_context: NwnTextContext,
+) -> ModelResult<TwoDa> {
     let resolved = ResolvedResRef::from_filename(&format!("{table_name}.2da"))
         .map_err(|error| ModelError::msg(format!("2da resref {table_name}.2da: {error}")))?;
     let res = resman
         .get_resolved(&resolved)
         .ok_or_else(|| ModelError::msg(format!("2da not found in ResMan: {table_name}.2da")))?;
-    as_2da(&res).map_err(|error| ModelError::msg(format!("read {table_name}.2da: {error}")))
+    as_2da(&res, text_context)
+        .map_err(|error| ModelError::msg(format!("read {table_name}.2da: {error}")))
 }
 
 fn gff_u32(value: Option<&GffValue>) -> Option<u32> {
@@ -1786,7 +1834,7 @@ donemodel child_root
 
     #[test]
     fn resman_loader_resolves_supermodel_chain() {
-        let mut manager = ResMan::new(1);
+        let mut manager = ResMan::new(1, nwnrs_types::encoding::NwnTextContext::english());
         for (label, filename, contents) in [
             (
                 "super",
@@ -1843,7 +1891,7 @@ donemodel child
 
     #[test]
     fn resman_loader_rejects_reference_model_cycles() {
-        let mut manager = ResMan::new(1);
+        let mut manager = ResMan::new(1, nwnrs_types::encoding::NwnTextContext::english());
         for (label, filename, model_name, reference) in [
             ("first", "first.mdl", "first", "second"),
             ("second", "second.mdl", "second", "first"),

@@ -76,23 +76,24 @@ pub type TlkResult<T> = Result<T, TlkError>;
 /// that original encoding.
 pub struct TlkEntry {
     /// Localized text content.
-    pub text:              String,
+    pub text:               String,
     /// Original encoded text bytes when this entry was read from disk.
-    pub raw_text:          Option<Vec<u8>>,
+    pub raw_text:           Option<Vec<u8>>,
+    pub(crate) native_text: Option<NwnText>,
     /// Associated sound resource reference.
-    pub sound_res_ref:     String,
+    pub sound_res_ref:      String,
     /// Raw 16-byte sound resource slot.
-    pub raw_sound_res_ref: [u8; 16],
+    pub raw_sound_res_ref:  [u8; 16],
     /// Sound length in seconds.
-    pub sound_length:      f32,
+    pub sound_length:       f32,
     /// Raw IEEE-754 bits for the stored sound length field.
-    pub sound_length_bits: u32,
+    pub sound_length_bits:  u32,
     /// Raw TLK entry flags.
-    pub flags:             i32,
+    pub flags:              i32,
     /// Stored volume variance field.
-    pub volume_variance:   i32,
+    pub volume_variance:    i32,
     /// Stored pitch variance field.
-    pub pitch_variance:    i32,
+    pub pitch_variance:     i32,
 }
 
 impl TlkEntry {
@@ -126,6 +127,7 @@ impl TlkEntry {
         Self {
             text,
             raw_text: None,
+            native_text: None,
             sound_res_ref,
             raw_sound_res_ref,
             sound_length,
@@ -134,6 +136,19 @@ impl TlkEntry {
             volume_variance: 0,
             pitch_variance: 0,
         }
+    }
+
+    /// Creates a TLK entry from byte-preserving structured native text.
+    #[must_use]
+    pub fn new_native(
+        native_text: NwnText,
+        sound_res_ref: impl Into<String>,
+        sound_length: f32,
+    ) -> Self {
+        let text = native_text.display_text();
+        let mut entry = Self::new(text, sound_res_ref, sound_length);
+        entry.native_text = Some(native_text);
+        entry
     }
 
     /// Returns `true` when the entry contains either text or a sound reference.
@@ -162,12 +177,12 @@ impl TlkEntry {
         flags
     }
 
-    pub(crate) fn stored_flags(&self) -> i32 {
-        let raw_sound = decode_sound_res_ref(&self.raw_sound_res_ref);
+    pub(crate) fn stored_flags(&self, encoding: LegacyEncoding) -> TlkResult<i32> {
+        let raw_sound = decode_sound_res_ref(&self.raw_sound_res_ref)?;
         let raw_text_matches = self
             .raw_text
             .as_ref()
-            .and_then(|bytes| from_nwnrs_encoding(bytes).ok())
+            .map(|bytes| NwnText::decode(bytes, encoding).display_text())
             .is_some_and(|decoded| decoded == self.text);
         let raw_sound_matches = raw_sound == self.sound_res_ref;
         let raw_length_matches =
@@ -179,17 +194,23 @@ impl TlkEntry {
             && self.volume_variance == 0
             && self.pitch_variance == 0
         {
-            self.flags
+            Ok(self.flags)
         } else {
-            self.canonical_flags()
+            Ok(self.canonical_flags())
         }
     }
 
     pub(crate) fn stored_sound_res_ref_bytes(&self) -> TlkResult<[u8; 16]> {
-        if decode_sound_res_ref(&self.raw_sound_res_ref) == self.sound_res_ref {
+        if decode_sound_res_ref(&self.raw_sound_res_ref)? == self.sound_res_ref {
             return Ok(self.raw_sound_res_ref);
         }
 
+        if !self.sound_res_ref.is_ascii() {
+            return Err(TlkError::msg(format!(
+                "sound resref {:?} contains a non-ASCII identifier character",
+                self.sound_res_ref
+            )));
+        }
         if self.sound_res_ref.len() > 16 {
             return Err(TlkError::msg(format!(
                 "sound resref {:?} exceeds 16 bytes",
@@ -205,14 +226,28 @@ impl TlkEntry {
         Ok(raw)
     }
 
-    pub(crate) fn stored_text_bytes(&self) -> TlkResult<Vec<u8>> {
+    pub(crate) fn stored_text_bytes(&self, encoding: LegacyEncoding) -> TlkResult<Vec<u8>> {
         if let Some(raw_text) = &self.raw_text
-            && from_nwnrs_encoding(raw_text)? == self.text
+            && NwnText::decode(raw_text, encoding).display_text() == self.text
         {
             return Ok(raw_text.clone());
         }
 
-        Ok(to_nwnrs_encoding(&self.text)?)
+        if let Some(native) = &self.native_text
+            && native.display_text() == self.text
+        {
+            return Ok(native.encode()?);
+        }
+
+        Ok(encode_legacy(encoding, &self.text)?)
+    }
+
+    /// Returns the byte-preserving structured native text for this entry.
+    #[must_use]
+    pub fn native_text(&self, encoding: LegacyEncoding) -> NwnText {
+        self.native_text
+            .clone()
+            .unwrap_or_else(|| NwnText::from_text(self.text.clone(), encoding))
     }
 
     pub(crate) fn stored_sound_length_bits(&self) -> u32 {
@@ -434,14 +469,33 @@ impl Default for SingleTlk {
     }
 }
 
-pub(crate) fn decode_sound_res_ref(bytes: &[u8]) -> String {
+pub(crate) fn decode_sound_res_ref(bytes: &[u8]) -> TlkResult<String> {
     let end = bytes
         .iter()
         .position(|byte| *byte == 0)
         .unwrap_or(bytes.len());
-    String::from_utf8_lossy(bytes.get(..end).unwrap_or(&[]))
-        .trim_matches(|ch: char| ch == '\u{00c0}' || ch.is_ascii_whitespace())
-        .to_string()
+    let value = bytes
+        .get(..end)
+        .unwrap_or(&[])
+        .iter()
+        .copied()
+        .skip_while(|byte| *byte == 0xc0 || byte.is_ascii_whitespace())
+        .collect::<Vec<_>>();
+    let trimmed_end = value
+        .iter()
+        .rposition(|byte| *byte != 0xc0 && !byte.is_ascii_whitespace())
+        .map_or(0, |index| index + 1);
+    let value = value.get(..trimmed_end).unwrap_or_default();
+    if !value.is_ascii() {
+        return Err(TlkError::msg(
+            "TLK sound resource reference contains non-ASCII bytes",
+        ));
+    }
+    String::from_utf8(value.to_vec()).map_err(|error| {
+        TlkError::msg(format!(
+            "invalid ASCII TLK sound resource reference: {error}"
+        ))
+    })
 }
 
 impl Tlk {

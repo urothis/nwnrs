@@ -24,7 +24,11 @@ nwnrs-types = { path = "../types", version = "0.0.1", default-features = false, 
 ] }
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 toml.workspace = true
+toml_parser.workspace = true
+tempfile.workspace = true
+url.workspace = true
 
 [lints]
 workspace = true

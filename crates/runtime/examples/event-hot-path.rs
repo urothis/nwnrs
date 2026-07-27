@@ -14,8 +14,11 @@ fn main() {
     let mut subscriptions = EventSubscriptionMask::empty();
     let mut keys = Vec::with_capacity(EVENT_CATALOG.len());
     for event in EVENT_CATALOG {
-        let Some((key, _definition)) = keyed_event_definition(event.identity) else {
-            eprintln!("catalog event {} has no stable key", event.identity);
+        let Some((key, _definition)) = keyed_event_definition(event.subject, event.phase) else {
+            eprintln!(
+                "catalog event {}::{} has no stable key",
+                event.subject, event.phase
+            );
             std::process::exit(1);
         };
         let _inserted = subscriptions.insert(key);

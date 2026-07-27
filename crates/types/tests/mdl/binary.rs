@@ -1,6 +1,7 @@
 use std::{error::Error, io::Cursor};
 
 use nwnrs_types::{
+    encoding::NwnTextContext,
     mdl::{
         BinaryModel, MODEL_RES_TYPE, ModelEncoding, ParsedModel, detect_model_encoding,
         lower_binary_model_to_ascii, parse_binary_model_bytes, parse_model_bytes,
@@ -27,11 +28,11 @@ fn detects_ascii_fixture_encoding() -> Result<(), Box<dyn Error>> {
 fn automatic_ascii_io_preserves_non_utf8_bytes() -> Result<(), Box<dyn Error>> {
     let bytes = b"# author \xff\nnewmodel demo\nbeginmodelgeom demo\nnode dummy demo\n  parent \
                   NULL\nendnode\nendmodelgeom demo\ndonemodel demo\n";
-    let parsed = parse_model_bytes(bytes)?;
+    let parsed = parse_model_bytes(bytes, NwnTextContext::english())?;
     assert!(matches!(parsed, ParsedModel::Ascii(_)));
 
     let mut encoded = Vec::new();
-    write_parsed_model(&mut encoded, &parsed)?;
+    write_parsed_model(&mut encoded, &parsed, NwnTextContext::english())?;
     assert!(encoded.windows(9).any(|window| window == b"author \xff\n"));
     Ok(())
 }
@@ -84,7 +85,7 @@ fn auto_parsing_dispatches_to_compiled_model() -> Result<(), Box<dyn Error>> {
         Err(error) => return skip_if_game_resources_unavailable(error),
     };
 
-    let parsed = parse_model_bytes(&bytes).unwrap_or_else(|error| {
+    let parsed = parse_model_bytes(&bytes, NwnTextContext::english()).unwrap_or_else(|error| {
         panic!("parse compiled bytes: {error}");
     });
     match parsed {
@@ -147,12 +148,12 @@ fn parsed_compiled_writer_roundtrips_exact_bytes() -> Result<(), Box<dyn Error>>
         Ok(bytes) => bytes,
         Err(error) => return skip_if_game_resources_unavailable(error),
     };
-    let parsed = parse_model_bytes(&bytes).unwrap_or_else(|error| {
+    let parsed = parse_model_bytes(&bytes, NwnTextContext::english()).unwrap_or_else(|error| {
         panic!("parse compiled model bytes: {error}");
     });
 
     let mut encoded = Vec::new();
-    if let Err(error) = write_parsed_model(&mut encoded, &parsed) {
+    if let Err(error) = write_parsed_model(&mut encoded, &parsed, NwnTextContext::english()) {
         panic!("write parsed compiled model: {error}");
     }
 
@@ -167,16 +168,17 @@ fn parsed_ascii_writer_roundtrips_canonically() -> Result<(), Box<dyn Error>> {
         Err(error) => return skip_if_game_resources_unavailable(error),
     };
     let mut reader = Cursor::new(bytes);
-    let parsed = read_parsed_model(&mut reader).unwrap_or_else(|error| {
-        panic!("read parsed ascii model: {error}");
-    });
+    let parsed =
+        read_parsed_model(&mut reader, NwnTextContext::english()).unwrap_or_else(|error| {
+            panic!("read parsed ascii model: {error}");
+        });
 
     let mut encoded = Vec::new();
-    if let Err(error) = write_parsed_model(&mut encoded, &parsed) {
+    if let Err(error) = write_parsed_model(&mut encoded, &parsed, NwnTextContext::english()) {
         panic!("write parsed ascii model: {error}");
     }
 
-    let reparsed = parse_model_bytes(&encoded).unwrap_or_else(|error| {
+    let reparsed = parse_model_bytes(&encoded, NwnTextContext::english()).unwrap_or_else(|error| {
         panic!("reparse encoded ascii model: {error}");
     });
     assert_eq!(reparsed, parsed);
@@ -197,6 +199,6 @@ fn shipped_ascii_fixture_bytes() -> Result<Vec<u8>, Box<dyn Error>> {
     let binary = BinaryModel::from_res(&res, CachePolicy::Use)?;
     let ascii = lower_binary_model_to_ascii(&binary)?;
     let mut bytes = Vec::new();
-    write_ascii_model(&mut bytes, &ascii)?;
+    write_ascii_model(&mut bytes, &ascii, NwnTextContext::english())?;
     Ok(bytes)
 }

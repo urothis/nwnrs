@@ -2,7 +2,7 @@
 
 use std::error::Error;
 
-use nwnrs_nwscript::prelude::*;
+use nwnrs_nwscript::{CancellationToken, prelude::*};
 
 mod support;
 
@@ -50,6 +50,34 @@ impl ScriptResolver for InstallScriptResolver {
         }
 
         Ok(None)
+    }
+
+    fn resolve_script_bytes_with_cancellation(
+        &self,
+        script_name: &str,
+        res_type: nwnrs_types::resman::prelude::ResType,
+        max_bytes: usize,
+        cancellation: &CancellationToken,
+    ) -> Result<Option<Vec<u8>>, SourceError> {
+        cancellation
+            .check()
+            .map_err(|_error| SourceError::Cancelled)?;
+        let resolved = self.resolve_script_bytes(script_name, res_type)?;
+        cancellation
+            .check()
+            .map_err(|_error| SourceError::Cancelled)?;
+        if let Some(bytes) = &resolved
+            && bytes.len() > max_bytes
+        {
+            return Err(SourceError::resource_limit(
+                script_name,
+                format!(
+                    "installed source contains {} bytes, exceeding configured maximum {max_bytes}",
+                    bytes.len()
+                ),
+            ));
+        }
+        Ok(resolved)
     }
 }
 

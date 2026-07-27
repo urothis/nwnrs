@@ -165,7 +165,7 @@ interface PointLightCollection {
   values: Float32Array;
 }
 
-type NwnEnvironment = Exclude<ScenePacketManifest['environment'], 'studio'>['nwn'];
+type NwnEnvironment = SceneAreaEnvironment;
 
 interface Illumination {
   readonly environmentLight: number[];
@@ -225,241 +225,33 @@ interface S3tcExtension {
   readonly COMPRESSED_RGBA_S3TC_DXT5_EXT: number;
 }
 
-interface ResourceSnapshotBase<Kind extends string, Data> {
-  readonly path: string;
-  readonly kind: Kind;
-  readonly readOnlyOrigin?: boolean;
-  readonly revision?: number;
-  readonly data: Data;
-}
-
-interface TwoDaData {
-  columns: string[];
-  default: string | null;
-  rows: Array<{ label: string; cells: Array<string | null> }>;
-}
-
-interface TlkEntry {
-  readonly strRef: number;
-  text: string;
-  soundResRef: string;
-  soundLength: number;
-  flags: number;
-  volumeVariance: number;
-  pitchVariance: number;
-}
-
-interface TlkData {
-  readonly language: number;
-  readonly highest: number;
-  readonly total: number;
-  readonly offset: number;
-  readonly limit: number;
-  readonly entries: TlkEntry[];
-}
-
-type JsonValue =
-  | null
-  | boolean
-  | number
-  | string
-  | JsonValue[]
-  | { [key: string]: JsonValue };
-
 const gffKinds = [
   'byte', 'char', 'word', 'short', 'dword', 'int', 'float', 'dword64',
   'int64', 'double', 'string', 'resref', 'locstring', 'void', 'struct', 'list',
 ] as const;
-type GffKind = typeof gffKinds[number];
-type GffPath = Array<string | number>;
-
-interface GffChildSummary {
-  readonly kind: 'struct' | 'list';
-  readonly path: GffPath;
-  readonly id?: number;
-  readonly total: number;
-}
-
-interface GffFieldSummary {
-  readonly label: string;
-  readonly kind: GffKind;
-  readonly value: JsonValue;
-  readonly child: GffChildSummary | null;
-}
-
-interface GffStructPage {
-  readonly kind: 'struct';
-  readonly path: GffPath;
-  readonly id: number;
-  readonly total: number;
-  readonly offset: number;
-  readonly limit: number;
-  readonly fields: readonly GffFieldSummary[];
-}
-
-interface GffListPage {
-  readonly kind: 'list';
-  readonly path: GffPath;
-  readonly total: number;
-  readonly offset: number;
-  readonly limit: number;
-  readonly items: readonly {
-    readonly index: number;
-    readonly path: GffPath;
-    readonly id: number;
-    readonly total: number;
-  }[];
-}
-
-interface GffData {
-  readonly fileType: string;
-  readonly fileVersion: string;
-  readonly root: GffStructPage;
-}
-
-type GffNodePage = GffStructPage | GffListPage;
-
-interface ScriptSourceLocation {
-  readonly file: string;
-  readonly line: number;
-  readonly text?: string | null;
-  readonly available: boolean;
-}
-
-interface ScriptSuccessor {
-  readonly offset: number;
-  readonly kind: string;
-}
-
+type GffKind = ResourceGffKind;
+type GffPath = ResourceGffPathSegment[];
+type GffChildSummary = ResourceGffChildSummary;
+type GffFieldSummary = ResourceGffFieldSummary;
+type GffNodePage = ResourceGffNodePage;
+type GffStructPage = Extract<GffNodePage, { readonly kind: 'struct' }>;
+type GffListPage = Extract<GffNodePage, { readonly kind: 'list' }>;
+type TwoDaData = ResourceTwoDaTable;
+type TlkEntry = ResourceTlkSnapshotEntry;
+type TlkData = ResourceTlkData;
+type GffData = ResourceGffData;
 type BuiltinType = string | Readonly<Record<string, string>>;
-
-interface ScriptAction {
-  readonly id: number;
-  readonly argumentCount: number;
-  readonly name: string;
-  readonly returnType: BuiltinType;
-  readonly parameters: readonly { readonly name: string; readonly ty: BuiltinType }[];
-  readonly arityMatches: boolean;
-}
-
-interface ScriptInstruction {
-  readonly index: number;
-  readonly offset: number;
-  readonly localOffset: number | null;
-  readonly size: number;
-  readonly label: string;
-  readonly opcode: string;
-  readonly opcodeInternal: string;
-  readonly auxcode: string;
-  readonly auxcodeInternal: string;
-  readonly operand: string;
-  readonly action: ScriptAction | null;
-  readonly rawHex: string;
-  readonly jumpTarget: number | null;
-  readonly callTarget: number | null;
-  readonly successors: readonly ScriptSuccessor[];
-  readonly functionIndex: number | null;
-  readonly source: ScriptSourceLocation | null;
-}
-
-interface ScriptBlock {
-  readonly start: number;
-  readonly end: number;
-  readonly instructionIndices: readonly number[];
-  readonly successors: readonly ScriptSuccessor[];
-}
-
-interface ScriptFunction {
-  readonly index: number;
-  readonly name: string;
-  readonly start: number;
-  readonly end: number;
-  readonly returnType: string;
-  readonly arguments: readonly string[];
-  readonly synthetic: boolean;
-  readonly source?: ScriptSourceLocation | null;
-  readonly blocks: readonly ScriptBlock[];
-}
-
-interface ScriptDebugData {
-  readonly primary: 'ncs' | 'ndb';
-  readonly hasNcs: boolean;
-  readonly hasNdb: boolean;
-  readonly hasLangspec: boolean;
-  readonly sourceFiles: readonly {
-    readonly name: string;
-    readonly available: boolean;
-    readonly isRoot: boolean;
-  }[];
-  readonly header?: {
-    readonly format: string;
-    readonly fileSize: number;
-    readonly declaredSize: number;
-    readonly codeSize: number;
-    readonly instructionCount: number;
-  };
-  readonly summary: {
-    readonly files: number;
-    readonly structs: number;
-    readonly functions: number;
-    readonly variables: number;
-    readonly lineMappings: number;
-    readonly structEntries?: readonly {
-      readonly name: string;
-      readonly fields: readonly { readonly name: string; readonly type: string }[];
-    }[];
-    readonly variableEntries?: readonly {
-      readonly name: string;
-      readonly type: string;
-      readonly start: number;
-      readonly end: number;
-      readonly stackLocation: number;
-    }[];
-  };
-  readonly functions: readonly ScriptFunction[];
-  readonly instructions: readonly ScriptInstruction[];
-  readonly diagnostics: readonly string[];
-}
-
-interface TextureData {
-  readonly width: number;
-  readonly height: number;
-  readonly rgba: string;
-  readonly metadata: Readonly<Record<string, JsonValue>>;
-}
-
-interface ArchiveEntry {
-  readonly resource: string;
-  readonly bif?: string;
-  readonly extension: string;
-  readonly typeId: number;
-  readonly size: number;
-  readonly modified: boolean;
-}
-
-interface ArchiveData {
-  readonly entries: readonly ArchiveEntry[];
-  readonly total: number;
-  readonly offset: number;
-  readonly limit: number;
-  readonly query: string;
-  readonly bifs?: readonly {
-    readonly index: number;
-    readonly filename: string;
-    readonly drives: number;
-    readonly oid: number;
-    readonly entryCount: number;
-  }[];
-}
-
-type ResourceModel =
-  | ResourceSnapshotBase<'2da', TwoDaData>
-  | ResourceSnapshotBase<'tlk', TlkData>
-  | ResourceSnapshotBase<'gff', GffData>
-  | ResourceSnapshotBase<'ncs' | 'ndb', ScriptDebugData>
-  | ResourceSnapshotBase<'dds' | 'tga' | 'plt', TextureData>
-  | ResourceSnapshotBase<'erf' | 'key', ArchiveData>
-  | { readonly path: string; readonly kind: 'viewer' };
+type ScriptSourceLocation = ResourceScriptSourceLocation;
+type ScriptSuccessor = ResourceScriptSuccessor;
+type ScriptAction = ResourceScriptAction;
+type ScriptInstruction = ResourceScriptInstruction;
+type ScriptBlock = ResourceScriptBlock;
+type ScriptFunction = ResourceScriptFunction;
+type ScriptDebugData = ResourceScriptDebugData;
+type TextureData = ResourceTextureData;
+type ArchiveEntry = ResourceArchiveEntry;
+type ArchiveData = ResourceArchiveData;
+type ResourceModel = ResourceSnapshot | { readonly path: string; readonly kind: 'viewer' };
 
 interface PersistedViewerState {
   readonly scene?: string;
@@ -614,6 +406,8 @@ const gffNodeOffsets = new Map<string, number>();
 const gffOpenNodes = new Set<string>(['[]']);
 const gffPendingRequests = new Map<number, string>();
 let nextGffRequestId = 1;
+let resourceTexturePixels: Uint8Array | undefined;
+let resourcePltPixels: Uint8Array | undefined;
 
 window.addEventListener('message', (event: MessageEvent<unknown>) => {
   try {
@@ -624,6 +418,12 @@ window.addEventListener('message', (event: MessageEvent<unknown>) => {
     if (data.type === 'snapshot') {
       clearTimeout(loadingTimer);
       model = parseResourceModel(data.snapshot);
+      resourceTexturePixels = data.texturePixels instanceof Uint8Array
+        ? data.texturePixels
+        : undefined;
+      resourcePltPixels = data.pltPixels instanceof Uint8Array
+        ? data.pltPixels
+        : undefined;
       if (model.kind === 'gff') {
         gffNodeCache.clear();
         gffNodeOffsets.clear();
@@ -736,15 +536,15 @@ function decodePacket(packetValue: unknown): DecodedPacket {
     : Uint8Array.from(packedBinary);
   if (parsedManifest.schema === 'nwnrs.scene') {
     validateSceneManifest(parsedManifest);
-    return { manifest: parsedManifest, binary };
+    return { manifest: parsedManifest as ScenePacketManifest, binary };
   }
   if (parsedManifest.schema === 'nwnrs.scene.animation') {
     validateAnimationManifest(parsedManifest);
-    return { manifest: parsedManifest, binary };
+    return { manifest: parsedManifest as SceneAnimationPacketManifest, binary };
   }
   if (parsedManifest.schema === 'nwnrs.scene.texture') {
     validateTextureManifest(parsedManifest);
-    return { manifest: parsedManifest, binary };
+    return { manifest: parsedManifest as SceneTexturePacketManifest, binary };
   }
   throw new Error(`The native viewer returned unsupported packet schema ${parsedManifest.schema}.`);
 }
@@ -754,7 +554,7 @@ function decodeScenePacket(packetValue: unknown): DecodedScenePacket {
   if (packet.manifest.schema !== 'nwnrs.scene') {
     throw new Error(`Expected a scene packet, received ${packet.manifest.schema}.`);
   }
-  return { manifest: packet.manifest, binary: packet.binary };
+  return { manifest: packet.manifest as ScenePacketManifest, binary: packet.binary };
 }
 
 function decodeAnimationPacket(packetValue: unknown): DecodedAnimationPacket {
@@ -762,7 +562,7 @@ function decodeAnimationPacket(packetValue: unknown): DecodedAnimationPacket {
   if (packet.manifest.schema !== 'nwnrs.scene.animation') {
     throw new Error(`Expected an animation packet, received ${packet.manifest.schema}.`);
   }
-  return { manifest: packet.manifest, binary: packet.binary };
+  return { manifest: packet.manifest as SceneAnimationPacketManifest, binary: packet.binary };
 }
 
 function decodeTexturePacket(packetValue: unknown): DecodedTexturePacket {
@@ -770,7 +570,7 @@ function decodeTexturePacket(packetValue: unknown): DecodedTexturePacket {
   if (packet.manifest.schema !== 'nwnrs.scene.texture') {
     throw new Error(`Expected a texture packet, received ${packet.manifest.schema}.`);
   }
-  return { manifest: packet.manifest, binary: packet.binary };
+  return { manifest: packet.manifest as SceneTexturePacketManifest, binary: packet.binary };
 }
 
 function validateSceneManifest(value: unknown): asserts value is ScenePacketManifest {
@@ -968,7 +768,12 @@ function dispatchAnimationEvents(
   animation: PacketAnimation | undefined,
   previousElapsed: number,
   elapsed: number,
-  dispatch: (event: PacketAnimationEvent) => void,
+  dispatch: (
+    event: PacketAnimationEvent & {
+      readonly cycle?: number;
+      readonly absoluteTime?: number;
+    },
+  ) => void,
 ): number {
   if (!animation?.events?.length || elapsed < previousElapsed) return 0;
   const events = [...animation.events].sort((left, right) => left.time - right.time); let count = 0;
@@ -3336,9 +3141,10 @@ function scriptSourceResource(file: string): string {
   return value.toLowerCase().endsWith('.nss') ? value : `${value}.nss`;
 }
 
-function formatBuiltinType(value: BuiltinType): string {
+function formatBuiltinType(value: JsonValue): string {
   if (typeof value === 'string') return value.toLowerCase();
-  if (value.EngineStructure) return String(value.EngineStructure);
+  if (!isRecord(value)) return '?';
+  if (typeof value.EngineStructure === 'string') return value.EngineStructure;
   return Object.keys(value)[0]?.toLowerCase() || '?';
 }
 
@@ -3363,12 +3169,20 @@ function renderTexture(): void {
   requiredWebviewElement('content').innerHTML = `<div class="texture-layout"><div class="canvas-wrap"><canvas id="texture-canvas" width="${data.width}" height="${data.height}"></canvas></div>
     <aside class="inspector"><h2>Texture</h2><dl>${Object.entries(data.metadata || {}).filter(([key]) => key !== 'pixels').map(([key, value]) => `<dt>${escapeHtml(key)}</dt><dd>${escapeHtml(String(value))}</dd>`).join('')}</dl>
     ${currentModel.kind === 'plt' ? '<div id="plt-inspector" class="muted">Click a pixel to edit its value and material layer.</div>' : ''}</aside></div>`;
-  const canvas = requiredCanvas('texture-canvas'); drawRgba(canvas, data.rgba);
+  const canvas = requiredCanvas('texture-canvas');
+  if (!resourceTexturePixels) {
+    throw new Error('The texture snapshot has no RGBA pixel buffer.');
+  }
+  drawRgba(canvas, resourceTexturePixels);
   if (currentModel.kind === 'plt') canvas.onclick = (event) => showPltPixel(canvas, event, data);
 }
 
-function drawRgba(canvas: HTMLCanvasElement, base64: string): void {
-  const bytes = Uint8ClampedArray.from(atob(base64), (character) => character.charCodeAt(0));
+function drawRgba(canvas: HTMLCanvasElement, pixels: Uint8Array): void {
+  const expected = canvas.width * canvas.height * 4;
+  if (pixels.byteLength !== expected) {
+    throw new Error(`The texture has ${pixels.byteLength} RGBA bytes; expected ${expected}.`);
+  }
+  const bytes = Uint8ClampedArray.from(pixels);
   const context = canvas.getContext('2d');
   if (!context) throw new Error('The texture editor could not create a 2D canvas context.');
   context.putImageData(new ImageData(bytes, canvas.width, canvas.height), 0, 0);
@@ -3382,9 +3196,11 @@ function showPltPixel(
   const rect = canvas.getBoundingClientRect();
   const x = Math.min(canvas.width - 1, Math.max(0, Math.floor((event.clientX - rect.left) * canvas.width / rect.width)));
   const y = Math.min(canvas.height - 1, Math.max(0, Math.floor((event.clientY - rect.top) * canvas.height / rect.height)));
-  const pixelData = data.metadata.pixelData;
-  if (typeof pixelData !== 'string') throw new Error('The PLT snapshot has no pixel metadata.');
-  const pixels = Uint8Array.from(atob(pixelData), (character) => character.charCodeAt(0));
+  const pixels = resourcePltPixels;
+  if (!pixels) throw new Error('The PLT snapshot has no palette pixel buffer.');
+  if (pixels.byteLength !== canvas.width * canvas.height * 2) {
+    throw new Error('The PLT palette pixel buffer has an invalid length.');
+  }
   const offset = (y * canvas.width + x) * 2; const pixel = { value: pixels[offset], layer: pixels[offset + 1] }; const inspector = webviewElement('plt-inspector');
   const requiredInspector = requiredWebviewElement('plt-inspector');
   requiredInspector.className = '';
@@ -3434,7 +3250,11 @@ function bindArchiveRows(): void {
   document.querySelectorAll<WebviewElement>('.export-entry').forEach((button) => button.onclick = () => vscode.postMessage({ type: 'exportEntry', resource: button.dataset.resource }));
   document.querySelectorAll<WebviewElement>('.replace-entry').forEach((button) => button.onclick = () => vscode.postMessage({ type: 'replaceEntry', resource: button.dataset.resource }));
   document.querySelectorAll<WebviewElement>('.rename-entry').forEach((button) => button.onclick = () => { const newResource = prompt('New resource name', button.dataset.resource); if (newResource && newResource !== button.dataset.resource) edit({ action: 'renameEntry', resource: button.dataset.resource, newResource }); });
-  document.querySelectorAll<WebviewElement>('.remove-entry').forEach((button) => button.onclick = () => { if (confirm(`Remove ${button.dataset.resource}?`)) edit({ action: 'removeEntry', resource: button.dataset.resource }); });
+  document.querySelectorAll<WebviewElement>('.remove-entry').forEach((button) => button.onclick = () => {
+    if (confirm(`Remove ${button.dataset.resource}?`)) {
+      vscode.postMessage({ type: 'removeEntry', resource: button.dataset.resource });
+    }
+  });
 }
 
 function createProgram(
@@ -4571,7 +4391,7 @@ function sampleAnimMeshValuesInto(
 }
 
 function globalIllumination(environment: NwnEnvironment | undefined): Illumination {
-  const source = environment || {}; const night = source.isNight === true;
+  const source: Partial<NwnEnvironment> = environment ?? {}; const night = source.isNight === true;
   const ambient = packedColor(night ? source.moonAmbientColor : source.sunAmbientColor, [1, 1, 1]);
   const diffuse = packedColor(night ? source.moonDiffuseColor : source.sunDiffuseColor, [1, 1, 1]);
   const fog = packedColor(night ? source.moonFogColor : source.sunFogColor, ambient);
@@ -5267,7 +5087,6 @@ function isTextureData(value: unknown): value is TextureData {
   return isRecord(value)
     && isPositiveInteger(value.width)
     && isPositiveInteger(value.height)
-    && typeof value.rgba === 'string'
     && isRecord(value.metadata)
     && Object.values(value.metadata).every(isJsonValue);
 }

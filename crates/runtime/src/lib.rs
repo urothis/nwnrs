@@ -5,6 +5,7 @@ mod bridge;
 mod event_catalog;
 mod identity;
 mod platform;
+mod text;
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -34,6 +35,7 @@ pub use identity::{BinaryIdentity, FileSha256};
 pub use platform::{Architecture, OperatingSystem, Platform};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
+pub use text::{display_engine_text, display_native_path};
 
 /// The supported target-pack schema version.
 pub const TARGET_PACK_SCHEMA_VERSION: u32 = 2;
@@ -672,15 +674,15 @@ impl TargetPack {
         }
     }
 
-    /// Reports whether this exact target pack can provide one event identity.
+    /// Reports whether this exact target pack can provide one event route.
     ///
     /// ```no_run
     /// # let pack: nwnrs_runtime::TargetPack = unimplemented!();
-    /// assert!(!pack.supports_event("unknown.event"));
+    /// assert!(!pack.supports_event("unknown_event", "before"));
     /// ```
     #[must_use]
-    pub fn supports_event(&self, identity: &str) -> bool {
-        let Some(definition) = event_definition(identity) else {
+    pub fn supports_event(&self, subject: &str, phase: &str) -> bool {
+        let Some(definition) = event_definition(subject, phase) else {
             return false;
         };
         let Some(events) = &self.events else {
@@ -2056,10 +2058,11 @@ mod tests {
                 let pack = toml::from_str::<TargetPack>(&fs::read_to_string(path)?)?;
                 for event in EVENT_CATALOG {
                     assert!(
-                        pack.supports_event(event.identity),
-                        "{} does not support {}",
+                        pack.supports_event(event.subject, event.phase),
+                        "{} does not support {}::{}",
                         pack.server.platform,
-                        event.identity
+                        event.subject,
+                        event.phase
                     );
                 }
                 pack_count = pack_count.saturating_add(1);
@@ -2097,13 +2100,13 @@ mod tests {
             administration: None,
             events:         Some(events),
         };
-        assert!(pack.supports_event("object_lock_before"));
+        assert!(pack.supports_event("object_lock", "before"));
         pack.events
             .as_mut()
             .ok_or("fixture events")?
             .hooks
             .remove("module_load");
-        assert!(!pack.supports_event("object_lock_before"));
+        assert!(!pack.supports_event("object_lock", "before"));
         assert!(validate_target_pack_metadata(&pack).is_err());
 
         let events = pack.events.as_mut().ok_or("fixture events")?;
@@ -2119,10 +2122,10 @@ mod tests {
                 offset: 24
             },
         );
-        assert!(!pack.supports_event("object_set_experience_before"));
+        assert!(!pack.supports_event("object_set_experience", "before"));
         pack.layouts.classes.creature_stats_base_creature_offset = Some(48);
         pack.layouts.classes.creature_stats_experience_offset = Some(168);
-        assert!(pack.supports_event("object_set_experience_before"));
+        assert!(pack.supports_event("object_set_experience", "before"));
 
         let events = pack.events.as_mut().ok_or("fixture events")?;
         events.hooks.insert(

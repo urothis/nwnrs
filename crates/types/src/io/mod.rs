@@ -10,7 +10,7 @@ pub use helpers::*;
 /// Common imports for consumers of this crate.
 pub mod prelude {
     pub use crate::io::{
-        ExpectationError, SwappableEndian, expect, map_with_index, read_bytes_or_err,
-        read_fixed_count_seq, read_str_or_err, swap_endian,
+        ExpectationError, SwappableEndian, expect, map_with_index, read_ascii_or_err,
+        read_bytes_or_err, read_fixed_count_seq, swap_endian,
     };
 }

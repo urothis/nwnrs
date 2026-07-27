@@ -83,7 +83,12 @@ pub fn new_default_resman(
         }
     }
 
-    let mut result = ResMan::new(cache_size);
+    let language = crate::localization::resolve_language(language)
+        .map_err(|error| InstallError::msg(error.to_string()))?;
+    let mut result = ResMan::new(
+        cache_size,
+        crate::encoding::NwnTextContext::for_language_id(language.id()),
+    );
 
     if load_keys {
         for key in &keys {

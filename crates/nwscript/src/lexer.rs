@@ -1,7 +1,8 @@
 use std::{error::Error, fmt};
 
 use crate::{
-    CompilerErrorCode, Keyword, MAX_TOKEN_LENGTH, Token, TokenKind, nwscript_string_hash_bytes,
+    CancellationToken, CompilerErrorCode, CompilerResourceLimits, Keyword, MAX_TOKEN_LENGTH, Token,
+    TokenKind, nwscript_string_hash_bytes,
     source::{SourceFile, SourceId, Span},
 };
 
@@ -40,12 +41,45 @@ impl fmt::Display for LexerError {
 
 impl Error for LexerError {}
 
+/// Trivia category retained by recovering lexical analysis.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LexicalTriviaKind {
+    /// Spaces or line breaks.
+    Whitespace,
+    /// `//` comment.
+    LineComment,
+    /// `/* ... */` comment.
+    BlockComment,
+}
+
+/// One trivia range excluded from the compiler token stream.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LexicalTrivia {
+    /// Trivia category.
+    pub kind: LexicalTriviaKind,
+    /// Exact source range.
+    pub span: Span,
+}
+
+/// Canonical recovering lexer output for editor analysis.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecoveringLexedSource {
+    /// Compiler tokens, always ending with `Eof`.
+    pub tokens:      Vec<Token>,
+    /// Recoverable lexical diagnostics in source order.
+    pub diagnostics: Vec<LexerError>,
+    /// Comment and whitespace ranges skipped by compilation.
+    pub trivia:      Vec<LexicalTrivia>,
+}
+
 /// Lexes `NWScript` source using the upstream compiler's token vocabulary.
 #[derive(Debug, Clone)]
 pub struct Lexer<'a> {
-    source_id: SourceId,
-    input:     &'a [u8],
-    position:  usize,
+    source_id:    SourceId,
+    input:        &'a [u8],
+    position:     usize,
+    max_tokens:   usize,
+    cancellation: Option<&'a CancellationToken>,
 }
 
 impl<'a> Lexer<'a> {
@@ -56,6 +90,26 @@ impl<'a> Lexer<'a> {
             source_id,
             input,
             position: 0,
+            max_tokens: CompilerResourceLimits::default().max_tokens,
+            cancellation: None,
+        }
+    }
+
+    /// Creates a lexer governed by explicit resource limits and optional
+    /// cooperative cancellation.
+    #[must_use]
+    pub fn with_limits(
+        source_id: SourceId,
+        input: &'a [u8],
+        limits: CompilerResourceLimits,
+        cancellation: Option<&'a CancellationToken>,
+    ) -> Self {
+        Self {
+            source_id,
+            input,
+            position: 0,
+            max_tokens: limits.max_tokens,
+            cancellation,
         }
     }
 
@@ -67,7 +121,8 @@ impl<'a> Lexer<'a> {
     pub fn lex_all(&mut self) -> Result<Vec<Token>, LexerError> {
         let mut tokens = Vec::new();
         loop {
-            self.skip_trivia();
+            self.check_cancelled()?;
+            self.skip_trivia()?;
             if self
                 .current_byte()
                 .is_some_and(|byte| !is_token_start(byte))
@@ -81,11 +136,79 @@ impl<'a> Lexer<'a> {
             let token = self.next_token()?;
             let is_eof = token.kind == TokenKind::Eof;
             tokens.push(token);
+            if tokens.len() > self.max_tokens {
+                return Err(LexerError::new(
+                    CompilerErrorCode::UnknownStateInCompiler,
+                    self.source_id,
+                    self.position,
+                    self.position,
+                    format!(
+                        "token stream exceeded configured maximum of {} tokens",
+                        self.max_tokens
+                    ),
+                ));
+            }
             if is_eof {
                 break;
             }
         }
         Ok(tokens)
+    }
+
+    /// Lexes an incomplete editor source with the canonical compiler lexer.
+    ///
+    /// Invalid tokens are reported and skipped so later valid tokens remain
+    /// available. Cancellation and resource-limit failures remain fatal.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for cancellation or token-count exhaustion.
+    pub fn lex_recovering(&mut self) -> Result<RecoveringLexedSource, LexerError> {
+        let mut tokens = Vec::new();
+        let mut diagnostics = Vec::new();
+        let mut trivia = Vec::new();
+        loop {
+            self.check_cancelled()?;
+            self.scan_trivia(Some(&mut trivia))?;
+            if self
+                .current_byte()
+                .is_some_and(|byte| !is_token_start(byte))
+            {
+                self.position += 1;
+                continue;
+            }
+            match self.next_token() {
+                Ok(token) => {
+                    let is_eof = token.kind == TokenKind::Eof;
+                    tokens.push(token);
+                    if tokens.len() > self.max_tokens {
+                        return Err(LexerError::new(
+                            CompilerErrorCode::UnknownStateInCompiler,
+                            self.source_id,
+                            self.position,
+                            self.position,
+                            format!(
+                                "token stream exceeded configured maximum of {} tokens",
+                                self.max_tokens
+                            ),
+                        ));
+                    }
+                    if is_eof {
+                        break;
+                    }
+                }
+                Err(error) => {
+                    let recovery = error.span.end.max(error.span.start.saturating_add(1));
+                    self.position = self.position.max(recovery).min(self.input.len());
+                    diagnostics.push(error);
+                }
+            }
+        }
+        Ok(RecoveringLexedSource {
+            tokens,
+            diagnostics,
+            trivia,
+        })
     }
 
     fn next_token(&mut self) -> Result<Token, LexerError> {
@@ -124,17 +247,41 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn skip_trivia(&mut self) {
+    fn skip_trivia(&mut self) -> Result<(), LexerError> {
+        self.scan_trivia(None)
+    }
+
+    fn scan_trivia(
+        &mut self,
+        mut trivia: Option<&mut Vec<LexicalTrivia>>,
+    ) -> Result<(), LexerError> {
         loop {
+            if self.position & 0x0fff == 0 {
+                self.check_cancelled()?;
+            }
             if self.position >= self.input.len() {
-                return;
+                return Ok(());
             }
 
             match self.current_byte() {
                 Some(b' ' | b'\t' | b'\n' | b'\r') => {
-                    self.position += 1;
+                    let start = self.position;
+                    while self
+                        .current_byte()
+                        .is_some_and(|byte| matches!(byte, b' ' | b'\t' | b'\n' | b'\r'))
+                    {
+                        self.position += 1;
+                    }
+                    push_trivia(
+                        &mut trivia,
+                        LexicalTriviaKind::Whitespace,
+                        self.source_id,
+                        start,
+                        self.position,
+                    );
                 }
                 Some(b'/') if self.peek_byte(1) == Some(b'/') => {
+                    let start = self.position;
                     self.position += 2;
                     while let Some(byte) = self.current_byte() {
                         if byte == b'\n' {
@@ -142,8 +289,16 @@ impl<'a> Lexer<'a> {
                         }
                         self.position += 1;
                     }
+                    push_trivia(
+                        &mut trivia,
+                        LexicalTriviaKind::LineComment,
+                        self.source_id,
+                        start,
+                        self.position,
+                    );
                 }
                 Some(b'/') if self.peek_byte(1) == Some(b'*') => {
+                    let start = self.position;
                     self.position += 2;
                     while self.position < self.input.len() {
                         if self.current_byte() == Some(b'*') && self.peek_byte(1) == Some(b'/') {
@@ -152,10 +307,33 @@ impl<'a> Lexer<'a> {
                         }
                         self.position += 1;
                     }
+                    push_trivia(
+                        &mut trivia,
+                        LexicalTriviaKind::BlockComment,
+                        self.source_id,
+                        start,
+                        self.position,
+                    );
                 }
-                _ => return,
+                _ => return Ok(()),
             }
         }
+    }
+
+    fn check_cancelled(&self) -> Result<(), LexerError> {
+        if self
+            .cancellation
+            .is_some_and(CancellationToken::is_cancelled)
+        {
+            return Err(LexerError::new(
+                CompilerErrorCode::UnknownStateInCompiler,
+                self.source_id,
+                self.position,
+                self.position,
+                "operation cancelled",
+            ));
+        }
+        Ok(())
     }
 
     fn lex_number(&mut self) -> Result<Token, LexerError> {
@@ -688,6 +866,60 @@ pub fn lex_source(source: &SourceFile) -> Result<Vec<Token>, LexerError> {
     Lexer::new(source.id, source.bytes()).lex_all()
 }
 
+/// Lexes one source file with explicit resource limits and cancellation.
+///
+/// # Errors
+///
+/// Returns a lexical diagnostic for invalid input, exceeded bounds, or
+/// cancellation.
+pub fn lex_source_with_limits_and_cancellation(
+    source: &SourceFile,
+    limits: CompilerResourceLimits,
+    cancellation: Option<&CancellationToken>,
+) -> Result<Vec<Token>, LexerError> {
+    if source.len() > limits.max_source_file_bytes {
+        return Err(LexerError::new(
+            CompilerErrorCode::UnknownStateInCompiler,
+            source.id,
+            0,
+            source.len(),
+            format!(
+                "source file contains {} bytes, exceeding configured maximum {}",
+                source.len(),
+                limits.max_source_file_bytes
+            ),
+        ));
+    }
+    Lexer::with_limits(source.id, source.bytes(), limits, cancellation).lex_all()
+}
+
+/// Recoveringly lexes one source with compiler tokens, diagnostics, and
+/// trivia ranges.
+///
+/// # Errors
+///
+/// Returns an error only for cancellation or resource-limit exhaustion.
+pub fn lex_source_recovering_with_limits_and_cancellation(
+    source: &SourceFile,
+    limits: CompilerResourceLimits,
+    cancellation: Option<&CancellationToken>,
+) -> Result<RecoveringLexedSource, LexerError> {
+    if source.len() > limits.max_source_file_bytes {
+        return Err(LexerError::new(
+            CompilerErrorCode::UnknownStateInCompiler,
+            source.id,
+            0,
+            source.len(),
+            format!(
+                "source file contains {} bytes, exceeding configured maximum {}",
+                source.len(),
+                limits.max_source_file_bytes
+            ),
+        ));
+    }
+    Lexer::with_limits(source.id, source.bytes(), limits, cancellation).lex_recovering()
+}
+
 /// Lexes a byte buffer associated with `source_id`.
 ///
 /// # Errors
@@ -703,7 +935,20 @@ pub fn lex_bytes(source_id: SourceId, input: &[u8]) -> Result<Vec<Token>, LexerE
 ///
 /// Returns [`LexerError`] if a recognized token begins but is malformed.
 pub fn lex_text(source_id: SourceId, input: &str) -> Result<Vec<Token>, LexerError> {
-    lex_bytes(source_id, input.as_bytes())
+    let bytes = nwnrs_types::encoding::encode_legacy(
+        nwnrs_types::encoding::LegacyEncoding::Windows1252,
+        input,
+    )
+    .map_err(|error| {
+        LexerError::new(
+            CompilerErrorCode::UnexpectedCharacter,
+            source_id,
+            0,
+            input.len(),
+            format!("NWScript source is not representable as Windows-1252: {error}"),
+        )
+    })?;
+    lex_bytes(source_id, &bytes)
 }
 
 fn is_identifier_start(byte: u8) -> bool {
@@ -712,6 +957,21 @@ fn is_identifier_start(byte: u8) -> bool {
 
 fn is_identifier_continue(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || byte == b'_'
+}
+
+fn push_trivia(
+    trivia: &mut Option<&mut Vec<LexicalTrivia>>,
+    kind: LexicalTriviaKind,
+    source_id: SourceId,
+    start: usize,
+    end: usize,
+) {
+    if let Some(trivia) = trivia.as_deref_mut() {
+        trivia.push(LexicalTrivia {
+            kind,
+            span: Span::new(source_id, start, end),
+        });
+    }
 }
 
 fn is_token_start(byte: u8) -> bool {
@@ -774,7 +1034,8 @@ fn byte_to_text_char(byte: u8) -> char {
 #[cfg(test)]
 mod tests {
     use crate::{
-        Keyword, SourceFile, SourceId, TokenKind, lex_bytes, lex_source, lex_text,
+        CompilerResourceLimits, Keyword, LexicalTriviaKind, SourceFile, SourceId, TokenKind,
+        lex_bytes, lex_source, lex_source_recovering_with_limits_and_cancellation, lex_text,
         nwscript_string_hash_bytes,
     };
 
@@ -806,6 +1067,62 @@ mod tests {
                 TokenKind::Keyword(Keyword::EngineStructureDefinition),
                 TokenKind::Eof,
             ])
+        );
+    }
+
+    #[test]
+    fn recovering_lexer_preserves_tokens_after_errors_and_tracks_trivia() {
+        let source = SourceFile::new(
+            SourceId::new(7),
+            "recovery.nss",
+            b"// #[nwnrs::event::fake]\n\"unterminated\n#[nwnrs::event::module_load::before]\n"
+                .to_vec(),
+        );
+        let recovered = lex_source_recovering_with_limits_and_cancellation(
+            &source,
+            CompilerResourceLimits::default(),
+            None,
+        )
+        .expect("recover source");
+        assert!(!recovered.diagnostics.is_empty());
+        assert!(
+            recovered
+                .trivia
+                .iter()
+                .any(|trivia| trivia.kind == LexicalTriviaKind::LineComment)
+        );
+        assert!(
+            recovered
+                .tokens
+                .iter()
+                .any(|token| token.text == "module_load")
+        );
+    }
+
+    #[test]
+    fn recovering_lexer_does_not_treat_raw_string_contents_as_code() {
+        let source = SourceFile::new(
+            SourceId::new(8),
+            "raw.nss",
+            br##"
+string sValue = r"#[nwnrs::event::fake]";
+#[nwnrs::event::object_use::before]
+"##
+            .to_vec(),
+        );
+        let recovered = lex_source_recovering_with_limits_and_cancellation(
+            &source,
+            CompilerResourceLimits::default(),
+            None,
+        )
+        .expect("recover source");
+        assert_eq!(
+            recovered
+                .tokens
+                .iter()
+                .filter(|token| token.kind == TokenKind::Hash)
+                .count(),
+            1
         );
     }
 

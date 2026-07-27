@@ -6,7 +6,7 @@ use std::{
     },
 };
 
-use nwnrs_runtime::{EventObjectId, EventValue};
+use nwnrs_runtime::{EventKey, EventObjectId, EventValue};
 
 use crate::bridge::BridgeInstallError;
 
@@ -17,7 +17,7 @@ pub(crate) const DEFAULT_EVENT_PUMP_DRAIN_LIMIT: usize = 256;
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct EventPumpRecord {
     pub(crate) sequence: u64,
-    pub(crate) identity: String,
+    pub(crate) key:      EventKey,
     pub(crate) target:   EventObjectId,
     pub(crate) data:     BTreeMap<String, EventValue>,
 }
@@ -58,7 +58,7 @@ impl EventPump {
     #[allow(dead_code)]
     pub(crate) fn enqueue(
         &self,
-        identity: impl Into<String>,
+        key: EventKey,
         target: EventObjectId,
         data: BTreeMap<String, EventValue>,
     ) -> Result<u64, BridgeInstallError> {
@@ -84,7 +84,7 @@ impl EventPump {
         }
         state.records.push_back(EventPumpRecord {
             sequence,
-            identity: identity.into(),
+            key,
             target,
             data,
         });
@@ -133,7 +133,20 @@ impl EventPump {
 
 #[cfg(test)]
 mod tests {
+    use nwnrs_runtime::keyed_runtime_event_definition;
+
     use super::*;
+
+    fn key(value: u16) -> EventKey {
+        match value {
+            1 => keyed_runtime_event_definition("associate.add", "before"),
+            2 => keyed_runtime_event_definition("associate.add", "after"),
+            3 => keyed_runtime_event_definition("associate.remove", "before"),
+            _ => None,
+        }
+        .expect("test event route exists")
+        .0
+    }
 
     fn target(value: u32) -> EventObjectId {
         EventObjectId::new(value)
@@ -142,11 +155,11 @@ mod tests {
     #[test]
     fn pump_is_bounded_and_preserves_sequence_order() -> Result<(), BridgeInstallError> {
         let pump = EventPump::with_capacity(2);
-        let first = pump.enqueue("resource.added", target(1), BTreeMap::new())?;
-        let second = pump.enqueue("resource.modified", target(2), BTreeMap::new())?;
+        let first = pump.enqueue(key(1), target(1), BTreeMap::new())?;
+        let second = pump.enqueue(key(2), target(2), BTreeMap::new())?;
         assert!(second > first);
         assert!(
-            pump.enqueue("resource.removed", target(3), BTreeMap::new())
+            pump.enqueue(key(3), target(3), BTreeMap::new())
                 .expect_err("full queue must fail")
                 .to_string()
                 .contains("capacity")
@@ -164,14 +177,11 @@ mod tests {
     #[test]
     fn shutdown_closes_producers_and_reload_reopens_them() -> Result<(), BridgeInstallError> {
         let pump = EventPump::with_capacity(2);
-        let _sequence = pump.enqueue("resource.added", target(1), BTreeMap::new())?;
+        let _sequence = pump.enqueue(key(1), target(1), BTreeMap::new())?;
         assert_eq!(pump.close()?, 1);
-        assert!(
-            pump.enqueue("resource.added", target(1), BTreeMap::new())
-                .is_err()
-        );
+        assert!(pump.enqueue(key(1), target(1), BTreeMap::new()).is_err());
         assert_eq!(pump.reset()?, 0);
-        let _sequence = pump.enqueue("resource.added", target(1), BTreeMap::new())?;
+        let _sequence = pump.enqueue(key(1), target(1), BTreeMap::new())?;
         Ok(())
     }
 }

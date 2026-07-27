@@ -6,25 +6,35 @@ publish = false
 license.workspace = true
 description = "In-process Node.js binding for nwnrs Visual Studio Code tooling"
 
+[features]
+contract-codegen = ["nwnrs-types/typescript", "dep:ts-rs"]
+
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-napi = { version = "3", default-features = false, features = ["napi8", "dyn-symbols"] }
+napi = { version = "3", default-features = false, features = ["napi8", "dyn-symbols", "serde-json"] }
 napi-derive = "3"
-nwnrs = { path = "../nwnrs", default-features = false, features = ["tooling"] }
+nwnrs-language = { path = "../language" }
 nwnrs-nwscript = { path = "../nwscript" }
 nwnrs-nwpkg = { path = "../nwpkg" }
+nwnrs-runtime = { path = "../runtime" }
 nwnrs-types = { path = "../types" }
 base64.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 toml.workspace = true
+ts-rs = { workspace = true, optional = true }
 
 [build-dependencies]
 napi-build = "2"
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 
 [lints]
 workspace = true
+
+[[bin]]
+name = "generate_contracts"
+required-features = ["contract-codegen"]

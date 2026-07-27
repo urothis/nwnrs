@@ -5,7 +5,7 @@ use std::{
     path::Path,
 };
 
-use nwnrs_types::resman::prelude::*;
+use nwnrs_types::{encoding::NwnTextContext, resman::prelude::*};
 use tracing::instrument;
 
 use crate::mdl::{
@@ -41,7 +41,10 @@ pub enum ModelEncoding {
 /// # Examples
 ///
 /// ```
-/// let parsed = nwnrs_types::mdl::parse_model_bytes(b"beginmodelgeom demo\nendmodelgeom demo\ndonemodel demo\n")?;
+/// let parsed = nwnrs_types::mdl::parse_model_bytes(
+///     b"beginmodelgeom demo\nendmodelgeom demo\ndonemodel demo\n",
+///     nwnrs_types::encoding::NwnTextContext::english(),
+/// )?;
 /// assert!(matches!(parsed, nwnrs_types::mdl::ParsedModel::Ascii(_)));
 /// # Ok::<(), nwnrs_types::mdl::ModelError>(())
 /// ```
@@ -63,12 +66,15 @@ impl ParsedModel {
     /// # Examples
     ///
     /// ```no_run
-    /// let parsed = nwnrs_types::mdl::ParsedModel::from_file("model.mdl")?;
+    /// let parsed = nwnrs_types::mdl::ParsedModel::from_file(
+    ///     "model.mdl",
+    ///     nwnrs_types::encoding::NwnTextContext::english(),
+    /// )?;
     /// # Ok::<(), nwnrs_types::mdl::ModelError>(())
     /// ```
-    pub fn from_file(path: impl AsRef<Path>) -> ModelResult<Self> {
+    pub fn from_file(path: impl AsRef<Path>, context: NwnTextContext) -> ModelResult<Self> {
         let mut file = File::open(path.as_ref())?;
-        read_parsed_model(&mut file)
+        read_parsed_model(&mut file, context)
     }
 
     /// Reads a parsed MDL payload from a [`Res`].
@@ -83,17 +89,25 @@ impl ParsedModel {
     /// ```no_run
     /// # use nwnrs_types::resman::{CachePolicy, Res};
     /// fn parse(res: &Res) -> nwnrs_types::mdl::ModelResult<nwnrs_types::mdl::ParsedModel> {
-    ///     nwnrs_types::mdl::ParsedModel::from_res(res, CachePolicy::Use)
+    ///     nwnrs_types::mdl::ParsedModel::from_res(
+    ///         res,
+    ///         CachePolicy::Use,
+    ///         nwnrs_types::encoding::NwnTextContext::english(),
+    ///     )
     /// }
     /// ```
-    pub fn from_res(res: &Res, cache_policy: CachePolicy) -> ModelResult<Self> {
+    pub fn from_res(
+        res: &Res,
+        cache_policy: CachePolicy,
+        context: NwnTextContext,
+    ) -> ModelResult<Self> {
         if res.resref().res_type() != MODEL_RES_TYPE {
             return Err(ModelError::msg(format!(
                 "expected mdl resource, got {}",
                 res.resref()
             )));
         }
-        parse_model_bytes(&res.read_all(cache_policy)?)
+        parse_model_bytes(&res.read_all(cache_policy)?, context)
     }
 }
 
@@ -1064,8 +1078,8 @@ impl Model {
     /// # Errors
     ///
     /// Returns [`ModelError`] if the payload cannot be parsed.
-    pub fn parse_parsed(&self) -> ModelResult<ParsedModel> {
-        parse_model_bytes(self.bytes())
+    pub fn parse_parsed(&self, context: NwnTextContext) -> ModelResult<ParsedModel> {
+        parse_model_bytes(self.bytes(), context)
     }
 
     /// Parses the raw payload as a compiled binary model.
@@ -1105,14 +1119,17 @@ pub fn detect_model_encoding(bytes: &[u8]) -> ModelEncoding {
 /// # Examples
 ///
 /// ```
-/// let parsed = nwnrs_types::mdl::parse_model_bytes(b"beginmodelgeom demo\nendmodelgeom demo\ndonemodel demo\n")?;
+/// let parsed = nwnrs_types::mdl::parse_model_bytes(
+///     b"beginmodelgeom demo\nendmodelgeom demo\ndonemodel demo\n",
+///     nwnrs_types::encoding::NwnTextContext::english(),
+/// )?;
 /// assert!(matches!(parsed, nwnrs_types::mdl::ParsedModel::Ascii(_)));
 /// # Ok::<(), nwnrs_types::mdl::ModelError>(())
 /// ```
-pub fn parse_model_bytes(bytes: &[u8]) -> ModelResult<ParsedModel> {
+pub fn parse_model_bytes(bytes: &[u8], context: NwnTextContext) -> ModelResult<ParsedModel> {
     match detect_model_encoding(bytes) {
         ModelEncoding::Ascii => Ok(ParsedModel::Ascii(
-            crate::mdl::ascii::parse_ascii_model_bytes(bytes)?,
+            crate::mdl::ascii::parse_ascii_model_bytes(bytes, context)?,
         )),
         ModelEncoding::Compiled => Ok(ParsedModel::Compiled(parse_binary_model_bytes(bytes)?)),
     }
@@ -1128,15 +1145,21 @@ pub fn parse_model_bytes(bytes: &[u8]) -> ModelResult<ParsedModel> {
 ///
 /// ```
 /// let mut source = b"beginmodelgeom demo\nendmodelgeom demo\ndonemodel demo\n".as_slice();
-/// let parsed = nwnrs_types::mdl::read_parsed_model(&mut source)?;
+/// let parsed = nwnrs_types::mdl::read_parsed_model(
+///     &mut source,
+///     nwnrs_types::encoding::NwnTextContext::english(),
+/// )?;
 /// assert!(matches!(parsed, nwnrs_types::mdl::ParsedModel::Ascii(_)));
 /// # Ok::<(), nwnrs_types::mdl::ModelError>(())
 /// ```
 #[instrument(level = "debug", skip_all, err)]
-pub fn read_parsed_model<R: Read>(reader: &mut R) -> ModelResult<ParsedModel> {
+pub fn read_parsed_model<R: Read>(
+    reader: &mut R,
+    context: NwnTextContext,
+) -> ModelResult<ParsedModel> {
     let mut bytes = Vec::new();
     reader.read_to_end(&mut bytes)?;
-    parse_model_bytes(&bytes)
+    parse_model_bytes(&bytes, context)
 }
 
 /// Writes a parsed MDL payload.
@@ -1150,14 +1173,22 @@ pub fn read_parsed_model<R: Read>(reader: &mut R) -> ModelResult<ParsedModel> {
 /// ```
 /// let ascii = nwnrs_types::mdl::parse_ascii_model("beginmodelgeom demo\nendmodelgeom demo\ndonemodel demo\n")?;
 /// let mut bytes = Vec::new();
-/// nwnrs_types::mdl::write_parsed_model(&mut bytes, &nwnrs_types::mdl::ParsedModel::Ascii(ascii))?;
+/// nwnrs_types::mdl::write_parsed_model(
+///     &mut bytes,
+///     &nwnrs_types::mdl::ParsedModel::Ascii(ascii),
+///     nwnrs_types::encoding::NwnTextContext::english(),
+/// )?;
 /// assert!(!bytes.is_empty());
 /// # Ok::<(), nwnrs_types::mdl::ModelError>(())
 /// ```
 #[instrument(level = "debug", skip_all, err)]
-pub fn write_parsed_model<W: Write>(writer: &mut W, model: &ParsedModel) -> ModelResult<()> {
+pub fn write_parsed_model<W: Write>(
+    writer: &mut W,
+    model: &ParsedModel,
+    context: NwnTextContext,
+) -> ModelResult<()> {
     match model {
-        ParsedModel::Ascii(model) => crate::mdl::write_ascii_model(writer, model),
+        ParsedModel::Ascii(model) => crate::mdl::write_ascii_model(writer, model, context),
         ParsedModel::Compiled(model) => write_original_binary_model(writer, model),
     }
 }
@@ -2719,9 +2750,12 @@ fn trimmed_cstring(bytes: &[u8]) -> Option<String> {
         None
     } else {
         Some(
-            crate::mdl::ascii::text::decode_model_text(&trimmed)
-                .trim()
-                .to_string(),
+            crate::mdl::ascii::text::decode_model_text(
+                &trimmed,
+                nwnrs_types::encoding::NwnTextContext::english(),
+            )
+            .trim()
+            .to_string(),
         )
     }
 }

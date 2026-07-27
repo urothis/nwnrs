@@ -16,13 +16,16 @@ mod hir;
 mod int_literal;
 mod langspec;
 mod lexer;
+mod limits;
 mod macro_expansion;
 mod ncs;
 mod ndb;
 mod nwasm;
 mod opt;
 mod parser;
+mod path;
 mod preprocess;
+mod recovery;
 mod script_string;
 mod sema;
 mod session;
@@ -41,12 +44,15 @@ pub use hash::*;
 pub use hir::*;
 pub use langspec::*;
 pub use lexer::*;
+pub use limits::*;
 pub use macro_expansion::*;
 pub use ncs::*;
 pub use ndb::*;
 pub use nwasm::*;
 pub use parser::*;
+pub use path::*;
 pub use preprocess::*;
+pub use recovery::*;
 pub use script_string::*;
 pub use sema::*;
 pub use session::*;
@@ -88,15 +94,15 @@ pub mod prelude {
         VmSituation, VmSourceLocation, VmStepOutcome, VmTraceEvent, VmTraceHook, VmValue,
         WhileStmt, analyze_script, analyze_script_with_options, assemble_ncs_bytes,
         assemble_ncs_text, collect_declarative_macros, collect_nwscript_macros,
-        compile_file_with_host, compile_hir_to_ncs, compile_paths, compile_script,
-        compile_script_with_source_map, compile_source_bundle, compile_source_bundle_with_macros,
-        decode_ncs_header, decode_ncs_instructions, disassemble_ncs, encode_ncs_instructions,
-        expand_bang_macros, expand_source_macros, expand_source_macros_traced,
-        is_nwnrs_events_attribute, lex_bytes, lex_source, lex_text, load_langspec,
-        load_source_bundle, lower_to_hir, nwscript_string_hash, nwscript_string_hash_bytes,
-        parse_bytes, parse_langspec, parse_langspec_bytes, parse_langspec_from_source_map,
-        parse_ndb_str, parse_resolved_script, parse_source, parse_source_bundle,
-        parse_source_bundle_with_macros, parse_text, parse_tokens, preprocess_source_bundle,
+        collect_source_bundle_macros, compile_file_with_host, compile_hir_to_ncs, compile_paths,
+        compile_script, compile_script_with_source_map, compile_source_bundle,
+        compile_source_bundle_with_macros, decode_ncs_header, decode_ncs_instructions,
+        disassemble_ncs, encode_ncs_instructions, expand_bang_macros, expand_source_macros,
+        expand_source_macros_traced, is_nwnrs_event_attribute, lex_bytes, lex_source, lex_text,
+        load_langspec, load_source_bundle, lower_to_hir, nwscript_string_hash_bytes, parse_bytes,
+        parse_langspec, parse_langspec_bytes, parse_langspec_from_source_map, parse_ndb_str,
+        parse_resolved_script, parse_source, parse_source_bundle, parse_source_bundle_with_macros,
+        parse_text, parse_tokens, preprocess_source_bundle,
         preprocess_source_bundle_with_macro_trace, preprocess_source_bundle_with_macros,
         quote_nwscript, read_ndb, register_compiler_macros, register_nwscript_macro,
         render_disassembly_lines, render_ncs_disassembly, render_ncs_disassembly_with_ndb,

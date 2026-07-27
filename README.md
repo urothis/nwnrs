@@ -113,6 +113,21 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all -- --check
 ```
 
+The TypeScript tooling is also managed from the repository root as an npm
+workspace. Install it once with `npm install`; the root commands validate and
+package every applicable workspace member:
+
+```bash
+npm run check
+npm test
+npm run build:native
+npm run package:vscode -- --target darwin-arm64 --out nwnrs-0.0.2.vsix
+```
+
+The VS Code extension remains independently packageable, but its compiler,
+typings, and packaging tools are declared once in the private root
+[`package.json`](./package.json).
+
 ## License
 
 [`GPL-3.0-only`](./LICENSE)

@@ -1,22 +1,40 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { LanguageWorkerClient } from './language-worker-client';
+import {
+  LanguageWorkerClient,
+  type NativeLanguageResponse,
+  type NativeLanguageRequest,
+  type WorkerLanguageMethod,
+} from './language-worker-client';
+import type { WorkerProgressEvent } from './worker-client';
 import { ResourceCustomEditorProvider } from './resource-custom-editor';
 import { NwnrsSidebarController } from './sidebar';
+import {
+  buildEventCatalogDocument,
+  eventHoverMarkdown,
+  eventRouteKey,
+  type EventCatalogDocument,
+} from './event-catalog';
 import type {
-  NativeCheckDiagnostic,
   NativeDefinition,
   NativeDocumentSymbol,
-  NativeLanguageResponseMap,
+  NativeEventCatalogEntry,
+  NativeEventPositionRequest,
+  NativeEventSymbol,
+  NativeDependencyPlan,
+  NativeDependencySource,
+  NativeDependencyStatus,
   NativeReference,
-} from './native-types';
+  NativeLanguageDiagnostic,
+  NativePositionRequest,
+  NativeRange,
+} from './generated/native';
 import {
   buildCheckRequest,
   buildDefinitionRequest,
   buildDocumentSymbolsRequest,
   diagnosticRange,
-  findProjectRoot,
   formatHoverDocumentation,
   isNssPath,
   nativeBindingPath,
@@ -25,8 +43,8 @@ import {
   type NativeCheckRequest,
   type NativeDefinitionRequest,
   type NativeDocumentSymbolsRequest,
-  type SourceOverlay,
 } from './compiler';
+import { unrepresentableUtf16Ranges } from './nwscript-encoding';
 
 interface CompilerConfiguration {
   readonly includeDirectories: string[];
@@ -35,6 +53,8 @@ interface CompilerConfiguration {
   readonly userPath: string;
   readonly language: string;
   readonly loadOvr: boolean;
+  readonly gitExecutable: string;
+  readonly packageCache: string;
   readonly maxIncludeDepth: number;
   readonly maxDiagnosticsPerFile: number;
   readonly noEntrypointCheck: boolean;
@@ -51,7 +71,6 @@ interface CompilerRunRequest {
   readonly cwd: string;
   readonly sourceUri: vscode.Uri;
   readonly recurse: boolean;
-  readonly overlays: readonly SourceOverlay[];
   readonly revealFailure: boolean;
   readonly force: boolean;
 }
@@ -92,8 +111,11 @@ type NwnrsCallHierarchyItem = vscode.CallHierarchyItem & {
 };
 
 const DIAGNOSTIC_OWNER = 'nwnrs';
+const NWNSCRIPT_ENCODING = 'windows1252';
+const EVENT_CATALOG_URI = vscode.Uri.parse('nwnrs-events:/catalog.md');
+const DEPENDENCY_SOURCE_SCHEME = 'nwnrs-package';
 const SEMANTIC_TOKEN_TYPES = [
-  'function', 'parameter', 'variable', 'property', 'type', 'enum', 'enumMember', 'macro',
+  'function', 'parameter', 'variable', 'property', 'type', 'enum', 'enumMember', 'macro', 'event',
 ];
 const SEMANTIC_TOKEN_MODIFIERS = ['declaration', 'readonly', 'defaultLibrary'];
 const SEMANTIC_LEGEND = new vscode.SemanticTokensLegend(
@@ -105,6 +127,7 @@ class CompilerController {
   public readonly output: vscode.OutputChannel;
   private readonly context: vscode.ExtensionContext;
   private readonly diagnostics: vscode.DiagnosticCollection;
+  private readonly encodingDiagnostics: vscode.DiagnosticCollection;
   private readonly manifestDiagnostics: vscode.DiagnosticCollection;
   private readonly status: vscode.StatusBarItem;
   private readonly languageWorker: LanguageWorkerClient;
@@ -124,10 +147,14 @@ class CompilerController {
   private readonly virtualDocuments: Map<string, string>;
   private readonly externalWatchers: Map<string, vscode.FileSystemWatcher[]>;
   private readonly watchRootRequests: Set<string>;
+  private readonly encodingWarnings: Set<string>;
+  private eventCatalogPromise: Promise<readonly NativeEventCatalogEntry[]> | undefined;
+  private eventCatalogDocument: EventCatalogDocument | undefined;
 
   public constructor(context: vscode.ExtensionContext) {
     this.context = context;
     this.diagnostics = vscode.languages.createDiagnosticCollection(DIAGNOSTIC_OWNER);
+    this.encodingDiagnostics = vscode.languages.createDiagnosticCollection('nwnrs encoding');
     this.manifestDiagnostics = vscode.languages.createDiagnosticCollection('nwnrs nwpkg');
     this.output = vscode.window.createOutputChannel('nwnrs Compiler');
     this.status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 20);
@@ -147,14 +174,28 @@ class CompilerController {
     this.virtualDocuments = new Map();
     this.externalWatchers = new Map();
     this.watchRootRequests = new Set();
+    this.encodingWarnings = new Set();
     this.languageWorker = new LanguageWorkerClient(
       path.join(__dirname, 'compiler-worker.js'),
       nativeBindingPath(context.extensionPath),
       this.output,
     );
+    this.languageWorker.onReady(() => {
+      void this.synchronizeAllOpenDocuments();
+    });
+    for (const folder of vscode.workspace.workspaceFolders ?? []) {
+      this.languageWorker.addWorkspace(folder.uri.fsPath);
+    }
+    for (const document of vscode.workspace.textDocuments) {
+      if (document.uri.scheme === 'file'
+        && (this.isNwScriptDocument(document) || this.isNwpkgDocument(document))) {
+        void this.synchronizeDocument(document, 'open');
+      }
+    }
 
     context.subscriptions.push(
       this.diagnostics,
+      this.encodingDiagnostics,
       this.manifestDiagnostics,
       this.output,
       this.status,
@@ -179,6 +220,20 @@ class CompilerController {
         await this.showStatusMenu();
       }),
       vscode.commands.registerCommand('nwnrs.showCompilerOutput', () => this.output.show(true)),
+      vscode.commands.registerCommand(
+        'nwnrs.nwpkg.fetchDependencies',
+        (manifestPath?: string, dependency?: string) =>
+          this.fetchPackageDependencies(manifestPath, dependency),
+      ),
+      vscode.commands.registerCommand(
+        'nwnrs.nwpkg.updateDependencies',
+        (manifestPath?: string, dependency?: string) =>
+          this.updatePackageDependencies(manifestPath, dependency),
+      ),
+      vscode.commands.registerCommand(
+        'nwnrs.nwpkg.cleanCache',
+        () => this.cleanPackageDependencyCache(),
+      ),
       vscode.workspace.onDidSaveTextDocument((document) => {
         if (this.isNwpkgDocument(document)) {
           this.invalidateChecks(document);
@@ -195,6 +250,17 @@ class CompilerController {
         }
       }),
       vscode.workspace.onDidChangeTextDocument((event) => {
+        if (event.document.uri.scheme === 'file'
+          && (this.isNwScriptDocument(event.document) || this.isNwpkgDocument(event.document))) {
+          void this.synchronizeDocument(event.document, 'update').then((valid) => {
+            if (!valid || !this.isNwScriptDocument(event.document)) return;
+            this.invalidateChecks(event.document);
+            const config = vscode.workspace.getConfiguration('nwnrs', event.document.uri);
+            if (config.get('checkOnChange', true)) {
+              this.scheduleDocument(event.document);
+            }
+          });
+        }
         if (this.isNwpkgDocument(event.document)) {
           this.invalidateChecks(event.document);
           this.scheduleManifest(event.document);
@@ -203,13 +269,19 @@ class CompilerController {
         if (!this.isNwScriptDocument(event.document)) {
           return;
         }
-        this.invalidateChecks(event.document);
-        const config = vscode.workspace.getConfiguration('nwnrs', event.document.uri);
-        if (config.get('checkOnChange', true)) {
-          this.scheduleDocument(event.document);
-        }
       }),
       vscode.workspace.onDidOpenTextDocument((document) => {
+        if (document.uri.scheme === 'file'
+          && (this.isNwScriptDocument(document) || this.isNwpkgDocument(document))) {
+          void this.synchronizeDocument(document, 'open').then((valid) => {
+            if (!valid || !this.isNwScriptDocument(document)) return;
+            this.invalidateChecks(document);
+            const config = vscode.workspace.getConfiguration('nwnrs', document.uri);
+            if (config.get('checkOnOpen', true)) {
+              this.scheduleDocument(document);
+            }
+          });
+        }
         if (this.isNwpkgDocument(document)) {
           this.scheduleManifest(document);
           return;
@@ -217,13 +289,14 @@ class CompilerController {
         if (!this.isNwScriptDocument(document)) {
           return;
         }
-        this.invalidateChecks(document);
-        const config = vscode.workspace.getConfiguration('nwnrs', document.uri);
-        if (config.get('checkOnOpen', true)) {
-          this.scheduleDocument(document);
-        }
       }),
       vscode.workspace.onDidCloseTextDocument((document) => {
+        if (document.uri.scheme === 'file'
+          && (this.isNwScriptDocument(document) || this.isNwpkgDocument(document))) {
+          this.languageWorker.closeDocument(document.uri.fsPath);
+          this.encodingWarnings.delete(document.uri.toString());
+          this.encodingDiagnostics.delete(document.uri);
+        }
         if (this.isNwpkgDocument(document)) {
           const timer = this.manifestTimers.get(document.uri.toString());
           if (timer) {
@@ -255,6 +328,14 @@ class CompilerController {
           }
         }
       }),
+      vscode.workspace.onDidChangeWorkspaceFolders((event) => {
+        for (const folder of event.removed) {
+          this.languageWorker.removeWorkspace(folder.uri.fsPath);
+        }
+        for (const folder of event.added) {
+          this.languageWorker.addWorkspace(folder.uri.fsPath);
+        }
+      }),
       vscode.languages.registerDefinitionProvider(
         [
           { language: 'nwscript', scheme: 'file' },
@@ -264,6 +345,32 @@ class CompilerController {
           provideDefinition: (document, position, token) =>
             this.provideDefinition(document, position, token),
         },
+      ),
+      vscode.languages.registerCompletionItemProvider(
+        [
+          { language: 'nwscript', scheme: 'file' },
+          { language: 'nwscript', scheme: 'nwnrs-game' },
+        ],
+        {
+          provideCompletionItems: (document, position, token) =>
+            this.provideNwScriptCompletions(document, position, token),
+        },
+        '(',
+        ',',
+        ':',
+        '.',
+      ),
+      vscode.languages.registerSignatureHelpProvider(
+        [
+          { language: 'nwscript', scheme: 'file' },
+          { language: 'nwscript', scheme: 'nwnrs-game' },
+        ],
+        {
+          provideSignatureHelp: (document, position, token) =>
+            this.provideSignatureHelp(document, position, token),
+        },
+        '(',
+        ',',
       ),
       vscode.languages.registerReferenceProvider(
         [
@@ -326,6 +433,14 @@ class CompilerController {
         },
         { providedCodeActionKinds: [vscode.CodeActionKind.QuickFix] },
       ),
+      vscode.languages.registerCodeActionsProvider(
+        { language: 'nwpkg', scheme: 'file' },
+        {
+          provideCodeActions: (document, _range, actionContext) =>
+            this.provideManifestCodeActions(document, actionContext),
+        },
+        { providedCodeActionKinds: [vscode.CodeActionKind.QuickFix] },
+      ),
       vscode.languages.registerDocumentSemanticTokensProvider(
         [
           { language: 'nwscript', scheme: 'file' },
@@ -349,23 +464,41 @@ class CompilerController {
       ),
       vscode.languages.registerCompletionItemProvider(
         { language: 'nwpkg', scheme: 'file' },
-        { provideCompletionItems: (document, position) => nwpkgCompletions(document, position) },
+        {
+          provideCompletionItems: (document, position, token) =>
+            this.provideManifestCompletions(document, position, token),
+        },
         '[', '.', '/', '"',
       ),
       vscode.languages.registerHoverProvider(
         { language: 'nwpkg', scheme: 'file' },
-        { provideHover: (document, position) => nwpkgHover(document, position) },
+        {
+          provideHover: (document, position, token) =>
+            this.provideManifestHover(document, position, token),
+        },
       ),
       vscode.languages.registerDefinitionProvider(
         { language: 'nwpkg', scheme: 'file' },
-        { provideDefinition: (document, position) => nwpkgDefinition(document, position) },
+        {
+          provideDefinition: (document, position, token) =>
+            this.provideManifestDefinition(document, position, token),
+        },
       ),
       vscode.languages.registerDocumentSymbolProvider(
         { language: 'nwpkg', scheme: 'file' },
-        { provideDocumentSymbols: (document) => nwpkgDocumentSymbols(document) },
+        {
+          provideDocumentSymbols: (document, token) =>
+            this.provideManifestSymbols(document, token),
+        },
       ),
       vscode.workspace.registerTextDocumentContentProvider('nwnrs-game', {
         provideTextDocumentContent: (uri, token) => this.provideVirtualSource(uri, token),
+      }),
+      vscode.workspace.registerTextDocumentContentProvider('nwnrs-events', {
+        provideTextDocumentContent: (_uri, token) => this.provideEventCatalogDocument(token),
+      }),
+      vscode.workspace.registerTextDocumentContentProvider(DEPENDENCY_SOURCE_SCHEME, {
+        provideTextDocumentContent: (uri, token) => this.provideDependencySource(uri, token),
       }),
     );
 
@@ -427,7 +560,6 @@ class CompilerController {
     const configuration = this.compilerConfiguration(representative, projectRoot);
     const request = buildDocumentSymbolsRequest(representative.fsPath, {
       projectRoot,
-      overlays: this.sourceOverlays(projectRoot),
       ...configuration,
     });
     const previousText = this.status.text;
@@ -450,11 +582,7 @@ class CompilerController {
         this.output.appendLine(`nwnrs project-index warning: ${warning}`);
       }
       for (const document of index?.documents || []) {
-        this.rememberPhysicalDocument(document.path, {
-          ...request,
-          source_path: document.path,
-          overlays: [],
-        });
+        this.rememberPhysicalDocument(document.path, request);
       }
       const count = index?.documents?.length || 0;
       this.output.appendLine(`[index] ${projectRoot}: ${count} document(s)`);
@@ -481,12 +609,12 @@ class CompilerController {
     }
     if (document.uri.scheme === 'nwnrs-game') {
       const request = this.virtualDocumentRequests.get(document.uri.toString());
-      if (!request?.project_root || !request.source_path) {
+      if (!request?.projectRoot || !request.sourcePath) {
         return undefined;
       }
       return {
-        projectRoot: path.resolve(request.project_root),
-        representative: vscode.Uri.file(request.source_path),
+        projectRoot: path.resolve(request.projectRoot),
+        representative: vscode.Uri.file(request.sourcePath),
       };
     }
     if (document.uri.scheme !== 'file') {
@@ -494,16 +622,138 @@ class CompilerController {
     }
     const projectRoot = this.isNwpkgDocument(document)
       ? path.dirname(document.uri.fsPath)
-      : findProjectRoot(document.uri.fsPath);
+      : await this.resolveProjectRoot(document.uri.fsPath);
     if (this.isNwScriptDocument(document)) {
       return { projectRoot, representative: document.uri };
     }
-    const sources = await vscode.workspace.findFiles(
-      new vscode.RelativePattern(projectRoot, '**/*.nss'),
-      '**/{.git,node_modules,target}/**',
-      1,
+    return this.isNwpkgDocument(document)
+      ? { projectRoot, representative: vscode.Uri.file(projectRoot) }
+      : undefined;
+  }
+
+  private async synchronizeAllOpenDocuments(): Promise<void> {
+    for (const folder of vscode.workspace.workspaceFolders ?? []) {
+      this.languageWorker.addWorkspace(folder.uri.fsPath);
+    }
+    await Promise.all(vscode.workspace.textDocuments.map(async (document) => {
+      if (document.uri.scheme === 'file'
+        && (this.isNwScriptDocument(document) || this.isNwpkgDocument(document))) {
+        await this.synchronizeDocument(document, 'open');
+      }
+    }));
+  }
+
+  private async synchronizeDocument(
+    document: vscode.TextDocument,
+    operation: 'open' | 'update',
+  ): Promise<boolean> {
+    if (document.uri.scheme !== 'file') return false;
+    const version = document.version;
+    if (this.isNwpkgDocument(document)) {
+      const bytes = new TextEncoder().encode(document.getText());
+      if (document.version !== version) return false;
+      if (operation === 'open') {
+        this.languageWorker.openDocument(document.uri.fsPath, version, bytes);
+      } else {
+        this.languageWorker.updateDocument(document.uri.fsPath, version, bytes);
+      }
+      return true;
+    }
+    if (!this.isNwScriptDocument(document)) return false;
+
+    if (document.encoding !== NWNSCRIPT_ENCODING) {
+      this.suspendDocumentAnalysis(document);
+      this.languageWorker.invalidateDocument(document.uri.fsPath, version);
+      await this.warnIncorrectNwScriptEncoding(document);
+      return false;
+    }
+
+    const source = document.getText();
+    const bytes = await vscode.workspace.encode(source, {
+      encoding: NWNSCRIPT_ENCODING,
+    });
+    const decoded = await vscode.workspace.decode(bytes, {
+      encoding: NWNSCRIPT_ENCODING,
+    });
+    if (document.version !== version) return false;
+
+    if (decoded !== source) {
+      this.suspendDocumentAnalysis(document);
+      this.encodingDiagnostics.set(
+        document.uri,
+        unrepresentableEncodingDiagnostics(document, source, decoded),
+      );
+      this.languageWorker.invalidateDocument(document.uri.fsPath, version);
+      return false;
+    }
+
+    this.encodingDiagnostics.delete(document.uri);
+    this.encodingWarnings.delete(document.uri.toString());
+    if (operation === 'open') {
+      this.languageWorker.openDocument(document.uri.fsPath, version, bytes);
+    } else {
+      this.languageWorker.updateDocument(document.uri.fsPath, version, bytes);
+    }
+    return true;
+  }
+
+  private suspendDocumentAnalysis(document: vscode.TextDocument): void {
+    const key = this.documentKey(document);
+    const timer = this.timers.get(key);
+    if (timer) {
+      clearTimeout(timer);
+      this.timers.delete(key);
+    }
+    const active = this.activeRuns.get(key);
+    if (active) {
+      active.cancellation.cancel();
+      this.activeRuns.delete(key);
+    }
+    this.changeEpoch += 1;
+    this.diagnostics.delete(document.uri);
+    this.runDiagnostics.delete(key);
+  }
+
+  private async warnIncorrectNwScriptEncoding(document: vscode.TextDocument): Promise<void> {
+    const key = document.uri.toString();
+    if (this.encodingWarnings.has(key)) return;
+    this.encodingWarnings.add(key);
+    const action = 'Reopen as Windows-1252';
+    const selected = await vscode.window.showWarningMessage(
+      `NWScript files must use Windows-1252. ${path.basename(document.uri.fsPath)} is open as `
+      + `${document.encoding}; nwnrs language features are suspended.`,
+      action,
     );
-    return sources[0] ? { projectRoot, representative: sources[0] } : undefined;
+    if (selected !== action) return;
+
+    if (document.isDirty) {
+      const confirmed = await vscode.window.showWarningMessage(
+        'Reopening with Windows-1252 must discard the unsaved edits in this document.',
+        { modal: true },
+        'Discard Unsaved Edits',
+      );
+      if (confirmed !== 'Discard Unsaved Edits') return;
+      await vscode.commands.executeCommand('workbench.action.files.revert', document.uri);
+      const current = vscode.workspace.textDocuments.find(
+        (candidate) => candidate.uri.toString() === key,
+      );
+      if (current?.isDirty) {
+        void vscode.window.showErrorMessage(
+          'Could not discard the unsaved NWScript edits; the encoding was not changed.',
+        );
+        return;
+      }
+    }
+
+    try {
+      await vscode.workspace.openTextDocument(document.uri, {
+        encoding: NWNSCRIPT_ENCODING,
+      });
+    } catch (error) {
+      void vscode.window.showErrorMessage(
+        `Could not reopen ${path.basename(document.uri.fsPath)} as Windows-1252: ${String(error)}`,
+      );
+    }
   }
 
   async restartLanguageService() {
@@ -587,26 +837,31 @@ class CompilerController {
     const sequence = ++this.sequence;
     this.manifestChecks.set(key, sequence);
     try {
-      const response = await this.invokeNative('checkNwpkg', {
+      const configuration = this.compilerConfiguration(
+        document.uri,
+        path.dirname(document.uri.fsPath),
+      );
+      const response = await this.invokeNative('manifestDiagnostics', {
         path: document.uri.fsPath,
-        contents: document.getText(),
+        gitExecutable: configuration.gitExecutable || undefined,
+        packageCache: configuration.packageCache || undefined,
       });
       if (this.manifestChecks.get(key) !== sequence) {
         return;
       }
-      const diagnostics = (response?.diagnostics || []).map((record) => {
-        const range = diagnosticRange(record);
+      const diagnostics = response.map((record) => {
         const diagnostic = new vscode.Diagnostic(
           new vscode.Range(
-            range.startLine,
-            range.startColumn,
-            range.endLine,
-            range.endColumn,
+            record.range.start.line,
+            record.range.start.character,
+            record.range.end.line,
+            record.range.end.character,
           ),
           record.message,
           severity(record.severity),
         );
         diagnostic.source = 'nwnrs nwpkg';
+        if (record.code !== undefined) diagnostic.code = record.code;
         return diagnostic;
       });
       this.manifestDiagnostics.set(document.uri, diagnostics);
@@ -618,6 +873,413 @@ class CompilerController {
       this.manifestChecks.delete(key);
       this.output.appendLine(`nwnrs nwpkg validation failure: ${String(error)}`);
     }
+  }
+
+  async listPackageDependencies(manifestPath: string): Promise<readonly NativeDependencyStatus[]> {
+    return this.invokeNative('listPackageDependencies', this.dependencyRequest(manifestPath));
+  }
+
+  async listPackageDependencySources(
+    manifestPath: string,
+    route: string,
+    token?: vscode.CancellationToken,
+  ): Promise<readonly NativeDependencySource[]> {
+    return this.invokeNative(
+      'listPackageDependencySources',
+      this.dependencySourceRequest(manifestPath, route),
+      token,
+    );
+  }
+
+  dependencySourceUri(
+    manifestPath: string,
+    route: string,
+    relativePath: string,
+  ): vscode.Uri {
+    const query = new URLSearchParams({
+      manifest: manifestPath,
+      route,
+      source: relativePath,
+    });
+    return vscode.Uri.from({
+      scheme: DEPENDENCY_SOURCE_SCHEME,
+      path: `/${route}/${relativePath}`,
+      query: query.toString(),
+    });
+  }
+
+  async provideDependencySource(
+    uri: vscode.Uri,
+    token: vscode.CancellationToken,
+  ): Promise<string> {
+    const query = new URLSearchParams(uri.query);
+    const manifestPath = query.get('manifest');
+    const route = query.get('route');
+    const relativePath = query.get('source');
+    if (!manifestPath || !route || !relativePath) {
+      throw new Error('Invalid nwnrs dependency source URI.');
+    }
+    const response = await this.invokeNative('readPackageDependencySource', {
+      ...this.dependencySourceRequest(manifestPath, route),
+      relativePath,
+    }, token);
+    return vscode.workspace.decode(response.contents, {
+      encoding: response.encoding,
+    });
+  }
+
+  async fetchPackageDependencies(
+    manifestPath?: string,
+    dependency?: string,
+  ): Promise<readonly NativeDependencyStatus[]> {
+    const manifest = await this.resolveDependencyManifest(manifestPath);
+    if (!manifest || !(await this.prepareDependencyOperation(manifest, 'Fetch'))) return [];
+    const request = this.dependencyRequest(manifest, dependency);
+    try {
+      const result = await vscode.window.withProgress({
+        location: vscode.ProgressLocation.Notification,
+        title: dependency
+          ? `nwnrs: Fetching ${dependency}`
+          : `nwnrs: Fetching dependencies for ${path.basename(path.dirname(manifest))}`,
+        cancellable: true,
+      }, (progress, token) =>
+        this.invokeNative(
+          'fetchPackageDependencies',
+          request,
+          token,
+          (event) => {
+            progress.report({ message: event.message });
+            this.output.appendLine(`[nwpkg:${event.phase}] ${event.message}`);
+          },
+        ));
+      this.output.appendLine(
+        `[nwpkg] fetched ${result.length} dependency package${result.length === 1 ? '' : 's'} for ${manifest}`,
+      );
+      for (const status of result) {
+        const commit = status.commit ? ` @ ${shortCommit(status.commit)}` : '';
+        this.output.appendLine(
+          `  ${status.route}: ${status.sourceKind} ${status.state}${commit}`,
+        );
+      }
+      await this.refreshAfterDependencyChange(manifest);
+      return result;
+    } catch (error) {
+      this.output.appendLine(`[nwpkg] dependency fetch failed: ${String(error)}`);
+      void vscode.window.showErrorMessage(`nwnrs dependency fetch failed: ${String(error)}`);
+      return [];
+    }
+  }
+
+  async updatePackageDependencies(
+    manifestPath?: string,
+    dependency?: string,
+  ): Promise<NativeDependencyPlan | undefined> {
+    const manifest = await this.resolveDependencyManifest(manifestPath);
+    if (!manifest || !(await this.prepareDependencyOperation(manifest, 'Update'))) return undefined;
+    const request = this.dependencyRequest(manifest, dependency);
+    try {
+      const plan = await vscode.window.withProgress({
+        location: vscode.ProgressLocation.Notification,
+        title: dependency
+          ? `nwnrs: Resolving update for ${dependency}`
+          : `nwnrs: Resolving dependency updates for ${path.basename(path.dirname(manifest))}`,
+        cancellable: true,
+      }, (progress, token) =>
+        this.invokeNative(
+          'planPackageDependencyUpdate',
+          request,
+          token,
+          (event) => {
+            progress.report({ message: event.message });
+            this.output.appendLine(`[nwpkg:${event.phase}] ${event.message}`);
+          },
+        ));
+      if (!plan.changes.length) {
+        void vscode.window.showInformationMessage('nwnrs dependencies are already up to date.');
+        return plan;
+      }
+      const lines = plan.changes.map((change) =>
+        `${change.route}: ${shortCommit(change.before)} → ${shortCommit(change.after)}`);
+      this.output.appendLine(`[nwpkg] update preview for ${manifest}`);
+      for (const line of lines) this.output.appendLine(`  ${line}`);
+      const choice = await vscode.window.showInformationMessage(
+        `Apply ${plan.changes.length} dependency update${plan.changes.length === 1 ? '' : 's'}?\n\n`
+          + lines.slice(0, 8).join('\n')
+          + (lines.length > 8 ? `\n…and ${lines.length - 8} more (see nwnrs Compiler output)` : ''),
+        { modal: true },
+        'Apply Update',
+      );
+      if (choice !== 'Apply Update') return plan;
+      await this.invokeNative('applyPackageDependencyUpdate', {
+        manifestPath: manifest,
+        token: plan.token,
+      });
+      this.output.appendLine(`[nwpkg] applied dependency update to ${manifest}`);
+      await this.refreshAfterDependencyChange(manifest);
+      return plan;
+    } catch (error) {
+      this.output.appendLine(`[nwpkg] dependency update failed: ${String(error)}`);
+      void vscode.window.showErrorMessage(`nwnrs dependency update failed: ${String(error)}`);
+      return undefined;
+    }
+  }
+
+  async cleanPackageDependencyCache(): Promise<void> {
+    if (!(await this.ensureTrustedWorkspace())) return;
+    try {
+      const result = await vscode.window.withProgress({
+        location: vscode.ProgressLocation.Notification,
+        title: 'nwnrs: Cleaning unused dependency cache entries',
+        cancellable: true,
+      }, (_progress, token) =>
+        this.invokeNative('cleanPackageDependencyCache', this.dependencyRequest(''), token));
+      this.output.appendLine(`[nwpkg] removed ${result.removed.length} unused cache entries`);
+      void vscode.window.showInformationMessage(
+        `nwnrs removed ${result.removed.length} unused dependency cache entr${result.removed.length === 1 ? 'y' : 'ies'}.`,
+      );
+    } catch (error) {
+      this.output.appendLine(`[nwpkg] cache cleanup failed: ${String(error)}`);
+      void vscode.window.showErrorMessage(`nwnrs cache cleanup failed: ${String(error)}`);
+    }
+  }
+
+  provideManifestCodeActions(
+    document: vscode.TextDocument,
+    actionContext: vscode.CodeActionContext,
+  ): vscode.CodeAction[] {
+    const actions: vscode.CodeAction[] = [];
+    for (const diagnostic of actionContext.diagnostics) {
+      if (diagnostic.source !== 'nwnrs nwpkg' || typeof diagnostic.code !== 'string') continue;
+      if (diagnostic.code === 'nwpkg.dependency.missing') {
+        const action = new vscode.CodeAction(
+          document.isDirty ? 'Save and Fetch nwpkg Dependencies' : 'Fetch nwpkg Dependencies',
+          vscode.CodeActionKind.QuickFix,
+        );
+        action.diagnostics = [diagnostic];
+        action.isPreferred = true;
+        action.command = {
+          command: 'nwnrs.nwpkg.fetchDependencies',
+          title: action.title,
+          arguments: [document.uri.fsPath],
+        };
+        actions.push(action);
+      } else if (diagnostic.code === 'nwpkg.dependency.stale') {
+        const action = new vscode.CodeAction(
+          document.isDirty ? 'Save and Update nwpkg Dependencies' : 'Update nwpkg Dependencies',
+          vscode.CodeActionKind.QuickFix,
+        );
+        action.diagnostics = [diagnostic];
+        action.isPreferred = true;
+        action.command = {
+          command: 'nwnrs.nwpkg.updateDependencies',
+          title: action.title,
+          arguments: [document.uri.fsPath],
+        };
+        actions.push(action);
+      }
+    }
+    return actions;
+  }
+
+  private dependencyRequest(manifestPath: string, dependency?: string) {
+    const uri = manifestPath ? vscode.Uri.file(manifestPath) : undefined;
+    const configuration = vscode.workspace.getConfiguration('nwnrs', uri);
+    const gitPath = configuration.get<string>('git.path', '').trim();
+    const cachePath = configuration.get<string>('packageCachePath', '').trim();
+    return {
+      manifestPath,
+      gitPath: gitPath || undefined,
+      cachePath: cachePath || undefined,
+      dependency,
+    };
+  }
+
+  private dependencySourceRequest(
+    manifestPath: string,
+    route: string,
+  ) {
+    const dependency = this.dependencyRequest(manifestPath);
+    return {
+      manifestPath,
+      route,
+      relativePath: undefined,
+      gitPath: dependency.gitPath,
+      cachePath: dependency.cachePath,
+    };
+  }
+
+  private async resolveDependencyManifest(explicit?: string): Promise<string | undefined> {
+    if (explicit) return explicit;
+    const document = vscode.window.activeTextEditor?.document;
+    if (document && this.isNwpkgDocument(document)) return document.uri.fsPath;
+    const context = await this.currentPackageContext();
+    if (context) return path.join(context.projectRoot, 'nwpkg.toml');
+    void vscode.window.showWarningMessage(
+      'Open a file inside an nwnrs package before managing dependencies.',
+    );
+    return undefined;
+  }
+
+  private async prepareDependencyOperation(
+    manifestPath: string,
+    operation: 'Fetch' | 'Update',
+  ): Promise<boolean> {
+    if (!(await this.ensureTrustedWorkspace())) return false;
+    const document = vscode.workspace.textDocuments.find((candidate) =>
+      candidate.uri.scheme === 'file'
+      && normalizeFsPath(candidate.uri.fsPath) === normalizeFsPath(manifestPath));
+    if (!document?.isDirty) return true;
+    const choice = await vscode.window.showWarningMessage(
+      `${path.basename(manifestPath)} must be saved before resolving dependencies.`,
+      { modal: true },
+      `Save and ${operation}`,
+    );
+    if (choice !== `Save and ${operation}`) return false;
+    return document.save();
+  }
+
+  private async ensureTrustedWorkspace(): Promise<boolean> {
+    if (vscode.workspace.isTrusted) return true;
+    const choice = await vscode.window.showWarningMessage(
+      'nwnrs requires a trusted workspace before invoking system Git.',
+      'Manage Workspace Trust',
+    );
+    if (choice === 'Manage Workspace Trust') {
+      await vscode.commands.executeCommand('workbench.trust.manage');
+    }
+    return false;
+  }
+
+  private async refreshAfterDependencyChange(manifestPath: string): Promise<void> {
+    this.languageWorker.invalidate(path.dirname(manifestPath), path.join(
+      path.dirname(manifestPath),
+      'nwpkg.lock',
+    ));
+    const document = vscode.workspace.textDocuments.find((candidate) =>
+      normalizeFsPath(candidate.uri.fsPath) === normalizeFsPath(manifestPath));
+    if (document) {
+      await this.checkManifest(document);
+    }
+  }
+
+  async provideManifestCompletions(
+    document: vscode.TextDocument,
+    position: vscode.Position,
+    token: vscode.CancellationToken,
+  ): Promise<vscode.CompletionItem[]> {
+    if (token.isCancellationRequested) return [];
+    const records = await this.invokeNative('manifestCompletions', {
+      path: document.uri.fsPath,
+      line: position.line,
+      character: position.character,
+    }, token);
+    return records.map((record) => {
+      const item = new vscode.CompletionItem(
+        record.label,
+        record.kind === 'folder'
+          ? vscode.CompletionItemKind.Folder
+          : record.kind === 'projectKind'
+            ? vscode.CompletionItemKind.EnumMember
+            : record.kind === 'section'
+              ? vscode.CompletionItemKind.Module
+              : vscode.CompletionItemKind.Property,
+      );
+      item.detail = record.detail;
+      item.documentation = new vscode.MarkdownString(record.documentation);
+      item.insertText = new vscode.SnippetString(record.insertText);
+      item.range = new vscode.Range(
+        record.replacement.start.line,
+        record.replacement.start.character,
+        record.replacement.end.line,
+        record.replacement.end.character,
+      );
+      if (record.retrigger) {
+        item.command = {
+          command: 'editor.action.triggerSuggest',
+          title: 'Continue path completion',
+        };
+      }
+      return item;
+    });
+  }
+
+  async provideManifestHover(
+    document: vscode.TextDocument,
+    position: vscode.Position,
+    token: vscode.CancellationToken,
+  ): Promise<vscode.Hover | undefined> {
+    if (token.isCancellationRequested) return undefined;
+    const record = await this.invokeNative('manifestHover', {
+      path: document.uri.fsPath,
+      line: position.line,
+      character: position.character,
+    }, token);
+    if (!record) return undefined;
+    return new vscode.Hover(
+      new vscode.MarkdownString(record.documentation),
+      new vscode.Range(
+        record.range.start.line,
+        record.range.start.character,
+        record.range.end.line,
+        record.range.end.character,
+      ),
+    );
+  }
+
+  async provideManifestDefinition(
+    document: vscode.TextDocument,
+    position: vscode.Position,
+    token: vscode.CancellationToken,
+  ): Promise<vscode.Location | undefined> {
+    if (token.isCancellationRequested) return undefined;
+    const record = await this.invokeNative('manifestDefinition', {
+      path: document.uri.fsPath,
+      line: position.line,
+      character: position.character,
+    }, token);
+    return record
+      ? new vscode.Location(
+        vscode.Uri.file(record.path),
+        new vscode.Range(
+          record.range.start.line,
+          record.range.start.character,
+          record.range.end.line,
+          record.range.end.character,
+        ),
+      )
+      : undefined;
+  }
+
+  async provideManifestSymbols(
+    document: vscode.TextDocument,
+    token: vscode.CancellationToken,
+  ): Promise<vscode.DocumentSymbol[]> {
+    if (token.isCancellationRequested) return [];
+    const records = await this.invokeNative('manifestSymbols', {
+      path: document.uri.fsPath,
+    }, token);
+    const convert = (record: (typeof records)[number]): vscode.DocumentSymbol => {
+      const symbol = new vscode.DocumentSymbol(
+        record.name,
+        record.detail,
+        record.kind === 'section' ? vscode.SymbolKind.Namespace : vscode.SymbolKind.Property,
+        new vscode.Range(
+          record.range.start.line,
+          record.range.start.character,
+          record.range.end.line,
+          record.range.end.character,
+        ),
+        new vscode.Range(
+          record.selection.start.line,
+          record.selection.start.character,
+          record.selection.end.line,
+          record.selection.end.character,
+        ),
+      );
+      symbol.children = record.children.map(convert);
+      return symbol;
+    };
+    return records.map(convert);
   }
 
   documentKey(document: vscode.TextDocument): string {
@@ -640,6 +1302,7 @@ class CompilerController {
     const watchers = [
       vscode.workspace.createFileSystemWatcher('**/*.nss'),
       vscode.workspace.createFileSystemWatcher('**/nwpkg.toml'),
+      vscode.workspace.createFileSystemWatcher('**/nwpkg.lock'),
     ];
     for (const watcher of watchers) {
       const changed = (uri: vscode.Uri): void => this.handleWorkspaceFileChange(uri);
@@ -657,7 +1320,8 @@ class CompilerController {
       return;
     }
     this.invalidateChecks({ uri });
-    if (path.basename(uri.fsPath) === 'nwpkg.toml') {
+    if (path.basename(uri.fsPath) === 'nwpkg.toml'
+        || path.basename(uri.fsPath) === 'nwpkg.lock') {
       this.resetExternalWatchers();
     }
     const changedFolder = vscode.workspace.getWorkspaceFolder(uri);
@@ -698,7 +1362,7 @@ class CompilerController {
     }
     this.watchRootRequests.add(requestKey);
     try {
-      const resolved = await this.invokeNative('resolveWatchRoots', { roots: inputs });
+      const resolved = await this.invokeNative('resolveWatchRoots', { roots: [...inputs] });
       const roots = [...new Set([
         ...(Array.isArray(resolved) ? resolved : []),
         ...includeDirectories,
@@ -758,14 +1422,13 @@ class CompilerController {
       return;
     }
     const filePath = document.uri.fsPath;
-    const projectRoot = findProjectRoot(filePath);
+    const projectRoot = await this.resolveProjectRoot(filePath);
     await this.runCompiler({
       key: this.documentKey(document),
       targets: [filePath],
       cwd: projectRoot,
       sourceUri: document.uri,
       recurse: false,
-      overlays: this.sourceOverlays(projectRoot),
       revealFailure,
       force: revealFailure,
     });
@@ -777,19 +1440,14 @@ class CompilerController {
       void vscode.window.showWarningMessage('Open a workspace before running an nwnrs check.');
       return;
     }
-    const candidates = [];
-    for (const folder of folders) {
-      const manifests = await vscode.workspace.findFiles(
-        new vscode.RelativePattern(folder, '**/nwpkg.toml'),
-        '**/{.git,node_modules,target}/**',
-      );
-      const roots = manifests.length > 0
-        ? manifests.map((uri) => path.dirname(uri.fsPath))
-        : [folder.uri.fsPath];
-      for (const root of [...new Set(roots)]) {
-        candidates.push({ root, sourceUri: folder.uri });
-      }
-    }
+    const packages = await this.invokeNative('listWorkspacePackages', undefined);
+    const candidates = packages.length > 0
+      ? packages.map((pkg) => ({
+        root: pkg.root,
+        sourceUri: vscode.workspace.getWorkspaceFolder(vscode.Uri.file(pkg.root))?.uri
+          ?? vscode.Uri.file(pkg.root),
+      }))
+      : folders.map((folder) => ({ root: folder.uri.fsPath, sourceUri: folder.uri }));
     const roots = await this.deduplicateWorkspaceRoots(candidates);
     await vscode.window.withProgress({
       location: vscode.ProgressLocation.Notification,
@@ -812,13 +1470,17 @@ class CompilerController {
           cwd: root,
           sourceUri,
           recurse: true,
-          overlays: this.sourceOverlays(root),
           revealFailure: true,
           force: true,
         }, token);
         progress.report({ increment, message: path.basename(root) });
       }));
     });
+  }
+
+  async listWorkspacePackageManifests(): Promise<readonly string[]> {
+    const packages = await this.invokeNative('listWorkspacePackages', undefined);
+    return packages.map((entry) => entry.manifestPath);
   }
 
   async deduplicateWorkspaceRoots(
@@ -855,12 +1517,6 @@ class CompilerController {
     }
   }
 
-  sourceOverlays(_root: string | null | undefined): SourceOverlay[] {
-    return vscode.workspace.textDocuments
-      .filter((document) => this.isNwScriptDocument(document) && document.isDirty)
-      .map((document) => ({ path: document.uri.fsPath, contents: document.getText() }));
-  }
-
   compilerConfiguration(sourceUri: vscode.Uri, cwd: string): CompilerConfiguration {
     const config = vscode.workspace.getConfiguration('nwnrs', sourceUri);
     const workspaceFolder = vscode.workspace.getWorkspaceFolder(sourceUri)?.uri.fsPath || cwd;
@@ -874,6 +1530,8 @@ class CompilerController {
     const langspecPath = resolveConfiguredPath(config.get('langspecPath', ''), context, cwd);
     const rootPath = resolveConfiguredPath(config.get('rootPath', ''), context, cwd);
     const userPath = resolveConfiguredPath(config.get('userPath', ''), context, cwd);
+    const gitExecutable = config.get<string>('git.path', '').trim();
+    const packageCache = resolveConfiguredPath(config.get('packageCachePath', ''), context, cwd);
     return {
       includeDirectories,
       langspecPath,
@@ -881,23 +1539,36 @@ class CompilerController {
       userPath,
       language: config.get('language', 'english'),
       loadOvr: config.get('loadOvr', false),
+      gitExecutable,
+      packageCache,
       maxIncludeDepth: config.get('maxIncludeDepth', 16),
       maxDiagnosticsPerFile: config.get('maxDiagnosticsPerFile', 50),
       noEntrypointCheck: config.get('noEntrypointCheck', true),
     };
   }
 
-  async invokeNative<K extends keyof NativeLanguageResponseMap>(
+  async invokeNative<K extends WorkerLanguageMethod>(
     method: K,
-    request: unknown,
+    request: NativeLanguageRequest<K>,
     cancellationToken?: vscode.CancellationToken,
-  ): Promise<NativeLanguageResponseMap[K]> {
+    onProgress?: (event: WorkerProgressEvent) => void,
+  ): Promise<NativeLanguageResponse<K>> {
     return this.languageWorker.requestTyped(
       method,
       request,
       cancellationToken,
-      this.languageSessionKey(request),
+      {
+        sessionKey: this.languageSessionKey(request),
+        ...(onProgress === undefined ? {} : { onProgress }),
+      },
     );
+  }
+
+  async resolveProjectRoot(
+    sourcePath: string,
+    cancellationToken?: vscode.CancellationToken,
+  ): Promise<string> {
+    return this.invokeNative('resolvePackageRoot', sourcePath, cancellationToken);
   }
 
   languageSessionKey(request: unknown): string {
@@ -905,17 +1576,22 @@ class CompilerController {
     if (requestPath && path.basename(requestPath) === 'nwpkg.toml') {
       return path.dirname(path.resolve(requestPath));
     }
-    const projectRoot = recordString(request, 'project_root');
+    const manifestPath = recordString(request, 'manifestPath');
+    if (manifestPath) return path.dirname(path.resolve(manifestPath));
+    const packageRequest = typeof request === 'object' && request !== null && 'package' in request
+      ? (request as { readonly package?: unknown }).package
+      : request;
+    const projectRoot = recordString(packageRequest, 'projectRoot');
     if (projectRoot) {
       return path.resolve(projectRoot);
     }
-    const sourcePath = recordString(request, 'source_path');
+    const sourcePath = recordString(packageRequest, 'sourcePath');
     if (sourcePath) {
-      return findProjectRoot(sourcePath);
+      return path.resolve(sourcePath);
     }
     const paths = recordStringArray(request, 'paths');
     if (paths?.length === 1 && paths[0]) {
-      return findProjectRoot(paths[0]);
+      return path.resolve(paths[0]);
     }
     return '__workspace__';
   }
@@ -945,25 +1621,22 @@ class CompilerController {
         context,
         symbol,
         qualifier,
-        this.sourceOverlays(context.project_root),
       );
     } else {
       const sourcePath = document.uri.fsPath;
       const origin = this.physicalDocumentRequests.get(path.resolve(sourcePath))?.[0];
       if (origin) {
         request = definitionRequestFromSourceContext(
-          { ...origin, source_path: sourcePath },
+          { ...origin, sourcePath },
           symbol,
           qualifier,
-          this.sourceOverlays(origin.project_root),
         );
       } else {
-        const projectRoot = findProjectRoot(sourcePath);
+        const projectRoot = await this.resolveProjectRoot(sourcePath, cancellationToken);
         const configuration = this.compilerConfiguration(document.uri, projectRoot);
         request = buildDefinitionRequest(sourcePath, symbol, {
           projectRoot,
           qualifier,
-          overlays: this.sourceOverlays(projectRoot),
           ...configuration,
         });
       }
@@ -990,13 +1663,10 @@ class CompilerController {
     definitions: readonly NativeDefinition[],
     request: NativeDefinitionRequest,
   ): void {
-    const reusableRequest = { ...request, overlays: [] };
+    const reusableRequest = request;
     for (const definition of definitions) {
       if (!definition.uri && path.isAbsolute(definition.path)) {
-        this.rememberPhysicalDocument(definition.path, {
-          ...reusableRequest,
-          source_path: definition.path,
-        });
+        this.rememberPhysicalDocument(definition.path, reusableRequest);
       }
       if (typeof definition.uri === 'string'
           && definition.uri.startsWith('nwnrs-game:')
@@ -1016,17 +1686,18 @@ class CompilerController {
     const sourceContext = sourceContextFromRequest(request, sourcePath);
     const key = path.resolve(sourcePath);
     const contexts = [...(this.physicalDocumentRequests.get(key) || [])];
-    const owningRoot = findProjectRoot(sourcePath);
-    const contextKey = path.resolve(sourceContext.project_root || owningRoot);
+    const contextKey = sourceContext.projectRoot
+      ? path.resolve(sourceContext.projectRoot)
+      : key;
     const existing = contexts.findIndex((context) =>
-      path.resolve(context.project_root || owningRoot) === contextKey);
+      (context.projectRoot ? path.resolve(context.projectRoot) : key) === contextKey);
     if (existing >= 0) {
       contexts.splice(existing, 1);
     }
     contexts.push(sourceContext);
     contexts.sort((left, right) => {
-      const score = (context: NativeDocumentSymbolsRequest): number => context.project_root
-        && path.resolve(context.project_root) !== path.resolve(owningRoot) ? 1 : 0;
+      const score = (context: NativeDocumentSymbolsRequest): number =>
+        context.projectRoot ? 1 : 0;
       return score(right) - score(left);
     });
     this.physicalDocumentRequests.set(key, contexts);
@@ -1045,12 +1716,21 @@ class CompilerController {
     if (!request) {
       throw new Error('The nwnrs game-source context expired; invoke Go to Definition again.');
     }
-    const response = await this.invokeNative('readVirtualSource', request, cancellationToken);
-    if (!response || response.uri !== key || typeof response.contents !== 'string') {
+    if (!request.resource) {
+      throw new Error('The nwnrs game-source context has no logical resource identity.');
+    }
+    const response = await this.invokeNative('readVirtualSource', {
+      package: request,
+      resource: request.resource,
+    }, cancellationToken);
+    if (!response || response.uri !== key || !(response.contents instanceof Uint8Array)) {
       throw new Error('The compiler returned a different game script than requested.');
     }
-    this.virtualDocuments.set(key, response.contents);
-    return response.contents;
+    const contents = await vscode.workspace.decode(response.contents, {
+      encoding: NWNSCRIPT_ENCODING,
+    });
+    this.virtualDocuments.set(key, contents);
+    return contents;
   }
 
   async provideDocumentSymbols(
@@ -1065,15 +1745,13 @@ class CompilerController {
       }
       request = {
         ...context,
-        overlays: this.sourceOverlays(context.project_root),
       };
     } else {
       const sourcePath = document.uri.fsPath;
-      const projectRoot = findProjectRoot(sourcePath);
+      const projectRoot = await this.resolveProjectRoot(sourcePath, cancellationToken);
       const configuration = this.compilerConfiguration(document.uri, projectRoot);
       request = buildDocumentSymbolsRequest(sourcePath, {
         projectRoot,
-        overlays: this.sourceOverlays(projectRoot),
         ...configuration,
       });
     }
@@ -1104,70 +1782,55 @@ class CompilerController {
     actionContext: vscode.CodeActionContext,
     cancellationToken: vscode.CancellationToken,
   ): Promise<vscode.CodeAction[]> {
-    const actions = [];
-    for (const diagnostic of actionContext.diagnostics) {
-      if (diagnostic.source !== DIAGNOSTIC_OWNER) {
-        continue;
-      }
-      if (diagnostic.code === -573) {
-        const action = new vscode.CodeAction(
-          'Insert missing semicolon',
-          vscode.CodeActionKind.QuickFix,
-        );
-        action.diagnostics = [diagnostic];
-        action.isPreferred = true;
-        action.edit = new vscode.WorkspaceEdit();
-        action.edit.insert(document.uri, diagnostic.range.end, ';');
-        actions.push(action);
-      }
-      if (diagnostic.code === -622) {
-        const match = diagnostic.message.match(/undefined identifier\s+"([A-Za-z_][A-Za-z0-9_]*)"/u);
-        const missingSymbol = match?.[1];
-        if (!missingSymbol) {
-          continue;
-        }
-        const sourcePath = document.uri.fsPath;
-        const projectRoot = findProjectRoot(sourcePath);
-        const configuration = this.compilerConfiguration(document.uri, projectRoot);
-        const request = buildDefinitionRequest(sourcePath, missingSymbol, {
+    if (document.uri.scheme !== 'file') return [];
+    const diagnostics = actionContext.diagnostics
+      .filter((diagnostic) =>
+        diagnostic.source === DIAGNOSTIC_OWNER && typeof diagnostic.code === 'number')
+      .map((diagnostic) => ({
+        code: diagnostic.code as number,
+        range: {
+          start: {
+            line: diagnostic.range.start.line,
+            character: diagnostic.range.start.character,
+          },
+          end: {
+            line: diagnostic.range.end.line,
+            character: diagnostic.range.end.character,
+          },
+        },
+      }));
+    if (diagnostics.length === 0) return [];
+    try {
+      const sourcePath = document.uri.fsPath;
+      const projectRoot = await this.resolveProjectRoot(sourcePath, cancellationToken);
+      const configuration = this.compilerConfiguration(document.uri, projectRoot);
+      const records = await this.invokeNative('codeActionsAt', {
+        package: buildDocumentSymbolsRequest(sourcePath, {
           projectRoot,
-          overlays: this.sourceOverlays(projectRoot),
           ...configuration,
-        });
-        try {
-          const candidates = await this.invokeNative(
-            'findIncludeCandidates',
-            request,
-            cancellationToken,
+        }),
+        diagnostics,
+      }, cancellationToken);
+      return records.map((record) => {
+        const action = new vscode.CodeAction(record.title, vscode.CodeActionKind.QuickFix);
+        action.diagnostics = [...actionContext.diagnostics];
+        action.isPreferred = record.isPreferred;
+        action.edit = new vscode.WorkspaceEdit();
+        for (const edit of record.edits) {
+          action.edit.replace(
+            vscode.Uri.file(edit.path),
+            nativeSourceRange(edit.range),
+            edit.newText,
           );
-          if (!Array.isArray(candidates) || candidates.length !== 1) {
-            continue;
-          }
-          const includeName = candidates[0].include_name;
-          if (document.getText().match(new RegExp(
-            `^\\s*#include\\s+"${escapeRegExp(includeName)}"`,
-            'imu',
-          ))) {
-            continue;
-          }
-          const action = new vscode.CodeAction(
-            `Add #include "${includeName}"`,
-            vscode.CodeActionKind.QuickFix,
-          );
-          action.diagnostics = [diagnostic];
-          action.isPreferred = true;
-          action.edit = new vscode.WorkspaceEdit();
-          const insertion = includeInsertion(document, includeName);
-          action.edit.insert(document.uri, insertion.position, insertion.text);
-          actions.push(action);
-        } catch (error) {
-          if (!cancellationToken.isCancellationRequested) {
-            this.output.appendLine(`nwnrs include quick-fix failure: ${String(error)}`);
-          }
         }
+        return action;
+      });
+    } catch (error) {
+      if (!cancellationToken.isCancellationRequested) {
+        this.output.appendLine(`nwnrs code-action failure: ${String(error)}`);
       }
+      return [];
     }
-    return actions;
   }
 
   async semanticDocument(
@@ -1182,15 +1845,13 @@ class CompilerController {
       }
       request = {
         ...context,
-        overlays: this.sourceOverlays(context.project_root),
       };
     } else {
       const sourcePath = document.uri.fsPath;
-      const projectRoot = findProjectRoot(sourcePath);
+      const projectRoot = await this.resolveProjectRoot(sourcePath, cancellationToken);
       const configuration = this.compilerConfiguration(document.uri, projectRoot);
       request = buildDocumentSymbolsRequest(sourcePath, {
         projectRoot,
-        overlays: this.sourceOverlays(projectRoot),
         ...configuration,
       });
     }
@@ -1208,7 +1869,7 @@ class CompilerController {
       const response = await this.semanticDocument(document, cancellationToken);
       const builder = new vscode.SemanticTokensBuilder(SEMANTIC_LEGEND);
       for (const record of response.tokens || []) {
-        const range = diagnosticRange(record.range || {});
+        const range = diagnosticRange(record.range);
         if (range.startLine !== range.endLine) {
           continue;
         }
@@ -1218,13 +1879,13 @@ class CompilerController {
           continue;
         }
         let modifiers = 0;
-        if (record.is_declaration) {
+        if (record.isDeclaration) {
           modifiers |= 1 << SEMANTIC_TOKEN_MODIFIERS.indexOf('declaration');
         }
-        if (record.is_readonly) {
+        if (record.isReadonly) {
           modifiers |= 1 << SEMANTIC_TOKEN_MODIFIERS.indexOf('readonly');
         }
-        if (record.is_default_library) {
+        if (record.isDefaultLibrary) {
           modifiers |= 1 << SEMANTIC_TOKEN_MODIFIERS.indexOf('defaultLibrary');
         }
         builder.push(range.startLine, range.startColumn, length, tokenType, modifiers);
@@ -1257,7 +1918,7 @@ class CompilerController {
           || (record.kind === 'parameter' && parameterNames === 'all'))
         .map((record) => {
           const hint = new vscode.InlayHint(
-            new vscode.Position(record.line - 1, record.column - 1),
+            new vscode.Position(record.position.line - 1, record.position.character - 1),
             record.label,
             record.kind === 'enumValue'
               ? vscode.InlayHintKind.Type
@@ -1287,6 +1948,14 @@ class CompilerController {
     position: vscode.Position,
     cancellationToken: vscode.CancellationToken,
   ): Promise<vscode.Definition | undefined> {
+    const eventDefinition = await this.provideEventDefinition(
+      document,
+      position,
+      cancellationToken,
+    );
+    if (eventDefinition) {
+      return eventDefinition;
+    }
     const included = await this.resolveIncludedSource(document, position, cancellationToken);
     if (included) {
       return new vscode.Location(
@@ -1296,7 +1965,7 @@ class CompilerController {
     }
     try {
       const references = await this.resolveReferences(document, position, cancellationToken);
-      const declarations = references?.records.filter((record) => record.is_declaration) || [];
+      const declarations = references?.records.filter((record) => record.isDeclaration) || [];
       if (declarations.length > 0) {
         return declarations.map((record) => referenceLocation(record));
       }
@@ -1315,20 +1984,9 @@ class CompilerController {
       return undefined;
     }
     const { definitions } = resolved;
-    const implementations = definitions.filter((definition) => definition.is_implementation);
+    const implementations = definitions.filter((definition) => definition.isImplementation);
     const preferred = implementations.length > 0 ? implementations : definitions;
-    return preferred.map((definition) => {
-      const range = diagnosticRange(definition);
-      return new vscode.Location(
-        definition.uri ? vscode.Uri.parse(definition.uri) : vscode.Uri.file(definition.path),
-        new vscode.Range(
-          range.startLine,
-          range.startColumn,
-          range.endLine,
-          range.endColumn,
-        ),
-      );
-    });
+    return preferred.map(definitionLocation);
   }
 
   async provideHover(
@@ -1336,6 +1994,10 @@ class CompilerController {
     position: vscode.Position,
     cancellationToken: vscode.CancellationToken,
   ): Promise<vscode.Hover | undefined> {
+    const eventHover = await this.provideEventHover(document, position, cancellationToken);
+    if (eventHover) {
+      return eventHover;
+    }
     const included = await this.resolveIncludedSource(document, position, cancellationToken);
     if (included) {
       const source = included.uri ? 'packed read-only game source' : 'editable source';
@@ -1351,7 +2013,7 @@ class CompilerController {
     let exactDefinitions = resolved.definitions;
     try {
       const references = await this.resolveReferences(document, position, cancellationToken);
-      const declarations = references?.records.filter((record) => record.is_declaration) || [];
+      const declarations = references?.records.filter((record) => record.isDeclaration) || [];
       const matched = resolved.definitions.filter((definition) =>
         declarations.some((reference) => definitionMatchesReference(definition, reference)));
       if (matched.length > 0) {
@@ -1382,6 +2044,264 @@ class CompilerController {
     return contents.length > 0 ? new vscode.Hover(contents, resolved.wordRange) : undefined;
   }
 
+  async eventCatalog(
+    cancellationToken?: vscode.CancellationToken,
+  ): Promise<readonly NativeEventCatalogEntry[]> {
+    if (!this.eventCatalogPromise) {
+      this.eventCatalogPromise = this.invokeNative(
+        'listEventCatalog',
+        undefined,
+        cancellationToken,
+      ).catch((error: unknown) => {
+        this.eventCatalogPromise = undefined;
+        throw error;
+      });
+    }
+    return this.eventCatalogPromise;
+  }
+
+  async provideEventHover(
+    document: vscode.TextDocument,
+    position: vscode.Position,
+    cancellationToken: vscode.CancellationToken,
+  ): Promise<vscode.Hover | undefined> {
+    const match = await this.resolveEventSymbol(document, position, cancellationToken);
+    if (!match) return undefined;
+    if (match.kind === 'handler' && match.definition) {
+      return hoverForDefinition(match.definition, nativeSourceRange(match.range));
+    }
+    const event = (await this.eventCatalog(cancellationToken))
+      .find((candidate) =>
+        candidate.subject === match.subject && candidate.phase === match.phase);
+    if (!event) return undefined;
+    const signature = new vscode.MarkdownString();
+    signature.appendCodeblock(
+      `#[nwnrs::event::${event.subject}::${event.phase}]`,
+      'nwscript',
+    );
+    const documentation = new vscode.MarkdownString(eventHoverMarkdown(event));
+    documentation.isTrusted = false;
+    return new vscode.Hover(
+      [signature, documentation],
+      nativeSourceRange(match.range),
+    );
+  }
+
+  async provideEventDefinition(
+    document: vscode.TextDocument,
+    position: vscode.Position,
+    cancellationToken: vscode.CancellationToken,
+  ): Promise<vscode.Location | undefined> {
+    const match = await this.resolveEventSymbol(document, position, cancellationToken);
+    if (!match) return undefined;
+    if (match.kind === 'handler' && match.definition) {
+      return definitionLocation(match.definition);
+    }
+    const catalog = await this.eventCatalog(cancellationToken);
+    if (!catalog.some((event) =>
+      event.subject === match.subject && event.phase === match.phase)) return undefined;
+    const generated = buildEventCatalogDocument(catalog);
+    this.eventCatalogDocument = generated;
+    const line = generated.routeLines.get(eventRouteKey(match.subject, match.phase));
+    if (line === undefined) return undefined;
+    const startColumn = match.token === 'subject' ? 3 : 3 + match.subject.length + 2;
+    const tokenLength = match.token === 'subject' ? match.subject.length : match.phase.length;
+    return new vscode.Location(
+      EVENT_CATALOG_URI,
+      new vscode.Range(line, startColumn, line, startColumn + tokenLength),
+    );
+  }
+
+  async provideEventCompletions(
+    document: vscode.TextDocument,
+    position: vscode.Position,
+    cancellationToken: vscode.CancellationToken,
+  ): Promise<vscode.CompletionItem[] | undefined> {
+    const request = await this.eventPositionRequest(document, position, cancellationToken);
+    if (!request) return undefined;
+    const context = await this.invokeNative('eventCompletionsAt', request, cancellationToken);
+    if (!context) return undefined;
+    const replacement = new vscode.Range(
+      document.positionAt(context.replacementStart),
+      document.positionAt(context.replacementEnd),
+    );
+    return context.items.map((record) => {
+      const item = new vscode.CompletionItem(
+        record.label,
+        eventCompletionItemKind(record.kind),
+      );
+      item.range = replacement;
+      item.detail = record.detail;
+      item.sortText = record.sortText;
+      if (record.documentation) {
+        item.documentation = new vscode.MarkdownString(record.documentation);
+      }
+      if (context.kind === 'modifier') {
+        item.insertText = new vscode.SnippetString(`${record.label}(\${1})`);
+      }
+      return item;
+    });
+  }
+
+  async provideNwScriptCompletions(
+    document: vscode.TextDocument,
+    position: vscode.Position,
+    cancellationToken: vscode.CancellationToken,
+  ): Promise<vscode.CompletionItem[] | undefined> {
+    try {
+      const eventItems = await this.provideEventCompletions(
+        document,
+        position,
+        cancellationToken,
+      );
+      if (eventItems) return eventItems;
+      const request = await this.nwscriptPositionRequest(document, position, cancellationToken);
+      if (!request) return undefined;
+      const records = await this.invokeNative('completeNwscript', request, cancellationToken);
+      return records.map((record) => {
+        const item = new vscode.CompletionItem(
+          record.label,
+          nwscriptCompletionItemKind(record.kind),
+        );
+        item.detail = record.detail;
+        item.insertText = record.insertText;
+        item.sortText = record.sortText;
+        item.range = nativeSourceRange(record.replacement);
+        if (record.documentation) {
+          item.documentation = new vscode.MarkdownString(
+            formatHoverDocumentation(record.documentation),
+          );
+        }
+        return item;
+      });
+    } catch (error) {
+      if (!cancellationToken.isCancellationRequested) {
+        this.output.appendLine(`nwnrs completion failure: ${String(error)}`);
+      }
+      return undefined;
+    }
+  }
+
+  async provideSignatureHelp(
+    document: vscode.TextDocument,
+    position: vscode.Position,
+    cancellationToken: vscode.CancellationToken,
+  ): Promise<vscode.SignatureHelp | undefined> {
+    const request = await this.nwscriptPositionRequest(document, position, cancellationToken);
+    if (!request) return undefined;
+    try {
+      const record = await this.invokeNative('signatureHelp', request, cancellationToken);
+      if (!record) return undefined;
+      const result = new vscode.SignatureHelp();
+      result.activeSignature = record.activeSignature;
+      result.activeParameter = record.activeParameter;
+      result.signatures = record.signatures.map((signature) => {
+        const information = new vscode.SignatureInformation(
+          signature.label,
+          signature.documentation
+            ? new vscode.MarkdownString(formatHoverDocumentation(signature.documentation))
+            : undefined,
+        );
+        information.parameters = signature.parameters.map((parameter) =>
+          new vscode.ParameterInformation(
+            parameter.label,
+            parameter.documentation
+              ? new vscode.MarkdownString(parameter.documentation)
+              : undefined,
+          ));
+        return information;
+      });
+      return result;
+    } catch (error) {
+      if (!cancellationToken.isCancellationRequested) {
+        this.output.appendLine(`nwnrs signature-help failure: ${String(error)}`);
+      }
+      return undefined;
+    }
+  }
+
+  async nwscriptPositionRequest(
+    document: vscode.TextDocument,
+    position: vscode.Position,
+    cancellationToken?: vscode.CancellationToken,
+  ): Promise<NativePositionRequest | undefined> {
+    let packageConfiguration;
+    if (document.uri.scheme === 'nwnrs-game') {
+      const context = this.virtualDocumentRequests.get(document.uri.toString());
+      if (!context) return undefined;
+      packageConfiguration = context;
+    } else if (document.uri.scheme === 'file') {
+      const sourcePath = document.uri.fsPath;
+      const origin = this.physicalDocumentRequests.get(path.resolve(sourcePath))?.[0];
+      if (origin) {
+        packageConfiguration = { ...origin, sourcePath };
+      } else {
+        const projectRoot = await this.resolveProjectRoot(sourcePath, cancellationToken);
+        packageConfiguration = buildDocumentSymbolsRequest(sourcePath, {
+          projectRoot,
+          ...this.compilerConfiguration(document.uri, projectRoot),
+        });
+      }
+    } else {
+      return undefined;
+    }
+    return {
+      package: {
+        ...packageConfiguration,
+        includeDirectories: [...packageConfiguration.includeDirectories],
+      },
+      line: position.line,
+      column: position.character,
+    };
+  }
+
+  async eventPositionRequest(
+    document: vscode.TextDocument,
+    position: vscode.Position,
+    cancellationToken?: vscode.CancellationToken,
+  ): Promise<NativeEventPositionRequest | undefined> {
+    if (document.uri.scheme !== 'file') return undefined;
+    const sourcePath = document.uri.fsPath;
+    const projectRoot = await this.resolveProjectRoot(sourcePath, cancellationToken);
+    const configuration = this.compilerConfiguration(document.uri, projectRoot);
+    return {
+      package: buildDocumentSymbolsRequest(sourcePath, {
+        projectRoot,
+        ...configuration,
+      }),
+      offset: document.offsetAt(position),
+    };
+  }
+
+  async resolveEventSymbol(
+    document: vscode.TextDocument,
+    position: vscode.Position,
+    cancellationToken: vscode.CancellationToken,
+  ): Promise<NativeEventSymbol | undefined> {
+    const request = await this.eventPositionRequest(document, position, cancellationToken);
+    if (!request) return undefined;
+    try {
+      return await this.invokeNative('resolveEventSymbolAt', request, cancellationToken)
+        || undefined;
+    } catch (error) {
+      if (!cancellationToken.isCancellationRequested) {
+        this.output.appendLine(`nwnrs event-symbol failure: ${String(error)}`);
+      }
+      return undefined;
+    }
+  }
+
+  async provideEventCatalogDocument(
+    cancellationToken: vscode.CancellationToken,
+  ): Promise<string> {
+    if (!this.eventCatalogDocument) {
+      this.eventCatalogDocument = buildEventCatalogDocument(
+        await this.eventCatalog(cancellationToken),
+      );
+    }
+    return this.eventCatalogDocument.contents;
+  }
+
   async resolveIncludedSource(
     document: vscode.TextDocument,
     position: vscode.Position,
@@ -1410,14 +2330,13 @@ class CompilerController {
       if (!context) {
         return undefined;
       }
-      request = definitionRequestFromSourceContext(context, '', null, []);
+      request = definitionRequestFromSourceContext(context, '', null);
     } else {
       const sourcePath = document.uri.fsPath;
-      const projectRoot = findProjectRoot(sourcePath);
+      const projectRoot = await this.resolveProjectRoot(sourcePath, cancellationToken);
       const configuration = this.compilerConfiguration(document.uri, projectRoot);
       request = buildDefinitionRequest(sourcePath, '', {
         projectRoot,
-        overlays: this.sourceOverlays(projectRoot),
         ...configuration,
       });
     }
@@ -1434,7 +2353,13 @@ class CompilerController {
         sourceContextFromRequest(request, source.path, source.resource),
       );
     }
-    return { ...source, range, includeName };
+    return {
+      path: source.path,
+      uri: source.uri ?? null,
+      resource: source.resource ?? null,
+      range,
+      includeName,
+    };
   }
 
   async resolveReferences(
@@ -1454,24 +2379,22 @@ class CompilerController {
       if (!context) {
         return undefined;
       }
-      requests = [definitionRequestFromSourceContext(context, symbol, qualifier, [])];
+      requests = [definitionRequestFromSourceContext(context, symbol, qualifier)];
     } else {
       const sourcePath = document.uri.fsPath;
       const origins = this.physicalDocumentRequests.get(path.resolve(sourcePath));
       if (origins?.length) {
         requests = origins.map((origin) => definitionRequestFromSourceContext(
-          { ...origin, source_path: sourcePath },
+          { ...origin, sourcePath },
           symbol,
           qualifier,
-          this.sourceOverlays(origin.project_root),
         ));
       } else {
-        const projectRoot = findProjectRoot(sourcePath);
+        const projectRoot = await this.resolveProjectRoot(sourcePath, cancellationToken);
         const configuration = this.compilerConfiguration(document.uri, projectRoot);
         requests = [buildDefinitionRequest(sourcePath, symbol, {
           projectRoot,
           qualifier,
-          overlays: this.sourceOverlays(projectRoot),
           ...configuration,
         })];
       }
@@ -1479,7 +2402,7 @@ class CompilerController {
     const responses = await Promise.all(requests.map((request) => this.invokeNative(
       'findReferences',
       {
-        ...request,
+        package: request.package,
         line: position.line + 1,
         column: position.character + 1,
       },
@@ -1494,7 +2417,8 @@ class CompilerController {
     const recordContexts = new Map<string, NativeDefinitionRequest>();
     for (const [index, response] of responses.entries()) {
       for (const record of Array.isArray(response) ? response : []) {
-        const key = `${record.uri || path.resolve(record.path)}:${record.range?.start_line}:${record.range?.start_column}`;
+        const key = `${record.uri || path.resolve(record.path)}:`
+          + `${record.range.start.line}:${record.range.start.character}`;
         if (!seen.has(key)) {
           seen.add(key);
           records.push(record);
@@ -1506,7 +2430,8 @@ class CompilerController {
       }
     }
     for (const record of records) {
-      const key = `${record.uri || path.resolve(record.path)}:${record.range?.start_line}:${record.range?.start_column}`;
+      const key = `${record.uri || path.resolve(record.path)}:`
+        + `${record.range.start.line}:${record.range.start.character}`;
       const recordRequest = recordContexts.get(key) || request;
       if (record.uri && record.resource) {
         this.virtualDocumentRequests.set(
@@ -1515,11 +2440,7 @@ class CompilerController {
         );
       }
       if (!record.uri && path.isAbsolute(record.path)) {
-        this.rememberPhysicalDocument(record.path, {
-          ...recordRequest,
-          source_path: record.path,
-          overlays: [],
-        });
+        this.rememberPhysicalDocument(record.path, recordRequest);
       }
     }
     return { records, wordRange, request, requests, symbol };
@@ -1537,7 +2458,7 @@ class CompilerController {
         return [];
       }
       return resolved.records
-        .filter((record) => referenceContext.includeDeclaration || !record.is_declaration)
+        .filter((record) => referenceContext.includeDeclaration || !record.isDeclaration)
         .map((record) => referenceLocation(record));
     } catch (error) {
       if (!cancellationToken.isCancellationRequested) {
@@ -1552,14 +2473,13 @@ class CompilerController {
     position: vscode.Position,
     cancellationToken: vscode.CancellationToken,
   ): Promise<{ range: vscode.Range; placeholder: string }> {
-    const resolved = await this.resolveReferences(document, position, cancellationToken);
-    if (!resolved || resolved.records.length === 0) {
-      throw new Error('The symbol at this position cannot be renamed.');
-    }
-    if (resolved.records.some((record) => record.uri || !path.isAbsolute(record.path))) {
-      throw new Error('Packed game and generated symbols are read-only and cannot be renamed.');
-    }
-    return { range: resolved.wordRange, placeholder: resolved.symbol };
+    const request = await this.nwscriptPositionRequest(document, position, cancellationToken);
+    if (!request) throw new Error('The symbol at this position cannot be renamed.');
+    const plan = await this.invokeNative('renameAt', {
+      ...request,
+      newName: undefined,
+    }, cancellationToken);
+    return { range: nativeSourceRange(plan.range), placeholder: plan.name };
   }
 
   async provideRenameEdits(
@@ -1568,123 +2488,46 @@ class CompilerController {
     newName: string,
     cancellationToken: vscode.CancellationToken,
   ): Promise<vscode.WorkspaceEdit> {
-    if (!/^[A-Za-z_][A-Za-z0-9_]*$/u.test(newName)) {
-      throw new Error(`${JSON.stringify(newName)} is not a valid NWScript identifier.`);
-    }
-    const resolved = await this.resolveReferences(document, position, cancellationToken);
-    if (!resolved || resolved.records.length === 0) {
-      throw new Error('The symbol at this position cannot be renamed.');
-    }
-    if (resolved.records.some((record) => record.uri || !path.isAbsolute(record.path))) {
-      throw new Error('Packed game and generated symbols are read-only and cannot be renamed.');
-    }
-    const collisionResponses = await Promise.all(
-      (resolved.requests || [resolved.request]).map((request) => this.invokeNative(
-        'findDefinitions',
-        { ...request, symbol: newName, qualifier: null },
-        cancellationToken,
-      )),
-    );
-    const collisions = collisionResponses.flatMap((response) =>
-      Array.isArray(response) ? response : []);
-    const relevantCollisions = await this.renameCollisions(
-      resolved,
-      collisions,
-      cancellationToken,
-    );
-    if (relevantCollisions.length > 0) {
-      throw new Error(`Rename would collide with the existing symbol ${newName}.`);
-    }
+    const request = await this.nwscriptPositionRequest(document, position, cancellationToken);
+    if (!request) throw new Error('The symbol at this position cannot be renamed.');
+    const plan = await this.invokeNative('renameAt', {
+      ...request,
+      newName,
+    }, cancellationToken);
     const edit = new vscode.WorkspaceEdit();
-    for (const record of resolved.records) {
+    for (const record of plan.edits) {
       const location = referenceLocation(record);
       edit.replace(location.uri, location.range, newName);
     }
     return edit;
   }
 
-  async renameCollisions(
-    resolved: ResolvedReferences,
-    collisions: readonly NativeDefinition[],
-    cancellationToken: vscode.CancellationToken,
-  ): Promise<readonly NativeDefinition[]> {
-    const local = resolved.records.find((record) => record.container && record.is_declaration)
-      || resolved.records.find((record) => record.container);
-    if (!local) {
-      return collisions;
-    }
-    const sourcePath = local.path;
-    const projectRoot = findProjectRoot(sourcePath);
-    const configuration = this.compilerConfiguration(vscode.Uri.file(sourcePath), projectRoot);
-    const request = buildDocumentSymbolsRequest(sourcePath, {
-      projectRoot,
-      overlays: this.sourceOverlays(projectRoot),
-      ...configuration,
-    });
-    const symbols = await this.invokeNative('listDocumentSymbols', request, cancellationToken);
-    if (!local.container) {
-      return collisions.filter((collision) => path.resolve(collision.path) === path.resolve(sourcePath));
-    }
-    const container = findDocumentSymbol(symbols, local.container, 'function');
-    if (!container) {
-      return collisions.filter((collision) => path.resolve(collision.path) === path.resolve(sourcePath));
-    }
-    const range = diagnosticRange(container.range || {});
-    return collisions.filter((collision) =>
-      path.resolve(collision.path) === path.resolve(sourcePath)
-      && collision.start_line - 1 >= range.startLine
-      && collision.start_line - 1 <= range.endLine);
-  }
-
   async provideWorkspaceSymbols(
     search: string,
     cancellationToken: vscode.CancellationToken,
   ): Promise<vscode.SymbolInformation[]> {
-    const files = await vscode.workspace.findFiles(
-      '**/*.nss',
-      '**/{.git,node_modules,target}/**',
-    );
     const results: vscode.SymbolInformation[] = [];
-    const projects = new Map<string, vscode.Uri>();
-    for (const uri of files) {
-      const projectRoot = findProjectRoot(uri.fsPath);
-      if (!projects.has(projectRoot)) {
-        projects.set(projectRoot, uri);
+    const representative = vscode.workspace.workspaceFolders?.[0]?.uri;
+    if (!representative) return results;
+    const configuration = this.compilerConfiguration(representative, representative.fsPath);
+    const request = buildDocumentSymbolsRequest(representative.fsPath, {
+      projectRoot: representative.fsPath,
+      ...configuration,
+    });
+    try {
+      const symbols = await this.invokeNative('listWorkspaceSymbols', request, cancellationToken);
+      for (const entry of symbols) {
+        appendWorkspaceSymbols(
+          results,
+          [entry.symbol],
+          vscode.Uri.file(entry.sourcePath),
+          search,
+          '',
+        );
       }
-    }
-    for (const [projectRoot, representative] of projects) {
-      if (cancellationToken.isCancellationRequested) {
-        return results;
-      }
-      const configuration = this.compilerConfiguration(representative, projectRoot);
-      const request = buildDocumentSymbolsRequest(representative.fsPath, {
-        projectRoot,
-        overlays: this.sourceOverlays(projectRoot),
-        ...configuration,
-      });
-      try {
-        const index = await this.invokeNative('indexProject', request, cancellationToken);
-        for (const warning of index?.warnings || []) {
-          this.output.appendLine(`nwnrs project-index warning: ${warning}`);
-        }
-        for (const document of index?.documents || []) {
-          this.rememberPhysicalDocument(document.path, {
-            ...request,
-            source_path: document.path,
-            overlays: [],
-          });
-          appendWorkspaceSymbols(
-            results,
-            document.symbols,
-            vscode.Uri.file(document.path),
-            search,
-            '',
-          );
-        }
-      } catch (error) {
-        if (!cancellationToken.isCancellationRequested) {
-          this.output.appendLine(`nwnrs workspace-symbol warning: ${String(error)}`);
-        }
+    } catch (error) {
+      if (!cancellationToken.isCancellationRequested) {
+        this.output.appendLine(`nwnrs workspace-symbol warning: ${String(error)}`);
       }
     }
     return results;
@@ -1706,8 +2549,10 @@ class CompilerController {
     }
     return [callHierarchyItem(definition, {
       ...resolved.request,
-      source_path: definition.path,
-      overlays: this.sourceOverlays(resolved.request.project_root),
+      package: {
+        ...resolved.request.package,
+        sourcePath: definition.path,
+      },
     })];
   }
 
@@ -1720,15 +2565,13 @@ class CompilerController {
       return [];
     }
     const references = await this.invokeNative('findReferences', {
-      ...request,
-      symbol: item.name,
-      qualifier: null,
+      package: request.package,
       line: item.selectionRange.start.line + 1,
       column: item.selectionRange.start.character + 1,
     }, cancellationToken);
     const groups = new Map();
     for (const reference of references || []) {
-      if (reference.is_declaration || !reference.container || reference.uri) {
+      if (reference.isDeclaration || !reference.container || reference.uri) {
         continue;
       }
       const key = `${reference.path}:${reference.container}`;
@@ -1738,14 +2581,16 @@ class CompilerController {
     }
     const incoming = [];
     for (const group of groups.values()) {
-      const callerRoot = request.project_root || findProjectRoot(group.reference.path);
-      const callerRequest = {
-        ...request,
-        source_path: group.reference.path,
-        project_root: callerRoot,
+      const callerRoot = request.package.projectRoot
+        || await this.resolveProjectRoot(group.reference.path, cancellationToken);
+      const callerRequest: NativeDefinitionRequest = {
+        package: {
+          ...request.package,
+          sourcePath: group.reference.path,
+          projectRoot: callerRoot,
+        },
         symbol: group.reference.container,
-        qualifier: null,
-        overlays: this.sourceOverlays(callerRoot),
+        qualifier: undefined,
       };
       const definitions = await this.invokeNative('findDefinitions', callerRequest, cancellationToken);
       const caller = definitions.find((definition) => definition.kind === 'function');
@@ -1768,20 +2613,20 @@ class CompilerController {
       return [];
     }
     const calls = await this.invokeNative('findOutgoingCalls', {
-      ...request,
-      symbol: item.name,
-      qualifier: null,
+      package: request.package,
       line: item.selectionRange.start.line + 1,
       column: item.selectionRange.start.character + 1,
     }, cancellationToken);
     return (calls || []).map((call) => {
-      const targetRoot = request.project_root;
-      const targetRequest = {
+      const targetRoot = request.package.projectRoot;
+      const targetRequest: NativeDefinitionRequest = {
         ...request,
-        source_path: call.target.path,
-        project_root: targetRoot,
+        package: {
+          ...request.package,
+          sourcePath: call.target.path,
+          projectRoot: targetRoot,
+        },
         symbol: call.target.name,
-        overlays: path.isAbsolute(call.target.path) ? this.sourceOverlays(targetRoot) : [],
       };
       return new vscode.CallHierarchyOutgoingCall(
         callHierarchyItem(call.target, targetRequest),
@@ -1807,7 +2652,6 @@ class CompilerController {
     const checkRequest = buildCheckRequest(request.targets, {
       ...configuration,
       recurse: request.recurse,
-      overlays: request.overlays,
     });
     const fingerprint = JSON.stringify({ epoch: this.changeEpoch, request: checkRequest });
     const sequence = ++this.sequence;
@@ -1883,13 +2727,13 @@ class CompilerController {
   }
 
   async mapDiagnostics(
-    records: readonly NativeCheckDiagnostic[],
+    records: readonly NativeLanguageDiagnostic[],
     request: CompilerRunRequest,
   ): Promise<Map<string, DiagnosticRunEntry>> {
     const mapped = new Map<string, DiagnosticRunEntry>();
     for (const record of records) {
-      const uri = await this.resolveDiagnosticUri(record, request);
-      const range = diagnosticRange(record);
+      const uri = this.resolveDiagnosticUri(record, request);
+      const range = diagnosticRange(record.range);
       const diagnostic = new vscode.Diagnostic(
         new vscode.Range(
           range.startLine,
@@ -1901,7 +2745,7 @@ class CompilerController {
         severity(record.severity),
       );
       diagnostic.source = DIAGNOSTIC_OWNER;
-      if (record.code !== null && Number.isInteger(record.code)) {
+      if (record.code !== undefined) {
         diagnostic.code = record.code;
       }
       const key = uri.toString();
@@ -1912,29 +2756,13 @@ class CompilerController {
     return mapped;
   }
 
-  async resolveDiagnosticUri(
-    record: NativeCheckDiagnostic,
+  resolveDiagnosticUri(
+    record: NativeLanguageDiagnostic,
     request: CompilerRunRequest,
-  ): Promise<vscode.Uri> {
-    const raw = String(record.file || record.input || request.sourceUri.fsPath);
-    if (path.isAbsolute(raw)) {
-      return vscode.Uri.file(raw);
-    }
-    const input = String(record.input || request.sourceUri.fsPath);
-    const candidates = [
-      path.resolve(request.cwd, raw),
-      path.resolve(path.dirname(input), raw),
-    ];
-    const existing = candidates.find((candidate) => fs.existsSync(candidate));
-    if (existing) {
-      return vscode.Uri.file(existing);
-    }
-    const matches = await vscode.workspace.findFiles(
-      `**/${path.basename(raw)}`,
-      '**/{.git,node_modules,target}/**',
-      2,
-    );
-    return matches[0] || request.sourceUri;
+  ): vscode.Uri {
+    if (record.path) return vscode.Uri.file(record.path);
+    if (record.uri) return vscode.Uri.parse(record.uri);
+    return request.sourceUri;
   }
 
   publishDiagnostics() {
@@ -1997,21 +2825,15 @@ function recordStringArray(value: unknown, key: string): string[] | undefined {
 
 function sourceContextFromRequest(
   request: NativeDefinitionRequest | NativeDocumentSymbolsRequest,
-  sourcePath: string = request.source_path,
-  resource: string | null = 'resource' in request ? request.resource : null,
+  sourcePath: string = 'package' in request ? request.package.sourcePath : request.sourcePath,
+  resource: string | null = 'resource' in request ? request.resource ?? null : null,
 ): NativeDocumentSymbolsRequest {
+  const packageConfiguration = 'package' in request ? request.package : request;
   return {
-    source_path: sourcePath,
-    resource,
-    project_root: request.project_root,
-    include_dirs: [...request.include_dirs],
-    overlays: [...request.overlays],
-    langspec: request.langspec,
-    max_include_depth: request.max_include_depth,
-    root: request.root,
-    user: request.user,
-    language: request.language,
-    load_ovr: request.load_ovr,
+    ...packageConfiguration,
+    sourcePath: resource || sourcePath,
+    resource: resource || undefined,
+    includeDirectories: [...packageConfiguration.includeDirectories],
   };
 }
 
@@ -2019,21 +2841,14 @@ function definitionRequestFromSourceContext(
   context: NativeDocumentSymbolsRequest,
   symbol: string,
   qualifier: string | null,
-  overlays: readonly SourceOverlay[],
 ): NativeDefinitionRequest {
   return {
-    source_path: context.source_path,
+    package: {
+      ...context,
+      includeDirectories: [...context.includeDirectories],
+    },
     symbol,
-    qualifier,
-    project_root: context.project_root,
-    include_dirs: [...context.include_dirs],
-    overlays: [...overlays],
-    langspec: context.langspec,
-    max_include_depth: context.max_include_depth,
-    root: context.root,
-    user: context.user,
-    language: context.language,
-    load_ovr: context.load_ovr,
+    qualifier: qualifier || undefined,
   };
 }
 
@@ -2050,276 +2865,100 @@ function severity(value: string): vscode.DiagnosticSeverity {
   }
 }
 
-const NWPKG_SECTIONS: Readonly<Record<string, string>> = {
-  project: 'Project identity and output kind.',
-  source: 'Source directory for authored package contents.',
-  dependencies: 'Local include-package dependencies keyed by package name.',
-};
-
-const NWPKG_FIELDS: Readonly<Record<string, string>> = {
-  'project.name': 'Stable project name used in package metadata and diagnostics.',
-  'project.kind': 'Package layout and output resource type.',
-  'source.path': 'Source directory, resolved relative to this nwpkg.toml.',
-  'dependencies.path': 'Local include-package root, resolved relative to this nwpkg.toml.',
-};
-
-const NWPKG_KINDS = [
-  '2da', 'are', 'bic', 'dds', 'dlg', 'erf', 'git', 'hak', 'ifo', 'include',
-  'itp', 'jrl', 'key', 'mdl', 'mod', 'ncs', 'nwm', 'plt', 'ssf', 'tga',
-  'tlk', 'utc', 'utd', 'ute', 'uti', 'utm', 'utp', 'uts', 'utt', 'utw',
-];
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
-}
-
-function includeInsertion(
-  document: vscode.TextDocument,
-  includeName: string,
-): { readonly position: vscode.Position; readonly text: string } {
-  let lastInclude = -1;
-  for (let line = 0; line < document.lineCount; line += 1) {
-    if (/^\s*#include\s+"[^"]+"/u.test(document.lineAt(line).text)) {
-      lastInclude = line;
-    }
-  }
-  if (lastInclude >= 0) {
-    return {
-      position: document.lineAt(lastInclude).range.end,
-      text: `\n#include "${includeName}"`,
-    };
-  }
-  return {
-    position: new vscode.Position(0, 0),
-    text: `#include "${includeName}"\n\n`,
-  };
-}
-
-function nwpkgSection(document: vscode.TextDocument, line: number): string {
-  for (let index = line; index >= 0; index -= 1) {
-    const match = document.lineAt(index).text.match(/^\s*\[([^\]]+)\]\s*(?:#.*)?$/u);
-    if (match?.[1]) {
-      return match[1];
-    }
-  }
-  return '';
-}
-
-function nwpkgCompletions(
-  document: vscode.TextDocument,
-  position: vscode.Position,
-): vscode.CompletionItem[] {
-  const line = document.lineAt(position.line).text;
-  const prefix = line.slice(0, position.character);
-  const section = nwpkgSection(document, position.line);
-  const pathValue = prefix.match(/^\s*(?:[A-Za-z0-9_-]+\s*=\s*\{\s*)?path\s*=\s*"([^"\r\n]*)$/u);
-  if (pathValue?.[1] !== undefined && (section === 'source' || section === 'dependencies')) {
-    return nwpkgPathCompletions(document, position, pathValue[1]);
-  }
-  if (/^\s*\[[A-Za-z]*$/u.test(prefix)) {
-    return Object.entries(NWPKG_SECTIONS).map(([name, documentation]) => {
-      const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Module);
-      item.detail = `[${name}]`;
-      item.documentation = documentation;
-      item.insertText = `${name}]`;
-      return item;
-    });
-  }
-  const kindValue = prefix.match(/^\s*kind\s*=\s*("?)[A-Za-z0-9]*$/u);
-  if (section === 'project' && kindValue) {
-    return NWPKG_KINDS.map((kind) => {
-      const item = new vscode.CompletionItem(kind, vscode.CompletionItemKind.EnumMember);
-      item.insertText = kindValue[1] ? kind : `"${kind}"`;
-      item.detail = 'nwpkg project kind';
-      return item;
-    });
-  }
-  const fields: readonly (readonly [string, string])[] = section === 'project'
-    ? [['name', '"${1:project}"'], ['kind', '"${1:mod}"']]
-    : section === 'source'
-      ? [['path', '"${1:.}"']]
-      : section === 'dependencies'
-        ? [['package', '{ path = "${1:../include/package}" }']]
-        : [];
-  return fields.map(([name, value]) => {
-    const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Property);
-    item.insertText = new vscode.SnippetString(section === 'dependencies'
-      ? '${1:package} = { path = "${2:../include/package}" }'
-      : `${name} = ${value}`);
-    item.detail = section === 'dependencies'
-      ? 'Local include dependency'
-      : NWPKG_FIELDS[`${section}.${name}`];
-    return item;
-  });
-}
-
-function nwpkgPathCompletions(
-  document: vscode.TextDocument,
-  position: vscode.Position,
-  value: string,
-): vscode.CompletionItem[] {
-  const slash = Math.max(value.lastIndexOf('/'), value.lastIndexOf(path.sep));
-  const directoryPart = slash >= 0 ? value.slice(0, slash + 1) : '';
-  const namePart = slash >= 0 ? value.slice(slash + 1) : value;
-  const directory = path.resolve(path.dirname(document.uri.fsPath), directoryPart || '.');
-  let entries: fs.Dirent[];
-  try {
-    entries = fs.readdirSync(directory, { withFileTypes: true });
-  } catch {
-    return [];
-  }
-  const replaceStart = position.character - namePart.length;
-  return entries
-    .filter((entry) => entry.isDirectory() && entry.name.startsWith(namePart))
-    .slice(0, 200)
-    .map((entry) => {
-      const item = new vscode.CompletionItem(entry.name, vscode.CompletionItemKind.Folder);
-      item.range = new vscode.Range(
-        position.line,
-        replaceStart,
-        position.line,
-        position.character,
-      );
-      item.insertText = `${entry.name}/`;
-      item.command = { command: 'editor.action.triggerSuggest', title: 'Continue path completion' };
-      return item;
-    });
-}
-
-function nwpkgHover(
-  document: vscode.TextDocument,
-  position: vscode.Position,
-): vscode.Hover | undefined {
-  const line = document.lineAt(position.line).text;
-  const sectionMatch = line.match(/^\s*\[([^\]]+)\]/u);
-  const sectionName = sectionMatch?.[1];
-  if (sectionName) {
-    const documentation = NWPKG_SECTIONS[sectionName];
-    if (documentation) {
-      return new vscode.Hover(documentation);
-    }
-  }
-  const keyMatch = line.match(/^\s*([A-Za-z0-9_-]+)\s*=/u);
-  if (!keyMatch) {
-    return undefined;
-  }
-  const section = nwpkgSection(document, position.line);
-  const key = keyMatch[1];
-  if (!key) {
-    return undefined;
-  }
-  const schemaKey = section === 'dependencies' ? 'dependencies.path' : `${section}.${key}`;
-  const documentation = NWPKG_FIELDS[schemaKey];
-  return documentation ? new vscode.Hover(documentation) : undefined;
-}
-
-function nwpkgDefinition(
-  document: vscode.TextDocument,
-  position: vscode.Position,
-): vscode.Location | undefined {
-  const line = document.lineAt(position.line).text;
-  const section = nwpkgSection(document, position.line);
-  const quotedValues = [...line.matchAll(/"([^"\r\n]+)"/gu)];
-  const value = quotedValues.find((match) => {
-    const matchedValue = match[1];
-    if (matchedValue === undefined) {
-      return false;
-    }
-    const start = (match.index ?? 0) + 1;
-    const end = start + matchedValue.length;
-    return position.character >= start && position.character <= end;
-  });
-  if (!value || (section !== 'source' && section !== 'dependencies')) {
-    return undefined;
-  }
-  const matchedValue = value[1];
-  if (!matchedValue) {
-    return undefined;
-  }
-  const resolved = path.resolve(path.dirname(document.uri.fsPath), matchedValue);
-  if (!fs.existsSync(resolved)) {
-    return undefined;
-  }
-  const target = section === 'dependencies' && fs.statSync(resolved).isDirectory()
-    ? path.join(resolved, 'nwpkg.toml')
-    : resolved;
-  if (!fs.existsSync(target) || fs.statSync(target).isDirectory()) {
-    return undefined;
-  }
-  return new vscode.Location(vscode.Uri.file(target), new vscode.Position(0, 0));
-}
-
-function nwpkgDocumentSymbols(document: vscode.TextDocument): vscode.DocumentSymbol[] {
-  const symbols: vscode.DocumentSymbol[] = [];
-  let current: vscode.DocumentSymbol | undefined;
-  for (let line = 0; line < document.lineCount; line += 1) {
-    const text = document.lineAt(line).text;
-    const section = text.match(/^\s*\[([^\]]+)\]/u);
-    const sectionName = section?.[1];
-    if (sectionName) {
-      const start = text.indexOf(sectionName);
-      current = new vscode.DocumentSymbol(
-        sectionName,
-        'manifest section',
-        vscode.SymbolKind.Namespace,
-        document.lineAt(line).range,
-        new vscode.Range(line, start, line, start + sectionName.length),
-      );
-      current.children = [];
-      symbols.push(current);
-      continue;
-    }
-    const field = text.match(/^\s*([A-Za-z0-9_-]+)\s*=/u);
-    if (!field) {
-      continue;
-    }
-    const fieldName = field[1];
-    if (!fieldName) {
-      continue;
-    }
-    const start = text.indexOf(fieldName);
-    const symbol = new vscode.DocumentSymbol(
-      fieldName,
-      text.slice(text.indexOf('=') + 1).trim(),
-      vscode.SymbolKind.Property,
-      document.lineAt(line).range,
-      new vscode.Range(line, start, line, start + fieldName.length),
-    );
-    if (current) {
-      current.children.push(symbol);
-      current.range = new vscode.Range(current.range.start, document.lineAt(line).range.end);
-    } else {
-      symbols.push(symbol);
-    }
-  }
-  return symbols;
-}
-
 function documentSymbol(record: NativeDocumentSymbol): vscode.DocumentSymbol {
-  const full = diagnosticRange(record.range);
-  const selection = diagnosticRange(record.selection_range);
+  const full = nativeSourceRange(record.range);
+  const selection = nativeSourceRange(record.selection);
   const symbol = new vscode.DocumentSymbol(
     String(record.name || ''),
     typeof record.detail === 'string' ? record.detail : '',
     documentSymbolKind(record.kind),
-    new vscode.Range(full.startLine, full.startColumn, full.endLine, full.endColumn),
-    new vscode.Range(
-      selection.startLine,
-      selection.startColumn,
-      selection.endLine,
-      selection.endColumn,
-    ),
+    full,
+    selection,
   );
   symbol.children = record.children.map((child) => documentSymbol(child));
   return symbol;
 }
 
 function referenceLocation(record: NativeReference): vscode.Location {
-  const range = diagnosticRange(record.range);
   return new vscode.Location(
     record.uri ? vscode.Uri.parse(record.uri) : vscode.Uri.file(record.path),
-    new vscode.Range(range.startLine, range.startColumn, range.endLine, range.endColumn),
+    nativeSourceRange(record.range),
   );
+}
+
+function nativeSourceRange(record: NativeRange): vscode.Range {
+  return new vscode.Range(
+    Math.max(0, record.start.line),
+    Math.max(0, record.start.character),
+    Math.max(0, record.end.line),
+    Math.max(0, record.end.character),
+  );
+}
+
+function definitionLocation(definition: NativeDefinition): vscode.Location {
+  return new vscode.Location(
+    definition.uri ? vscode.Uri.parse(definition.uri) : vscode.Uri.file(definition.path),
+    nativeSourceRange(definition.range),
+  );
+}
+
+function hoverForDefinition(
+  definition: NativeDefinition,
+  range: vscode.Range,
+): vscode.Hover | undefined {
+  const contents = [];
+  if (definition.signature) {
+    const signature = new vscode.MarkdownString();
+    signature.appendCodeblock(definition.signature, 'nwscript');
+    contents.push(signature);
+  }
+  const formattedDocumentation = formatHoverDocumentation(definition.documentation);
+  if (formattedDocumentation) {
+    const documentation = new vscode.MarkdownString(formattedDocumentation);
+    documentation.isTrusted = false;
+    contents.push(documentation);
+  }
+  return contents.length > 0 ? new vscode.Hover(contents, range) : undefined;
+}
+
+function eventCompletionItemKind(
+  kind: string,
+): vscode.CompletionItemKind {
+  switch (kind) {
+    case 'event':
+      return vscode.CompletionItemKind.Event;
+    case 'enumMember':
+      return vscode.CompletionItemKind.EnumMember;
+    case 'function':
+      return vscode.CompletionItemKind.Function;
+    default:
+      return vscode.CompletionItemKind.Keyword;
+  }
+}
+
+function nwscriptCompletionItemKind(kind: string): vscode.CompletionItemKind {
+  switch (kind) {
+    case 'function':
+      return vscode.CompletionItemKind.Function;
+    case 'variable':
+      return vscode.CompletionItemKind.Variable;
+    case 'constant':
+      return vscode.CompletionItemKind.Constant;
+    case 'parameter':
+      return vscode.CompletionItemKind.Variable;
+    case 'field':
+      return vscode.CompletionItemKind.Field;
+    case 'type':
+      return vscode.CompletionItemKind.Struct;
+    case 'enum':
+      return vscode.CompletionItemKind.Enum;
+    case 'enumMember':
+      return vscode.CompletionItemKind.EnumMember;
+    case 'macro':
+      return vscode.CompletionItemKind.Snippet;
+    default:
+      return vscode.CompletionItemKind.Text;
+  }
 }
 
 function definitionMatchesReference(
@@ -2330,21 +2969,15 @@ function definitionMatchesReference(
     ? definition.uri === reference.uri
     : path.resolve(definition.path) === path.resolve(reference.path);
   return sameSource
-    && definition.start_line === reference.range?.start_line
-    && definition.start_column === reference.range?.start_column;
+    && definition.range.start.line === reference.range.start.line
+    && definition.range.start.character === reference.range.start.character;
 }
 
 function callHierarchyItem(
   definition: NativeDefinition,
   request: NativeDefinitionRequest,
 ): NwnrsCallHierarchyItem {
-  const range = diagnosticRange(definition);
-  const selection = new vscode.Range(
-    range.startLine,
-    range.startColumn,
-    range.endLine,
-    range.endColumn,
-  );
+  const selection = nativeSourceRange(definition.range);
   const item = new vscode.CallHierarchyItem(
     vscode.SymbolKind.Function,
     definition.name,
@@ -2365,7 +2998,7 @@ function appendWorkspaceSymbols(
 ): void {
   const normalizedSearch = search.trim().toLocaleLowerCase();
   for (const record of records) {
-    const range = diagnosticRange(record.selection_range);
+    const range = nativeSourceRange(record.selection);
     if (!normalizedSearch || String(record.name).toLocaleLowerCase().includes(normalizedSearch)) {
       results.push(new vscode.SymbolInformation(
         record.name,
@@ -2373,29 +3006,12 @@ function appendWorkspaceSymbols(
         container,
         new vscode.Location(
           uri,
-          new vscode.Range(range.startLine, range.startColumn, range.endLine, range.endColumn),
+          range,
         ),
       ));
     }
     appendWorkspaceSymbols(results, record.children, uri, search, record.name);
   }
-}
-
-function findDocumentSymbol(
-  records: readonly NativeDocumentSymbol[],
-  name: string,
-  kind: string,
-): NativeDocumentSymbol | undefined {
-  for (const record of records) {
-    if (record.name === name && record.kind === kind) {
-      return record;
-    }
-    const nested = findDocumentSymbol(record.children, name, kind);
-    if (nested) {
-      return nested;
-    }
-  }
-  return undefined;
 }
 
 function documentSymbolKind(kind: string): vscode.SymbolKind {
@@ -2423,10 +3039,41 @@ function documentSymbolKind(kind: string): vscode.SymbolKind {
   }
 }
 
+function unrepresentableEncodingDiagnostics(
+  document: vscode.TextDocument,
+  source: string,
+  decoded: string,
+): vscode.Diagnostic[] {
+  return unrepresentableUtf16Ranges(source, decoded).map(({ start, end }) => {
+    const diagnostic = new vscode.Diagnostic(
+      new vscode.Range(document.positionAt(start), document.positionAt(end)),
+      'This text cannot be represented exactly in Windows-1252. '
+      + 'NWScript analysis is suspended until it is replaced.',
+      vscode.DiagnosticSeverity.Error,
+    );
+    diagnostic.source = 'nwnrs encoding';
+    diagnostic.code = 'nwnrs.encoding.unrepresentable';
+    return diagnostic;
+  });
+}
+
+function normalizeFsPath(value: string): string {
+  return path.resolve(value);
+}
+
+function shortCommit(value: string | undefined): string {
+  if (!value) return '<unlocked>';
+  return value.length > 12 ? value.slice(0, 12) : value;
+}
+
 export function activate(context: vscode.ExtensionContext): void {
   const controller = new CompilerController(context);
   controller.register();
-  const resourceEditors = new ResourceCustomEditorProvider(context, controller.output);
+  const resourceEditors = new ResourceCustomEditorProvider(
+    context,
+    controller.output,
+    (sourcePath) => controller.resolveProjectRoot(sourcePath),
+  );
   resourceEditors.register();
   const sidebar = new NwnrsSidebarController(
     context,

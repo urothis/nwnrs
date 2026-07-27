@@ -1,7 +1,7 @@
 use std::{collections::BTreeMap, fs, fs::File, io::BufReader, path::Path};
 
 use nwnrs_nwscript as nwscript;
-use nwnrs_types::{prelude::*, resman::CachePolicy};
+use nwnrs_types::{encoding::NwnTextContext, prelude::*, resman::CachePolicy};
 use tracing::{debug, info, instrument};
 
 use crate::{
@@ -43,7 +43,7 @@ pub(crate) fn run_inspect(cmd: &InspectCmd) -> Result<(), String> {
         }
         Some(Kind::Model) => {
             debug!("detected MDL input");
-            let summary = inspect_model(path)?;
+            let summary = inspect_model(path, inspect_text_context(cmd)?)?;
             write_stdout_line(&summary)
         }
         Some(Kind::Texture) => {
@@ -61,7 +61,7 @@ pub(crate) fn run_inspect(cmd: &InspectCmd) -> Result<(), String> {
             let file = File::open(path)
                 .map_err(|error| format!("failed to open {}: {error}", path.display()))?;
             let mut reader = BufReader::new(file);
-            let twoda = twoda::read_twoda(&mut reader)
+            let twoda = twoda::read_twoda(&mut reader, inspect_text_context(cmd)?)
                 .map_err(|error| format!("failed to parse {} as 2DA: {error}", path.display()))?;
             write_stdout_line(&format!("{twoda:#?}"))
         }
@@ -70,7 +70,7 @@ pub(crate) fn run_inspect(cmd: &InspectCmd) -> Result<(), String> {
             let file = File::open(path)
                 .map_err(|error| format!("failed to open {}: {error}", path.display()))?;
             let mut reader = BufReader::new(file);
-            let gff = gff::read_gff_root(&mut reader)
+            let gff = gff::read_gff_root(&mut reader, inspect_text_context(cmd)?)
                 .map_err(|error| format!("failed to parse {} as GFF: {error}", path.display()))?;
             write_stdout_line(&format!("{gff:#?}"))
         }
@@ -104,8 +104,8 @@ fn inspect_texture(path: &Path) -> Result<(), String> {
     }
 }
 
-fn inspect_model(path: &Path) -> Result<String, String> {
-    let parsed = mdl::ParsedModel::from_file(path)
+fn inspect_model(path: &Path, text_context: NwnTextContext) -> Result<String, String> {
+    let parsed = mdl::ParsedModel::from_file(path, text_context)
         .map_err(|error| format!("failed to parse {} as MDL: {error}", path.display()))?;
     match parsed {
         mdl::ParsedModel::Ascii(model) => Ok(format!("MDL encoding: ascii\n{model:#?}")),
@@ -128,6 +128,12 @@ fn inspect_model(path: &Path) -> Result<String, String> {
     }
 }
 
+fn inspect_text_context(cmd: &InspectCmd) -> Result<NwnTextContext, String> {
+    let language =
+        localization::resolve_language(&cmd.language).map_err(|error| error.to_string())?;
+    Ok(NwnTextContext::for_language_id(language.id()))
+}
+
 fn inspect_ncs(cmd: &InspectCmd) -> Result<(), String> {
     let path = &cmd.path;
     let bytes =
@@ -137,7 +143,8 @@ fn inspect_ncs(cmd: &InspectCmd) -> Result<(), String> {
         cmd.user.as_deref(),
         &cmd.language,
         cmd.load_ovr,
-    )?;
+    )
+    .map_err(|error| error.message)?;
     let langspec = load_langspec_for_ncs(cmd, install_resolver.as_deref())?;
     let ndb = load_ndb_for_ncs(cmd)?;
     let source_files = ndb
@@ -233,7 +240,11 @@ fn load_source_files(
         let Some(bytes) = bytes else {
             continue;
         };
-        let text = String::from_utf8_lossy(&bytes);
+        let text = nwnrs_types::encoding::NwnText::decode(
+            &bytes,
+            nwnrs_types::encoding::LegacyEncoding::Windows1252,
+        )
+        .display_text();
         files.insert(
             file.name.clone(),
             text.lines().map(str::to_string).collect(),
@@ -291,6 +302,7 @@ mod tests {
 
     use nwnrs_nwscript as nwscript;
     use nwnrs_types::{
+        encoding::NwnTextContext,
         prelude as nwn,
         test_support::{
             materialize_bytes_to_temp_file, materialize_resource_to_temp_file,
@@ -331,7 +343,8 @@ mod tests {
             Ok(path) => path,
             Err(error) => return skip_if_game_resources_unavailable(error),
         };
-        let summary = inspect_model(&fixture).expect("compiled inspect should succeed");
+        let summary = inspect_model(&fixture, NwnTextContext::english())
+            .expect("compiled inspect should succeed");
         assert!(summary.contains("MDL encoding: compiled"));
         assert!(summary.contains("model: a_ba2"));
         assert!(summary.contains("node_count: 57"));
@@ -360,7 +373,7 @@ mod tests {
             opcode:  nwscript::NcsOpcode::Ret,
             auxcode: nwscript::NcsAuxCode::None,
             extra:   Vec::new(),
-        }]);
+        }])?;
         let path = materialize_bytes_to_temp_file(&bytes, "inspect_test.ncs")?;
 
         inspect_ncs(&InspectCmd {

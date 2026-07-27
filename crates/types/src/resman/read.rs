@@ -40,10 +40,13 @@ pub fn read_resdir(path: impl AsRef<Path>) -> ResDirResult<ResDir> {
 
     let mut files = Vec::new();
     collect_files(root, root, &mut files)?;
-    files.sort_by_key(|relative| relative.to_string_lossy().to_ascii_lowercase());
+    files.sort_by_key(|relative| crate::native_path::ascii_folded_key(relative));
 
     for relative in files {
-        let Some(resolved) = ResolvedResRef::try_from_filename(&relative.to_string_lossy()) else {
+        let Some(filename) = relative.to_str() else {
+            continue;
+        };
+        let Some(resolved) = ResolvedResRef::try_from_filename(filename) else {
             continue;
         };
 
@@ -227,7 +230,8 @@ fn new_spawner_res(
 
 fn collect_files(root: &Path, directory: &Path, out: &mut Vec<PathBuf>) -> io::Result<()> {
     let mut entries = fs::read_dir(directory)?.collect::<Result<Vec<_>, io::Error>>()?;
-    entries.sort_by_key(|entry| entry.file_name().to_string_lossy().to_ascii_lowercase());
+    entries
+        .sort_by_key(|entry| crate::native_path::ascii_folded_key(Path::new(&entry.file_name())));
 
     for entry in entries {
         let file_type = entry.file_type()?;

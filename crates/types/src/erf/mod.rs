@@ -11,6 +11,7 @@ pub use types::*;
 pub mod prelude {
     pub use crate::erf::{
         Erf, ErfError, ErfResult, ErfVersion, ErfWriteOptions, read_erf, read_erf_from_file,
-        read_erf_shared, write_erf, write_erf_archive, write_erf_with_options,
+        read_erf_shared, write_erf, write_erf_archive, write_erf_with_native_text,
+        write_erf_with_options,
     };
 }

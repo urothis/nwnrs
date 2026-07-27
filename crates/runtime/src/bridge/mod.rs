@@ -1,5 +1,5 @@
 use crate::{
-    Capability, EventResultKind, RUNTIME_API_VERSION, RuntimeContext, event_definition,
+    Capability, EventResultKind, RUNTIME_API_VERSION, RuntimeContext, keyed_event_definition,
     runtime_event_definition,
 };
 
@@ -117,7 +117,7 @@ pub enum BridgeFunction {
     SkipCurrentEvent,
     /// Sets the current event's JSON result when its schema permits it.
     SetCurrentEventResult,
-    /// Reports whether the exact target pack supports an event identity.
+    /// Reports whether the exact target pack supports an event route.
     GetEventSupported,
     /// Registers one generated dispatcher subscription during module load.
     SubscribeEvent,
@@ -360,6 +360,8 @@ impl BridgeFunction {
             | Self::SetPlayOption
             | Self::SetDebugValue
             | Self::DeleteTurd
+            | Self::GetEventSupported
+            | Self::SubscribeEvent
             | Self::ToggleEventIdWhitelist
             | Self::AddEventIdToWhitelist
             | Self::RemoveEventIdFromWhitelist => 2,
@@ -379,9 +381,7 @@ impl BridgeFunction {
             | Self::RemoveBannedCdKey
             | Self::AddBannedPlayerName
             | Self::RemoveBannedPlayerName
-            | Self::SetCurrentEventResult
-            | Self::GetEventSupported
-            | Self::SubscribeEvent => 1,
+            | Self::SetCurrentEventResult => 1,
             _ => 0,
         }
     }
@@ -814,19 +814,25 @@ impl ScriptBridge {
                 None
             }
             BridgeFunction::GetEventSupported => {
-                let identity = self.pop_nonempty_string_argument("event identity")?;
+                let subject = self.pop_nonempty_string_argument("event subject")?;
+                let phase = self.pop_nonempty_string_argument("event phase")?;
                 self.ensure_no_arguments(function)?;
-                let identity = std::str::from_utf8(&identity)
-                    .map_err(|_error| invalid_argument("event identity is not UTF-8"))?;
+                let subject = std::str::from_utf8(&subject)
+                    .map_err(|_error| invalid_argument("event subject is not UTF-8"))?;
+                let phase = std::str::from_utf8(&phase)
+                    .map_err(|_error| invalid_argument("event phase is not UTF-8"))?;
                 Some(BridgeValue::Integer(i32::from(
-                    context.target.pack.supports_event(identity),
+                    context.target.pack.supports_event(subject, phase),
                 )))
             }
             BridgeFunction::SubscribeEvent => {
-                let identity = self.pop_nonempty_string_argument("event identity")?;
+                let subject = self.pop_nonempty_string_argument("event subject")?;
+                let phase = self.pop_nonempty_string_argument("event phase")?;
                 self.ensure_no_arguments(function)?;
-                let identity = std::str::from_utf8(&identity)
-                    .map_err(|_error| invalid_argument("event identity is not UTF-8"))?;
+                let subject = std::str::from_utf8(&subject)
+                    .map_err(|_error| invalid_argument("event subject is not UTF-8"))?;
+                let phase = std::str::from_utf8(&phase)
+                    .map_err(|_error| invalid_argument("event phase is not UTF-8"))?;
                 let current = host_current_event(host)?.ok_or_else(|| {
                     invalid_argument("event subscription requested outside module.load")
                 })?;
@@ -835,23 +841,20 @@ impl ScriptBridge {
                         "event subscriptions may only be registered during module.load",
                     ));
                 }
-                if event_definition(identity).is_none() {
-                    return Err(invalid_argument(
-                        "event identity is absent from the catalog",
-                    ));
-                }
-                if !context.target.pack.supports_event(identity) {
+                let (key, _definition) = keyed_event_definition(subject, phase)
+                    .ok_or_else(|| invalid_argument("event route is absent from the catalog"))?;
+                if !context.target.pack.supports_event(subject, phase) {
                     self.logs.push(ScriptLog {
                         level:   ScriptLogLevel::Warn,
                         message: format!(
-                            "event subscription {identity} is unsupported by the selected target \
-                             pack; its handler will not run"
+                            "event subscription {subject}::{phase} is unsupported by the selected \
+                             target pack; its handler will not run"
                         )
                         .into_bytes(),
                     });
                     return Ok(());
                 }
-                host.control_event(EventCommand::Subscribe(identity.to_string()))?;
+                host.control_event(EventCommand::Subscribe(key))?;
                 None
             }
             BridgeFunction::ToggleEventIdWhitelist => {
@@ -1222,7 +1225,7 @@ fn banned_list_json(lists: BannedLists) -> BridgeResult<Vec<u8>> {
     let strings = |values: &[Vec<u8>]| {
         values
             .iter()
-            .map(|value| String::from_utf8_lossy(value).into_owned())
+            .map(|value| crate::display_engine_text(value))
             .collect::<Vec<_>>()
     };
     serde_json::to_vec(&serde_json::json!({
@@ -1477,7 +1480,8 @@ mod tests {
             ..FakeHost::default()
         };
 
-        bridge.push_argument(BridgeValue::String(b"item_use_before".to_vec()));
+        bridge.push_argument(BridgeValue::String(b"after".to_vec()));
+        bridge.push_argument(BridgeValue::String(b"item_use".to_vec()));
         bridge.call("NWNRS", "SubscribeEvent", &context, &mut host)?;
 
         assert!(host.event_commands.is_empty());
@@ -1485,7 +1489,7 @@ mod tests {
             bridge.take_logs(),
             vec![ScriptLog {
                 level:   ScriptLogLevel::Warn,
-                message: b"event subscription item_use_before is unsupported by the selected target pack; its handler will not run".to_vec(),
+                message: b"event subscription item_use::after is unsupported by the selected target pack; its handler will not run".to_vec(),
             }]
         );
         Ok(())
@@ -1664,12 +1668,18 @@ mod tests {
         assert!(header.contains(&format!(
             "const int NWNRS_API_VERSION = {RUNTIME_API_VERSION};"
         )));
+        let project_macro = include_str!("../../../../include/nwnrs/nwnrs_macros.nss");
         for function in super::BridgeFunction::ALL {
             assert_eq!(
                 super::BridgeFunction::from_name(function.name()),
                 Some(function)
             );
-            assert!(header.contains(function.name()));
+            if function == super::BridgeFunction::SubscribeEvent {
+                assert!(!header.contains(function.name()));
+                assert!(project_macro.contains(function.name()));
+            } else {
+                assert!(header.contains(function.name()));
+            }
         }
         for name in ["NWSCRIPT_BRIDGE", "SERVER_STATE", "ADMINISTRATION"] {
             assert!(header.contains(&format!("NWNRS_CAPABILITY_{name}")));

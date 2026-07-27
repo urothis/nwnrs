@@ -5,6 +5,7 @@ mod support;
 use std::{error::Error, io::Cursor};
 
 use nwnrs_types::{
+    encoding::NwnTextContext,
     resman::lookup_res_type,
     twoda::{TwoDa, read_twoda, write_twoda},
 };
@@ -26,8 +27,9 @@ fn edited_source_backed_twoda_preserves_row_layout_on_cell_edit() -> Result<(), 
         .expect("edit cell");
 
     let mut output = Vec::new();
-    write_twoda(&mut output, &value, false).expect("write twoda");
-    let reparsed = read_twoda(Cursor::new(output)).expect("reparse twoda");
+    write_twoda(&mut output, &value, false, NwnTextContext::default()).expect("write twoda");
+    let reparsed =
+        read_twoda(Cursor::new(output), NwnTextContext::default()).expect("reparse twoda");
 
     assert_eq!(
         reparsed
@@ -37,6 +39,29 @@ fn edited_source_backed_twoda_preserves_row_layout_on_cell_edit() -> Result<(), 
             .and_then(|cell| cell.as_deref()),
         Some("changed")
     );
+    Ok(())
+}
+
+#[test]
+fn editing_one_cell_never_mixes_utf8_with_legacy_layout_bytes() -> Result<(), Box<dyn Error>> {
+    let context = NwnTextContext::english();
+    let source =
+        b"2DA V2.0\r\n\r\n    Label Other      Editable\r\n0   caf\xe9  \x81opaque  old\r\n";
+    let mut table = read_twoda(Cursor::new(source), context)?;
+    table.set_cell(0, "Editable", Some("changed".to_string()))?;
+
+    let mut output = Vec::new();
+    write_twoda(&mut output, &table, false, context)?;
+
+    assert!(
+        output
+            .windows(b"\x81opaque".len())
+            .any(|window| window == b"\x81opaque")
+    );
+    assert!(output.contains(&0xe9));
+    assert!(!output.windows(2).any(|window| window == [0xc3, 0xa9]));
+    let reparsed = read_twoda(Cursor::new(output), context)?;
+    assert_eq!(reparsed.cell_or(0, "Editable", ""), "changed");
     Ok(())
 }
 
@@ -52,8 +77,9 @@ fn edited_source_backed_twoda_preserves_header_and_row_label_edits() -> Result<(
     value.set_row_label(0, "custom0").expect("rename row label");
 
     let mut output = Vec::new();
-    write_twoda(&mut output, &value, false).expect("write twoda");
-    let reparsed = read_twoda(Cursor::new(output)).expect("reparse twoda");
+    write_twoda(&mut output, &value, false, NwnTextContext::default()).expect("write twoda");
+    let reparsed =
+        read_twoda(Cursor::new(output), NwnTextContext::default()).expect("reparse twoda");
 
     assert_eq!(
         reparsed.columns().first().map(String::as_str),
@@ -117,8 +143,9 @@ fn edited_source_backed_twoda_appends_rows_and_columns() -> Result<(), Box<dyn E
     value.replace_rows(rows, row_labels).expect("replace rows");
 
     let mut output = Vec::new();
-    write_twoda(&mut output, &value, false).expect("write twoda");
-    let reparsed = read_twoda(Cursor::new(output)).expect("reparse twoda");
+    write_twoda(&mut output, &value, false, NwnTextContext::default()).expect("write twoda");
+    let reparsed =
+        read_twoda(Cursor::new(output), NwnTextContext::default()).expect("reparse twoda");
 
     assert_eq!(
         reparsed.columns().last().map(String::as_str),
@@ -139,7 +166,7 @@ fn edited_source_backed_twoda_appends_rows_and_columns() -> Result<(), Box<dyn E
 #[test]
 fn twoda_roundtrip() -> Result<(), Box<dyn Error>> {
     test_shipped_resource_by_extension_matching("2da", |_resref, bytes| {
-        read_twoda(Cursor::new(bytes))
+        read_twoda(Cursor::new(bytes), NwnTextContext::default())
             .is_ok_and(|table| !table.columns().is_empty() && !table.rows.is_empty())
     })
 }
@@ -150,9 +177,9 @@ fn shipped_twoda_fixture() -> Result<TwoDa, Box<dyn Error>> {
     let (_resref, bytes) = require_game_resource(read_first_shipped_resource_bytes_matching(
         twoda_type,
         |_resref, bytes| {
-            read_twoda(Cursor::new(bytes))
+            read_twoda(Cursor::new(bytes), NwnTextContext::default())
                 .is_ok_and(|table| !table.columns().is_empty() && !table.rows.is_empty())
         },
     ))?;
-    Ok(read_twoda(Cursor::new(bytes))?)
+    Ok(read_twoda(Cursor::new(bytes), NwnTextContext::default())?)
 }

@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 use serde::Serialize;
 
 use super::BridgeResult;
+use crate::EventKey;
 
 /// One administration mutation validated by the NWScript dispatcher.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -107,8 +108,8 @@ pub enum EventCommand {
     Skip,
     /// Replaces the event's JSON result.
     SetResult(Vec<u8>),
-    /// Registers one generated module event subscription.
-    Subscribe(String),
+    /// Registers one resolved generated module event subscription.
+    Subscribe(EventKey),
     /// Enables or disables one named integer whitelist.
     ToggleIdWhitelist {
         /// Stable whitelist name.
@@ -253,7 +254,7 @@ pub enum EventValue {
 /// One immutable JSON-shaped event snapshot passed to every NWScript handler.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct EventPayload {
-    /// Stable semantic event identity.
+    /// Stable dotted runtime event name.
     pub name:     String,
     /// Engine `EVENT_SCRIPT_*` identifier, or `-1` when not applicable.
     pub id:       i32,

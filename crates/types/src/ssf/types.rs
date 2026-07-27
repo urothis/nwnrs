@@ -50,23 +50,32 @@ pub struct SsfEntry {
 
 impl SsfEntry {
     /// Creates a canonical SSF slot with a zero-padded resref encoding.
-    pub fn new(resref: impl Into<String>, strref: StrRef) -> Self {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SsfError`] when the resref is not ASCII or exceeds 16 bytes.
+    pub fn new(resref: impl Into<String>, strref: StrRef) -> SsfResult<Self> {
         let resref = resref.into();
+        if !resref.is_ascii() || resref.len() > 16 {
+            return Err(SsfError::Message(format!(
+                "SSF resref {resref:?} must contain at most 16 ASCII bytes"
+            )));
+        }
         let mut raw_resref = [0_u8; 16];
         let bytes = resref.as_bytes();
         let count = bytes.len().min(raw_resref.len());
         if let (Some(dst), Some(src)) = (raw_resref.get_mut(..count), bytes.get(..count)) {
             dst.copy_from_slice(src);
         }
-        Self {
+        Ok(Self {
             raw_resref,
             resref,
             strref,
-        }
+        })
     }
 
     pub(crate) fn stored_resref_bytes(&self) -> io::Result<[u8; 16]> {
-        if decode_resref(&self.raw_resref) == self.resref {
+        if decode_resref(&self.raw_resref)? == self.resref {
             return Ok(self.raw_resref);
         }
 
@@ -74,6 +83,12 @@ impl SsfEntry {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("resref {:?} exceeds 16 bytes", self.resref),
+            ));
+        }
+        if !self.resref.is_ascii() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("resref {:?} contains non-ASCII text", self.resref),
             ));
         }
 
@@ -101,7 +116,15 @@ impl SsfRoot {
     }
 }
 
-pub(crate) fn decode_resref(raw: &[u8]) -> String {
+pub(crate) fn decode_resref(raw: &[u8]) -> io::Result<String> {
     let end = raw.iter().position(|byte| *byte == 0).unwrap_or(raw.len());
-    String::from_utf8_lossy(raw.get(..end).unwrap_or(&[])).to_string()
+    let value = raw.get(..end).unwrap_or(&[]);
+    if !value.is_ascii() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "SSF resref contains non-ASCII bytes",
+        ));
+    }
+    String::from_utf8(value.to_vec())
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
 }

@@ -28,10 +28,13 @@
     "workspace"
   ],
   "main": "./dist/src/extension.js",
-  "activationEvents": [
-    "workspaceContains:**/*.nss"
-  ],
   "contributes": {
+    "configurationDefaults": {
+      "[nwscript]": {
+        "files.encoding": "windows1252",
+        "files.autoGuessEncoding": false
+      }
+    },
     "languages": [
       {
         "id": "nwscript",
@@ -258,6 +261,21 @@
         "title": "nwnrs: Open nwnrs Settings"
       },
       {
+        "command": "nwnrs.nwpkg.fetchDependencies",
+        "title": "nwnrs: Fetch nwpkg Dependencies",
+        "icon": "$(cloud-download)"
+      },
+      {
+        "command": "nwnrs.nwpkg.updateDependencies",
+        "title": "nwnrs: Update nwpkg Dependencies",
+        "icon": "$(sync)"
+      },
+      {
+        "command": "nwnrs.nwpkg.cleanCache",
+        "title": "nwnrs: Clean Unused nwpkg Cache",
+        "icon": "$(trash)"
+      },
+      {
         "command": "nwnrs.sidebar.refreshPackages",
         "title": "Refresh Packages",
         "icon": "$(refresh)"
@@ -271,6 +289,21 @@
         "command": "nwnrs.sidebar.refreshResources",
         "title": "Refresh Resources",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "nwnrs.sidebar.fetchDependency",
+        "title": "Fetch Dependency",
+        "icon": "$(cloud-download)"
+      },
+      {
+        "command": "nwnrs.sidebar.updateDependency",
+        "title": "Update Dependency",
+        "icon": "$(sync)"
+      },
+      {
+        "command": "nwnrs.sidebar.copyDependencySource",
+        "title": "Copy Dependency Source",
+        "icon": "$(copy)"
       }
     ],
     "menus": {
@@ -296,6 +329,23 @@
           "command": "nwnrs.sidebar.refreshResources",
           "when": "view == nwnrs.resources",
           "group": "navigation@1"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "nwnrs.sidebar.fetchDependency",
+          "when": "view == nwnrs.packages && viewItem =~ /nwnrsDependency/",
+          "group": "inline@1"
+        },
+        {
+          "command": "nwnrs.sidebar.updateDependency",
+          "when": "view == nwnrs.packages && viewItem =~ /nwnrsDependency.git/",
+          "group": "inline@2"
+        },
+        {
+          "command": "nwnrs.sidebar.copyDependencySource",
+          "when": "view == nwnrs.packages && viewItem =~ /nwnrsDependency/",
+          "group": "navigation@10"
         }
       ]
     },
@@ -356,6 +406,16 @@
           "type": "string",
           "default": "",
           "description": "Default save destination for protected game resources. Empty uses the configured userPath/override directory or prompts for a destination."
+        },
+        "nwnrs.git.path": {
+          "type": "string",
+          "default": "",
+          "description": "System Git executable used only for explicit nwpkg fetch and update operations. Empty uses NWNRS_GIT or the system git command."
+        },
+        "nwnrs.packageCachePath": {
+          "type": "string",
+          "default": "",
+          "description": "Immutable nwpkg Git dependency cache directory. Empty uses NWNRS_PACKAGE_CACHE or the platform cache directory."
         },
         "nwnrs.language": {
           "type": "string",
@@ -432,12 +492,17 @@
   },
   "scripts": {
     "clean": "rimraf dist",
+    "prebuild": "npm run generate:contracts --prefix ../..",
     "build": "npm run clean && tsc -p tsconfig.build.json && node dist/scripts/sync-resource-capabilities.js --check && tsc -p tsconfig.webview.json",
+    "prebuild-native": "npm run generate:contracts --prefix ../..",
     "build-native": "npm run build && node dist/scripts/build-native.js",
     "vscode:prepublish": "npm run build-native && npm run check && npm test",
+    "precheck": "npm run generate:contracts --prefix ../..",
     "check": "tsc -p tsconfig.build.json && node dist/scripts/sync-resource-capabilities.js --check && tsc -p tsconfig.json --noEmit",
+    "prepackage": "npm run generate:contracts --prefix ../..",
     "package": "vsce package --no-dependencies",
     "sync:capabilities": "tsc -p tsconfig.build.json && node dist/scripts/sync-resource-capabilities.js --write",
+    "pretest": "npm run generate:contracts --prefix ../..",
     "test": "npm run build && node --test test/*.test.ts"
   }
 }

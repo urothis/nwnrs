@@ -15,6 +15,7 @@
   },
   "include": [
     "media/**/*.ts",
-    "types/webview.d.ts"
+    "types/webview.d.ts",
+    "src/generated/webview.d.ts"
   ]
 }

@@ -20,6 +20,7 @@ const PACKET_MAGIC: &[u8; 8] = b"NWNRS3D\0";
 
 /// Scalar representation stored in a packed buffer view.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub enum BufferComponent {
     /// Unsigned 8-bit integer.
@@ -34,6 +35,7 @@ pub enum BufferComponent {
 
 /// A typed slice of the binary payload accompanying a scene manifest.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct BufferView {
     /// Byte offset from the beginning of the packed payload.
@@ -50,6 +52,7 @@ pub struct BufferView {
 
 /// Packed representation of nested numeric rows.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct RaggedBuffer {
     /// Flattened row values.
@@ -60,6 +63,7 @@ pub struct RaggedBuffer {
 
 /// One UV stream in a packed primitive.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct PacketUvSet {
     /// Authored UV-set index.
@@ -70,6 +74,7 @@ pub struct PacketUvSet {
 
 /// One frontend-ready primitive and its source-preserving side streams.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct PacketPrimitive {
     /// Geometry animmesh sample period.
@@ -112,6 +117,7 @@ pub struct PacketPrimitive {
 
 /// One frontend-ready mesh.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct PacketMesh {
     /// Mesh name.
@@ -124,6 +130,7 @@ pub struct PacketMesh {
 
 /// One material texture binding.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct PacketTextureBinding {
     /// Authored texture slot.
@@ -134,6 +141,7 @@ pub struct PacketTextureBinding {
 
 /// Complete static material parameters preserved from an MDL node.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct PacketMaterial {
     /// Owning node index.
@@ -178,6 +186,7 @@ pub struct PacketMaterial {
 
 /// Scene-graph node data needed for rendering and inspection.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct PacketNode {
     /// Typed node-kind name.
@@ -224,6 +233,7 @@ pub struct PacketNode {
 
 /// Complete static light data authored by one model node.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct PacketLight {
     /// Light intensity multiplier.
@@ -262,6 +272,7 @@ pub struct PacketLight {
 
 /// One typed emitter-property value.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(tag = "kind", content = "value", rename_all = "camelCase")]
 pub enum PacketPropertyValue {
     /// Boolean value.
@@ -276,6 +287,7 @@ pub enum PacketPropertyValue {
 
 /// One ordered emitter property.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct PacketEmitterProperty {
     /// Authored property name.
@@ -286,6 +298,7 @@ pub struct PacketEmitterProperty {
 
 /// Complete static emitter payload.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct PacketEmitter {
     /// Emitter width.
@@ -298,6 +311,7 @@ pub struct PacketEmitter {
 
 /// Complete danglymesh physics payload.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct PacketDangly {
     /// Maximum displacement.
@@ -310,6 +324,7 @@ pub struct PacketDangly {
 
 /// One animation event.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct PacketAnimationEvent {
     /// Event time.
@@ -320,6 +335,7 @@ pub struct PacketAnimationEvent {
 
 /// Packed time/value samples for one animation channel.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct PacketKeyTrack {
     /// Packed scalar key times.
@@ -330,6 +346,7 @@ pub struct PacketKeyTrack {
 
 /// One packed emitter-controller curve.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct PacketEmitterTrack {
     /// Canonical NWN controller property name.
@@ -344,6 +361,7 @@ pub struct PacketEmitterTrack {
 
 /// Packed animmesh samples for one animated node.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct PacketAnimMeshTrack {
     /// Authored sample period.
@@ -364,6 +382,7 @@ pub struct PacketAnimMeshTrack {
 
 /// Complete animation channels for one target node.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct PacketNodeAnimationTrack {
     /// Target node name.
@@ -402,6 +421,7 @@ pub struct PacketNodeAnimationTrack {
 
 /// Animation metadata and packed node tracks.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct PacketAnimation {
     /// Animation name.
@@ -424,6 +444,7 @@ pub struct PacketAnimation {
 
 /// Attachment relationship between packed models.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct PacketAttachment {
     /// Target node name on the parent model.
@@ -434,6 +455,7 @@ pub struct PacketAttachment {
 
 /// Model-local axis-aligned geometry bounds.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct PacketBounds {
     /// Minimum XYZ corner.
@@ -444,6 +466,7 @@ pub struct PacketBounds {
 
 /// One packed model asset.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct PacketModel {
     /// Model name.
@@ -517,6 +540,7 @@ fn packet_scene_bounds(scene: &NwnScene) -> Option<PacketBounds> {
 
 /// One decoded texture in the packed binary payload.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct PacketTexture {
     /// Resolved texture resource.
@@ -539,6 +563,7 @@ pub struct PacketTexture {
 
 /// JSON manifest at the front of a binary scene packet.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct ScenePacketManifest {
     /// Packet schema identity.
@@ -828,6 +853,7 @@ impl ScenePacket {
 
 /// Manifest for one lazily requested animation payload.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct SceneAnimationPacketManifest {
     /// Packet schema identity.
@@ -861,6 +887,7 @@ impl SceneAnimationPacket {
 
 /// Manifest for one lazily requested texture payload.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct SceneTexturePacketManifest {
     /// Packet schema identity.
@@ -888,6 +915,7 @@ pub struct SceneTexturePacketManifest {
 
 /// One packed compressed texture mip.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct PacketTextureMip {
     /// Pixel width.
@@ -1630,6 +1658,7 @@ mod tests {
             ModelResourceKind::Model,
             "triangle",
             b"newmodel triangle\nsetsupermodel triangle null\nbeginmodelgeom triangle\nnode trimesh triangle\n parent null\n verts 3\n  0 0 0\n  1 0 0\n  0 1 0\n faces 1\n  0 1 2 0 0 1 2 0\nendnode\nendmodelgeom triangle\nnewanim pulse triangle\n length 1\n node dummy triangle\n  parent null\n  positionkey 2\n   0 0 0 0\n   1 1 2 3\n  alphakey 2\n   0 1\n   1 0.5\n endnode\ndoneanim pulse triangle\ndonemodel triangle\n",
+            nwnrs_types::encoding::NwnTextContext::english(),
         )
         .unwrap_or_else(|error| panic!("parse model: {error}"));
         let scene = SceneDocument {

@@ -414,7 +414,7 @@ impl KeyTable {
             let directory = path
                 .parent()
                 .filter(|parent| !parent.as_os_str().is_empty())
-                .map(|parent| parent.to_string_lossy().replace('\\', "/"))
+                .map(|parent| crate::native_path::display(parent).replace('\\', "/"))
                 .unwrap_or_default();
             result.push(KeyBifEntry {
                 directory,

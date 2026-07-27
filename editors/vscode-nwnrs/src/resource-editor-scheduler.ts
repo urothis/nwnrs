@@ -1,10 +1,20 @@
-import { isResourceEditorMutation } from './resource-editor-methods';
+import { RESOURCE_EDITOR_MUTATION_METHODS } from './generated/contract';
+import type {
+  ResourceEditorScheduledRequest,
+  ResourceEditorWorkerMethod,
+} from './resource-editor-protocol';
 
-export interface ResourceEditorScheduledRequest {
-  readonly id: number;
-  readonly method: string;
-  readonly request: unknown;
+const mutatingResourceEditorMethods: ReadonlySet<ResourceEditorWorkerMethod> = new Set(
+  RESOURCE_EDITOR_MUTATION_METHODS,
+);
+
+export function isResourceEditorMutation(
+  method: ResourceEditorWorkerMethod,
+): boolean {
+  return mutatingResourceEditorMethods.has(method);
 }
+
+export type { ResourceEditorScheduledRequest } from './resource-editor-protocol';
 
 export interface ResourceEditorSchedulerResponse {
   readonly type: 'response';
@@ -18,12 +28,12 @@ export interface ResourceEditorSchedulerOptions {
   readonly maxRunningDocuments?: number;
 }
 
-interface QueueEntry extends ResourceEditorScheduledRequest {
+type QueueEntry = ResourceEditorScheduledRequest & {
   readonly documentId: string;
   readonly cancellable: boolean;
   controller?: AbortController;
   suppressResponse: boolean;
-}
+};
 
 type ResourceEditorExecutor = (
   request: ResourceEditorScheduledRequest,

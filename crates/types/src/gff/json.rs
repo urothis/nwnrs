@@ -1,7 +1,13 @@
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde_json::{Map, Number, Value};
 
-use crate::gff::{GffCExoLocString, GffError, GffField, GffResult, GffRoot, GffStruct, GffValue};
+use crate::{
+    encoding::{LegacyEncoding, NwnText, NwnTextSegment},
+    gff::{
+        GffCExoLocString, GffError, GffField, GffFieldProvenance, GffResult, GffRoot, GffStruct,
+        GffValue,
+    },
+};
 
 /// Parses a canonical `neverwinter.nim` GFF JSON document from UTF-8 bytes.
 ///
@@ -54,9 +60,9 @@ pub fn gff_root_from_json(json: &Value) -> GffResult<GffRoot> {
         .get("__data_type")
         .and_then(Value::as_str)
         .ok_or_else(|| GffError::msg("GFF JSON root requires string __data_type"))?;
-    if file_type.len() != 4 {
+    if file_type.len() != 4 || !file_type.is_ascii() {
         return Err(GffError::msg(
-            "GFF JSON __data_type must be exactly 4 bytes",
+            "GFF JSON __data_type must be exactly 4 ASCII bytes",
         ));
     }
 
@@ -145,6 +151,18 @@ fn field_to_json(field: &GffField) -> GffResult<Value> {
 
     object.insert("type".to_string(), Value::String(kind.to_string()));
     object.insert("value".to_string(), value);
+    if !field.native_text().is_empty() {
+        object.insert(
+            "nativeText".to_string(),
+            Value::Array(
+                field
+                    .native_text()
+                    .iter()
+                    .map(native_text_to_json)
+                    .collect(),
+            ),
+        );
+    }
     Ok(Value::Object(object))
 }
 
@@ -244,7 +262,126 @@ fn field_from_json(label: &str, encoded: &Value) -> GffResult<GffField> {
         }
     };
 
-    Ok(GffField::new(parsed))
+    let native_text = object
+        .get("nativeText")
+        .map(|value| {
+            value
+                .as_array()
+                .ok_or_else(|| GffError::msg(format!("field {label} nativeText must be an array")))?
+                .iter()
+                .map(native_text_from_json)
+                .collect::<GffResult<Vec<_>>>()
+        })
+        .transpose()?
+        .unwrap_or_default();
+    if native_text.is_empty() {
+        return Ok(GffField::new(parsed));
+    }
+    let mut label_bytes = [0_u8; 16];
+    let bytes = label.as_bytes();
+    label_bytes
+        .get_mut(..bytes.len())
+        .ok_or_else(|| GffError::msg(format!("field label {label:?} exceeds 16 bytes")))?
+        .copy_from_slice(bytes);
+    Ok(GffField::with_provenance(
+        parsed.clone(),
+        GffFieldProvenance {
+            label_bytes,
+            original_value: parsed,
+            raw_data_or_offset: 0,
+            raw_field_data: None,
+            native_text,
+        },
+    ))
+}
+
+fn native_text_to_json(text: &NwnText) -> Value {
+    let segments = text
+        .segments()
+        .iter()
+        .map(|segment| match segment {
+            NwnTextSegment::Text(value) => {
+                serde_json::json!({ "kind": "text", "text": value })
+            }
+            NwnTextSegment::Opaque(bytes) => {
+                serde_json::json!({ "kind": "opaque", "base64": STANDARD.encode(bytes) })
+            }
+            NwnTextSegment::ColorStart(rgb) => {
+                serde_json::json!({ "kind": "colorStart", "rgb": rgb })
+            }
+            NwnTextSegment::ColorEnd => serde_json::json!({ "kind": "colorEnd" }),
+        })
+        .collect::<Vec<_>>();
+    serde_json::json!({
+        "encoding": text.encoding().label(),
+        "segments": segments,
+    })
+}
+
+fn native_text_from_json(value: &Value) -> GffResult<NwnText> {
+    let object = as_object(value, "nativeText")?;
+    let encoding = object
+        .get("encoding")
+        .and_then(Value::as_str)
+        .ok_or_else(|| GffError::msg("nativeText requires string encoding"))
+        .and_then(|value| {
+            LegacyEncoding::from_label(value).map_err(|error| GffError::msg(error.to_string()))
+        })?;
+    let segments = object
+        .get("segments")
+        .and_then(Value::as_array)
+        .ok_or_else(|| GffError::msg("nativeText requires a segments array"))?
+        .iter()
+        .map(|segment| {
+            let segment = as_object(segment, "nativeText segment")?;
+            match segment.get("kind").and_then(Value::as_str) {
+                Some("text") => Ok(NwnTextSegment::Text(
+                    segment
+                        .get("text")
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| GffError::msg("text segment requires text"))?
+                        .to_string(),
+                )),
+                Some("opaque") => Ok(NwnTextSegment::Opaque(
+                    STANDARD
+                        .decode(
+                            segment
+                                .get("base64")
+                                .and_then(Value::as_str)
+                                .ok_or_else(|| GffError::msg("opaque segment requires base64"))?,
+                        )
+                        .map_err(|error| {
+                            GffError::msg(format!("invalid opaque segment base64: {error}"))
+                        })?,
+                )),
+                Some("colorStart") => {
+                    let values = segment
+                        .get("rgb")
+                        .and_then(Value::as_array)
+                        .ok_or_else(|| GffError::msg("colorStart segment requires rgb"))?;
+                    let rgb = values
+                        .iter()
+                        .map(|value| {
+                            value
+                                .as_u64()
+                                .and_then(|value| u8::try_from(value).ok())
+                                .ok_or_else(|| GffError::msg("colorStart rgb values must be bytes"))
+                        })
+                        .collect::<GffResult<Vec<_>>>()?;
+                    let rgb: [u8; 3] = rgb.try_into().map_err(|_error| {
+                        GffError::msg("colorStart rgb must contain exactly three bytes")
+                    })?;
+                    Ok(NwnTextSegment::ColorStart(rgb))
+                }
+                Some("colorEnd") => Ok(NwnTextSegment::ColorEnd),
+                Some(kind) => Err(GffError::msg(format!(
+                    "unknown nativeText segment kind {kind}"
+                ))),
+                None => Err(GffError::msg("nativeText segment requires kind")),
+            }
+        })
+        .collect::<GffResult<Vec<_>>>()?;
+    Ok(NwnText::from_segments(segments, encoding))
 }
 
 fn sort_object(object: &mut Map<String, Value>) {
@@ -319,7 +456,13 @@ checked_integer!(to_i32, i32, i64);
 
 #[cfg(test)]
 mod tests {
+    use std::io::Cursor;
+
     use super::*;
+    use crate::{
+        encoding::{LegacyEncoding, NwnText},
+        gff::{GffFieldProvenance, read_gff_root, write_gff_root},
+    };
 
     #[test]
     fn canonical_json_round_trips_typed_values() -> GffResult<()> {
@@ -354,5 +497,49 @@ mod tests {
             result.is_err_and(|error| error.to_string().contains("outside f32 range")),
             "out-of-range float should be rejected"
         );
+    }
+
+    #[test]
+    fn json_preserves_opaque_bytes_and_color_controls() -> GffResult<()> {
+        let context = crate::encoding::NwnTextContext::english();
+        let bytes = [
+            0x81, b'A', b'<', b'c', 1, 2, 3, b'>', b'B', b'<', b'/', b'c', b'>',
+        ];
+        let native = NwnText::decode(&bytes, LegacyEncoding::Windows1252);
+        let value = GffValue::CExoString(native.display_text());
+        let mut label_bytes = [0_u8; 16];
+        label_bytes[..4].copy_from_slice(b"Text");
+        let field = GffField::with_provenance(
+            value.clone(),
+            GffFieldProvenance {
+                label_bytes,
+                original_value: value,
+                raw_data_or_offset: 0,
+                raw_field_data: None,
+                native_text: vec![native],
+            },
+        );
+        let mut root = GffRoot::new("UTC ");
+        root.root.put_field("Text", field)?;
+
+        let mut encoded = Cursor::new(Vec::new());
+        write_gff_root(&mut encoded, &root, context)?;
+        let parsed = read_gff_root(&mut Cursor::new(encoded.get_ref()), context)?;
+        let json = gff_root_to_json_bytes(&parsed)?;
+        let restored = gff_root_from_json_bytes(json)?;
+        let mut reencoded = Cursor::new(Vec::new());
+        write_gff_root(&mut reencoded, &restored, context)?;
+
+        let reparsed = read_gff_root(&mut Cursor::new(reencoded.get_ref()), context)?;
+        let native = reparsed
+            .root
+            .get_field("Text")
+            .map(GffField::native_text)
+            .unwrap_or_default();
+        assert_eq!(
+            native.first().map(NwnText::encode).transpose()?,
+            Some(bytes.to_vec())
+        );
+        Ok(())
     }
 }

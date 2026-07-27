@@ -3,9 +3,9 @@ use std::{collections::BTreeMap, error::Error, fmt};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    AssignmentOp, BinaryOp, BlockStmt, BuiltinValue, Expr, ExprKind, FunctionDecl,
-    IncludeDirective, LangSpec, Literal, Script, SemanticModel, SemanticType, Stmt, StructDecl,
-    TypeSpec, UnaryOp,
+    AssignmentOp, BinaryOp, BlockStmt, BuiltinValue, CancellationToken, Expr, ExprKind,
+    FunctionDecl, IncludeDirective, LangSpec, Literal, Script, SemanticModel, SemanticType, Stmt,
+    StructDecl, TypeSpec, UnaryOp,
 };
 
 /// One lowered HIR module ready for further compiler passes.
@@ -433,14 +433,42 @@ pub fn lower_to_hir(
     HirLowerer::new(script, semantic, langspec).lower()
 }
 
+pub(crate) fn lower_to_hir_with_cancellation(
+    script: &Script,
+    semantic: &SemanticModel,
+    langspec: Option<&LangSpec>,
+    cancellation: &CancellationToken,
+) -> Result<HirModule, HirLowerError> {
+    HirLowerer::new_with_cancellation(script, semantic, langspec, cancellation).lower()
+}
+
 struct HirLowerer<'a> {
     script:            &'a Script,
     semantic:          &'a SemanticModel,
     builtin_constants: BTreeMap<String, SemanticType>,
+    cancellation:      Option<&'a CancellationToken>,
 }
 
 impl<'a> HirLowerer<'a> {
     fn new(script: &'a Script, semantic: &'a SemanticModel, langspec: Option<&LangSpec>) -> Self {
+        Self::new_impl(script, semantic, langspec, None)
+    }
+
+    fn new_with_cancellation(
+        script: &'a Script,
+        semantic: &'a SemanticModel,
+        langspec: Option<&LangSpec>,
+        cancellation: &'a CancellationToken,
+    ) -> Self {
+        Self::new_impl(script, semantic, langspec, Some(cancellation))
+    }
+
+    fn new_impl(
+        script: &'a Script,
+        semantic: &'a SemanticModel,
+        langspec: Option<&LangSpec>,
+        cancellation: Option<&'a CancellationToken>,
+    ) -> Self {
         let mut builtin_constants = BTreeMap::new();
         if let Some(langspec) = langspec {
             for constant in &langspec.constants {
@@ -454,6 +482,18 @@ impl<'a> HirLowerer<'a> {
             script,
             semantic,
             builtin_constants,
+            cancellation,
+        }
+    }
+
+    fn check_cancelled(&self, span: crate::Span) -> Result<(), HirLowerError> {
+        if self
+            .cancellation
+            .is_some_and(CancellationToken::is_cancelled)
+        {
+            Err(HirLowerError::new(span, "operation cancelled"))
+        } else {
+            Ok(())
         }
     }
 
@@ -464,6 +504,7 @@ impl<'a> HirLowerer<'a> {
         let mut functions = Vec::new();
 
         for item in &self.script.items {
+            self.check_cancelled(crate::Span::new(crate::SourceId::new(0), 0, 0))?;
             match item {
                 crate::TopLevelItem::Include(include) => includes.push(include.clone()),
                 crate::TopLevelItem::Struct(definition) => {
@@ -593,7 +634,7 @@ impl<'a> HirLowerer<'a> {
                 parameter.ty.clone(),
                 HirLocalKind::Parameter,
                 parsed.span,
-            );
+            )?;
             let default = if let Some(default) = &parsed.default {
                 Some(self.lower_expr(default, &mut ctx)?)
             } else {
@@ -643,6 +684,7 @@ impl<'a> HirLowerer<'a> {
 
         let mut statements = Vec::new();
         for statement in &block.statements {
+            self.check_cancelled(block.span)?;
             statements.push(self.lower_stmt(statement, ctx)?);
         }
 
@@ -674,7 +716,7 @@ impl<'a> HirLowerer<'a> {
                         ty.clone(),
                         HirLocalKind::Local,
                         declarator.span,
-                    );
+                    )?;
                     let initializer = declarator
                         .initializer
                         .as_ref()
@@ -763,6 +805,7 @@ impl<'a> HirLowerer<'a> {
         expr: &Expr,
         ctx: &mut FunctionLoweringContext,
     ) -> Result<HirExpr, HirLowerError> {
+        self.check_cancelled(expr.span)?;
         let lowered = match &expr.kind {
             ExprKind::Literal(literal) => HirExpr {
                 span: expr.span,
@@ -1120,12 +1163,17 @@ impl FunctionLoweringContext {
         ty: SemanticType,
         kind: HirLocalKind,
         declaration_span: crate::Span,
-    ) -> HirLocalId {
+    ) -> Result<HirLocalId, HirLowerError> {
         if self.scopes.is_empty() {
             self.push_scope();
         }
 
-        let id = HirLocalId(u32::try_from(self.locals.len()).ok().unwrap_or(u32::MAX));
+        let id = HirLocalId(u32::try_from(self.locals.len()).map_err(|error| {
+            HirLowerError::new(
+                declaration_span,
+                format!("function contains too many locals to encode: {error}"),
+            )
+        })?);
         self.locals.push(HirLocal {
             id,
             declaration_span,
@@ -1142,7 +1190,7 @@ impl FunctionLoweringContext {
                 },
             );
         }
-        id
+        Ok(id)
     }
 
     fn lookup_local(&self, name: &str) -> Option<&HirLocalBinding> {

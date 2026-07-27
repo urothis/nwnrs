@@ -168,9 +168,12 @@ impl AreFile {
     /// # Errors
     ///
     /// Returns [`AreaError`] when the file cannot be opened or parsed.
-    pub fn from_file(path: impl AsRef<Path>) -> AreaResult<Self> {
+    pub fn from_file(
+        path: impl AsRef<Path>,
+        context: crate::encoding::NwnTextContext,
+    ) -> AreaResult<Self> {
         let mut file = File::open(path.as_ref())?;
-        read_are(&mut file)
+        read_are(&mut file, context)
     }
 
     /// Reads an ARE resource from a resource container.
@@ -178,7 +181,11 @@ impl AreFile {
     /// # Errors
     ///
     /// Returns [`AreaError`] when the resource type or payload is invalid.
-    pub fn from_res(res: &Res, cache_policy: CachePolicy) -> AreaResult<Self> {
+    pub fn from_res(
+        res: &Res,
+        cache_policy: CachePolicy,
+        context: crate::encoding::NwnTextContext,
+    ) -> AreaResult<Self> {
         if res.resref().res_type() != ARE_RES_TYPE {
             return Err(AreaError::msg(format!(
                 "expected are resource, got {}",
@@ -186,7 +193,7 @@ impl AreFile {
             )));
         }
         let bytes = res.read_all(cache_policy)?;
-        read_are(&mut io::Cursor::new(bytes))
+        read_are(&mut io::Cursor::new(bytes), context)
     }
 
     /// Resolves and reads an ARE resource by name.
@@ -204,7 +211,7 @@ impl AreFile {
         let resource = resman
             .get_resolved(&resolved)
             .ok_or_else(|| AreaError::msg(format!("ARE not found in ResMan: {resolved}")))?;
-        Self::from_res(&resource, cache_policy)
+        Self::from_res(&resource, cache_policy, resman.text_context())
     }
 }
 
@@ -240,9 +247,12 @@ impl ModuleInfo {
     /// # Errors
     ///
     /// Returns [`AreaError`] when the file cannot be opened or parsed.
-    pub fn from_file(path: impl AsRef<Path>) -> AreaResult<Self> {
+    pub fn from_file(
+        path: impl AsRef<Path>,
+        context: crate::encoding::NwnTextContext,
+    ) -> AreaResult<Self> {
         let mut file = File::open(path.as_ref())?;
-        read_module_info(&mut file)
+        read_module_info(&mut file, context)
     }
 
     /// Reads an IFO resource from a resource container.
@@ -250,7 +260,11 @@ impl ModuleInfo {
     /// # Errors
     ///
     /// Returns [`AreaError`] when the resource type or payload is invalid.
-    pub fn from_res(res: &Res, cache_policy: CachePolicy) -> AreaResult<Self> {
+    pub fn from_res(
+        res: &Res,
+        cache_policy: CachePolicy,
+        context: crate::encoding::NwnTextContext,
+    ) -> AreaResult<Self> {
         if res.resref().res_type() != IFO_RES_TYPE {
             return Err(AreaError::msg(format!(
                 "expected ifo resource, got {}",
@@ -258,7 +272,7 @@ impl ModuleInfo {
             )));
         }
         let bytes = res.read_all(cache_policy)?;
-        read_module_info(&mut io::Cursor::new(bytes))
+        read_module_info(&mut io::Cursor::new(bytes), context)
     }
 
     /// Resolves and reads an IFO resource by name.
@@ -276,7 +290,7 @@ impl ModuleInfo {
         let resource = resman
             .get_resolved(&resolved)
             .ok_or_else(|| AreaError::msg(format!("IFO not found in ResMan: {resolved}")))?;
-        Self::from_res(&resource, cache_policy)
+        Self::from_res(&resource, cache_policy, resman.text_context())
     }
 }
 
@@ -286,8 +300,11 @@ impl ModuleInfo {
 ///
 /// Returns [`AreaError`] when decoding or projection fails.
 #[instrument(level = "debug", skip_all, err)]
-pub fn read_are<R: Read + Seek>(reader: &mut R) -> AreaResult<AreFile> {
-    parse_are_root(&read_gff_root(reader)?)
+pub fn read_are<R: Read + Seek>(
+    reader: &mut R,
+    context: crate::encoding::NwnTextContext,
+) -> AreaResult<AreFile> {
+    parse_are_root(&read_gff_root(reader, context)?)
 }
 
 /// Projects a decoded ARE GFF root into scene-facing typed data.
@@ -381,8 +398,11 @@ pub fn parse_are_root(root: &GffRoot) -> AreaResult<AreFile> {
 ///
 /// Returns [`AreaError`] when decoding or projection fails.
 #[instrument(level = "debug", skip_all, err)]
-pub fn read_module_info<R: Read + Seek>(reader: &mut R) -> AreaResult<ModuleInfo> {
-    parse_module_info_root(&read_gff_root(reader)?)
+pub fn read_module_info<R: Read + Seek>(
+    reader: &mut R,
+    context: crate::encoding::NwnTextContext,
+) -> AreaResult<ModuleInfo> {
+    parse_module_info_root(&read_gff_root(reader, context)?)
 }
 
 /// Projects a decoded module IFO GFF root into scene-facing typed data.

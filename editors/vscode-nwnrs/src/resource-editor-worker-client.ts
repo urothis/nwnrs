@@ -3,36 +3,41 @@ import {
   type CancellationTokenLike,
   type OutputChannelLike,
 } from './worker-client';
-import { isResourceEditorMutation } from './resource-editor-methods';
+import { isResourceEditorMutation } from './resource-editor-scheduler';
+import type {
+  ResourceEditorWorkerMethod,
+  ResourceEditorWorkerRequest,
+  ResourceEditorWorkerResponse,
+} from './resource-editor-protocol';
 
 export class ResourceEditorWorkerClient extends WorkerClient {
   public constructor(workerPath: string, bindingPath: string, output?: OutputChannelLike) {
     super(workerPath, { bindingPath }, output, 'resource editor');
   }
 
-  public override request<TResponse = unknown>(
-    method: string,
-    request: unknown,
+  public requestResource<Method extends ResourceEditorWorkerMethod>(
+    method: Method,
+    request: ResourceEditorWorkerRequest<Method>,
     cancellationToken?: CancellationTokenLike,
-  ): Promise<TResponse> {
+  ): Promise<ResourceEditorWorkerResponse<Method>> {
     if (cancellationToken?.isCancellationRequested) {
       return Promise.reject(new Error(`${method} cancelled before it was queued`));
     }
     // Mutations run to a definite completion once queued. Read-only work stays
     // cooperatively cancellable through the worker and native task.
-    return super.request<TResponse>(
+    return super.request<ResourceEditorWorkerResponse<Method>>(
       method,
       request,
       isResourceEditorMutation(method) ? undefined : cancellationToken,
     );
   }
 
-  public readEntryBytes<TResponse = Uint8Array>(
+  public readEntryBytes(
     documentId: string,
-    resource: unknown,
+    resource: string,
     cancellationToken?: CancellationTokenLike,
-  ): Promise<TResponse> {
-    return this.request<TResponse>(
+  ): Promise<Uint8Array> {
+    return this.requestResource(
       'readEntryBytes',
       { documentId, resource },
       cancellationToken,

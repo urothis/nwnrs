@@ -360,10 +360,11 @@ deletion. No HTTP or metrics service is started.
 `nwnrs` relies on the `nwnrs-nwpkg` crate for project control files:
 
 - `nwpkg.toml` describes project identity, kind, and source root
-- `[dependencies]` maps include-library names to local package paths; `pack`
-  and `compile` add their source roots to NWScript include resolution
-- `nwpkg.lock` stores repack metadata that helps preserve archive structure
-  and reuse original content when possible
+- `[dependencies]` maps include-library names to live local paths or explicitly
+  fetched Git sources; `pack` and `compile` add their resolved source roots to
+  NWScript include resolution
+- `nwpkg.lock` combines exact Git dependency pins with repack metadata that
+  preserves archive structure and enables original-content reuse
 
 That metadata is what makes unpack-edit-repack workflows more faithful than a
 blind “read everything and write everything from scratch” loop.
@@ -376,8 +377,11 @@ copying its source into the module:
 nwnrs = { path = "../include/nwnrs" }
 ```
 
-Dependency paths are resolved relative to the declaring `nwpkg.toml`.
-Only local `include` packages are supported currently.
+Dependency paths are resolved relative to the declaring `nwpkg.toml`. Git
+dependencies accept one of `rev`, `tag`, or `branch`, an optional `subdir`, or
+no selector to follow the default branch. Use `nwnrs nwpkg fetch` to create and
+materialize pins, `nwnrs nwpkg update` to preview changes, and
+`nwnrs nwpkg update --apply` to atomically accept the preview.
 
 ## Relationship To The Other Crates
 

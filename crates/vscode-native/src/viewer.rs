@@ -10,11 +10,15 @@ use std::{
 
 use napi::{
     Task,
-    bindgen_prelude::{AbortSignal, AsyncTask, Buffer},
+    bindgen_prelude::{AbortSignal, AsyncTask, Buffer, Unknown},
 };
 use napi_derive::napi;
-use nwnrs_nwpkg::{DependencySpec, PROJECT_MANIFEST_FILENAME, read_project_manifest};
+use nwnrs_nwpkg::{
+    DependencyResolverConfiguration, PROJECT_MANIFEST_FILENAME, read_project_manifest,
+    resolve_include_dependencies, resolve_include_dependencies_with_configuration,
+};
 use nwnrs_types::{
+    encoding::NwnTextContext,
     gff::{
         ARE_RES_TYPE, GIT_RES_TYPE, IFO_RES_TYPE, gff_root_from_json_bytes, parse_git_root,
         parse_module_info_root, read_gff_root, write_gff_root,
@@ -25,15 +29,218 @@ use nwnrs_types::{
     mdl::{ModelResourceKind, NwnBlueprintKind},
     resman::{CachePolicy, ResContainer, ResMan, ResolvedResRef, read_resdir, read_resmemfile},
     scene::{
-        AreaInspectionCache, AreaInspector, InspectionLocalizationResolver,
+        AreaInspectionCache, AreaInspector, AreaObjectInspection, InspectionLocalizationResolver,
         InspectionLocalizedEntry, InspectionLocalizedString, SceneAreaObject, SceneDocument,
-        SceneLoader, ScenePacket, area_object_catalog,
+        SceneInstanceKind, SceneLoader, ScenePacket, area_object_catalog,
     },
     tlk::SingleTlk,
 };
 use serde::{Deserialize, Serialize};
 
 use crate::resource_capabilities::is_gff_extension;
+
+#[napi(object)]
+#[derive(Clone)]
+pub struct NativeViewerAuthoredAreaRequest {
+    pub resref: String,
+    pub are:    String,
+    pub git:    String,
+    pub gic:    Option<String>,
+}
+
+#[napi(object)]
+#[derive(Clone)]
+pub struct NativeViewerLoadRequest {
+    pub session_key: String,
+    pub path: String,
+    pub project_root: String,
+    pub area: Option<String>,
+    pub authored_area: Option<NativeViewerAuthoredAreaRequest>,
+    pub root: Option<String>,
+    pub user: Option<String>,
+    pub language: Option<String>,
+    pub load_ovr: Option<bool>,
+    pub archives: Option<Vec<String>>,
+    pub include_project_resources: Option<bool>,
+}
+
+impl From<NativeViewerLoadRequest> for ViewerLoadRequest {
+    fn from(value: NativeViewerLoadRequest) -> Self {
+        Self {
+            session_key: value.session_key,
+            path: PathBuf::from(value.path),
+            project_root: PathBuf::from(value.project_root),
+            area: value.area,
+            authored_area: value.authored_area.map(|area| ViewerAuthoredAreaRequest {
+                resref: area.resref,
+                are:    PathBuf::from(area.are),
+                git:    PathBuf::from(area.git),
+                gic:    area.gic.map(PathBuf::from),
+            }),
+            root: value.root.map(PathBuf::from),
+            user: value.user.map(PathBuf::from),
+            language: value.language.unwrap_or_else(default_language),
+            load_ovr: value.load_ovr.unwrap_or(false),
+            archives: value
+                .archives
+                .unwrap_or_default()
+                .into_iter()
+                .map(PathBuf::from)
+                .collect(),
+            include_project_resources: value.include_project_resources.unwrap_or(true),
+        }
+    }
+}
+
+#[napi(object)]
+#[derive(Clone)]
+pub struct NativeViewerAssetRequest {
+    pub session_key:       String,
+    pub asset_key:         String,
+    pub model_index:       Option<u32>,
+    pub animation_index:   Option<u32>,
+    pub texture_index:     Option<u32>,
+    pub prefer_compressed: Option<bool>,
+}
+
+impl From<NativeViewerAssetRequest> for ViewerAssetRequest {
+    fn from(value: NativeViewerAssetRequest) -> Self {
+        Self {
+            session_key:       value.session_key,
+            asset_key:         value.asset_key,
+            model_index:       value.model_index.map(|index| index as usize),
+            animation_index:   value.animation_index.map(|index| index as usize),
+            texture_index:     value.texture_index.map(|index| index as usize),
+            prefer_compressed: value.prefer_compressed.unwrap_or(false),
+        }
+    }
+}
+
+#[napi(object)]
+#[derive(Clone)]
+pub struct NativeViewerAreaInspectionRequest {
+    pub session_key: String,
+    pub asset_key:   String,
+    pub object_key:  String,
+}
+
+impl From<NativeViewerAreaInspectionRequest> for ViewerAreaInspectionRequest {
+    fn from(value: NativeViewerAreaInspectionRequest) -> Self {
+        Self {
+            session_key: value.session_key,
+            asset_key:   value.asset_key,
+            object_key:  value.object_key,
+        }
+    }
+}
+
+#[napi(object)]
+#[derive(Clone)]
+pub struct NativeViewerPackageRequest {
+    pub path:       String,
+    pub git_path:   Option<String>,
+    pub cache_path: Option<String>,
+}
+
+#[napi(object)]
+#[derive(Clone)]
+pub struct NativeViewerPackageSourceRequest {
+    pub manifest_path: String,
+}
+
+#[napi(object)]
+#[derive(Clone)]
+pub struct NativeViewerResourceCatalogRequest {
+    pub viewer:    NativeViewerLoadRequest,
+    pub stage:     String,
+    pub layer:     Option<String>,
+    pub family:    Option<String>,
+    pub extension: Option<String>,
+    pub prefix:    Option<String>,
+}
+
+#[napi(object)]
+pub struct NativeViewerPackageDependency {
+    pub name:          String,
+    pub root:          String,
+    pub manifest_path: String,
+}
+
+#[napi(object)]
+pub struct NativeViewerPackageInfo {
+    pub manifest_path:  String,
+    pub root:           String,
+    pub name:           String,
+    pub kind:           String,
+    pub source_path:    String,
+    pub resource_paths: Vec<String>,
+    pub dependencies:   Vec<NativeViewerPackageDependency>,
+}
+
+#[napi(object)]
+pub struct NativeViewerResolvedResource {
+    pub resource:  String,
+    pub origin:    String,
+    pub file_path: Option<String>,
+}
+
+#[napi(object)]
+pub struct NativeViewerResourceCatalogItem {
+    pub kind:      String,
+    pub label:     String,
+    pub count:     u32,
+    pub layer:     Option<String>,
+    pub family:    Option<String>,
+    pub extension: Option<String>,
+    pub prefix:    Option<String>,
+    pub resource:  Option<String>,
+    pub origin:    Option<String>,
+    pub file_path: Option<String>,
+}
+
+#[napi(object)]
+pub struct NativeViewerResourceCatalog {
+    pub items: Vec<NativeViewerResourceCatalogItem>,
+}
+
+#[napi(object)]
+pub struct NativeViewerPackageSourceFile {
+    pub path:          String,
+    pub relative_path: String,
+    pub kind:          String,
+}
+
+#[napi(object)]
+pub struct NativeViewerAreaObject {
+    pub key:                 String,
+    pub label:               String,
+    pub kind:                String,
+    pub source_index:        u32,
+    pub tag:                 Option<String>,
+    pub template_resref:     Option<String>,
+    pub position:            Vec<f64>,
+    pub rotation_axis_angle: Vec<f64>,
+}
+
+#[napi(object)]
+pub struct NativeViewerPackageSourceArea {
+    pub resref:       String,
+    pub registered:   bool,
+    pub files:        Vec<NativeViewerPackageSourceFile>,
+    pub missing:      Vec<String>,
+    pub conflicts:    Vec<String>,
+    pub objects:      Vec<NativeViewerAreaObject>,
+    pub object_error: Option<String>,
+}
+
+#[napi(object)]
+pub struct NativeViewerPackageSourceInfo {
+    pub source_path: String,
+    pub areas:       Vec<NativeViewerPackageSourceArea>,
+    pub dialogs:     Vec<NativeViewerPackageSourceFile>,
+    pub code:        Vec<NativeViewerPackageSourceFile>,
+    pub warnings:    Vec<String>,
+}
 
 struct ViewerServiceState {
     sessions: Mutex<WeightedLru<String, Arc<Mutex<Option<ViewerSession>>>>>,
@@ -87,15 +294,15 @@ impl ViewerService {
     }
 
     /// Assembles and packs one scene away from the JavaScript event loop.
-    #[napi]
+    #[napi(ts_return_type = "Promise<Buffer>")]
     pub fn load_scene(
         &self,
-        request_json: String,
+        request: NativeViewerLoadRequest,
         signal: Option<AbortSignal>,
     ) -> AsyncTask<ViewerLoadTask> {
         viewer_async_task(signal, |cancellation| ViewerLoadTask {
             state: Arc::clone(&self.state),
-            request_json,
+            request: request.into(),
             contents: None,
             cancellation,
         })
@@ -104,75 +311,75 @@ impl ViewerService {
     /// Assembles a virtual archive entry without copying it through JSON or
     /// base64. The supplied bytes become the highest-precedence resource in
     /// the package session for this load.
-    #[napi]
+    #[napi(ts_return_type = "Promise<Buffer>")]
     pub fn load_scene_bytes(
         &self,
-        request_json: String,
+        request: NativeViewerLoadRequest,
         contents: Buffer,
         signal: Option<AbortSignal>,
     ) -> AsyncTask<ViewerLoadTask> {
         viewer_async_task(signal, |cancellation| ViewerLoadTask {
             state: Arc::clone(&self.state),
-            request_json,
+            request: request.into(),
             contents: Some(contents.to_vec()),
             cancellation,
         })
     }
 
     /// Packs one animation selected from an already loaded scene catalog.
-    #[napi]
+    #[napi(ts_return_type = "Promise<Buffer>")]
     pub fn load_animation(
         &self,
-        request_json: String,
+        request: NativeViewerAssetRequest,
         signal: Option<AbortSignal>,
     ) -> AsyncTask<ViewerAnimationTask> {
         viewer_async_task(signal, |cancellation| ViewerAnimationTask {
             state: Arc::clone(&self.state),
-            request_json,
+            request: request.into(),
             cancellation,
         })
     }
 
     /// Packs one texture selected from an already loaded scene catalog.
-    #[napi]
+    #[napi(ts_return_type = "Promise<Buffer>")]
     pub fn load_texture(
         &self,
-        request_json: String,
+        request: NativeViewerAssetRequest,
         signal: Option<AbortSignal>,
     ) -> AsyncTask<ViewerTextureTask> {
         viewer_async_task(signal, |cancellation| ViewerTextureTask {
             state: Arc::clone(&self.state),
-            request_json,
+            request: request.into(),
             cancellation,
         })
     }
 
     /// Lazily builds one complete authored object inspection from a cached
     /// scene.
-    #[napi]
+    #[napi(ts_return_type = "Promise<import('./AreaObjectInspection').AreaObjectInspection>")]
     pub fn inspect_area_object(
         &self,
-        request_json: String,
+        request: NativeViewerAreaInspectionRequest,
         signal: Option<AbortSignal>,
     ) -> AsyncTask<ViewerAreaInspectionTask> {
         viewer_async_task(signal, |cancellation| ViewerAreaInspectionTask {
             state: Arc::clone(&self.state),
-            request_json,
+            request: request.into(),
             cancellation,
         })
     }
 
     /// Reads one dependency from the same precedence-aware package session so
     /// VS Code can open installed assets as immutable virtual documents.
-    #[napi]
+    #[napi(ts_return_type = "Promise<Buffer>")]
     pub fn read_resource(
         &self,
-        request_json: String,
+        request: NativeViewerLoadRequest,
         signal: Option<AbortSignal>,
     ) -> AsyncTask<ViewerReadTask> {
         viewer_async_task(signal, |cancellation| ViewerReadTask {
             state: Arc::clone(&self.state),
-            request_json,
+            request: request.into(),
             cancellation,
         })
     }
@@ -180,56 +387,69 @@ impl ViewerService {
     /// Resolves one dependency through the same package resource graph and
     /// reports the exact winning origin. Directory-backed resources expose
     /// their physical path; packed game resources remain virtual.
-    #[napi]
+    #[napi(ts_return_type = "Promise<NativeViewerResolvedResource>")]
     pub fn resolve_resource(
         &self,
-        request_json: String,
+        request: NativeViewerLoadRequest,
         signal: Option<AbortSignal>,
     ) -> AsyncTask<ViewerResolveTask> {
         viewer_async_task(signal, |cancellation| ViewerResolveTask {
             state: Arc::clone(&self.state),
-            request_json,
+            request: request.into(),
             cancellation,
         })
     }
 
     /// Reads typed package metadata for one discovered `nwpkg.toml`.
-    #[napi]
+    #[napi(ts_return_type = "Promise<NativeViewerPackageInfo>")]
     pub fn inspect_package(
         &self,
-        request_json: String,
+        request: NativeViewerPackageRequest,
         signal: Option<AbortSignal>,
     ) -> AsyncTask<ViewerPackageTask> {
         viewer_async_task(signal, |cancellation| ViewerPackageTask {
-            request_json,
+            request: ViewerPackageRequest {
+                path:       PathBuf::from(request.path),
+                git_path:   request.git_path.map(PathBuf::from),
+                cache_path: request.cache_path.map(PathBuf::from),
+            },
             cancellation,
         })
     }
 
     /// Inspects the authored package source tree and projects the canonical
     /// module-area, dialog, and NWScript sections used by the sidebar.
-    #[napi]
+    #[napi(ts_return_type = "Promise<NativeViewerPackageSourceInfo>")]
     pub fn inspect_package_source(
         &self,
-        request_json: String,
+        request: NativeViewerPackageSourceRequest,
         signal: Option<AbortSignal>,
     ) -> AsyncTask<ViewerPackageSourceTask> {
         viewer_async_task(signal, |cancellation| ViewerPackageSourceTask {
-            request_json,
+            request: ViewerPackageSourceRequest {
+                manifest_path: PathBuf::from(request.manifest_path),
+            },
             cancellation,
         })
     }
 
     /// Returns one lazy level of the precedence-aware resource catalog.
-    #[napi]
+    #[napi(ts_return_type = "Promise<NativeViewerResourceCatalog>")]
     pub fn list_resources(
         &self,
-        request_json: String,
+        request: NativeViewerResourceCatalogRequest,
         signal: Option<AbortSignal>,
     ) -> AsyncTask<ViewerResourceCatalogTask> {
         viewer_async_task(signal, |cancellation| ViewerResourceCatalogTask {
             state: Arc::clone(&self.state),
-            request_json,
+            request: ViewerResourceCatalogRequest {
+                viewer:    request.viewer.into(),
+                stage:     request.stage,
+                layer:     request.layer,
+                family:    request.family,
+                extension: request.extension,
+                prefix:    request.prefix.unwrap_or_default(),
+            },
             cancellation,
         })
     }
@@ -290,7 +510,7 @@ fn complete_cancellable<T>(
 /// Background scene assembly task.
 pub struct ViewerLoadTask {
     state:        Arc<ViewerServiceState>,
-    request_json: String,
+    request:      ViewerLoadRequest,
     contents:     Option<Vec<u8>>,
     cancellation: nwnrs_nwscript::CancellationToken,
 }
@@ -298,54 +518,54 @@ pub struct ViewerLoadTask {
 /// Background dependency read task.
 pub struct ViewerReadTask {
     state:        Arc<ViewerServiceState>,
-    request_json: String,
+    request:      ViewerLoadRequest,
     cancellation: nwnrs_nwscript::CancellationToken,
 }
 
 /// Background animation-packet task.
 pub struct ViewerAnimationTask {
     state:        Arc<ViewerServiceState>,
-    request_json: String,
+    request:      ViewerAssetRequest,
     cancellation: nwnrs_nwscript::CancellationToken,
 }
 
 /// Background texture-packet task.
 pub struct ViewerTextureTask {
     state:        Arc<ViewerServiceState>,
-    request_json: String,
+    request:      ViewerAssetRequest,
     cancellation: nwnrs_nwscript::CancellationToken,
 }
 
 /// Background authored-area-object inspection task.
 pub struct ViewerAreaInspectionTask {
     state:        Arc<ViewerServiceState>,
-    request_json: String,
+    request:      ViewerAreaInspectionRequest,
     cancellation: nwnrs_nwscript::CancellationToken,
 }
 
 /// Background dependency provenance task.
 pub struct ViewerResolveTask {
     state:        Arc<ViewerServiceState>,
-    request_json: String,
+    request:      ViewerLoadRequest,
     cancellation: nwnrs_nwscript::CancellationToken,
 }
 
 /// Background package-manifest inspection task.
 pub struct ViewerPackageTask {
-    request_json: String,
+    request:      ViewerPackageRequest,
     cancellation: nwnrs_nwscript::CancellationToken,
 }
 
 /// Background package-source inspection task.
 pub struct ViewerPackageSourceTask {
-    request_json: String,
+    request:      ViewerPackageSourceRequest,
     cancellation: nwnrs_nwscript::CancellationToken,
 }
 
 /// Background resource-catalog query task.
 pub struct ViewerResourceCatalogTask {
     state:        Arc<ViewerServiceState>,
-    request_json: String,
+    request:      ViewerResourceCatalogRequest,
     cancellation: nwnrs_nwscript::CancellationToken,
 }
 
@@ -552,21 +772,11 @@ fn valid_custom_tlk_name(value: &str) -> Option<&str> {
     .then_some(value)
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 struct ViewerPackageRequest {
-    path: PathBuf,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct ViewerPackageInfo {
-    manifest_path:  PathBuf,
-    root:           PathBuf,
-    name:           String,
-    kind:           String,
-    source_path:    PathBuf,
-    resource_paths: Vec<PathBuf>,
-    dependencies:   Vec<ViewerPackageDependency>,
+    path:       PathBuf,
+    git_path:   Option<PathBuf>,
+    cache_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Serialize)]
@@ -578,15 +788,12 @@ struct ViewerPackageDependency {
 }
 
 impl Task for ViewerPackageTask {
-    type JsValue = String;
-    type Output = String;
+    type JsValue = NativeViewerPackageInfo;
+    type Output = NativeViewerPackageInfo;
 
     fn compute(&mut self) -> napi::Result<Self::Output> {
         check_cancellation(&self.cancellation)?;
-        let request: ViewerPackageRequest =
-            serde_json::from_str(&self.request_json).map_err(|error| {
-                napi::Error::from_reason(format!("invalid package request: {error}"))
-            })?;
+        let request = self.request.clone();
         let manifest_path = if request.path.is_dir() {
             request.path.join(PROJECT_MANIFEST_FILENAME)
         } else {
@@ -604,36 +811,59 @@ impl Task for ViewerPackageTask {
                     manifest_path.display()
                 ))
             })?;
-        let dependencies = manifest
-            .dependencies
-            .iter()
-            .map(|(name, dependency)| {
-                let DependencySpec::Path(dependency) = dependency;
-                let dependency_root = root.join(&dependency.path);
-                ViewerPackageDependency {
-                    name:          name.clone(),
-                    manifest_path: dependency_root.join(PROJECT_MANIFEST_FILENAME),
-                    root:          dependency_root,
-                }
+        let mut dependency_configuration = DependencyResolverConfiguration::from_environment();
+        if let Some(git_path) = request.git_path {
+            dependency_configuration.git_executable = git_path;
+        }
+        if let Some(cache_path) = request.cache_path {
+            dependency_configuration.cache_root = cache_path;
+        }
+        let dependencies: Vec<ViewerPackageDependency> =
+            resolve_include_dependencies_with_configuration(
+                &root,
+                &dependency_configuration,
+                &self.cancellation,
+            )
+            .map_err(napi::Error::from_reason)?
+            .into_iter()
+            .map(|dependency| ViewerPackageDependency {
+                name:          dependency.name,
+                manifest_path: dependency.package_root.join(PROJECT_MANIFEST_FILENAME),
+                root:          dependency.package_root,
             })
             .collect();
-        let resource_paths = package_resource_roots(&root)
-            .map_err(napi::Error::from_reason)?
-            .dependencies
-            .into_iter()
-            .chain(std::iter::once(root.join(&manifest.source.path)))
-            .collect();
-        let output = serde_json::to_string(&ViewerPackageInfo {
-            manifest_path,
-            source_path: root.join(&manifest.source.path),
-            resource_paths,
-            root,
-            name: manifest.project.name,
-            kind: manifest.project.kind.to_string(),
-            dependencies,
-        })
-        .map_err(|error| napi::Error::from_reason(error.to_string()));
-        complete_cancellable(&self.cancellation, output)
+        let resource_paths: Vec<PathBuf> =
+            package_resource_roots_with_configuration(&root, &dependency_configuration)
+                .map_err(napi::Error::from_reason)?
+                .dependencies
+                .into_iter()
+                .chain(std::iter::once(root.join(&manifest.source.path)))
+                .collect();
+        let source_path = root.join(&manifest.source.path);
+        let output = NativeViewerPackageInfo {
+            manifest_path:  nwnrs_nwscript::physical_path_display(&manifest_path),
+            source_path:    nwnrs_nwscript::physical_path_display(&source_path),
+            resource_paths: resource_paths
+                .into_iter()
+                .map(|path| nwnrs_nwscript::physical_path_display(&path))
+                .collect(),
+            root:           nwnrs_nwscript::physical_path_display(&root),
+            name:           manifest.project.name,
+            kind:           manifest.project.kind.to_string(),
+            dependencies:   dependencies
+                .into_iter()
+                .map(
+                    |dependency: ViewerPackageDependency| NativeViewerPackageDependency {
+                        name:          dependency.name,
+                        root:          nwnrs_nwscript::physical_path_display(&dependency.root),
+                        manifest_path: nwnrs_nwscript::physical_path_display(
+                            &dependency.manifest_path,
+                        ),
+                    },
+                )
+                .collect(),
+        };
+        complete_cancellable(&self.cancellation, Ok(output))
     }
 
     fn resolve(&mut self, _env: napi::Env, output: Self::Output) -> napi::Result<Self::JsValue> {
@@ -641,7 +871,7 @@ impl Task for ViewerPackageTask {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ViewerPackageSourceRequest {
     manifest_path: PathBuf,
@@ -678,26 +908,92 @@ struct ViewerPackageSourceFile {
 }
 
 impl Task for ViewerPackageSourceTask {
-    type JsValue = String;
-    type Output = String;
+    type JsValue = NativeViewerPackageSourceInfo;
+    type Output = NativeViewerPackageSourceInfo;
 
     fn compute(&mut self) -> napi::Result<Self::Output> {
         check_cancellation(&self.cancellation)?;
-        let request: ViewerPackageSourceRequest = serde_json::from_str(&self.request_json)
-            .map_err(|error| {
-                napi::Error::from_reason(format!("invalid package-source request: {error}"))
-            })?;
+        let request = self.request.clone();
         let result = inspect_package_source(&request.manifest_path, &self.cancellation)
             .map_err(napi::Error::from_reason)?;
-        complete_cancellable(
-            &self.cancellation,
-            serde_json::to_string(&result)
-                .map_err(|error| napi::Error::from_reason(error.to_string())),
-        )
+        complete_cancellable(&self.cancellation, Ok(result.into()))
     }
 
     fn resolve(&mut self, _env: napi::Env, output: Self::Output) -> napi::Result<Self::JsValue> {
         Ok(output)
+    }
+}
+
+impl From<ViewerPackageSourceFile> for NativeViewerPackageSourceFile {
+    fn from(value: ViewerPackageSourceFile) -> Self {
+        Self {
+            path:          nwnrs_nwscript::physical_path_display(&value.path),
+            relative_path: value.relative_path,
+            kind:          value.kind,
+        }
+    }
+}
+
+impl From<SceneAreaObject> for NativeViewerAreaObject {
+    fn from(value: SceneAreaObject) -> Self {
+        Self {
+            key:                 value.key,
+            label:               value.label,
+            kind:                scene_instance_kind_name(value.kind).to_string(),
+            source_index:        u32::try_from(value.source_index).unwrap_or(u32::MAX),
+            tag:                 value.tag,
+            template_resref:     value.template_resref,
+            position:            value.position.into_iter().map(f64::from).collect(),
+            rotation_axis_angle: value
+                .rotation_axis_angle
+                .into_iter()
+                .map(f64::from)
+                .collect(),
+        }
+    }
+}
+
+fn scene_instance_kind_name(kind: SceneInstanceKind) -> &'static str {
+    match kind {
+        SceneInstanceKind::Model => "model",
+        SceneInstanceKind::Tile => "tile",
+        SceneInstanceKind::Skybox => "skybox",
+        SceneInstanceKind::Creature => "creature",
+        SceneInstanceKind::Door => "door",
+        SceneInstanceKind::Placeable => "placeable",
+        SceneInstanceKind::Store => "store",
+        SceneInstanceKind::Item => "item",
+        SceneInstanceKind::Collision => "collision",
+        SceneInstanceKind::Trigger => "trigger",
+        SceneInstanceKind::Encounter => "encounter",
+        SceneInstanceKind::Waypoint => "waypoint",
+        SceneInstanceKind::Sound => "sound",
+    }
+}
+
+impl From<ViewerPackageSourceArea> for NativeViewerPackageSourceArea {
+    fn from(value: ViewerPackageSourceArea) -> Self {
+        Self {
+            resref:       value.resref,
+            registered:   value.registered,
+            files:        value.files.into_iter().map(Into::into).collect(),
+            missing:      value.missing,
+            conflicts:    value.conflicts,
+            objects:      value.objects.into_iter().map(Into::into).collect(),
+            object_error: value.object_error,
+        }
+    }
+}
+
+impl From<ViewerPackageSourceInfo> for NativeViewerPackageSourceInfo {
+    fn from(value: ViewerPackageSourceInfo) -> Self {
+        Self {
+            source_path: nwnrs_nwscript::physical_path_display(&value.source_path),
+            areas:       value.areas.into_iter().map(Into::into).collect(),
+            dialogs:     value.dialogs.into_iter().map(Into::into).collect(),
+            code:        value.code.into_iter().map(Into::into).collect(),
+            warnings:    value.warnings,
+        }
     }
 }
 
@@ -711,6 +1007,7 @@ fn inspect_package_source(
         .ok_or_else(|| "package manifest has no parent directory".to_string())?;
     let manifest = read_project_manifest(manifest_path)?
         .ok_or_else(|| format!("{} is not an nwnrs package", manifest_path.display()))?;
+    let text_context = NwnTextContext::for_language_id(manifest.project.language.id());
     let source_path = root.join(manifest.source.path);
     let source_path = source_path
         .canonicalize()
@@ -784,7 +1081,7 @@ fn inspect_package_source(
         ));
     }
     let registered = if let Some(path) = module_ifos.first() {
-        match read_module_area_resrefs(path, cancellation) {
+        match read_module_area_resrefs(path, text_context, cancellation) {
             Ok(areas) => areas,
             Err(error) => {
                 warnings.push(error);
@@ -808,11 +1105,23 @@ fn inspect_package_source(
         let files = area_files
             .remove(&key)
             .map_or_else(Vec::new, |(_, files)| files);
-        areas.push(source_area(resref, true, files, cancellation)?);
+        areas.push(source_area(
+            resref,
+            true,
+            files,
+            text_context,
+            cancellation,
+        )?);
     }
     for (resref, files) in area_files.into_values() {
         check_source_cancellation(cancellation)?;
-        areas.push(source_area(resref, false, files, cancellation)?);
+        areas.push(source_area(
+            resref,
+            false,
+            files,
+            text_context,
+            cancellation,
+        )?);
     }
     dialogs.sort_by(source_file_order);
     code.sort_by(source_file_order);
@@ -900,9 +1209,7 @@ fn source_file(source_root: &Path, path: &Path, kind: &str) -> ViewerPackageSour
 }
 
 fn source_relative_path(source_root: &Path, path: &Path) -> String {
-    path.strip_prefix(source_root)
-        .unwrap_or(path)
-        .to_string_lossy()
+    nwnrs_nwscript::physical_path_display(path.strip_prefix(source_root).unwrap_or(path))
         .replace('\\', "/")
 }
 
@@ -920,6 +1227,7 @@ fn source_area(
     resref: String,
     registered: bool,
     mut files: Vec<ViewerPackageSourceFile>,
+    text_context: NwnTextContext,
     cancellation: &nwnrs_nwscript::CancellationToken,
 ) -> Result<ViewerPackageSourceArea, String> {
     check_source_cancellation(cancellation)?;
@@ -942,7 +1250,7 @@ fn source_area(
         .filter(|(_, count)| *count > 1)
         .map(|(kind, _)| kind.to_ascii_uppercase())
         .collect();
-    let (objects, object_error) = read_source_area_objects(&files, cancellation)
+    let (objects, object_error) = read_source_area_objects(&files, text_context, cancellation)
         .map(|objects| (objects, None))
         .unwrap_or_else(|error| (Vec::new(), Some(error)));
     check_source_cancellation(cancellation)?;
@@ -959,6 +1267,7 @@ fn source_area(
 
 fn read_source_area_objects(
     files: &[ViewerPackageSourceFile],
+    text_context: NwnTextContext,
     cancellation: &nwnrs_nwscript::CancellationToken,
 ) -> Result<Vec<SceneAreaObject>, String> {
     check_source_cancellation(cancellation)?;
@@ -969,9 +1278,9 @@ fn read_source_area_objects(
     match git_files.as_slice() {
         [] => Ok(Vec::new()),
         [file] => {
-            let bytes = encode_gff_source(&file.path, "GIT")?;
+            let bytes = encode_gff_source(&file.path, "GIT", text_context)?;
             check_source_cancellation(cancellation)?;
-            let root = read_gff_root(&mut Cursor::new(bytes)).map_err(|error| {
+            let root = read_gff_root(&mut Cursor::new(bytes), text_context).map_err(|error| {
                 format!(
                     "failed to parse authored objects from {}: {error}",
                     file.path.display()
@@ -1001,6 +1310,7 @@ fn area_component_order(kind: &str) -> usize {
 
 fn read_module_area_resrefs(
     path: &Path,
+    text_context: NwnTextContext,
     cancellation: &nwnrs_nwscript::CancellationToken,
 ) -> Result<Vec<String>, String> {
     check_source_cancellation(cancellation)?;
@@ -1014,7 +1324,7 @@ fn read_module_area_resrefs(
     let root = if json_source {
         gff_root_from_json_bytes(bytes)
     } else {
-        read_gff_root(&mut Cursor::new(bytes))
+        read_gff_root(&mut Cursor::new(bytes), text_context)
     }
     .map_err(|error| format!("failed to parse {}: {error}", path.display()))?;
     check_source_cancellation(cancellation)?;
@@ -1039,7 +1349,7 @@ struct ViewerResourceEntry {
     file_path: Option<PathBuf>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ViewerResourceCatalogRequest {
     #[serde(flatten)]
@@ -1053,12 +1363,6 @@ struct ViewerResourceCatalogRequest {
     extension: Option<String>,
     #[serde(default)]
     prefix:    String,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct ViewerResourceCatalogResponse {
-    items: Vec<ViewerResourceCatalogItem>,
 }
 
 #[derive(Debug, Serialize)]
@@ -1083,23 +1387,13 @@ struct ViewerResourceCatalogItem {
     file_path: Option<PathBuf>,
 }
 
-#[derive(Debug, Serialize)]
-struct ViewerResolvedResource {
-    resource:  String,
-    origin:    String,
-    file_path: Option<PathBuf>,
-}
-
 impl Task for ViewerResolveTask {
-    type JsValue = String;
-    type Output = String;
+    type JsValue = NativeViewerResolvedResource;
+    type Output = NativeViewerResolvedResource;
 
     fn compute(&mut self) -> napi::Result<Self::Output> {
         check_cancellation(&self.cancellation)?;
-        let request: ViewerLoadRequest =
-            serde_json::from_str(&self.request_json).map_err(|error| {
-                napi::Error::from_reason(format!("invalid viewer request: {error}"))
-            })?;
+        let request = self.request.clone();
         let mut resman = fork_session_resman(&self.state, &request, &self.cancellation)?;
         check_cancellation(&self.cancellation)?;
         let filename = request
@@ -1114,17 +1408,13 @@ impl Task for ViewerResolveTask {
             .ok_or_else(|| napi::Error::from_reason(format!("resource not found: {resolved}")))?;
         let origin = resource.origin();
         let label_path = PathBuf::from(origin.label());
-        let result = ViewerResolvedResource {
+        let result = NativeViewerResolvedResource {
             resource:  resolved.to_string(),
             origin:    origin.to_string(),
             file_path: (origin.container().starts_with("ResDir:") && label_path.is_file())
-                .then_some(label_path),
+                .then(|| nwnrs_nwscript::physical_path_display(&label_path)),
         };
-        complete_cancellable(
-            &self.cancellation,
-            serde_json::to_string(&result)
-                .map_err(|error| napi::Error::from_reason(error.to_string())),
-        )
+        complete_cancellable(&self.cancellation, Ok(result))
     }
 
     fn resolve(&mut self, _env: napi::Env, output: Self::Output) -> napi::Result<Self::JsValue> {
@@ -1138,10 +1428,7 @@ impl Task for ViewerReadTask {
 
     fn compute(&mut self) -> napi::Result<Self::Output> {
         check_cancellation(&self.cancellation)?;
-        let request: ViewerLoadRequest =
-            serde_json::from_str(&self.request_json).map_err(|error| {
-                napi::Error::from_reason(format!("invalid viewer request: {error}"))
-            })?;
+        let request = self.request.clone();
         let mut resman = fork_session_resman(&self.state, &request, &self.cancellation)?;
         check_cancellation(&self.cancellation)?;
         let filename = request
@@ -1166,15 +1453,12 @@ impl Task for ViewerReadTask {
 }
 
 impl Task for ViewerResourceCatalogTask {
-    type JsValue = String;
-    type Output = String;
+    type JsValue = NativeViewerResourceCatalog;
+    type Output = NativeViewerResourceCatalog;
 
     fn compute(&mut self) -> napi::Result<Self::Output> {
         check_cancellation(&self.cancellation)?;
-        let request: ViewerResourceCatalogRequest = serde_json::from_str(&self.request_json)
-            .map_err(|error| {
-                napi::Error::from_reason(format!("invalid resource catalog request: {error}"))
-            })?;
+        let request = self.request.clone();
         let package = package_session(&self.state, &request.viewer)?;
         let (cached_resources, resman, configuration_key) = {
             let mut session = package.lock().map_err(|error| {
@@ -1215,12 +1499,28 @@ impl Task for ViewerResourceCatalogTask {
         };
         check_cancellation(&self.cancellation)?;
         let items = query_resource_catalog(&resources, &request)?;
+        let items = items
+            .into_iter()
+            .map(|item| NativeViewerResourceCatalogItem {
+                kind:      item.kind,
+                label:     item.label,
+                count:     u32::try_from(item.count).unwrap_or(u32::MAX),
+                layer:     item.layer,
+                family:    item.family,
+                extension: item.extension,
+                prefix:    item.prefix,
+                resource:  item.resource,
+                origin:    item.origin,
+                file_path: item
+                    .file_path
+                    .map(|path| nwnrs_nwscript::physical_path_display(&path)),
+            })
+            .collect();
         complete_cancellable(
             &self.cancellation,
-            serde_json::to_string(&ViewerResourceCatalogResponse {
+            Ok(NativeViewerResourceCatalog {
                 items,
-            })
-            .map_err(|error| napi::Error::from_reason(error.to_string())),
+            }),
         )
     }
 
@@ -1294,6 +1594,16 @@ struct PackageResourceRoots {
 }
 
 fn package_resource_roots(project_root: &Path) -> Result<PackageResourceRoots, String> {
+    package_resource_roots_with_configuration(
+        project_root,
+        &DependencyResolverConfiguration::from_environment(),
+    )
+}
+
+fn package_resource_roots_with_configuration(
+    project_root: &Path,
+    dependency_configuration: &DependencyResolverConfiguration,
+) -> Result<PackageResourceRoots, String> {
     let normalized = project_root
         .canonicalize()
         .unwrap_or_else(|_| project_root.to_path_buf());
@@ -1303,16 +1613,14 @@ fn package_resource_roots(project_root: &Path) -> Result<PackageResourceRoots, S
             dependencies: Vec::new(),
         });
     };
-    let mut dependencies = Vec::new();
-    let mut visited = BTreeSet::new();
-    for dependency in manifest.dependencies.values() {
-        let DependencySpec::Path(dependency) = dependency;
-        collect_project_resource_directories(
-            &normalized.join(&dependency.path),
-            &mut visited,
-            &mut dependencies,
-        )?;
-    }
+    let dependencies = resolve_include_dependencies_with_configuration(
+        &normalized,
+        dependency_configuration,
+        &nwnrs_nwscript::CancellationToken::new(),
+    )?
+    .into_iter()
+    .map(|dependency| dependency.source_root)
+    .collect();
     Ok(PackageResourceRoots {
         workspace: vec![normalized.join(manifest.source.path)],
         dependencies,
@@ -1339,7 +1647,7 @@ fn classify_resource_layer(
     if container.starts_with("Erf:")
         || archives
             .iter()
-            .any(|archive| container.contains(archive.to_string_lossy().as_ref()))
+            .any(|archive| container.contains(&nwnrs_nwscript::physical_path_display(archive)))
     {
         return "Archives";
     }
@@ -1545,10 +1853,7 @@ impl Task for ViewerLoadTask {
 
     fn compute(&mut self) -> napi::Result<Self::Output> {
         check_cancellation(&self.cancellation)?;
-        let request: ViewerLoadRequest =
-            serde_json::from_str(&self.request_json).map_err(|error| {
-                napi::Error::from_reason(format!("invalid viewer request: {error}"))
-            })?;
+        let request = self.request.clone();
         let filename = request
             .path
             .file_name()
@@ -1557,7 +1862,9 @@ impl Task for ViewerLoadTask {
         let resource = ResolvedResRef::from_filename(filename)
             .map_err(|error| napi::Error::from_reason(format!("viewer resource name: {error}")))?;
         let overlay_sources = if let Some(authored) = &request.authored_area {
-            authored_area_overlay_sources(authored)?
+            let text_context =
+                effective_viewer_text_context(&request).map_err(napi::Error::from_reason)?;
+            authored_area_overlay_sources(authored, text_context)?
         } else if let Some(contents) = self.contents.take() {
             vec![(filename.to_string(), contents)]
         } else {
@@ -1690,10 +1997,7 @@ impl Task for ViewerAnimationTask {
 
     fn compute(&mut self) -> napi::Result<Self::Output> {
         check_cancellation(&self.cancellation)?;
-        let request: ViewerAssetRequest =
-            serde_json::from_str(&self.request_json).map_err(|error| {
-                napi::Error::from_reason(format!("invalid viewer asset request: {error}"))
-            })?;
+        let request = self.request.clone();
         let scene = cached_scene(&self.state, &request)?;
         let mut packet = ScenePacket::animation_from_scene(
             &scene,
@@ -1725,10 +2029,7 @@ impl Task for ViewerTextureTask {
 
     fn compute(&mut self) -> napi::Result<Self::Output> {
         check_cancellation(&self.cancellation)?;
-        let request: ViewerAssetRequest =
-            serde_json::from_str(&self.request_json).map_err(|error| {
-                napi::Error::from_reason(format!("invalid viewer asset request: {error}"))
-            })?;
+        let request = self.request.clone();
         let scene = cached_scene(&self.state, &request)?;
         let mut packet = ScenePacket::texture_from_scene(
             &scene,
@@ -1753,15 +2054,12 @@ impl Task for ViewerTextureTask {
 }
 
 impl Task for ViewerAreaInspectionTask {
-    type JsValue = String;
-    type Output = String;
+    type JsValue = Unknown<'static>;
+    type Output = AreaObjectInspection;
 
     fn compute(&mut self) -> napi::Result<Self::Output> {
         check_cancellation(&self.cancellation)?;
-        let request: ViewerAreaInspectionRequest = serde_json::from_str(&self.request_json)
-            .map_err(|error| {
-                napi::Error::from_reason(format!("invalid area inspection request: {error}"))
-            })?;
+        let request = self.request.clone();
         let session = {
             let mut sessions = self.state.sessions.lock().map_err(|error| {
                 napi::Error::from_reason(format!("viewer session map is poisoned: {error}"))
@@ -1792,7 +2090,9 @@ impl Task for ViewerAreaInspectionTask {
             })?;
             if let Some(encoded) = inspections.get(&request.object_key).cloned() {
                 check_cancellation(&self.cancellation)?;
-                return Ok(encoded.as_ref().clone());
+                return serde_json::from_str(encoded.as_ref()).map_err(|error| {
+                    napi::Error::from_reason(format!("cached area inspection is invalid: {error}"))
+                });
             }
         }
 
@@ -1818,7 +2118,7 @@ impl Task for ViewerAreaInspectionTask {
             .map_err(|error| napi::Error::from_reason(error.to_string()))?;
         check_cancellation(&self.cancellation)?;
         let encoded = Arc::new(serde_json::to_string(&inspection).map_err(|error| {
-            napi::Error::from_reason(format!("failed to encode area inspection: {error}"))
+            napi::Error::from_reason(format!("failed to cache area inspection: {error}"))
         })?);
         cached
             .inspections
@@ -1832,11 +2132,11 @@ impl Task for ViewerAreaInspectionTask {
                 Arc::clone(&encoded),
             );
         check_cancellation(&self.cancellation)?;
-        Ok(encoded.as_ref().clone())
+        Ok(inspection)
     }
 
-    fn resolve(&mut self, _env: napi::Env, output: Self::Output) -> napi::Result<Self::JsValue> {
-        Ok(output)
+    fn resolve(&mut self, env: napi::Env, output: Self::Output) -> napi::Result<Self::JsValue> {
+        env.to_js_value(&output)
     }
 }
 
@@ -1908,12 +2208,12 @@ struct ViewerConfiguration<'a> {
 }
 
 impl ViewerLoadRequest {
-    fn configuration(&self) -> ViewerConfiguration<'_> {
+    fn configuration<'a>(&'a self, language: &'a str) -> ViewerConfiguration<'a> {
         ViewerConfiguration {
             project_root: &self.project_root,
             root: &self.root,
             user: &self.user,
-            language: &self.language,
+            language,
             load_ovr: self.load_ovr,
             resource_dir: self.path.parent(),
             archives: &self.archives,
@@ -1924,6 +2224,7 @@ impl ViewerLoadRequest {
 
 fn build_session(
     request: &ViewerLoadRequest,
+    language: &str,
     configuration_key: String,
     cancellation: &nwnrs_nwscript::CancellationToken,
 ) -> Result<ViewerSession, String> {
@@ -1946,12 +2247,12 @@ fn build_session(
     {
         push_unique_path(&mut directories, parent.to_path_buf());
     }
-    let localization = ViewerLocalization::new(&root, user.clone(), &request.language)?;
+    let localization = ViewerLocalization::new(&root, user.clone(), language)?;
     check_source_cancellation(cancellation)?;
     let mut resman = new_default_resman(
         &root,
         &user,
-        &request.language,
+        language,
         96,
         true,
         request.load_ovr,
@@ -1967,7 +2268,9 @@ fn build_session(
             Arc::new(read_resdir(directory).map_err(|error| error.to_string())?)
                 as Arc<dyn ResContainer>,
         );
-        for (filename, contents) in gff_json_resources(directory, cancellation)? {
+        for (filename, contents) in
+            gff_json_resources(directory, resman.text_context(), cancellation)?
+        {
             check_source_cancellation(cancellation)?;
             let resource = ResolvedResRef::from_filename(&filename)
                 .map_err(|error| format!("invalid GFF JSON resource {filename}: {error}"))?;
@@ -1990,6 +2293,7 @@ fn build_session(
 
 fn gff_json_resources(
     directory: &Path,
+    text_context: NwnTextContext,
     cancellation: &nwnrs_nwscript::CancellationToken,
 ) -> Result<Vec<(String, Vec<u8>)>, String> {
     let mut paths = Vec::new();
@@ -2031,7 +2335,7 @@ fn gff_json_resources(
         }
         resources.insert(
             resource_name.to_string(),
-            encode_gff_source(&path, extension)?,
+            encode_gff_source(&path, extension, text_context)?,
         );
     }
     Ok(resources.into_iter().collect())
@@ -2102,18 +2406,47 @@ fn ensure_session(
     request: &ViewerLoadRequest,
     cancellation: &nwnrs_nwscript::CancellationToken,
 ) -> napi::Result<()> {
-    let configuration_key = serde_json::to_string(&request.configuration())
+    let language = effective_viewer_language(request).map_err(napi::Error::from_reason)?;
+    let configuration_key = serde_json::to_string(&request.configuration(&language))
         .map_err(|error| napi::Error::from_reason(error.to_string()))?;
     if session
         .as_ref()
         .is_none_or(|session| session.configuration_key != configuration_key)
     {
         *session = Some(
-            build_session(request, configuration_key, cancellation)
+            build_session(request, &language, configuration_key, cancellation)
                 .map_err(napi::Error::from_reason)?,
         );
     }
     Ok(())
+}
+
+fn effective_viewer_language(request: &ViewerLoadRequest) -> Result<String, String> {
+    let manifest_path = if request
+        .project_root
+        .file_name()
+        .is_some_and(|name| name == PROJECT_MANIFEST_FILENAME)
+    {
+        request.project_root.clone()
+    } else {
+        request.project_root.join(PROJECT_MANIFEST_FILENAME)
+    };
+    if !manifest_path.is_file() {
+        return Ok(request.language.clone());
+    }
+    read_project_manifest(&manifest_path)
+        .map_err(|error| error.to_string())?
+        .map_or_else(
+            || Ok(request.language.clone()),
+            |manifest| Ok(manifest.project.language.as_str().to_string()),
+        )
+}
+
+fn effective_viewer_text_context(request: &ViewerLoadRequest) -> Result<NwnTextContext, String> {
+    let language = effective_viewer_language(request)?;
+    resolve_language(&language)
+        .map(|language| NwnTextContext::for_language_id(language.id()))
+        .map_err(|error| error.to_string())
 }
 
 fn scene_cache_key(
@@ -2144,6 +2477,7 @@ fn scene_cache_key(
 
 fn authored_area_overlay_sources(
     authored: &ViewerAuthoredAreaRequest,
+    text_context: NwnTextContext,
 ) -> napi::Result<Vec<(String, Vec<u8>)>> {
     let mut sources = Vec::with_capacity(if authored.gic.is_some() { 3 } else { 2 });
     for (kind, path) in [
@@ -2152,7 +2486,8 @@ fn authored_area_overlay_sources(
         ("GIC", authored.gic.as_ref()),
     ] {
         let Some(path) = path else { continue };
-        let bytes = encode_gff_source(path, kind).map_err(napi::Error::from_reason)?;
+        let bytes =
+            encode_gff_source(path, kind, text_context).map_err(napi::Error::from_reason)?;
         sources.push((
             format!("{}.{}", authored.resref, kind.to_ascii_lowercase()),
             bytes,
@@ -2161,7 +2496,11 @@ fn authored_area_overlay_sources(
     Ok(sources)
 }
 
-fn encode_gff_source(path: &Path, expected_type: &str) -> Result<Vec<u8>, String> {
+fn encode_gff_source(
+    path: &Path,
+    expected_type: &str,
+    text_context: NwnTextContext,
+) -> Result<Vec<u8>, String> {
     let source =
         fs::read(path).map_err(|error| format!("failed to read {}: {error}", path.display()))?;
     let json_source = path
@@ -2171,7 +2510,7 @@ fn encode_gff_source(path: &Path, expected_type: &str) -> Result<Vec<u8>, String
     let root = if json_source {
         gff_root_from_json_bytes(&source)
     } else {
-        read_gff_root(&mut Cursor::new(&source))
+        read_gff_root(&mut Cursor::new(&source), text_context)
     }
     .map_err(|error| format!("failed to parse {}: {error}", path.display()))?;
     let expected_file_type = format!("{:<4}", expected_type.to_ascii_uppercase());
@@ -2186,40 +2525,25 @@ fn encode_gff_source(path: &Path, expected_type: &str) -> Result<Vec<u8>, String
         return Ok(source);
     }
     let mut output = Cursor::new(Vec::new());
-    write_gff_root(&mut output, &root)
+    write_gff_root(&mut output, &root, text_context)
         .map_err(|error| format!("failed to encode {}: {error}", path.display()))?;
     Ok(output.into_inner())
 }
 
 fn project_resource_directories(project_root: &Path) -> Result<Vec<PathBuf>, String> {
-    let mut result = Vec::new();
-    let mut visited = BTreeSet::new();
-    collect_project_resource_directories(project_root, &mut visited, &mut result)?;
-    Ok(result)
-}
-
-fn collect_project_resource_directories(
-    project_root: &Path,
-    visited: &mut BTreeSet<PathBuf>,
-    result: &mut Vec<PathBuf>,
-) -> Result<(), String> {
     let normalized = project_root
         .canonicalize()
         .unwrap_or_else(|_| project_root.to_path_buf());
-    if !visited.insert(normalized.clone()) {
-        return Ok(());
-    }
+    let mut result = resolve_include_dependencies(&normalized)?
+        .into_iter()
+        .map(|dependency| dependency.source_root)
+        .collect::<Vec<_>>();
     let Some(manifest) = read_project_manifest(&normalized)? else {
-        push_unique_path(result, normalized);
-        return Ok(());
+        push_unique_path(&mut result, normalized);
+        return Ok(result);
     };
-    for dependency in manifest.dependencies.values() {
-        let DependencySpec::Path(dependency) = dependency;
-        let root = normalized.join(&dependency.path);
-        collect_project_resource_directories(&root, visited, result)?;
-    }
-    push_unique_path(result, normalized.join(manifest.source.path));
-    Ok(())
+    push_unique_path(&mut result, normalized.join(manifest.source.path));
+    Ok(result)
 }
 
 fn push_unique_path(target: &mut Vec<PathBuf>, path: PathBuf) {
@@ -2330,12 +2654,15 @@ mod tests {
         let git = root.join("start.git.json");
         fs::write(&are, r#"{"__data_type":"ARE "}"#).expect("write ARE JSON");
         fs::write(&git, r#"{"__data_type":"GIT "}"#).expect("write GIT JSON");
-        let sources = authored_area_overlay_sources(&ViewerAuthoredAreaRequest {
-            resref: "start".into(),
-            are,
-            git,
-            gic: None,
-        })
+        let sources = authored_area_overlay_sources(
+            &ViewerAuthoredAreaRequest {
+                resref: "start".into(),
+                are,
+                git,
+                gic: None,
+            },
+            NwnTextContext::english(),
+        )
         .expect("encode authored area");
         assert_eq!(sources.len(), 2);
         let are_source = sources.first().expect("ARE source");
@@ -2343,7 +2670,7 @@ mod tests {
         assert_eq!(are_source.0, "start.are");
         assert_eq!(git_source.0, "start.git");
         assert_eq!(
-            read_gff_root(&mut Cursor::new(&are_source.1))
+            read_gff_root(&mut Cursor::new(&are_source.1), NwnTextContext::default(),)
                 .expect("decode ARE")
                 .file_type,
             "ARE "
@@ -2357,12 +2684,14 @@ mod tests {
         fs::write(root.join("creature.utc.json"), r#"{"__data_type":"UTC "}"#)
             .expect("write UTC JSON");
         let cancellation = nwnrs_nwscript::CancellationToken::new();
-        let resources = gff_json_resources(&root, &cancellation).expect("collect GFF JSON");
+        let resources = gff_json_resources(&root, NwnTextContext::english(), &cancellation)
+            .expect("collect GFF JSON");
         assert_eq!(resources.len(), 1);
         let resource = resources.first().expect("authored UTC");
         assert_eq!(resource.0, "creature.utc");
         fs::write(root.join("creature.utc"), &resource.1).expect("write binary UTC");
-        let with_binary = gff_json_resources(&root, &cancellation).expect("prefer authored JSON");
+        let with_binary = gff_json_resources(&root, NwnTextContext::english(), &cancellation)
+            .expect("prefer authored JSON");
         assert_eq!(with_binary.len(), 1);
         assert_eq!(
             with_binary.first().map(|resource| resource.0.as_str()),
@@ -2457,7 +2786,7 @@ mod tests {
         )
         .expect("write placeable list");
         let mut git_file = fs::File::create(root.join("areas/start.git")).expect("create git");
-        write_gff_root(&mut git_file, &git).expect("write git");
+        write_gff_root(&mut git_file, &git, NwnTextContext::default()).expect("write git");
         fs::write(root.join("areas/orphan.gic.json"), "{}").expect("write orphan gic");
         fs::write(root.join("dialogs/intro.dlg.json"), "{}").expect("write dialog");
         fs::write(root.join("code/main.nss"), "void main() {}\n").expect("write script");

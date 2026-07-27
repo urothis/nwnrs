@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 
 /// The semantic role of a resource dependency.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub enum DependencyKind {
     /// Root resource opened by the user.
@@ -40,6 +41,7 @@ pub enum DependencyKind {
 
 /// Resolution state of one dependency node.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub enum DependencyState {
     /// Resource resolved successfully.
@@ -54,6 +56,7 @@ pub enum DependencyState {
 
 /// One resource in a scene dependency graph.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct DependencyNode {
     /// Stable node index.
@@ -72,6 +75,7 @@ pub struct DependencyNode {
 
 /// A directed dependency relationship.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct DependencyEdge {
     /// Referring resource node.
@@ -84,6 +88,7 @@ pub struct DependencyEdge {
 
 /// Deduplicated scene dependency graph with resolution provenance.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct DependencyGraph {
     /// Resource nodes.

@@ -3,10 +3,11 @@ use std::{collections::HashMap, error::Error, fmt};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    CompilerErrorCode, Keyword, LexerError, ScriptResolver, ScriptString, SourceError, SourceFile,
-    SourceLoadOptions, SourceMap, Span, Token, TokenKind,
+    CancellationToken, Cancelled, CompilerErrorCode, Keyword, LexerError, ScriptResolver,
+    ScriptString, SourceError, SourceFile, SourceLoadOptions, SourceMap, Span, Token, TokenKind,
     int_literal::{parse_wrapping_decimal_i32, parse_wrapping_prefixed_i32},
-    lex_source, load_source_bundle,
+    lex_source, lex_source_with_limits_and_cancellation, load_source_bundle,
+    load_source_bundle_with_cancellation,
 };
 
 /// Default logical script name for the builtin `NWScript` language definition.
@@ -109,6 +110,8 @@ pub struct LangSpec {
 /// Errors returned while bootstrapping the builtin language spec.
 #[derive(Debug)]
 pub enum LangSpecError {
+    /// The caller cancelled langspec loading or parsing.
+    Cancelled(Cancelled),
     /// Source loading failure.
     Source(SourceError),
     /// Lexing failure.
@@ -134,6 +137,7 @@ impl LangSpecError {
 impl fmt::Display for LangSpecError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Cancelled(error) => error.fmt(f),
             Self::Source(error) => error.fmt(f),
             Self::Lex(error) => error.fmt(f),
             Self::Parse {
@@ -158,6 +162,12 @@ impl From<LexerError> for LangSpecError {
     }
 }
 
+impl From<Cancelled> for LangSpecError {
+    fn from(value: Cancelled) -> Self {
+        Self::Cancelled(value)
+    }
+}
+
 /// Loads `nwscript.nss` through a source resolver and parses the builtin
 /// declarations.
 ///
@@ -173,10 +183,42 @@ pub fn load_langspec<R: ScriptResolver + ?Sized>(
         load_source_bundle(resolver, script_name, options).map_err(|error| match error {
             crate::PreprocessError::Source(source) => LangSpecError::Source(source),
             crate::PreprocessError::Lex(lex) => LangSpecError::Lex(lex),
-            crate::PreprocessError::Cancelled(error) => LangSpecError::parse(error.to_string()),
+            crate::PreprocessError::Cancelled(error) => LangSpecError::Cancelled(error),
             crate::PreprocessError::Macro(error) => LangSpecError::parse(error.to_string()),
         })?;
     parse_langspec_from_source_map(&bundle.source_map, bundle.root_id)
+}
+
+/// Loads and parses the builtin declarations with cooperative cancellation.
+///
+/// # Errors
+///
+/// Returns [`LangSpecError`] for source, lexing, parsing, or cancellation
+/// failures.
+pub fn load_langspec_with_cancellation<R: ScriptResolver + ?Sized>(
+    resolver: &R,
+    script_name: &str,
+    options: SourceLoadOptions,
+    cancellation: &CancellationToken,
+) -> Result<LangSpec, LangSpecError> {
+    cancellation.check()?;
+    let bundle = load_source_bundle_with_cancellation(resolver, script_name, options, cancellation)
+        .map_err(|error| match error {
+            crate::PreprocessError::Source(source) => LangSpecError::Source(source),
+            crate::PreprocessError::Lex(lex) => LangSpecError::Lex(lex),
+            crate::PreprocessError::Cancelled(error) => LangSpecError::Cancelled(error),
+            crate::PreprocessError::Macro(error) => LangSpecError::parse(error.to_string()),
+        })?;
+    let source = bundle
+        .source_map
+        .get(bundle.root_id)
+        .ok_or_else(|| LangSpecError::parse("missing root source file for langspec parse"))?;
+    let tokens = lex_source_with_limits_and_cancellation(
+        source,
+        bundle.resource_limits,
+        Some(cancellation),
+    )?;
+    LangSpecParser::with_cancellation(source, tokens, cancellation).parse()
 }
 
 /// Parses builtin declarations from one already-loaded source file.
@@ -185,7 +227,16 @@ pub fn load_langspec<R: ScriptResolver + ?Sized>(
 ///
 /// Returns [`LangSpecError`] if parsing fails.
 pub fn parse_langspec(source_name: &str, input: &str) -> Result<LangSpec, LangSpecError> {
-    parse_langspec_bytes(source_name, input.as_bytes())
+    let bytes = nwnrs_types::encoding::encode_legacy(
+        nwnrs_types::encoding::LegacyEncoding::Windows1252,
+        input,
+    )
+    .map_err(|error| {
+        LangSpecError::parse(format!(
+            "NWScript language specification is not representable as Windows-1252: {error}"
+        ))
+    })?;
+    parse_langspec_bytes(source_name, &bytes)
 }
 
 /// Parses builtin declarations from one already-loaded byte buffer.
@@ -224,6 +275,7 @@ struct LangSpecParser<'a> {
     constants:             Vec<BuiltinConstant>,
     functions:             Vec<BuiltinFunction>,
     constant_values:       HashMap<String, BuiltinValue>,
+    cancellation:          Option<&'a CancellationToken>,
 }
 
 impl<'a> LangSpecParser<'a> {
@@ -237,11 +289,31 @@ impl<'a> LangSpecParser<'a> {
             constants: Vec::new(),
             functions: Vec::new(),
             constant_values: HashMap::new(),
+            cancellation: None,
+        }
+    }
+
+    fn with_cancellation(
+        source: &'a SourceFile,
+        tokens: Vec<Token>,
+        cancellation: &'a CancellationToken,
+    ) -> Self {
+        Self {
+            source,
+            tokens,
+            position: 0,
+            engine_num_structures: 0,
+            engine_structures: Vec::new(),
+            constants: Vec::new(),
+            functions: Vec::new(),
+            constant_values: HashMap::new(),
+            cancellation: Some(cancellation),
         }
     }
 
     fn parse(mut self) -> Result<LangSpec, LangSpecError> {
         while !self.at_eof() {
+            self.check_cancellation()?;
             if self.matches_keyword(Keyword::Define) {
                 self.parse_define()?;
             } else {
@@ -274,13 +346,13 @@ impl<'a> LangSpecParser<'a> {
         let index = match &token.kind {
             TokenKind::Identifier | TokenKind::Keyword(Keyword::EngineStructureDefinition) => {
                 let Some(index) = parse_engine_structure_define_index(&token.text) else {
-                    self.skip_line(define_line);
+                    self.skip_line(define_line)?;
                     return Ok(());
                 };
                 index
             }
             _ => {
-                self.skip_line(define_line);
+                self.skip_line(define_line)?;
                 return Ok(());
             }
         };
@@ -327,6 +399,7 @@ impl<'a> LangSpecParser<'a> {
     fn parse_parameters(&mut self) -> Result<Vec<BuiltinParameter>, LangSpecError> {
         let mut parameters = Vec::new();
         while !self.matches_kind(&TokenKind::RightParen) {
+            self.check_cancellation()?;
             let ty = self.parse_type()?;
             let name = self.expect_identifier_like_name()?;
             let default =
@@ -430,6 +503,7 @@ impl<'a> LangSpecParser<'a> {
         let mut consumed = false;
 
         while let Some(token) = self.peek() {
+            self.check_cancellation()?;
             if paren_depth == 0
                 && bracket_depth == 0
                 && brace_depth == 0
@@ -727,12 +801,13 @@ impl<'a> LangSpecParser<'a> {
             .map(|location| location.line)
     }
 
-    fn skip_line(&mut self, line: Option<usize>) {
+    fn skip_line(&mut self, line: Option<usize>) -> Result<(), LangSpecError> {
         let Some(line) = line else {
-            return;
+            return Ok(());
         };
 
         while let Some(token) = self.peek() {
+            self.check_cancellation()?;
             if token.kind == TokenKind::Eof {
                 break;
             }
@@ -741,6 +816,14 @@ impl<'a> LangSpecParser<'a> {
             }
             self.position += 1;
         }
+        Ok(())
+    }
+
+    fn check_cancellation(&self) -> Result<(), LangSpecError> {
+        if let Some(cancellation) = self.cancellation {
+            cancellation.check()?;
+        }
+        Ok(())
     }
 }
 
@@ -825,7 +908,9 @@ effect EffectDamage(int nAmount);
             Some(vec![
                 Some(BuiltinValue::Int(0)),
                 Some(BuiltinValue::Float(3.141_591_5)),
-                Some(BuiltinValue::String("hello".into())),
+                Some(BuiltinValue::String(crate::ScriptString::new(
+                    b"hello".to_vec(),
+                ))),
                 Some(BuiltinValue::ObjectSelf),
                 Some(BuiltinValue::ObjectId(32767)),
                 Some(BuiltinValue::LocationInvalid),

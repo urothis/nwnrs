@@ -4,6 +4,9 @@
 
 extern crate self as nwnrs_types;
 
+/// Lossless native-filesystem path presentation and ordering.
+pub mod native_path;
+
 #[cfg(feature = "checksums")]
 #[cfg_attr(docsrs, doc(cfg(feature = "checksums")))]
 /// Checksum types and helpers.
@@ -264,14 +267,21 @@ mod tests {
         let _erf_write: fn(&mut Cursor, &erf::Erf) -> erf::ErfResult<()> =
             erf::write_erf_archive::<Cursor>;
 
-        let _gff_read: fn(&mut Cursor) -> gff::GffResult<gff::GffRoot> =
+        let _gff_read: fn(&mut Cursor, encoding::NwnTextContext) -> gff::GffResult<gff::GffRoot> =
             gff::read_gff_root::<Cursor>;
-        let _gff_write: fn(&mut Cursor, &gff::GffRoot) -> gff::GffResult<()> =
-            gff::write_gff_root::<Cursor>;
+        let _gff_write: fn(
+            &mut Cursor,
+            &gff::GffRoot,
+            encoding::NwnTextContext,
+        ) -> gff::GffResult<()> = gff::write_gff_root::<Cursor>;
 
-        let _git_read: fn(&mut Cursor) -> gff::GitResult<gff::GitFile> = gff::read_git::<Cursor>;
-        let _git_write: fn(&mut Cursor, &gff::GitFile) -> gff::GitResult<()> =
-            gff::write_git::<Cursor>;
+        let _git_read: fn(&mut Cursor, encoding::NwnTextContext) -> gff::GitResult<gff::GitFile> =
+            gff::read_git::<Cursor>;
+        let _git_write: fn(
+            &mut Cursor,
+            &gff::GitFile,
+            encoding::NwnTextContext,
+        ) -> gff::GitResult<()> = gff::write_git::<Cursor>;
 
         let _key_read: fn(std::path::PathBuf) -> key::KeyResult<key::KeyTable> =
             key::read_key_table_from_file;
@@ -282,31 +292,56 @@ mod tests {
             mdl::read_model::<Cursor>;
         let _model_write: fn(&mut Cursor, &mdl::Model) -> mdl::ModelResult<()> =
             mdl::write_model::<Cursor>;
-        let _ascii_read: fn(&mut Cursor) -> mdl::ModelResult<mdl::AsciiModel> =
-            mdl::read_ascii_model::<Cursor>;
-        let _ascii_write: fn(&mut Cursor, &mdl::AsciiModel) -> mdl::ModelResult<()> =
-            mdl::write_ascii_model::<Cursor>;
-        let _parsed_read: fn(&mut Cursor) -> mdl::ModelResult<mdl::ParsedModel> =
-            mdl::read_parsed_model::<Cursor>;
-        let _parsed_write: fn(&mut Cursor, &mdl::ParsedModel) -> mdl::ModelResult<()> =
-            mdl::write_parsed_model::<Cursor>;
+        let _ascii_read: fn(
+            &mut Cursor,
+            encoding::NwnTextContext,
+        ) -> mdl::ModelResult<mdl::AsciiModel> = mdl::read_ascii_model::<Cursor>;
+        let _ascii_write: fn(
+            &mut Cursor,
+            &mdl::AsciiModel,
+            encoding::NwnTextContext,
+        ) -> mdl::ModelResult<()> = mdl::write_ascii_model::<Cursor>;
+        let _parsed_read: fn(
+            &mut Cursor,
+            encoding::NwnTextContext,
+        ) -> mdl::ModelResult<mdl::ParsedModel> = mdl::read_parsed_model::<Cursor>;
+        let _parsed_write: fn(
+            &mut Cursor,
+            &mdl::ParsedModel,
+            encoding::NwnTextContext,
+        ) -> mdl::ModelResult<()> = mdl::write_parsed_model::<Cursor>;
         let _binary_read: fn(&mut Cursor) -> mdl::ModelResult<mdl::BinaryModel> =
             mdl::read_binary_model::<Cursor>;
         let _binary_write: fn(&mut Cursor, &mdl::BinaryModel) -> mdl::ModelResult<()> =
             mdl::write_original_binary_model::<Cursor>;
-        let _semantic_read: fn(&mut Cursor) -> mdl::ModelResult<mdl::SemanticModel> =
-            mdl::read_semantic_model::<Cursor>;
-        let _semantic_write: fn(&mut Cursor, &mdl::SemanticModel) -> mdl::ModelResult<()> =
-            mdl::write_semantic_model::<Cursor>;
-        let _scene_read: fn(&mut Cursor) -> mdl::ModelResult<mdl::NwnScene> =
-            mdl::read_scene_model::<Cursor>;
-        let _scene_write: fn(&mut Cursor, &mdl::NwnScene) -> mdl::ModelResult<()> =
-            mdl::write_scene_model::<Cursor>;
+        let _semantic_read: fn(
+            &mut Cursor,
+            encoding::NwnTextContext,
+        ) -> mdl::ModelResult<mdl::SemanticModel> = mdl::read_semantic_model::<Cursor>;
+        let _semantic_write: fn(
+            &mut Cursor,
+            &mdl::SemanticModel,
+            encoding::NwnTextContext,
+        ) -> mdl::ModelResult<()> = mdl::write_semantic_model::<Cursor>;
+        let _scene_read: fn(
+            &mut Cursor,
+            encoding::NwnTextContext,
+        ) -> mdl::ModelResult<mdl::NwnScene> = mdl::read_scene_model::<Cursor>;
+        let _scene_write: fn(
+            &mut Cursor,
+            &mdl::NwnScene,
+            encoding::NwnTextContext,
+        ) -> mdl::ModelResult<()> = mdl::write_scene_model::<Cursor>;
 
-        let _mtr_read: fn(&mut Cursor) -> mtr::MtrResult<mtr::MtrMaterial> =
-            mtr::read_mtr::<Cursor>;
-        let _mtr_write: fn(&mut Cursor, &mtr::MtrMaterial) -> mtr::MtrResult<()> =
-            mtr::write_mtr::<Cursor>;
+        let _mtr_read: fn(
+            &mut Cursor,
+            encoding::NwnTextContext,
+        ) -> mtr::MtrResult<mtr::MtrMaterial> = mtr::read_mtr::<Cursor>;
+        let _mtr_write: fn(
+            &mut Cursor,
+            &mtr::MtrMaterial,
+            encoding::NwnTextContext,
+        ) -> mtr::MtrResult<()> = mtr::write_mtr::<Cursor>;
 
         let _manifest_read: fn(&mut Cursor) -> nwsync::ManifestResult<nwsync::Manifest> =
             nwsync::read_manifest::<Cursor>;
@@ -317,9 +352,13 @@ mod tests {
         let _plt_write: fn(&mut Cursor, &plt::PltTexture) -> plt::PltResult<()> =
             plt::write_plt::<Cursor>;
 
-        let _set_read: fn(&mut Cursor) -> set::SetResult<set::SetFile> = set::read_set::<Cursor>;
-        let _set_write: fn(&mut Cursor, &set::SetFile) -> set::SetResult<()> =
-            set::write_set::<Cursor>;
+        let _set_read: fn(&mut Cursor, encoding::NwnTextContext) -> set::SetResult<set::SetFile> =
+            set::read_set::<Cursor>;
+        let _set_write: fn(
+            &mut Cursor,
+            &set::SetFile,
+            encoding::NwnTextContext,
+        ) -> set::SetResult<()> = set::write_set::<Cursor>;
 
         let _ssf_read: fn(&mut Cursor) -> ssf::SsfResult<ssf::SsfRoot> = ssf::read_ssf::<Cursor>;
         let _ssf_write: fn(&mut Cursor, &ssf::SsfRoot) -> ssf::SsfResult<()> =
@@ -339,13 +378,23 @@ mod tests {
             &mut tlk::Tlk,
         ) -> tlk::TlkResult<()> = tlk::write_tlk_chain;
 
-        let _twoda_read: fn(Cursor) -> twoda::TwoDaResult<twoda::TwoDa> =
+        let _twoda_read: fn(Cursor, encoding::NwnTextContext) -> twoda::TwoDaResult<twoda::TwoDa> =
             twoda::read_twoda::<Cursor>;
-        let _twoda_write: fn(&mut Cursor, &twoda::TwoDa, bool) -> twoda::TwoDaResult<()> =
-            twoda::write_twoda::<Cursor>;
+        let _twoda_write: fn(
+            &mut Cursor,
+            &twoda::TwoDa,
+            bool,
+            encoding::NwnTextContext,
+        ) -> twoda::TwoDaResult<()> = twoda::write_twoda::<Cursor>;
 
-        let _txi_read: fn(&mut dyn std::io::Read) -> txi::TxiResult<txi::TxiFile> = txi::read_txi;
-        let _txi_write: fn(&mut Cursor, &txi::TxiFile) -> txi::TxiResult<()> =
-            txi::write_txi::<Cursor>;
+        let _txi_read: fn(
+            &mut dyn std::io::Read,
+            encoding::NwnTextContext,
+        ) -> txi::TxiResult<txi::TxiFile> = txi::read_txi;
+        let _txi_write: fn(
+            &mut Cursor,
+            &txi::TxiFile,
+            encoding::NwnTextContext,
+        ) -> txi::TxiResult<()> = txi::write_txi::<Cursor>;
     }
 }

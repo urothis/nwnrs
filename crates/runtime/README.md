@@ -36,9 +36,9 @@ or metrics service.
 
 The core NWScript API has one integer API version and is statically registered.
 Scripts query optional core, server-state, and administration capabilities by
-presence. Events are also unversioned and are queried by identity. Dispatch
-failures retain a stable error code and a diagnostic message on the current
-bridge thread.
+presence. Events are also unversioned and are queried by their canonical
+subject-and-phase route. Dispatch failures retain a stable error code and a
+diagnostic message on the current bridge thread.
 
 Native ABI provenance and regeneration rules are documented in
 [`ABI.md`](ABI.md).
@@ -46,7 +46,7 @@ Native ABI provenance and regeneration rules are documented in
 The [`nwnrs.nss`](../../include/nwnrs/nwnrs.nss) include is a separate local
 `nwpkg` dependency of the source-controlled demo module. Its compiler-only
 [`nwnrs_macros.nss`](../../include/nwnrs/nwnrs_macros.nss) procedural macro
-collects `#[nwnrs::events(module_load)]` and native event phase functions
+collects `#[nwnrs::event::module_load::before]` and native event phase functions
 during the project preprocessing pass and quotes the always-present
 `_nwnrs_onload` dispatcher.
 Handlers use the exact `void Handler(json event)` signature. The dispatcher is
@@ -79,12 +79,12 @@ dispatcher runs; no borrowed engine pointer enters JSON. Event frames are
 nested, bounded, and removed by scope cleanup even when dispatch fails.
 
 The first native hook family uses
-`#[nwnrs::events(associate_add_before)]`,
-`#[nwnrs::events(associate_add_after)]`,
-`#[nwnrs::events(associate_remove_before)]`, and
-`#[nwnrs::events(associate_remove_after)]`. Familiar possession uses the same
-pattern with `associate_possess_familiar_*` and
-`associate_unpossess_familiar_*`. Payload names are `associate.add`,
+`#[nwnrs::event::associate_add::before]`,
+`#[nwnrs::event::associate_add::after]`,
+`#[nwnrs::event::associate_remove::before]`, and
+`#[nwnrs::event::associate_remove::after]`. Familiar possession uses the same
+pattern with `associate_possess_familiar` and
+`associate_unpossess_familiar` subjects in their supported phases. Payload names are `associate.add`,
 `associate.remove`, `associate.possess_familiar`, and
 `associate.unpossess_familiar`. `data.associate` is an object ID,
 `data.associate_type` is an integer for add events, and familiar events expose

@@ -6,7 +6,7 @@ use std::{
     path::Path,
 };
 
-use nwnrs_types::resman::prelude::*;
+use nwnrs_types::{encoding::NwnTextContext, resman::prelude::*};
 use tracing::instrument;
 
 use self::text::parse_legacy_f32;
@@ -517,13 +517,16 @@ impl AsciiModel {
     /// # Examples
     ///
     /// ```no_run
-    /// let model = nwnrs_types::mdl::AsciiModel::from_file("model.mdl")?;
+    /// let model = nwnrs_types::mdl::AsciiModel::from_file(
+    ///     "model.mdl",
+    ///     nwnrs_types::encoding::NwnTextContext::english(),
+    /// )?;
     /// assert!(!model.geometry_name.is_empty());
     /// # Ok::<(), nwnrs_types::mdl::ModelError>(())
     /// ```
-    pub fn from_file(path: impl AsRef<Path>) -> ModelResult<Self> {
+    pub fn from_file(path: impl AsRef<Path>, context: NwnTextContext) -> ModelResult<Self> {
         let mut file = File::open(path.as_ref())?;
-        read_ascii_model(&mut file)
+        read_ascii_model(&mut file, context)
     }
 
     /// Reads an ASCII MDL model from a [`Res`].
@@ -538,10 +541,18 @@ impl AsciiModel {
     /// ```no_run
     /// # use nwnrs_types::resman::{CachePolicy, Res};
     /// fn parse(res: &Res) -> nwnrs_types::mdl::ModelResult<nwnrs_types::mdl::AsciiModel> {
-    ///     nwnrs_types::mdl::AsciiModel::from_res(res, CachePolicy::Use)
+    ///     nwnrs_types::mdl::AsciiModel::from_res(
+    ///         res,
+    ///         CachePolicy::Use,
+    ///         nwnrs_types::encoding::NwnTextContext::english(),
+    ///     )
     /// }
     /// ```
-    pub fn from_res(res: &Res, cache_policy: CachePolicy) -> ModelResult<Self> {
+    pub fn from_res(
+        res: &Res,
+        cache_policy: CachePolicy,
+        context: NwnTextContext,
+    ) -> ModelResult<Self> {
         if res.resref().res_type() != MODEL_RES_TYPE {
             return Err(ModelError::msg(format!(
                 "expected mdl resource, got {}",
@@ -550,7 +561,7 @@ impl AsciiModel {
         }
 
         let bytes = res.read_all(cache_policy)?;
-        parse_ascii_model_bytes(&bytes)
+        parse_ascii_model_bytes(&bytes, context)
     }
 }
 
@@ -560,8 +571,8 @@ impl Model {
     /// # Errors
     ///
     /// Returns [`ModelError`] if the bytes cannot be parsed as ASCII MDL.
-    pub fn parse_ascii(&self) -> ModelResult<AsciiModel> {
-        parse_ascii_model_bytes(self.bytes())
+    pub fn parse_ascii(&self, context: NwnTextContext) -> ModelResult<AsciiModel> {
+        parse_ascii_model_bytes(self.bytes(), context)
     }
 }
 
@@ -712,8 +723,11 @@ pub fn restore_compiled_model(model: &AsciiModel) -> ModelResult<Model> {
     Ok(Model::new(bytes))
 }
 
-pub(crate) fn parse_ascii_model_bytes(bytes: &[u8]) -> ModelResult<AsciiModel> {
-    let text = text::decode_model_text(bytes);
+pub(crate) fn parse_ascii_model_bytes(
+    bytes: &[u8],
+    context: NwnTextContext,
+) -> ModelResult<AsciiModel> {
+    let text = text::decode_model_text(bytes, context);
     parse_ascii_model(&text)
 }
 
@@ -727,15 +741,21 @@ pub(crate) fn parse_ascii_model_bytes(bytes: &[u8]) -> ModelResult<AsciiModel> {
 ///
 /// ```
 /// let mut source = "beginmodelgeom demo\nendmodelgeom demo\ndonemodel demo\n".as_bytes();
-/// let model = nwnrs_types::mdl::read_ascii_model(&mut source)?;
+/// let model = nwnrs_types::mdl::read_ascii_model(
+///     &mut source,
+///     nwnrs_types::encoding::NwnTextContext::english(),
+/// )?;
 /// assert_eq!(model.geometry_name, "demo");
 /// # Ok::<(), nwnrs_types::mdl::ModelError>(())
 /// ```
 #[instrument(level = "debug", skip_all, err)]
-pub fn read_ascii_model<R: Read>(reader: &mut R) -> ModelResult<AsciiModel> {
+pub fn read_ascii_model<R: Read>(
+    reader: &mut R,
+    context: NwnTextContext,
+) -> ModelResult<AsciiModel> {
     let mut bytes = Vec::new();
     reader.read_to_end(&mut bytes)?;
-    parse_ascii_model_bytes(&bytes)
+    parse_ascii_model_bytes(&bytes, context)
 }
 
 /// Writes a parsed ASCII MDL model using canonical indentation.
@@ -762,14 +782,22 @@ pub fn read_ascii_model<R: Read>(reader: &mut R) -> ModelResult<AsciiModel> {
 /// ",
 /// )?;
 /// let mut bytes = Vec::new();
-/// nwnrs_types::mdl::write_ascii_model(&mut bytes, &model)?;
+/// nwnrs_types::mdl::write_ascii_model(
+///     &mut bytes,
+///     &model,
+///     nwnrs_types::encoding::NwnTextContext::english(),
+/// )?;
 /// let text = String::from_utf8(bytes).unwrap();
 /// assert!(text.contains("beginmodelgeom demo"));
 /// # Ok::<(), nwnrs_types::mdl::ModelError>(())
 /// ```
 #[instrument(level = "debug", skip_all, err, fields(geometry_name = %model.geometry_name))]
-pub fn write_ascii_model<W: Write>(writer: &mut W, model: &AsciiModel) -> ModelResult<()> {
-    writer.write_all(&text::encode_model_text(&model.to_text()))?;
+pub fn write_ascii_model<W: Write>(
+    writer: &mut W,
+    model: &AsciiModel,
+    context: NwnTextContext,
+) -> ModelResult<()> {
+    writer.write_all(&text::encode_model_text(&model.to_text(), context)?)?;
     Ok(())
 }
 
@@ -825,9 +853,12 @@ fn compiled_source_comments(bytes: &[u8]) -> Vec<AsciiElement> {
     let mut comments = vec![AsciiElement::Comment(COMPILED_SOURCE_BEGIN.to_string())];
     let hex = encode_hex(bytes);
     for chunk in hex.as_bytes().chunks(HEX_CHUNK_LEN) {
+        let chunk = chunk
+            .iter()
+            .map(|byte| char::from(*byte))
+            .collect::<String>();
         comments.push(AsciiElement::Comment(format!(
-            "{COMPILED_SOURCE_HEX_PREFIX}{}",
-            String::from_utf8_lossy(chunk)
+            "{COMPILED_SOURCE_HEX_PREFIX}{chunk}"
         )));
     }
     comments.push(AsciiElement::Comment(COMPILED_SOURCE_END.to_string()));
@@ -2178,10 +2209,18 @@ donemodel demo
         ));
 
         let mut encoded = Vec::new();
-        if let Err(error) = write_ascii_model(&mut Cursor::new(&mut encoded), &model) {
+        if let Err(error) = write_ascii_model(
+            &mut Cursor::new(&mut encoded),
+            &model,
+            nwnrs_types::encoding::NwnTextContext::english(),
+        ) {
             panic!("write comment sample: {error}");
         }
-        let written = String::from_utf8_lossy(&encoded);
+        let written = nwnrs_types::encoding::NwnText::decode(
+            &encoded,
+            nwnrs_types::encoding::LegacyEncoding::Windows1252,
+        )
+        .display_text();
         assert!(written.contains("#part-number 0"));
     }
 

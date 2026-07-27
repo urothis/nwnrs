@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     fs,
     io::{self, Write},
     path::Path,
@@ -14,7 +15,7 @@ use crate::{
 };
 
 pub(crate) struct ExpandedScript {
-    pub(crate) source: String,
+    pub(crate) source: Vec<u8>,
     pub(crate) trace:  Vec<nwscript::MacroExpansionTrace>,
     source_map:        nwscript::SourceMap,
 }
@@ -31,9 +32,14 @@ pub(crate) fn expand_script(cmd: &ExpandCmd) -> Result<ExpandedScript, String> {
     }
 
     let mut include_dirs = cmd.include_dir.clone();
-    for dependency in nwnrs_nwpkg::resolve_include_dependencies(&cmd.input)? {
-        if !include_dirs.contains(&dependency.source_root) {
-            include_dirs.push(dependency.source_root);
+    let cancellation = nwscript::CancellationToken::new();
+    if let Some(session) =
+        nwnrs_nwpkg::ResolvedPackageSession::open(&cmd.input, &BTreeMap::new(), &cancellation)?
+    {
+        for dependency in session.dependencies() {
+            if !include_dirs.contains(&dependency.source_root) {
+                include_dirs.push(dependency.source_root.clone());
+            }
         }
     }
     let install_resman = build_install_resman(
@@ -41,13 +47,21 @@ pub(crate) fn expand_script(cmd: &ExpandCmd) -> Result<ExpandedScript, String> {
         cmd.user.as_deref(),
         &cmd.language,
         cmd.load_ovr,
-    )?;
-    let host = CliCompilerHost::for_source(&cmd.input, &include_dirs, install_resman);
+    )
+    .map_err(|error| error.message)?;
+    let host = CliCompilerHost::for_source(&cmd.input, &include_dirs, install_resman)
+        .map_err(|error| error.message)?;
     let source_load = nwscript::SourceLoadOptions {
         max_include_depth: cmd.max_include_depth,
         ..nwscript::SourceLoadOptions::default()
     };
-    let bundle = nwscript::load_source_bundle(&host, &cmd.input.to_string_lossy(), source_load)
+    let source_name = cmd.input.to_str().ok_or_else(|| {
+        format!(
+            "NWScript input path is not valid UTF-8: {}",
+            nwscript::physical_path_display(&cmd.input)
+        )
+    })?;
+    let bundle = nwscript::load_source_bundle(&host, source_name, source_load)
         .map_err(|error| format!("failed to load {}: {error}", cmd.input.display()))?;
     let mut registry = nwscript::MacroRegistry::new();
     let (preprocessed, trace) = nwscript::preprocess_source_bundle_with_macro_trace(
@@ -58,9 +72,9 @@ pub(crate) fn expand_script(cmd: &ExpandCmd) -> Result<ExpandedScript, String> {
     .map_err(|error| format!("failed to expand {}: {error}", cmd.input.display()))?;
     let stream = nwscript::NwTokenStream::from_tokens(&preprocessed.tokens)
         .map_err(|error| format!("expanded source is not balanced: {error}"))?;
-    let mut source = nwscript::render_nwscript_tokens(&stream);
-    if !source.ends_with('\n') {
-        source.push('\n');
+    let mut source = nwscript::render_nwscript_tokens_bytes(&stream);
+    if !source.ends_with(b"\n") {
+        source.push(b'\n');
     }
     Ok(ExpandedScript {
         source,
@@ -80,12 +94,12 @@ pub(crate) fn run_expand(cmd: ExpandCmd) -> Result<(), String> {
         write_trace(&expanded)?;
     }
     if let Some(output) = cmd.output.as_deref() {
-        fs::write(output, expanded.source.as_bytes())
+        fs::write(output, &expanded.source)
             .map_err(|error| format!("failed to write {}: {error}", output.display()))?;
     } else {
         let mut stdout = io::stdout().lock();
         stdout
-            .write_all(expanded.source.as_bytes())
+            .write_all(&expanded.source)
             .map_err(|error| format!("failed to write stdout: {error}"))?;
     }
     Ok(())
@@ -180,8 +194,9 @@ mod tests {
         .expect("write source");
 
         let expanded = expand_script(&expand_cmd(input)).expect("expand source");
-        assert!(expanded.source.contains("42"));
-        assert!(!expanded.source.contains("macro_rules"));
+        let source = std::str::from_utf8(&expanded.source).expect("canonical expanded source");
+        assert!(source.contains("42"));
+        assert!(!source.contains("macro_rules"));
         let [trace] = expanded.trace.as_slice() else {
             panic!("expected exactly one trace record");
         };
@@ -221,8 +236,9 @@ mod tests {
         .expect("write project source");
 
         let expanded = expand_script(&expand_cmd(input)).expect("expand nwpkg dependency");
-        assert!(expanded.source.contains("23"));
-        assert!(!expanded.source.contains("dependency_value!"));
+        let source = std::str::from_utf8(&expanded.source).expect("canonical expanded source");
+        assert!(source.contains("23"));
+        assert!(!source.contains("dependency_value!"));
 
         let _ = fs::remove_dir_all(temp_dir);
     }

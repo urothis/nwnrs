@@ -15,14 +15,14 @@ use crate::ssf::{
 /// the SSF format.
 #[instrument(level = "debug", skip_all, err)]
 pub fn read_ssf<R: Read + Seek>(reader: &mut R) -> SsfResult<SsfRoot> {
-    let file_type = read_str_or_err(reader, 4)?;
+    let file_type = read_ascii_or_err(reader, 4)?;
     expect(
         file_type == HEADER_MAGIC,
         format!("expected {HEADER_MAGIC:?}, got {file_type:?}"),
     )
     .map_err(invalid_data)?;
 
-    let file_version = read_str_or_err(reader, 4)?;
+    let file_version = read_ascii_or_err(reader, 4)?;
     expect(
         file_version == HEADER_VERSION,
         format!("expected {HEADER_VERSION:?}, got {file_version:?}"),
@@ -58,7 +58,7 @@ pub fn read_ssf<R: Read + Seek>(reader: &mut R) -> SsfResult<SsfRoot> {
 
         Ok(SsfEntry {
             raw_resref: raw_resref_bytes,
-            resref: decode_resref(&raw_resref),
+            resref: decode_resref(&raw_resref)?,
             strref,
         })
     })?;
@@ -132,7 +132,8 @@ mod tests {
     #[test]
     fn ssf_new_entry_uses_canonical_padding() {
         let mut ssf = SsfRoot::new();
-        ssf.entries.push(SsfEntry::new("hello", 7));
+        ssf.entries
+            .push(SsfEntry::new("hello", 7).expect("valid resref"));
 
         let mut encoded = Vec::new();
         if let Err(error) = write_ssf(&mut encoded, &ssf) {

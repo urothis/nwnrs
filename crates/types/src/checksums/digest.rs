@@ -112,3 +112,29 @@ pub fn sha256_digest(data: impl AsRef<[u8]>) -> Sha256Digest {
     bytes.copy_from_slice(&digest);
     Sha256Digest::new(bytes)
 }
+
+/// Computes a SHA-256 digest by streaming bytes from `reader`.
+///
+/// This avoids materializing large archives solely to fingerprint them.
+///
+/// # Errors
+///
+/// Returns the first I/O error encountered while reading.
+pub fn sha256_digest_reader(mut reader: impl Read) -> io::Result<Sha256Digest> {
+    let mut hasher = Sha256::new();
+    let mut buffer = [0_u8; 128 * 1024];
+    loop {
+        let read = reader.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        let chunk = buffer
+            .get(..read)
+            .ok_or_else(|| io::Error::other("SHA-256 reader returned an invalid byte count"))?;
+        hasher.update(chunk);
+    }
+    let digest = hasher.finalize();
+    let mut bytes = [0_u8; 32];
+    bytes.copy_from_slice(&digest);
+    Ok(Sha256Digest::new(bytes))
+}

@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     ffi::OsStr,
     fs,
     io::{self, BufReader, Cursor},
@@ -12,7 +13,7 @@ use nwnrs_nwpkg::{
     should_copy_original_key, should_copy_original_resource,
 };
 use nwnrs_nwscript as nwscript;
-use nwnrs_types::prelude::*;
+use nwnrs_types::{encoding::NwnTextContext, prelude::*};
 use tracing::{debug, info, instrument, warn};
 
 use crate::{
@@ -194,7 +195,14 @@ fn run_pack_erf(cmd: PackCmd) -> Result<(), String> {
     let (input, output) = explicit_pack_paths(&cmd)?;
     let input = input.clone();
     let output = output.clone();
-    let dispatcher = nwnrs_nwpkg::generate_event_dispatcher(&input)?;
+    let cancellation = nwscript::CancellationToken::new();
+    let package_session =
+        nwnrs_nwpkg::ResolvedPackageSession::open(&input, &BTreeMap::new(), &cancellation)?;
+    let dispatcher = match package_session.as_ref() {
+        Some(session) => nwnrs_nwpkg::generate_event_dispatcher_from_session(session)
+            .map_err(|diagnostic| diagnostic.message)?,
+        None => None,
+    };
     let metadata = read_erf_pack_metadata(&input)?;
     if let Some(metadata) = metadata.as_ref()
         && dispatcher.is_none()
@@ -221,8 +229,13 @@ fn run_pack_erf(cmd: PackCmd) -> Result<(), String> {
         || infer_erf_type(output.as_path(), cmd.erf_type.as_deref()),
         |meta| meta.file_type.clone(),
     );
-    let compile_config = ScriptCompileConfig::from_pack_cmd(&cmd, &input)?;
-    let sources = collect_generic_pack_sources(&input, true, cmd.no_symlinks)?;
+    let compile_config =
+        ScriptCompileConfig::from_pack_cmd_with_session(&cmd, package_session.as_ref())?;
+    let text_context = package_session.as_ref().map_or_else(
+        || pack_text_context(cmd.language.as_deref()),
+        |session| Ok(session.text_context()),
+    )?;
+    let sources = collect_generic_pack_sources(&input, true, cmd.no_symlinks, text_context)?;
     let sources = add_generated_event_dispatcher(&input, sources, &compile_config, dispatcher)?;
     let sources = apply_erf_entry_order(metadata.as_ref(), sources);
     let sources = normalize_pack_sources(sources)?;
@@ -243,6 +256,24 @@ fn run_pack_erf(cmd: PackCmd) -> Result<(), String> {
         .as_ref()
         .map(|meta| meta.loc_strings.clone())
         .unwrap_or_default();
+    let loc_native_text = metadata
+        .as_ref()
+        .map(|meta| {
+            meta.loc_string_bytes
+                .iter()
+                .map(|(id, bytes)| {
+                    let language_id = u32::try_from(id.div_euclid(2)).unwrap_or_default();
+                    (
+                        *id,
+                        nwnrs_types::encoding::NwnText::decode(
+                            bytes,
+                            nwnrs_types::encoding::LegacyEncoding::for_language_id(language_id),
+                        ),
+                    )
+                })
+                .collect::<BTreeMap<_, _>>()
+        })
+        .unwrap_or_default();
     let str_ref = metadata.as_ref().map_or(0, |meta| meta.str_ref);
     let oid = metadata.as_ref().and_then(|meta| meta.oid.as_deref());
     let entry_algorithms = metadata
@@ -253,7 +284,7 @@ fn run_pack_erf(cmd: PackCmd) -> Result<(), String> {
     let resource_list_padding = metadata
         .as_ref()
         .map_or(0, |meta| meta.resource_list_padding);
-    erf::write_erf_with_options(
+    erf::write_erf_with_native_text(
         &mut out,
         &file_type,
         version,
@@ -262,6 +293,7 @@ fn run_pack_erf(cmd: PackCmd) -> Result<(), String> {
         exocomp,
         compalg,
         &loc_strings,
+        &loc_native_text,
         str_ref,
         &refs,
         oid,
@@ -306,7 +338,8 @@ fn add_generated_event_dispatcher(
         dispatcher.source.as_bytes(),
         std::slice::from_ref(&dispatcher.include_root),
         &options,
-    )?;
+    )
+    .map_err(|error| error.message)?;
     let rr = resman::ResolvedResRef::from_filename(&format!("{}.ncs", dispatcher.name))
         .map_err(|error| format!("invalid generated dispatcher name: {error}"))?;
     sources.push(PackSourceEntry {
@@ -345,9 +378,17 @@ fn run_pack_resource(cmd: PackCmd, kind: Kind) -> Result<(), String> {
     }
 
     let source = resolve_resource_pack_source(&input, kind, read_resource_pack_metadata(&input)?)?;
+    let text_context = nwnrs_nwpkg::read_project_manifest(&input)?.map_or_else(
+        || pack_text_context(cmd.language.as_deref()),
+        |manifest| {
+            Ok(NwnTextContext::for_language_id(
+                manifest.project.language.id(),
+            ))
+        },
+    )?;
     match kind {
-        Kind::Gff => pack_gff_resource(&source, &output, cmd.force),
-        Kind::TwoDa => pack_twoda_resource(&source, &output, cmd.force),
+        Kind::Gff => pack_gff_resource(&source, &output, cmd.force, text_context),
+        Kind::TwoDa => pack_twoda_resource(&source, &output, cmd.force, text_context),
         Kind::Tlk => pack_tlk_resource(&source, &output, cmd.force),
         Kind::Ssf => pack_ssf_resource(&source, &output, cmd.force),
         Kind::Model => pack_model_resource(&source, &output, cmd.force),
@@ -365,7 +406,9 @@ fn resolve_resource_pack_source(
     expected_kind: Kind,
     metadata: Option<ResourcePackMetadata>,
 ) -> Result<PathBuf, String> {
-    if input.is_file() {
+    let input_metadata = fs::metadata(input)
+        .map_err(|error| format!("failed to inspect source {}: {error}", input.display()))?;
+    if input_metadata.is_file() {
         if !path_matches_pack_kind(input, expected_kind) {
             return Err(format!(
                 "input file type does not match output resource kind: {}",
@@ -374,28 +417,47 @@ fn resolve_resource_pack_source(
         }
         return Ok(input.to_path_buf());
     }
-    if !input.is_dir() {
-        return Err(format!("source does not exist: {}", input.display()));
+    if !input_metadata.is_dir() {
+        return Err(format!(
+            "source is neither a regular file nor a directory: {}",
+            input.display()
+        ));
     }
 
     if let Some(metadata) = metadata {
         let candidate = input.join(&metadata.file_name);
-        if candidate.is_file() {
-            if !path_matches_pack_kind(&candidate, expected_kind) {
+        match fs::metadata(&candidate) {
+            Ok(candidate_metadata) if candidate_metadata.is_file() => {
+                if !path_matches_pack_kind(&candidate, expected_kind) {
+                    return Err(format!(
+                        "resource metadata file type does not match output resource kind: {}",
+                        candidate.display()
+                    ));
+                }
+                return Ok(candidate);
+            }
+            Ok(_) => {
                 return Err(format!(
-                    "resource metadata file type does not match output resource kind: {}",
+                    "resource metadata source is not a regular file: {}",
                     candidate.display()
                 ));
             }
-            return Ok(candidate);
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(format!(
+                    "failed to inspect resource metadata source {}: {error}",
+                    candidate.display()
+                ));
+            }
         }
     }
 
-    let mut files = sorted_dir_entries(input)?
-        .into_iter()
-        .filter(|entry| entry_is_file(&entry.path, false).unwrap_or(false))
-        .filter(|entry| !is_project_control_file(&entry.path))
-        .collect::<Vec<_>>();
+    let mut files = Vec::new();
+    for entry in sorted_dir_entries(input)? {
+        if entry_is_file(&entry.path, false)? && !is_project_control_file(&entry.path) {
+            files.push(entry);
+        }
+    }
     if files.len() != 1 {
         return Err(format!(
             "resource directory must contain exactly one packable file: {}",
@@ -417,32 +479,48 @@ fn path_matches_pack_kind(path: &Path, expected_kind: Kind) -> bool {
         || (expected_kind == Kind::Ncs && (is_ncs_asm_file(path) || is_nwscript_source_file(path)))
 }
 
-fn pack_gff_resource(input: &Path, output: &Path, force: bool) -> Result<(), String> {
+fn pack_gff_resource(
+    input: &Path,
+    output: &Path,
+    force: bool,
+    context: NwnTextContext,
+) -> Result<(), String> {
     let file = fs::File::open(input)
         .map_err(|error| format!("failed to open {}: {error}", input.display()))?;
     let mut reader = BufReader::new(file);
-    let root = gff::read_gff_root(&mut reader)
+    let root = gff::read_gff_root(&mut reader, context)
         .map_err(|error| format!("failed to parse {} as GFF: {error}", input.display()))?;
     ensure_output_file_ready(output, force)?;
     let mut bytes = Cursor::new(Vec::new());
-    gff::write_gff_root(&mut bytes, &root)
+    gff::write_gff_root(&mut bytes, &root, context)
         .map_err(|error| format!("failed to write {} as GFF: {error}", output.display()))?;
     fs::write(output, bytes.into_inner())
         .map_err(|error| format!("failed to write {}: {error}", output.display()))
 }
 
-fn pack_twoda_resource(input: &Path, output: &Path, force: bool) -> Result<(), String> {
+fn pack_twoda_resource(
+    input: &Path,
+    output: &Path,
+    force: bool,
+    context: NwnTextContext,
+) -> Result<(), String> {
     let file = fs::File::open(input)
         .map_err(|error| format!("failed to open {}: {error}", input.display()))?;
     let mut reader = BufReader::new(file);
-    let value = twoda::read_twoda(&mut reader)
+    let value = twoda::read_twoda(&mut reader, context)
         .map_err(|error| format!("failed to parse {} as 2DA: {error}", input.display()))?;
     ensure_output_file_ready(output, force)?;
     let mut bytes = Vec::new();
-    twoda::write_twoda(&mut bytes, &value, false)
+    twoda::write_twoda(&mut bytes, &value, false, context)
         .map_err(|error| format!("failed to write {} as 2DA: {error}", output.display()))?;
     fs::write(output, bytes)
         .map_err(|error| format!("failed to write {}: {error}", output.display()))
+}
+
+fn pack_text_context(language: Option<&str>) -> Result<NwnTextContext, String> {
+    let language = localization::resolve_language(language.unwrap_or("english"))
+        .map_err(|error| error.to_string())?;
+    Ok(NwnTextContext::for_language_id(language.id()))
 }
 
 fn pack_ncs_resource(input: &Path, output: &Path, cmd: &PackCmd) -> Result<(), String> {
@@ -457,7 +535,7 @@ fn pack_ncs_resource(input: &Path, output: &Path, cmd: &PackCmd) -> Result<(), S
             Vec::new(),
             cmd.debug,
         )?;
-        let artifacts = compile_script_file(input, &options)?;
+        let artifacts = compile_script_file(input, &options).map_err(|error| error.message)?;
         ensure_output_file_ready(output, cmd.force)?;
         fs::write(output, &artifacts.ncs)
             .map_err(|error| format!("failed to write {}: {error}", output.display()))?;
@@ -471,13 +549,28 @@ fn pack_ncs_resource(input: &Path, output: &Path, cmd: &PackCmd) -> Result<(), S
                 .map_err(|error| format!("failed to write {}: {error}", debug_output.display()))?;
         } else {
             let debug_output = output.with_extension("ndb");
-            if debug_output.is_file() {
-                fs::remove_file(&debug_output).map_err(|error| {
-                    format!(
-                        "failed to remove stale debugger output {}: {error}",
+            match fs::metadata(&debug_output) {
+                Ok(metadata) if metadata.is_file() => {
+                    fs::remove_file(&debug_output).map_err(|error| {
+                        format!(
+                            "failed to remove stale debugger output {}: {error}",
+                            debug_output.display()
+                        )
+                    })?;
+                }
+                Ok(_) => {
+                    return Err(format!(
+                        "stale debugger output is not a regular file: {}",
                         debug_output.display()
-                    )
-                })?;
+                    ));
+                }
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    return Err(format!(
+                        "failed to inspect stale debugger output {}: {error}",
+                        debug_output.display()
+                    ));
+                }
             }
         }
         return Ok(());
@@ -684,14 +777,28 @@ where
 )]
 fn run_key_pack(cmd: KeyPackCmd) -> Result<(), String> {
     info!(source = %cmd.source.display(), destination = %cmd.destination.display(), key = %cmd.key, "packing key set");
-    if !cmd.source.is_dir() {
+    let source_metadata = fs::metadata(&cmd.source).map_err(|error| {
+        format!(
+            "failed to inspect key-pack source {}: {error}",
+            cmd.source.display()
+        )
+    })?;
+    if !source_metadata.is_dir() {
         return Err(format!(
-            "source does not contain any data: {}",
+            "key-pack source is not a directory: {}",
             cmd.source.display()
         ));
     }
     let bif_prefix = "data";
     let compile_config = ScriptCompileConfig::from_key_pack_cmd(&cmd)?;
+    let text_context = nwnrs_nwpkg::read_project_manifest(&cmd.source)?.map_or_else(
+        || pack_text_context(None),
+        |manifest| {
+            Ok(NwnTextContext::for_language_id(
+                manifest.project.language.id(),
+            ))
+        },
+    )?;
 
     let mut bifs = Vec::new();
     let mut source_entries = std::collections::HashMap::<resman::ResRef, PackSourceEntry>::new();
@@ -718,7 +825,7 @@ fn run_key_pack(cmd: KeyPackCmd) -> Result<(), String> {
             if is_project_control_file(&entry.path) {
                 continue;
             }
-            match pack_source_for_file(&entry.path, &cmd.source) {
+            match pack_source_for_file(&entry.path, &cmd.source, text_context) {
                 Ok(source) => entries.push(source),
                 Err(error) => {
                     warn!(error = %error, path = %entry.path.display(), "skipping invalid key pack file");
@@ -846,16 +953,31 @@ pub(crate) fn collect_generic_pack_sources(
     path: &Path,
     explicit: bool,
     no_symlinks: bool,
+    text_context: NwnTextContext,
 ) -> Result<Vec<PackSourceEntry>, String> {
     let mut out = Vec::new();
-    let pack_root = if path.is_dir() {
+    let metadata = fs::metadata(path)
+        .map_err(|error| format!("failed to inspect pack source {}: {error}", path.display()))?;
+    let pack_root = if metadata.is_dir() {
         path.to_path_buf()
-    } else {
+    } else if metadata.is_file() {
         path.parent()
             .unwrap_or_else(|| Path::new("."))
             .to_path_buf()
+    } else {
+        return Err(format!(
+            "pack source is neither a regular file nor a directory: {}",
+            path.display()
+        ));
     };
-    collect_generic_pack_entry(path, &pack_root, explicit, no_symlinks, &mut out)?;
+    collect_generic_pack_entry(
+        path,
+        &pack_root,
+        explicit,
+        no_symlinks,
+        text_context,
+        &mut out,
+    )?;
     Ok(out)
 }
 
@@ -864,13 +986,14 @@ fn collect_generic_pack_entry(
     pack_root: &Path,
     explicit: bool,
     no_symlinks: bool,
+    text_context: NwnTextContext,
     out: &mut Vec<PackSourceEntry>,
 ) -> Result<(), String> {
     if entry_is_file(path, no_symlinks)? {
         if is_project_control_file(path) {
             return Ok(());
         }
-        match pack_source_for_file(path, pack_root) {
+        match pack_source_for_file(path, pack_root, text_context) {
             Ok(source) => out.push(source),
             Err(error) => {
                 if explicit {
@@ -891,12 +1014,19 @@ fn collect_generic_pack_entry(
                 continue;
             }
             if entry_is_dir(&entry.path, no_symlinks)? {
-                collect_generic_pack_entry(&entry.path, pack_root, false, no_symlinks, out)?;
+                collect_generic_pack_entry(
+                    &entry.path,
+                    pack_root,
+                    false,
+                    no_symlinks,
+                    text_context,
+                    out,
+                )?;
             } else if entry_is_file(&entry.path, no_symlinks)? {
                 if is_project_control_file(&entry.path) {
                     continue;
                 }
-                match pack_source_for_file(&entry.path, pack_root) {
+                match pack_source_for_file(&entry.path, pack_root, text_context) {
                     Ok(source) => out.push(source),
                     Err(error) => {
                         warn!(error = %error, path = %entry.path.display(), "skipping invalid file during pack");
@@ -910,7 +1040,11 @@ fn collect_generic_pack_entry(
     Err(format!("no idea what to do about: {}", path.display()))
 }
 
-fn pack_source_for_file(path: &Path, pack_root: &Path) -> Result<PackSourceEntry, String> {
+fn pack_source_for_file(
+    path: &Path,
+    pack_root: &Path,
+    text_context: NwnTextContext,
+) -> Result<PackSourceEntry, String> {
     if is_project_control_file(path) {
         return Err(format!(
             "{} is project control data, not a resource",
@@ -975,7 +1109,7 @@ fn pack_source_for_file(path: &Path, pack_root: &Path) -> Result<PackSourceEntry
         let root = gff::gff_root_from_json_bytes(&source)
             .map_err(|error| format!("failed to parse {} as GFF JSON: {error}", path.display()))?;
         let mut output = Cursor::new(Vec::new());
-        gff::write_gff_root(&mut output, &root)
+        gff::write_gff_root(&mut output, &root, text_context)
             .map_err(|error| format!("failed to encode {} as GFF: {error}", path.display()))?;
         return Ok(PackSourceEntry {
             rr:     resolved.into(),
@@ -1015,6 +1149,16 @@ struct ScriptCompileConfig {
 
 impl ScriptCompileConfig {
     fn from_pack_cmd(value: &PackCmd, input: &Path) -> Result<Self, String> {
+        let cancellation = nwscript::CancellationToken::new();
+        let session =
+            nwnrs_nwpkg::ResolvedPackageSession::open(input, &BTreeMap::new(), &cancellation)?;
+        Self::from_pack_cmd_with_session(value, session.as_ref())
+    }
+
+    fn from_pack_cmd_with_session(
+        value: &PackCmd,
+        session: Option<&nwnrs_nwpkg::ResolvedPackageSession>,
+    ) -> Result<Self, String> {
         let mut config = Self {
             debug:               value.debug,
             no_entrypoint_check: value.no_entrypoint_check,
@@ -1024,7 +1168,7 @@ impl ScriptCompileConfig {
             optimization_flags:  value.optimization_flag.clone(),
             jobs:                value.jobs,
         };
-        config.add_project_dependencies(input)?;
+        config.add_session_dependencies(session);
         Ok(config)
     }
 
@@ -1043,12 +1187,21 @@ impl ScriptCompileConfig {
     }
 
     fn add_project_dependencies(&mut self, input: &Path) -> Result<(), String> {
-        for dependency in nwnrs_nwpkg::resolve_include_dependencies(input)? {
-            if !self.include_dirs.contains(&dependency.source_root) {
-                self.include_dirs.push(dependency.source_root);
+        let cancellation = nwscript::CancellationToken::new();
+        let session =
+            nwnrs_nwpkg::ResolvedPackageSession::open(input, &BTreeMap::new(), &cancellation)?;
+        self.add_session_dependencies(session.as_ref());
+        Ok(())
+    }
+
+    fn add_session_dependencies(&mut self, session: Option<&nwnrs_nwpkg::ResolvedPackageSession>) {
+        if let Some(session) = session {
+            for dependency in session.dependencies() {
+                if !self.include_dirs.contains(&dependency.source_root) {
+                    self.include_dirs.push(dependency.source_root.clone());
+                }
             }
         }
-        Ok(())
     }
 }
 
@@ -1067,7 +1220,8 @@ fn pack_compile_options(
         no_entrypoint_check: config.no_entrypoint_check,
         langspec: config.langspec.clone(),
         include_dirs,
-        optimizations: parse_optimizations(&config.optimization, &config.optimization_flags)?,
+        optimizations: parse_optimizations(&config.optimization, &config.optimization_flags)
+            .map_err(|error| error.message)?,
         max_include_depth: nwscript::DEFAULT_MAX_INCLUDE_DEPTH,
         install_resman: autodetected_install_resman(),
     })
@@ -1119,7 +1273,8 @@ fn compile_pack_sources(
                             &path,
                             &options,
                             !config.no_entrypoint_check,
-                        )?;
+                        )
+                        .map_err(|error| error.message)?;
                         match outcome {
                             CompileScriptOutcome::Compiled(artifacts) => {
                                 results.push((index, Some(artifacts)));
@@ -1332,6 +1487,7 @@ mod tests {
             build_day:             0,
             str_ref:               -1,
             loc_strings:           std::collections::BTreeMap::new(),
+            loc_string_bytes:      std::collections::BTreeMap::new(),
             oid:                   None,
             resource_list_padding: 0,
             entry_order:           vec![original.into()],
@@ -1362,7 +1518,8 @@ mod tests {
         let input = temp_dir.join("fixture.utc");
         let output = temp_dir.join("copy.utc");
         let mut bytes = Cursor::new(Vec::new());
-        gff::write_gff_root(&mut bytes, &root).expect("write gff fixture");
+        gff::write_gff_root(&mut bytes, &root, NwnTextContext::default())
+            .expect("write gff fixture");
         fs::write(&input, bytes.into_inner()).expect("write input fixture");
 
         run_pack(base_pack_cmd(vec![input.clone(), output.clone()])).expect("pack gff resource");
@@ -1415,6 +1572,18 @@ json JsonParse(string sJson);
 json JsonObjectGet(json jObject, string sKey);
 string JsonGetString(json jValue);
 "#
+    }
+
+    fn workspace_nwnrs_include_root() -> PathBuf {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../include/nwnrs");
+        assert!(
+            root.join("nwpkg.toml").is_file()
+                && root.join("nwnrs.nss").is_file()
+                && root.join("nwnrs_macros.nss").is_file(),
+            "workspace nwnrs include package is incomplete: {}",
+            root.display()
+        );
+        root
     }
 
     #[test]
@@ -1536,20 +1705,25 @@ string JsonGetString(json jValue);
         let temp_dir = unique_test_dir("erf-pack-event-macro");
         let input = temp_dir.join("module");
         let output = temp_dir.join("test.mod");
+        let nwnrs_include = workspace_nwnrs_include_root();
         fs::create_dir_all(&input).expect("create module dir");
         fs::write(
             input.join("nwpkg.toml"),
-            "[project]\nname = \"fixture\"\nkind = \"mod\"\n\n[source]\npath = \".\"\n",
+            format!(
+                "[project]\nname = \"fixture\"\nkind = \"mod\"\n\n[source]\npath = \
+                 \".\"\n\n[dependencies]\nnwnrs = {{ path = {:?} }}\n",
+                nwnrs_include
+            ),
         )
         .expect("write module manifest");
         fs::write(input.join("nwscript.nss"), event_langspec()).expect("write langspec");
         fs::write(
             input.join("startup.nss"),
-            "#[nwnrs::events(module_load)]\nvoid ProjectStart(json jEvent) \
-             {}\n#[nwnrs::events(associate_add_before)]\nvoid BeforeAssociateAdded(json jEvent) \
-             {}\n#[nwnrs::events(object_broadcast_safe_projectile_after)]\nvoid \
-             AfterProjectile(json jEvent) {}\n#[nwnrs::events(skill_use_before)]\nvoid \
-             BeforeSkill(json jEvent) {}\n#[nwnrs::events(item_decrement_stack_size_after)]\nvoid \
+            "#[nwnrs::event::module_load::before]\nvoid ProjectStart(json jEvent) \
+             {}\n#[nwnrs::event::associate_add::before]\nvoid BeforeAssociateAdded(json jEvent) \
+             {}\n#[nwnrs::event::object_broadcast_safe_projectile::after]\nvoid \
+             AfterProjectile(json jEvent) {}\n#[nwnrs::event::skill_use::before]\nvoid \
+             BeforeSkill(json jEvent) {}\n#[nwnrs::event::item_decrement_stack_size::after]\nvoid \
              AfterStackChange(json jEvent) {}\n",
         )
         .expect("write event source");
@@ -1659,7 +1833,8 @@ string JsonGetString(json jValue);
                 auxcode: nwscript::NcsAuxCode::None,
                 extra:   Vec::new(),
             },
-        ]);
+        ])
+        .expect("encode ncs fixture");
         let asm = nwscript::render_ncs_disassembly(
             &original,
             None,

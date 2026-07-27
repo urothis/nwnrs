@@ -13,10 +13,17 @@ if (!fs.existsSync(extensionManifest) || !fs.existsSync(workspaceManifest)) {
   );
 }
 
-if (process.platform !== 'darwin' || process.arch !== 'arm64') {
+const target = `${process.platform}-${process.arch}`;
+const libraries = new Map<string, string>([
+  ['darwin-arm64', 'libnwnrs_vscode_native.dylib'],
+  ['linux-x64', 'libnwnrs_vscode_native.so'],
+  ['win32-x64', 'nwnrs_vscode_native.dll'],
+]);
+const library = libraries.get(target);
+if (!library) {
   throw new Error(
-    `native compiler packaging is not implemented for ${process.platform}-${process.arch}; `
-    + 'see VSCODE_TODO.md',
+    `native service packaging does not support ${target}; supported targets are `
+    + [...libraries.keys()].join(', '),
   );
 }
 
@@ -35,10 +42,10 @@ if (build.status !== 0) {
     repositoryRoot,
     'target',
     'release',
-    'libnwnrs_vscode_native.dylib',
+    library,
   );
   const nativeDirectory = path.join(extensionRoot, 'native');
-  const destination = path.join(nativeDirectory, 'nwnrs-vscode.darwin-arm64.node');
+  const destination = path.join(nativeDirectory, `nwnrs-vscode.${target}.node`);
   fs.mkdirSync(nativeDirectory, { recursive: true });
   fs.copyFileSync(source, destination);
   fs.copyFileSync(

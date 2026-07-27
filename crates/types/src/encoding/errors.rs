@@ -50,25 +50,3 @@ impl fmt::Display for EncodingConversionError {
 }
 
 impl Error for EncodingConversionError {}
-
-/// An error returned when the native system encoding cannot be determined.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct NativeEncodingError {
-    message: String,
-}
-
-impl NativeEncodingError {
-    pub(crate) fn new(message: impl Into<String>) -> Self {
-        Self {
-            message: message.into(),
-        }
-    }
-}
-
-impl fmt::Display for NativeEncodingError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.message)
-    }
-}
-
-impl Error for NativeEncodingError {}

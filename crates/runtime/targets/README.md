@@ -23,7 +23,8 @@ global.
 
 An absent optional block means that functionality is unavailable.
 `NWNRS_HasCapability` reports block presence without a version. Event support
-is checked per identity with `NWNRS_GetEventSupported`.
+is checked per canonical subject-and-phase route with
+`NWNRS_GetEventSupported`.
 
 The event target map contains exact addresses for global
 `g_pVirtualMachine`, `CVirtualMachine::RunScript`, and a keyed map of physical
@@ -39,7 +40,7 @@ engine function use one map entry and one detour.
 owned payload data; these addresses are never installed as detours. The
 machine-probed `layouts.classes.game_object_id_offset` supplies the exact
 `CGameObject::m_idSelf` offset. `NWNRS_GetEventSupported` checks an individual
-catalog identity against its required hook and helper on the active target.
+catalog route against its required hook and helper on the active target.
 
 Addresses are either exact native symbols:
 
