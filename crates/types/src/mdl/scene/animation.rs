@@ -157,6 +157,7 @@ fn sample_composed_scene_with_animation(
         scene: sampled_scene?,
         hidden_geometry_nodes: scene.hidden_geometry_nodes.clone(),
         attachments,
+        appearance_overrides: scene.appearance_overrides.clone(),
     })
 }
 
@@ -176,14 +177,14 @@ fn sample_scene_with_animation(
         let Some(node) = sampled.nodes.get_mut(node_index) else {
             continue;
         };
-        node.local_transform =
-            sample_transform_track(&track.transform, &node.local_transform, sampled_time);
+        node.local_transform = sample_transform_track(track, &node.local_transform, sampled_time);
 
         if !track.material.color_keys.is_empty() {
             node.color = Some(sample_vec3_keys(
                 &track.material.color_keys,
                 sampled_time,
                 node.color.unwrap_or([1.0, 1.0, 1.0]),
+                track_uses_bezier(track, "color"),
             ));
         }
         if !track.material.radius_keys.is_empty() {
@@ -191,6 +192,7 @@ fn sample_scene_with_animation(
                 &track.material.radius_keys,
                 sampled_time,
                 node.radius.unwrap_or(0.0),
+                track_uses_bezier(track, "radius"),
             ));
         }
         if !track.material.alpha_keys.is_empty() {
@@ -198,6 +200,7 @@ fn sample_scene_with_animation(
                 &track.material.alpha_keys,
                 sampled_time,
                 node.alpha.unwrap_or(1.0),
+                track_uses_bezier(track, "alpha"),
             ));
         }
         if !track.material.multiplier_keys.is_empty()
@@ -207,6 +210,27 @@ fn sample_scene_with_animation(
                 &track.material.multiplier_keys,
                 sampled_time,
                 light.multiplier,
+                track_uses_bezier(track, "multiplier"),
+            );
+        }
+        if !track.material.shadow_radius_keys.is_empty()
+            && let Some(light) = node.light.as_mut()
+        {
+            light.shadow_radius = sample_scalar_keys(
+                &track.material.shadow_radius_keys,
+                sampled_time,
+                light.shadow_radius,
+                track_uses_bezier(track, "shadowradius"),
+            );
+        }
+        if !track.material.vertical_displacement_keys.is_empty()
+            && let Some(light) = node.light.as_mut()
+        {
+            light.vertical_displacement = sample_scalar_keys(
+                &track.material.vertical_displacement_keys,
+                sampled_time,
+                light.vertical_displacement,
+                track_uses_bezier(track, "verticaldisplacement"),
             );
         }
         if let Some(dangly) = &track.effects.dangly {
@@ -241,6 +265,7 @@ fn sample_scene_with_animation(
                     &track.material.self_illum_color_keys,
                     sampled_time,
                     material.self_illum_color,
+                    track_uses_bezier(track, "selfillumcolor"),
                 );
             }
         }
@@ -271,7 +296,7 @@ fn apply_emitter_controller(
     controller: &NwnEmitterControllerTrack,
     time: f32,
 ) {
-    let Some(values) = sample_emitter_keys(&controller.keys, time) else {
+    let Some(values) = sample_emitter_keys(&controller.keys, time, controller.bezier_keyed) else {
         return;
     };
     let property_name = controller.controller.property_name();
@@ -290,7 +315,7 @@ fn apply_emitter_controller(
     }
 }
 
-fn sample_emitter_keys(keys: &[NwnEmitterKey], time: f32) -> Option<Vec<f32>> {
+fn sample_emitter_keys(keys: &[NwnEmitterKey], time: f32, bezier: bool) -> Option<Vec<f32>> {
     let first = keys.first()?;
     if keys.len() == 1 || time <= first.time {
         return Some(first.values.clone());
@@ -305,7 +330,7 @@ fn sample_emitter_keys(keys: &[NwnEmitterKey], time: f32) -> Option<Vec<f32>> {
         };
         if time <= end.time {
             let duration = (end.time - start.time).max(f32::EPSILON);
-            let factor = ((time - start.time) / duration).clamp(0.0, 1.0);
+            let factor = interpolation_factor((time - start.time) / duration, bezier);
             if start.values.len() != end.values.len() {
                 return Some(start.values.clone());
             }
@@ -332,18 +357,45 @@ fn resolve_track_node_index(scene: &NwnScene, track: &NwnNodeAnimationTrack) -> 
 }
 
 fn sample_transform_track(
-    track: &crate::mdl::NwnTransformTrack,
+    track: &NwnNodeAnimationTrack,
     fallback: &NwnTransform,
     time: f32,
 ) -> NwnTransform {
     NwnTransform {
-        translation:         sample_vec3_keys(&track.translation_keys, time, fallback.translation),
+        translation:         sample_vec3_keys(
+            &track.transform.translation_keys,
+            time,
+            fallback.translation,
+            track_uses_bezier(track, "position"),
+        ),
         rotation_axis_angle: sample_rotation_axis_angle_keys(
-            &track.rotation_axis_angle_keys,
+            &track.transform.rotation_axis_angle_keys,
             time,
             fallback.rotation_axis_angle,
+            track_uses_bezier(track, "orientation"),
         ),
-        scale:               sample_vec3_keys(&track.scale_keys, time, fallback.scale),
+        scale:               sample_vec3_keys(
+            &track.transform.scale_keys,
+            time,
+            fallback.scale,
+            track_uses_bezier(track, "scale"),
+        ),
+    }
+}
+
+fn track_uses_bezier(track: &NwnNodeAnimationTrack, controller: &str) -> bool {
+    track
+        .bezier_controllers
+        .iter()
+        .any(|candidate| candidate.eq_ignore_ascii_case(controller))
+}
+
+fn interpolation_factor(factor: f32, bezier: bool) -> f32 {
+    let factor = factor.clamp(0.0, 1.0);
+    if bezier {
+        factor * factor * (3.0 - 2.0 * factor)
+    } else {
+        factor
     }
 }
 
@@ -384,7 +436,7 @@ fn normalize_animation_time(length: f32, time: f32) -> f32 {
     }
 }
 
-fn sample_vec3_keys(keys: &[Vec3Key], time: f32, fallback: [f32; 3]) -> [f32; 3] {
+fn sample_vec3_keys(keys: &[Vec3Key], time: f32, fallback: [f32; 3], bezier: bool) -> [f32; 3] {
     let Some(first) = keys.first() else {
         return fallback;
     };
@@ -402,7 +454,7 @@ fn sample_vec3_keys(keys: &[Vec3Key], time: f32, fallback: [f32; 3]) -> [f32; 3]
         };
         if time <= end.time {
             let duration = (end.time - start.time).max(f32::EPSILON);
-            let factor = ((time - start.time) / duration).clamp(0.0, 1.0);
+            let factor = interpolation_factor((time - start.time) / duration, bezier);
             return [
                 start.value[0] + (end.value[0] - start.value[0]) * factor,
                 start.value[1] + (end.value[1] - start.value[1]) * factor,
@@ -414,7 +466,7 @@ fn sample_vec3_keys(keys: &[Vec3Key], time: f32, fallback: [f32; 3]) -> [f32; 3]
     last.value
 }
 
-fn sample_scalar_keys(keys: &[ScalarKey], time: f32, fallback: f32) -> f32 {
+fn sample_scalar_keys(keys: &[ScalarKey], time: f32, fallback: f32, bezier: bool) -> f32 {
     let Some(first) = keys.first() else {
         return fallback;
     };
@@ -431,14 +483,19 @@ fn sample_scalar_keys(keys: &[ScalarKey], time: f32, fallback: f32) -> f32 {
         };
         if time <= end.time {
             let duration = (end.time - start.time).max(f32::EPSILON);
-            let factor = ((time - start.time) / duration).clamp(0.0, 1.0);
+            let factor = interpolation_factor((time - start.time) / duration, bezier);
             return start.value + (end.value - start.value) * factor;
         }
     }
     last.value
 }
 
-fn sample_rotation_axis_angle_keys(keys: &[Vec4Key], time: f32, fallback: [f32; 4]) -> [f32; 4] {
+fn sample_rotation_axis_angle_keys(
+    keys: &[Vec4Key],
+    time: f32,
+    fallback: [f32; 4],
+    bezier: bool,
+) -> [f32; 4] {
     let Some(first) = keys.first() else {
         return fallback;
     };
@@ -456,7 +513,7 @@ fn sample_rotation_axis_angle_keys(keys: &[Vec4Key], time: f32, fallback: [f32; 
         };
         if time <= end.time {
             let duration = (end.time - start.time).max(f32::EPSILON);
-            let factor = ((time - start.time) / duration).clamp(0.0, 1.0);
+            let factor = interpolation_factor((time - start.time) / duration, bezier);
             return Quat::from_axis_angle(start.value)
                 .slerp(Quat::from_axis_angle(end.value), factor)
                 .to_axis_angle();
@@ -711,6 +768,7 @@ fn normalize_vec3(vector: [f32; 3]) -> Option<[f32; 3]> {
 
 #[cfg(test)]
 mod tests {
+    use super::sample_scalar_keys;
     use crate::mdl::{
         AnimationEvent, NodeKind, NwnAnimMeshTrack, NwnAnimation, NwnComposedScene,
         NwnCoordinateSystem, NwnEffectTrack, NwnFace, NwnMaterial, NwnMaterialTrack, NwnMesh,
@@ -931,6 +989,7 @@ donemodel effects
             scene:                 scene_with_animation("default"),
             hidden_geometry_nodes: Vec::new(),
             attachments:           Vec::new(),
+            appearance_overrides:  Default::default(),
         };
         let parent = NwnComposedScene {
             model_name:            "parent".to_string(),
@@ -970,6 +1029,7 @@ donemodel effects
                 diagnostics:       Vec::new(),
             },
             hidden_geometry_nodes: Vec::new(),
+            appearance_overrides:  Default::default(),
             attachments:           vec![NwnSceneAttachment {
                 target_node_name: "attach".to_string(),
                 model_name:       "child".to_string(),
@@ -1135,6 +1195,22 @@ donemodel effects
             }],
             diagnostics:       Vec::new(),
         }
+    }
+
+    #[test]
+    fn bezier_keyed_tracks_use_cubic_endpoint_easing() {
+        let scalar = [
+            ScalarKey {
+                time:  0.0,
+                value: 0.0,
+            },
+            ScalarKey {
+                time:  1.0,
+                value: 1.0,
+            },
+        ];
+        assert!((sample_scalar_keys(&scalar, 0.25, 0.0, true) - 0.15625).abs() < f32::EPSILON);
+        assert!((sample_scalar_keys(&scalar, 0.25, 0.0, false) - 0.25).abs() < f32::EPSILON);
     }
 
     fn skinned_scene_with_animation() -> NwnScene {

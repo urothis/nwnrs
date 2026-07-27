@@ -19,6 +19,7 @@ pub fn write_scene_obj<W: Write>(writer: &mut W, scene: &NwnScene) -> ModelResul
         scene:                 bake_scene_pose(scene)?,
         hidden_geometry_nodes: Vec::new(),
         attachments:           Vec::new(),
+        appearance_overrides:  Default::default(),
     };
     write_composed_scene_obj(writer, &composed)
 }
@@ -216,6 +217,7 @@ mod tests {
             },
             hidden_geometry_nodes: Vec::new(),
             attachments:           Vec::new(),
+            appearance_overrides:  Default::default(),
         };
         let parent = NwnComposedScene {
             model_name:            "parent".to_string(),
@@ -255,6 +257,7 @@ mod tests {
                 diagnostics:       Vec::new(),
             },
             hidden_geometry_nodes: Vec::new(),
+            appearance_overrides:  Default::default(),
             attachments:           vec![NwnSceneAttachment {
                 target_node_name: "attach".to_string(),
                 model_name:       "child".to_string(),

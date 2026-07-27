@@ -35,6 +35,7 @@ pub fn bake_composed_scene_pose(scene: &NwnComposedScene) -> ModelResult<NwnComp
                 })
             })
             .collect::<ModelResult<Vec<_>>>()?,
+        appearance_overrides:  scene.appearance_overrides.clone(),
     })
 }
 

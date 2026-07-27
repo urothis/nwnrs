@@ -5,71 +5,118 @@ on:
 env:
     CARGO_TERM_COLOR: always
 concurrency:
-    group: test-${{ github.workflow }}-${{
-        github.event.pull_request.head.repo.full_name || github.repository}}-${{
-        github.head_ref || github.ref_name }}
+    group: ${{ github.workflow }}-${{ github.event.pull_request.head.repo.full_name
+        || github.repository }}-${{ github.head_ref || github.ref_name }}
     cancel-in-progress: true
 jobs:
-    debug-event:
-        name: Debug Event
-        runs-on: ubuntu-latest
-        steps:
-            - name: Print label payload
-              env:
-                  EVENT_ACTION: ${{ github.event.action }}
-                  EVENT_LABEL_JSON: ${{ toJson(github.event.label) }}
-                  PR_LABELS_JSON: ${{ toJson(github.event.pull_request.labels) }}
-                  PR_LABEL_NAMES: ${{ join(github.event.pull_request.labels.*.name, ', ') }}
-              run: |
-                  echo "github.event.action=${EVENT_ACTION}"
-                  echo "github.event.label=${EVENT_LABEL_JSON}"
-                  echo "github.event.pull_request.labels=${PR_LABELS_JSON}"
-                  echo "github.event.pull_request.labels.*.name=${PR_LABEL_NAMES}"
-
     nwnrs:
-        name: Test nwnrs
+        name: Test nwnrs (${{ matrix.name }})
         if: contains(github.event.pull_request.labels.*.name, 'nwnrs')
-        runs-on: ${{ matrix.os }}
+        runs-on:
+            [self-hosted, nwnrs, "${{ matrix.os_label }}", "${{ matrix.arch_label }}"]
         strategy:
+            fail-fast: false
             matrix:
-                os: [ ubuntu-latest ] # disable for now: windows-latest, macos-latest]
+                include:
+                    - name: macOS ARM64
+                      os_label: macOS
+                      arch_label: ARM64
+                    - name: Linux x86_64
+                      os_label: Linux
+                      arch_label: X64
+                    - name: Linux ARM64
+                      os_label: Linux
+                      arch_label: ARM64
+                    - name: Windows x86_64
+                      os_label: Windows
+                      arch_label: X64
         steps:
             - uses: actions/checkout@v6.0.3
-            - uses: ./.github/actions/setup-rust
+              with:
+                  persist-credentials: false
+            - uses: ./.github/actions/rust-toolchain
             - run: cargo test -p nwnrs
 
     nwpkg:
-        name: Test NWPKG
+        name: Test NWPKG (${{ matrix.name }})
         if: contains(github.event.pull_request.labels.*.name, 'nwpkg')
-        runs-on: ${{ matrix.os }}
+        runs-on:
+            [self-hosted, nwnrs, "${{ matrix.os_label }}", "${{ matrix.arch_label }}"]
         strategy:
+            fail-fast: false
             matrix:
-                os: [ ubuntu-latest ] # disable for now: windows-latest, macos-latest]
+                include:
+                    - name: macOS ARM64
+                      os_label: macOS
+                      arch_label: ARM64
+                    - name: Linux x86_64
+                      os_label: Linux
+                      arch_label: X64
+                    - name: Linux ARM64
+                      os_label: Linux
+                      arch_label: ARM64
+                    - name: Windows x86_64
+                      os_label: Windows
+                      arch_label: X64
         steps:
             - uses: actions/checkout@v6.0.3
-            - uses: ./.github/actions/setup-rust
+              with:
+                  persist-credentials: false
+            - uses: ./.github/actions/rust-toolchain
             - run: cargo test -p nwnrs-nwpkg
 
     nwscript:
-        name: Test NWScript
+        name: Test NWScript (${{ matrix.name }})
         if: contains(github.event.pull_request.labels.*.name, 'nwscript')
-        runs-on: ${{ matrix.os }}
+        runs-on:
+            [self-hosted, nwnrs, "${{ matrix.os_label }}", "${{ matrix.arch_label }}"]
         strategy:
+            fail-fast: false
             matrix:
-                os: [ ubuntu-latest ] # disable for now: windows-latest, macos-latest]
+                include:
+                    - name: macOS ARM64
+                      os_label: macOS
+                      arch_label: ARM64
+                    - name: Linux x86_64
+                      os_label: Linux
+                      arch_label: X64
+                    - name: Linux ARM64
+                      os_label: Linux
+                      arch_label: ARM64
+                    - name: Windows x86_64
+                      os_label: Windows
+                      arch_label: X64
         steps:
             - uses: actions/checkout@v6.0.3
-            - uses: ./.github/actions/setup-rust
+              with:
+                  persist-credentials: false
+            - uses: ./.github/actions/rust-toolchain
             - run: cargo test -p nwnrs-nwscript
 
     types:
-        name: Test Types
+        name: Test Types (${{ matrix.name }})
         if: contains(github.event.pull_request.labels.*.name, 'types')
-        runs-on: ${{ matrix.os }}
+        runs-on:
+            [self-hosted, nwnrs, "${{ matrix.os_label }}", "${{ matrix.arch_label }}"]
         strategy:
+            fail-fast: false
             matrix:
-                os: [ ubuntu-latest ] # disable for now: windows-latest, macos-latest]
+                include:
+                    - name: macOS ARM64
+                      os_label: macOS
+                      arch_label: ARM64
+                    - name: Linux x86_64
+                      os_label: Linux
+                      arch_label: X64
+                    - name: Linux ARM64
+                      os_label: Linux
+                      arch_label: ARM64
+                    - name: Windows x86_64
+                      os_label: Windows
+                      arch_label: X64
         steps:
             - uses: actions/checkout@v6.0.3
-            - uses: ./.github/actions/setup-rust
+              with:
+                  persist-credentials: false
+            - uses: ./.github/actions/rust-toolchain
             - run: cargo test -p nwnrs-types

@@ -1,0 +1,406 @@
+# Neverwinter Nights 8193.37-17 Linux x86-64.
+schema_version = 2
+runtime_api = 1
+
+[server]
+sha256 = "d6d952826b671fc62c376dca912e87f1aa45d4aa81c620e912ceb4d8e051111d"
+build = "8193.37-17 [26c6e573]"
+
+[server.platform]
+os = "linux"
+architecture = "x86_64"
+
+[source]
+unified_commit = "3d4c4e13c6bf01b032ffe90534fc4a19eb036c03"
+nwn_build = 8193
+nwn_revision = 37
+nwn_postfix = 17
+
+[layouts.c_exo_string]
+size = 16
+alignment = 8
+string_offset = 0
+string_length_offset = 8
+buffer_length_offset = 12
+
+[layouts.player_list]
+size = 16
+alignment = 8
+elements_offset = 0
+count_offset = 8
+capacity_offset = 12
+
+[layouts.vector]
+size = 12
+alignment = 4
+x_offset = 0
+y_offset = 4
+z_offset = 8
+
+[layouts.classes]
+game_object_id_offset = 8
+game_object_type_offset = 12
+item_repository_parent_offset = 8
+creature_stats_base_creature_offset = 48
+creature_stats_experience_offset = 168
+item_base_item_offset = 64
+item_possessor_offset = 960
+message_read_buffer_offset = 56
+message_read_buffer_size_offset = 64
+message_read_buffer_position_offset = 68
+message_read_fragments_size_offset = 80
+message_read_fragments_position_offset = 84
+message_current_read_bit_offset = 92
+message_last_byte_bits_offset = 93
+player_object_id_offset = 84
+player_inventory_gui_offset = 152
+player_other_inventory_gui_offset = 160
+inventory_gui_selected_panel_offset = 12
+command_implementer_vm_offset = 16
+app_manager_server_offset = 8
+server_info_module_offset = 8
+server_info_joining_restrictions_offset = 136
+server_info_play_options_offset = 252
+server_info_persistent_world_options_offset = 404
+persistent_world_options_server_vault_by_player_name_offset = 16
+joining_restrictions_min_level_offset = 104
+joining_restrictions_max_level_offset = 108
+server_exo_app_internal_offset = 8
+internal_banned_ip_list_offset = 65920
+internal_banned_cd_key_list_offset = 65936
+internal_banned_player_name_list_offset = 65952
+module_turd_list_offset = 112
+player_turd_community_name_offset = 768
+player_turd_first_name_offset = 784
+player_turd_last_name_offset = 800
+linked_list_head_offset = 0
+linked_list_count_offset = 16
+linked_list_node_next_offset = 8
+linked_list_node_object_offset = 16
+player_id_offset = 72
+player_file_name_offset = 181
+player_file_name_size = 17
+net_layer_player_info_cd_key_offset = 136
+player_cd_key_public_offset = 0
+exo_base_alias_list_offset = 32
+creature_stats_offset = 2824
+creature_stats_first_name_offset = 72
+creature_stats_last_name_offset = 88
+vm_recursion_level_offset = 36
+vm_script_array_offset = 40
+vm_script_slot_count = 8
+vm_script_size = 152
+vm_script_alignment = 8
+vm_script_name_offset = 24
+vm_script_event_id_offset = 72
+
+[bridge]
+
+[bridge.function_management]
+symbol = "_ZN26CNWSVirtualMachineCommands36ExecuteCommandNWNXFunctionManagementEii"
+
+[bridge.stack_pop_integer]
+symbol = "_ZN15CVirtualMachine15StackPopIntegerEPi"
+
+[bridge.stack_push_integer]
+symbol = "_ZN15CVirtualMachine16StackPushIntegerEi"
+
+[bridge.stack_pop_float]
+symbol = "_ZN15CVirtualMachine13StackPopFloatEPf"
+
+[bridge.stack_push_float]
+symbol = "_ZN15CVirtualMachine14StackPushFloatEf"
+
+[bridge.stack_pop_object]
+symbol = "_ZN15CVirtualMachine14StackPopObjectEPj"
+
+[bridge.stack_push_object]
+symbol = "_ZN15CVirtualMachine15StackPushObjectEj"
+
+[bridge.stack_pop_string]
+symbol = "_ZN15CVirtualMachine14StackPopStringEP10CExoString"
+
+[bridge.stack_push_string]
+symbol = "_ZN15CVirtualMachine15StackPushStringERK10CExoString"
+
+[bridge.stack_pop_vector]
+symbol = "_ZN15CVirtualMachine14StackPopVectorEP6Vector"
+
+[bridge.stack_push_vector]
+symbol = "_ZN15CVirtualMachine15StackPushVectorE6Vector"
+
+[bridge.free_exo_string_buffer]
+symbol = "_ZdaPv"
+
+[server_state]
+
+[server_state.app_manager]
+symbol = "g_pAppManager"
+
+[server_state.get_server_info]
+symbol = "_ZN13CServerExoApp13GetServerInfoEv"
+
+[server_state.get_player_list]
+symbol = "_ZN13CServerExoApp13GetPlayerListEv"
+
+[server_state.get_net_layer]
+symbol = "_ZN13CServerExoApp11GetNetLayerEv"
+
+[server_state.get_session_max_players]
+symbol = "_ZN9CNetLayer20GetSessionMaxPlayersEv"
+
+[server_state.get_udp_port]
+symbol = "_ZN9CNetLayer10GetUDPPortEv"
+
+[events]
+
+[events.hooks.module_load]
+symbol = "_ZN10CNWSModule16LoadModuleFinishEv"
+
+[events.virtual_machine]
+symbol = "g_pVirtualMachine"
+
+[events.run_script]
+symbol = "_ZN15CVirtualMachine9RunScriptEP10CExoStringjii"
+
+[events.hooks.associate_add]
+symbol = "_ZN12CNWSCreature12AddAssociateEjt"
+
+[events.hooks.associate_remove]
+symbol = "_ZN12CNWSCreature15RemoveAssociateEj"
+
+[events.hooks.associate_possess_familiar]
+symbol = "_ZN12CNWSCreature15PossessFamiliarEv"
+
+[events.hooks.associate_unpossess_familiar]
+symbol = "_ZN12CNWSCreature17UnpossessFamiliarEv"
+
+[events.functions.associate_get_id]
+symbol = "_ZN12CNWSCreature14GetAssociateIdEti"
+
+[events.hooks.object_lock]
+symbol = "_ZN10CNWSObject19AddLockObjectActionEj"
+
+[events.hooks.object_unlock]
+symbol = "_ZN10CNWSObject21AddUnlockObjectActionEjji"
+
+[events.hooks.object_use]
+symbol = "_ZN10CNWSObject18AddUseObjectActionEj"
+
+[events.hooks.placeable_open]
+symbol = "_ZN13CNWSPlaceable13OpenInventoryEj"
+
+[events.hooks.placeable_close]
+symbol = "_ZN13CNWSPlaceable14CloseInventoryEji"
+
+[events.hooks.inventory_add_gold]
+symbol = "_ZN12CNWSCreature7AddGoldEii"
+
+[events.hooks.inventory_remove_gold]
+symbol = "_ZN12CNWSCreature10RemoveGoldEii"
+
+[events.hooks.feat_use]
+symbol = "_ZN12CNWSCreature7UseFeatEttjjP6Vector"
+
+[events.hooks.journal_message]
+symbol = "_ZN11CNWSMessage34HandlePlayerToServerJournalMessageEP10CNWSPlayerh"
+
+[events.hooks.timing_bar_send]
+symbol = "_ZN11CNWSMessage32SendServerToPlayerGuiTimingEventEP10CNWSPlayerihj"
+
+[events.hooks.timing_bar_cancel]
+symbol = "_ZN11CNWSMessage45HandlePlayerToServerInputCancelGuiTimingEventEP10CNWSPlayer"
+
+[events.hooks.object_broadcast_safe_projectile]
+symbol = "_ZN10CNWSObject23BroadcastSafeProjectileEjj6VectorS0_jhjhh"
+
+[events.hooks.skill_use]
+symbol = "_ZN12CNWSCreature8UseSkillEhhj6Vectorjji"
+
+[events.hooks.item_use]
+symbol = "_ZN12CNWSCreature7UseItemEjhhj6Vectorji"
+
+[events.hooks.item_inventory_open]
+symbol = "_ZN8CNWSItem13OpenInventoryEj"
+
+[events.hooks.item_inventory_close]
+symbol = "_ZN8CNWSItem14CloseInventoryEji"
+
+[events.hooks.item_scroll_learn]
+symbol = "_ZN12CNWSCreature11LearnScrollEj"
+
+[events.hooks.item_use_lore]
+symbol = "_ZN12CNWSCreature13UseLoreOnItemEj"
+
+[events.hooks.item_pay_to_identify]
+symbol = "_ZN12CNWSCreature17PayToIdentifyItemEjj"
+
+[events.hooks.item_event_handler]
+symbol = "_ZN8CNWSItem12EventHandlerEjjPvjj"
+
+[events.hooks.object_set_experience]
+symbol = "_ZN17CNWSCreatureStats13SetExperienceEji"
+
+[events.hooks.feat_decrement_remaining_uses]
+symbol = "_ZN17CNWSCreatureStats26DecrementFeatRemainingUsesEt"
+
+[events.hooks.feat_has]
+symbol = "_ZN17CNWSCreatureStats7HasFeatEt"
+
+[events.hooks.inventory_message]
+symbol = "_ZN11CNWSMessage39HandlePlayerToServerGuiInventoryMessageEP10CNWSPlayerh"
+
+[events.hooks.inventory_add_item]
+symbol = "_ZN15CItemRepository7AddItemEPP8CNWSItemhhii"
+
+[events.hooks.inventory_remove_item]
+symbol = "_ZN15CItemRepository10RemoveItemEP8CNWSItem"
+
+[events.hooks.item_validate_use]
+symbol = "_ZN12CNWSCreature10CanUseItemEP8CNWSItemi"
+
+[events.hooks.item_ammo_reload]
+symbol = "_ZN15CItemRepository22FindItemWithBaseItemIdEji"
+
+[events.hooks.item_validate_equip]
+symbol = "_ZN12CNWSCreature12CanEquipItemEP8CNWSItemPjiiiP10CNWSPlayer"
+
+[events.hooks.item_equip]
+symbol = "_ZN12CNWSCreature8RunEquipEjjj"
+
+[events.hooks.item_unequip]
+symbol = "_ZN12CNWSCreature10RunUnequipEjjhhij"
+
+[events.hooks.item_split]
+symbol = "_ZN12CNWSCreature9SplitItemEP8CNWSItemi"
+
+[events.hooks.item_merge]
+symbol = "_ZN12CNWSCreature9MergeItemEP8CNWSItemS1_"
+
+[events.hooks.item_acquire]
+symbol = "_ZN12CNWSCreature11AcquireItemEPP8CNWSItemjjhhii"
+
+[events.functions.player_get_game_object]
+symbol = "_ZN10CNWSPlayer13GetGameObjectEv"
+
+[events.functions.stats_get_feat_remaining_uses]
+symbol = "_ZN17CNWSCreatureStats20GetFeatRemainingUsesEt"
+
+[events.functions.server_get_game_object]
+symbol = "_ZN13CServerExoApp13GetGameObjectEj"
+
+[events.functions.server_get_client_object]
+symbol = "_ZN13CServerExoApp25GetClientObjectByObjectIdEj"
+
+[events.functions.server_get_nws_message]
+symbol = "_ZN13CServerExoApp13GetNWSMessageEv"
+
+[events.functions.inventory_status]
+symbol = "_ZN11CNWSMessage37SendPlayerToServerGuiInventory_StatusEP10CNWSPlayerij"
+
+[events.functions.inventory_gui_set_open]
+symbol = "_ZN22CNWSPlayerInventoryGUI7SetOpenEii"
+
+[events.functions.inventory_select_panel]
+symbol = "_ZN11CNWSMessage39SendServerToPlayerInventory_SelectPanelEjh"
+
+[events.functions.inventory_equip_cancel]
+symbol = "_ZN11CNWSMessage39SendServerToPlayerInventory_EquipCancelEjjji"
+
+[events.functions.inventory_unequip_cancel]
+symbol = "_ZN11CNWSMessage41SendServerToPlayerInventory_UnequipCancelEjji"
+
+[administration]
+
+[administration.get_session_name]
+symbol = "_ZN9CNetLayer14GetSessionNameEv"
+
+[administration.set_session_name]
+symbol = "_ZN9CNetLayer14SetSessionNameE10CExoString"
+
+[administration.get_player_password]
+symbol = "_ZN9CNetLayer17GetPlayerPasswordEv"
+
+[administration.set_player_password]
+symbol = "_ZN9CNetLayer17SetPlayerPasswordE10CExoString"
+
+[administration.get_game_master_password]
+symbol = "_ZN9CNetLayer21GetGameMasterPasswordEv"
+
+[administration.set_game_master_password]
+symbol = "_ZN9CNetLayer21SetGameMasterPasswordE10CExoString"
+
+[administration.enable_combat_debugging]
+symbol = "g_bEnableCombatDebugging"
+
+[administration.enable_saving_throw_debugging]
+symbol = "g_bEnableSavingThrowDebugging"
+
+[administration.enable_movement_speed_debugging]
+symbol = "g_bEnableMovementSpeedDebugging"
+
+[administration.enable_hit_die_debugging]
+symbol = "g_bEnableHitDieDebugging"
+
+[administration.shutdown]
+strategy = "exit_flag"
+
+[administration.shutdown.address]
+symbol = "g_bExitProgram"
+
+[administration.add_banned_ip]
+symbol = "_ZN13CServerExoApp17AddIPToBannedListE10CExoString"
+
+[administration.remove_banned_ip]
+symbol = "_ZN13CServerExoApp22RemoveIPFromBannedListE10CExoString"
+
+[administration.add_banned_cd_key]
+symbol = "_ZN13CServerExoApp20AddCDKeyToBannedListE10CExoString"
+
+[administration.remove_banned_cd_key]
+symbol = "_ZN13CServerExoApp25RemoveCDKeyFromBannedListE10CExoString"
+
+[administration.add_banned_player_name]
+symbol = "_ZN13CServerExoApp25AddPlayerNameToBannedListE10CExoString"
+
+[administration.remove_banned_player_name]
+symbol = "_ZN13CServerExoApp30RemovePlayerNameFromBannedListE10CExoString"
+
+[administration.rules]
+symbol = "g_pRules"
+
+[administration.reload_rules]
+symbol = "_ZN8CNWRules9ReloadAllEv"
+
+[administration.get_module]
+symbol = "_ZN13CServerExoApp9GetModuleEv"
+
+[administration.get_loc_string]
+symbol = "_ZNK13CExoLocString12GetStringLocEiP10CExoStringh"
+
+[administration.remove_linked_list_node]
+symbol = "_ZN22CExoLinkedListInternal6RemoveEP18CExoLinkedListNode"
+
+[administration.main_loop]
+symbol = "_ZN21CServerExoAppInternal8MainLoopEv"
+
+[administration.get_client_object_by_object_id]
+symbol = "_ZN13CServerExoApp25GetClientObjectByObjectIdEj"
+
+[administration.get_creature_by_game_object_id]
+symbol = "_ZN13CServerExoApp25GetCreatureByGameObjectIDEj"
+
+[administration.get_player_name]
+symbol = "_ZN10CNWSPlayer13GetPlayerNameEv"
+
+[administration.get_player_info]
+symbol = "_ZN9CNetLayer13GetPlayerInfoEj"
+
+[administration.disconnect_player]
+symbol = "_ZN9CNetLayer16DisconnectPlayerEjjiRK10CExoString"
+
+[administration.exo_base]
+symbol = "g_pExoBase"
+
+[administration.get_alias_path]
+symbol = "_ZNK13CExoAliasList12GetAliasPathERK10CExoStringi"

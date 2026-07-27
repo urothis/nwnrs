@@ -1,0 +1,5633 @@
+use std::{
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
+    fs::{self, File, OpenOptions},
+    io::{self, Cursor, Read, Seek, SeekFrom, Write},
+    path::{Path, PathBuf},
+    sync::{Arc, Mutex},
+    time::{SystemTime, UNIX_EPOCH},
+};
+
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+use napi::{
+    Either, Env, Task,
+    bindgen_prelude::{AbortSignal, AsyncTask, Buffer, Unknown},
+};
+use napi_derive::napi;
+use nwnrs_nwscript::{
+    LangSpec, NCS_BINARY_HEADER_SIZE, NcsDisassemblyOptions, NcsInstruction, NcsOpcode, Ndb,
+    decode_ncs_header, decode_ncs_instructions, disassemble_ncs, parse_langspec_bytes, read_ndb,
+};
+use nwnrs_types::{
+    checksums::{sha1_digest, sha1_digest_reader},
+    compressedbuf::Algorithm,
+    dds::{DdsFormat, DdsTexture, read_dds, write_dds},
+    encoding::{
+        LegacyEncoding, NwnText, NwnTextContext, NwnTextSegment, display_legacy_preserving,
+    },
+    erf::{Erf, ErfVersion, ErfWriteOptions, read_erf, write_erf_with_native_text},
+    exo::ExoResFileCompressionType,
+    gff::{
+        GffCExoLocString, GffField, GffRoot, GffStruct, GffValue, gff_root_from_json_bytes,
+        gff_root_to_json_bytes, read_gff_root, write_gff_root,
+    },
+    key::{
+        KeyBifEntry, KeyBifVersion, KeyTable, key_bif_relative_path, read_key_table_from_file,
+        write_key_and_bif,
+    },
+    localization::{Language, resolve_language},
+    plt::{PltPixel, PltRenderSpec, PltTexture, read_plt, write_plt},
+    resman::{CachePolicy, Res, ResContainer, ResRef, ResolvedResRef, get_res_ext},
+    tga::{TgaTexture, read_tga, write_tga},
+    tlk::{SingleTlk, TlkEntry, read_single_tlk, write_single_tlk},
+    twoda::{TwoDa, read_twoda, write_twoda},
+};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde_json::{Value, json};
+
+use crate::{
+    resource_capabilities::{is_gff_extension, resource_handler},
+    resource_contracts::{
+        JsonValue, ResourceBackupResult, ResourceBinaryEditResult, ResourceCloseResult,
+        ResourceEdit, ResourceEditResult, ResourceSaveAsPlan, ResourceSaveResult, ResourceSnapshot,
+    },
+};
+
+const DEFAULT_PAGE_SIZE: usize = 200;
+const MAX_PAGE_SIZE: usize = 2_000;
+const BACKUP_MAGIC: &[u8; 8] = b"NWNRSB02";
+const MAX_BACKUP_HEADER_SIZE: u64 = 64 * 1024 * 1024;
+
+fn resource_text_context(path: &Path, language: Option<&str>) -> EditorResult<NwnTextContext> {
+    for ancestor in path.parent().into_iter().flat_map(Path::ancestors) {
+        let manifest_path = ancestor.join(nwnrs_nwpkg::PROJECT_MANIFEST_FILENAME);
+        if !manifest_path.is_file() {
+            continue;
+        }
+        if let Some(manifest) =
+            nwnrs_nwpkg::read_project_manifest(&manifest_path).map_err(display_error)?
+        {
+            return Ok(NwnTextContext::for_language_id(
+                manifest.project.language.id(),
+            ));
+        }
+        break;
+    }
+    let language = resolve_language(language.unwrap_or("english")).map_err(display_error)?;
+    Ok(NwnTextContext::for_language_id(language.id()))
+}
+const MAX_BACKUP_FILE_COUNT: usize = 65_536;
+const MAX_BACKUP_PATH_LENGTH: usize = 4_096;
+
+type EditorResult<T> = Result<T, String>;
+
+/// Resource-editor methods whose accepted work must run to completion.
+///
+/// The contract generator exports this exact list to the worker scheduler so
+/// mutation cancellation policy has one Rust-owned source of truth.
+pub const RESOURCE_EDITOR_MUTATION_METHODS: &[&str] = &[
+    "openDocument",
+    "openDocumentBytes",
+    "configureScriptDebug",
+    "applyEdit",
+    "replaceArchiveEntry",
+    "addArchiveEntry",
+    "removeArchiveEntry",
+    "replaceTexturePixels",
+    "applyBinaryUndo",
+    "saveDocument",
+    "saveDocumentAs",
+    "backupDocument",
+    "revertDocument",
+    "closeDocument",
+];
+
+#[napi(object)]
+#[derive(Clone)]
+pub struct NativeResourceOpenRequest {
+    pub document_id:      String,
+    pub path:             String,
+    pub backup_path:      Option<String>,
+    pub read_only_origin: Option<bool>,
+    /// Native resource language used by formats without an embedded language.
+    pub language:         Option<String>,
+}
+
+#[napi(object)]
+#[derive(Clone)]
+pub struct NativeResourceDocumentIdRequest {
+    pub document_id: String,
+}
+
+#[napi(object)]
+#[derive(Clone)]
+pub struct NativeResourceSnapshotRequest {
+    pub document_id: String,
+    pub offset:      Option<u32>,
+    pub limit:       Option<u32>,
+    pub query:       Option<String>,
+}
+
+#[napi(object)]
+#[derive(Clone)]
+pub struct NativeResourceGffNodeRequest {
+    pub document_id: String,
+    pub path:        Vec<Either<String, u32>>,
+    pub offset:      Option<u32>,
+    pub limit:       Option<u32>,
+}
+
+#[napi(object)]
+#[derive(Clone)]
+pub struct NativeResourceSaveRequest {
+    pub document_id: String,
+    pub force:       Option<bool>,
+}
+
+#[napi(object)]
+#[derive(Clone)]
+pub struct NativeResourcePathRequest {
+    pub document_id: String,
+    pub path:        String,
+}
+
+#[napi(object)]
+#[derive(Clone)]
+pub struct NativeResourceSaveAsRequest {
+    pub document_id:        String,
+    pub path:               String,
+    pub confirmation_token: Option<String>,
+}
+
+#[napi(object)]
+pub struct NativeResourceScriptDebugConfiguration {
+    pub ncs:             Option<Buffer>,
+    pub ndb:             Option<Buffer>,
+    pub langspec:        Option<Buffer>,
+    pub source_names:    Option<Vec<String>>,
+    pub source_contents: Option<Vec<Buffer>>,
+}
+
+#[napi(object)]
+#[derive(Clone)]
+pub struct NativeResourceArchiveEntryRequest {
+    pub document_id: String,
+    pub resource:    String,
+    pub bif_index:   Option<u32>,
+}
+
+#[napi(object)]
+#[derive(Clone)]
+pub struct NativeResourceArchiveAddRequest {
+    pub document_id: String,
+    pub resource:    String,
+    pub index:       Option<u32>,
+    pub algorithm:   Option<String>,
+    pub bif_index:   Option<u32>,
+}
+
+#[napi(object)]
+#[derive(Clone)]
+pub struct NativeResourceTextureReplaceRequest {
+    pub document_id: String,
+    pub width:       u32,
+    pub height:      u32,
+}
+
+#[napi(object)]
+#[derive(Clone)]
+pub struct NativeResourceBinaryUndoRequest {
+    pub document_id: String,
+    pub token:       String,
+}
+
+#[derive(Default)]
+struct ResourceEditorState {
+    documents: Mutex<HashMap<String, Arc<Mutex<EditorDocument>>>>,
+}
+
+/// Persistent native resource editor used by the VS Code custom editors.
+#[napi]
+pub struct ResourceEditorService {
+    state: Arc<ResourceEditorState>,
+}
+
+#[napi]
+impl ResourceEditorService {
+    #[napi(constructor)]
+    pub fn new() -> Self {
+        Self {
+            state: Arc::new(ResourceEditorState::default()),
+        }
+    }
+
+    #[napi(ts_return_type = "Promise<import('./ResourceSnapshot').ResourceSnapshot>")]
+    pub fn open_document(
+        &self,
+        request: NativeResourceOpenRequest,
+    ) -> AsyncTask<ResourceTask<NativeResourceOpenRequest, ResourceSnapshot>> {
+        self.mutation(request, open_document)
+    }
+
+    #[napi(ts_return_type = "Promise<import('./ResourceSnapshot').ResourceSnapshot>")]
+    pub fn open_document_bytes(
+        &self,
+        request: NativeResourceOpenRequest,
+        contents: Buffer,
+    ) -> AsyncTask<ResourceTask<ResourceOpenBytesRequest, ResourceSnapshot>> {
+        self.mutation(
+            ResourceOpenBytesRequest {
+                request,
+                contents: contents.to_vec(),
+            },
+            open_document_bytes,
+        )
+    }
+
+    #[napi(ts_return_type = "Promise<import('./ResourceSnapshot').ResourceSnapshot>")]
+    pub fn snapshot(
+        &self,
+        request: NativeResourceSnapshotRequest,
+        signal: Option<AbortSignal>,
+    ) -> AsyncTask<ResourceTask<NativeResourceSnapshotRequest, ResourceSnapshot>> {
+        self.query(request, snapshot_document, signal)
+    }
+
+    #[napi(ts_return_type = "Promise<import('./JsonValue').JsonValue>")]
+    pub fn gff_node(
+        &self,
+        request: NativeResourceGffNodeRequest,
+        signal: Option<AbortSignal>,
+    ) -> AsyncTask<ResourceTask<NativeResourceGffNodeRequest, JsonValue>> {
+        self.query(request, gff_document_node, signal)
+    }
+
+    #[napi(ts_return_type = "Promise<import('./ResourceSnapshot').ResourceSnapshot>")]
+    pub fn configure_script_debug(
+        &self,
+        request: NativeResourceDocumentIdRequest,
+        configuration: NativeResourceScriptDebugConfiguration,
+    ) -> napi::Result<AsyncTask<ResourceTask<ResourceScriptDebugRequest, ResourceSnapshot>>> {
+        let sources = match (configuration.source_names, configuration.source_contents) {
+            (None, None) => None,
+            (Some(names), Some(contents)) if names.len() == contents.len() => Some(
+                names
+                    .into_iter()
+                    .zip(contents.into_iter().map(|contents| contents.to_vec()))
+                    .collect(),
+            ),
+            (Some(names), Some(contents)) => {
+                return Err(napi::Error::from_reason(format!(
+                    "script source name count {} does not match content count {}",
+                    names.len(),
+                    contents.len()
+                )));
+            }
+            _ => {
+                return Err(napi::Error::from_reason(
+                    "script source names and contents must be supplied together",
+                ));
+            }
+        };
+        let configuration = ResourceScriptDebugConfiguration {
+            ncs: configuration.ncs.map(|value| value.to_vec()),
+            ndb: configuration.ndb.map(|value| value.to_vec()),
+            langspec: configuration.langspec.map(|value| value.to_vec()),
+            sources,
+        };
+        Ok(self.mutation(
+            ResourceScriptDebugRequest {
+                document_id: request.document_id,
+                configuration,
+            },
+            configure_script_debug,
+        ))
+    }
+
+    #[napi(ts_return_type = "Promise<import('./ResourceEditResult').ResourceEditResult>")]
+    pub fn apply_edit(
+        &self,
+        env: Env,
+        request: NativeResourceDocumentIdRequest,
+        #[napi(ts_arg_type = "import('./ResourceEdit').ResourceEdit")] edit: Unknown<'_>,
+    ) -> napi::Result<AsyncTask<ResourceTask<ResourceApplyEditRequest, ResourceEditResult>>> {
+        let edit: ResourceEdit = env.from_js_value(edit)?;
+        Ok(self.mutation(
+            ResourceApplyEditRequest {
+                document_id: request.document_id,
+                edit,
+            },
+            apply_resource_edit,
+        ))
+    }
+
+    #[napi(
+        ts_return_type = "Promise<import('./ResourceBinaryEditResult').ResourceBinaryEditResult>"
+    )]
+    pub fn replace_archive_entry(
+        &self,
+        request: NativeResourceArchiveEntryRequest,
+        contents: Buffer,
+    ) -> AsyncTask<ResourceTask<ResourceBinaryMutationRequest, ResourceBinaryEditResult>> {
+        self.mutation(
+            ResourceBinaryMutationRequest {
+                document_id: request.document_id,
+                edit:        json!({
+                    "action": "replaceEntry",
+                    "resource": request.resource,
+                    "contents": BASE64.encode(contents),
+                    "bifIndex": request.bif_index,
+                }),
+            },
+            apply_binary_resource_edit,
+        )
+    }
+
+    #[napi(
+        ts_return_type = "Promise<import('./ResourceBinaryEditResult').ResourceBinaryEditResult>"
+    )]
+    pub fn add_archive_entry(
+        &self,
+        request: NativeResourceArchiveAddRequest,
+        contents: Buffer,
+    ) -> AsyncTask<ResourceTask<ResourceBinaryMutationRequest, ResourceBinaryEditResult>> {
+        self.mutation(
+            ResourceBinaryMutationRequest {
+                document_id: request.document_id,
+                edit:        json!({
+                    "action": "addEntry",
+                    "resource": request.resource,
+                    "contents": BASE64.encode(contents),
+                    "index": request.index,
+                    "algorithm": request.algorithm,
+                    "bifIndex": request.bif_index,
+                }),
+            },
+            apply_binary_resource_edit,
+        )
+    }
+
+    #[napi(
+        ts_return_type = "Promise<import('./ResourceBinaryEditResult').ResourceBinaryEditResult>"
+    )]
+    pub fn remove_archive_entry(
+        &self,
+        request: NativeResourceArchiveEntryRequest,
+    ) -> AsyncTask<ResourceTask<NativeResourceArchiveEntryRequest, ResourceBinaryEditResult>> {
+        self.mutation(request, remove_archive_entry)
+    }
+
+    #[napi(
+        ts_return_type = "Promise<import('./ResourceBinaryEditResult').ResourceBinaryEditResult>"
+    )]
+    pub fn replace_texture_pixels(
+        &self,
+        request: NativeResourceTextureReplaceRequest,
+        rgba: Buffer,
+    ) -> AsyncTask<ResourceTask<ResourceBinaryMutationRequest, ResourceBinaryEditResult>> {
+        self.mutation(
+            ResourceBinaryMutationRequest {
+                document_id: request.document_id,
+                edit:        json!({
+                    "action": "replaceTexture",
+                    "width": request.width,
+                    "height": request.height,
+                    "rgba": BASE64.encode(rgba),
+                }),
+            },
+            apply_binary_resource_edit,
+        )
+    }
+
+    #[napi(
+        ts_return_type = "Promise<import('./ResourceBinaryEditResult').ResourceBinaryEditResult>"
+    )]
+    pub fn apply_binary_undo(
+        &self,
+        request: NativeResourceBinaryUndoRequest,
+    ) -> AsyncTask<ResourceTask<NativeResourceBinaryUndoRequest, ResourceBinaryEditResult>> {
+        self.mutation(request, apply_binary_resource_undo)
+    }
+
+    /// Serializes the current document directly into a native byte buffer.
+    /// Exported resources can be large, so they must never transit through
+    /// JSON/base64.
+    #[napi(ts_return_type = "Promise<Uint8Array>")]
+    pub fn export_document(
+        &self,
+        document_id: String,
+        signal: Option<AbortSignal>,
+    ) -> AsyncTask<ResourceExportTask> {
+        let cancellation = nwnrs_nwscript::CancellationToken::new();
+        if let Some(signal) = &signal {
+            let cancellation = cancellation.clone();
+            signal.on_abort(move || cancellation.cancel());
+        }
+        AsyncTask::with_optional_signal(
+            ResourceExportTask {
+                state: Arc::clone(&self.state),
+                document_id,
+                cancellation,
+            },
+            signal,
+        )
+    }
+
+    #[napi(ts_return_type = "Promise<import('./ResourceSaveResult').ResourceSaveResult>")]
+    pub fn save_document(
+        &self,
+        request: NativeResourceSaveRequest,
+    ) -> AsyncTask<ResourceTask<NativeResourceSaveRequest, ResourceSaveResult>> {
+        self.mutation(request, save_document)
+    }
+
+    #[napi(ts_return_type = "Promise<import('./ResourceSaveAsPlan').ResourceSaveAsPlan>")]
+    pub fn plan_save_document_as(
+        &self,
+        request: NativeResourcePathRequest,
+        signal: Option<AbortSignal>,
+    ) -> AsyncTask<ResourceTask<NativeResourcePathRequest, ResourceSaveAsPlan>> {
+        self.query(request, plan_save_document_as, signal)
+    }
+
+    #[napi(ts_return_type = "Promise<import('./ResourceSaveResult').ResourceSaveResult>")]
+    pub fn save_document_as(
+        &self,
+        request: NativeResourceSaveAsRequest,
+    ) -> AsyncTask<ResourceTask<NativeResourceSaveAsRequest, ResourceSaveResult>> {
+        self.mutation(request, save_document_as)
+    }
+
+    #[napi(ts_return_type = "Promise<import('./ResourceBackupResult').ResourceBackupResult>")]
+    pub fn backup_document(
+        &self,
+        request: NativeResourcePathRequest,
+    ) -> AsyncTask<ResourceTask<NativeResourcePathRequest, ResourceBackupResult>> {
+        self.mutation(request, backup_document)
+    }
+
+    #[napi(ts_return_type = "Promise<import('./ResourceSnapshot').ResourceSnapshot>")]
+    pub fn revert_document(
+        &self,
+        request: NativeResourceSnapshotRequest,
+    ) -> AsyncTask<ResourceTask<NativeResourceSnapshotRequest, ResourceSnapshot>> {
+        self.mutation(request, revert_document)
+    }
+
+    #[napi(ts_return_type = "Promise<import('./ResourceCloseResult').ResourceCloseResult>")]
+    pub fn close_document(
+        &self,
+        request: NativeResourceDocumentIdRequest,
+    ) -> AsyncTask<ResourceTask<NativeResourceDocumentIdRequest, ResourceCloseResult>> {
+        self.mutation(request, close_document)
+    }
+
+    /// Reads an archive entry as a native byte buffer. Large model and texture
+    /// payloads must not be expanded through JSON/base64 on their way to a
+    /// renderer worker.
+    #[napi(ts_return_type = "Promise<Uint8Array>")]
+    pub fn read_entry_bytes(
+        &self,
+        document_id: String,
+        resource: String,
+        signal: Option<AbortSignal>,
+    ) -> AsyncTask<ResourceEntryReadTask> {
+        let cancellation = nwnrs_nwscript::CancellationToken::new();
+        if let Some(signal) = &signal {
+            let cancellation = cancellation.clone();
+            signal.on_abort(move || cancellation.cancel());
+        }
+        AsyncTask::with_optional_signal(
+            ResourceEntryReadTask {
+                state: Arc::clone(&self.state),
+                document_id,
+                resource,
+                cancellation,
+            },
+            signal,
+        )
+    }
+
+    /// Decodes the open DDS, TGA, or PLT document into RGBA8 bytes without a
+    /// JSON/base64 expansion.
+    #[napi(ts_return_type = "Promise<Uint8Array>")]
+    pub fn read_texture_pixels(
+        &self,
+        document_id: String,
+        signal: Option<AbortSignal>,
+    ) -> AsyncTask<ResourceDocumentBytesTask> {
+        self.document_bytes_query(document_id, EditorContent::texture_pixels, signal)
+    }
+
+    /// Reads the interleaved value/layer bytes for an open PLT document.
+    #[napi(ts_return_type = "Promise<Uint8Array>")]
+    pub fn read_plt_pixels(
+        &self,
+        document_id: String,
+        signal: Option<AbortSignal>,
+    ) -> AsyncTask<ResourceDocumentBytesTask> {
+        self.document_bytes_query(document_id, EditorContent::plt_pixels, signal)
+    }
+}
+
+impl ResourceEditorService {
+    fn document_bytes_query(
+        &self,
+        document_id: String,
+        operation: fn(&EditorContent) -> EditorResult<Vec<u8>>,
+        signal: Option<AbortSignal>,
+    ) -> AsyncTask<ResourceDocumentBytesTask> {
+        let cancellation = nwnrs_nwscript::CancellationToken::new();
+        if let Some(signal) = &signal {
+            let cancellation = cancellation.clone();
+            signal.on_abort(move || cancellation.cancel());
+        }
+        AsyncTask::with_optional_signal(
+            ResourceDocumentBytesTask {
+                state: Arc::clone(&self.state),
+                document_id,
+                operation,
+                cancellation,
+            },
+            signal,
+        )
+    }
+
+    fn query<Request, Response>(
+        &self,
+        request: Request,
+        operation: fn(&ResourceEditorState, Request) -> EditorResult<Response>,
+        signal: Option<AbortSignal>,
+    ) -> AsyncTask<ResourceTask<Request, Response>>
+    where
+        Request: Send + 'static,
+        Response: Serialize + Send + 'static,
+    {
+        let cancellation = nwnrs_nwscript::CancellationToken::new();
+        if let Some(signal) = &signal {
+            let cancellation = cancellation.clone();
+            signal.on_abort(move || cancellation.cancel());
+        }
+        AsyncTask::with_optional_signal(
+            ResourceTask {
+                state: Arc::clone(&self.state),
+                operation,
+                request: Some(request),
+                cancellation,
+            },
+            signal,
+        )
+    }
+
+    fn mutation<Request, Response>(
+        &self,
+        request: Request,
+        operation: fn(&ResourceEditorState, Request) -> EditorResult<Response>,
+    ) -> AsyncTask<ResourceTask<Request, Response>>
+    where
+        Request: Send + 'static,
+        Response: Serialize + Send + 'static,
+    {
+        AsyncTask::new(ResourceTask {
+            state: Arc::clone(&self.state),
+            operation,
+            request: Some(request),
+            cancellation: nwnrs_nwscript::CancellationToken::new(),
+        })
+    }
+}
+
+impl Default for ResourceEditorService {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+pub struct ResourceTask<Request, Response> {
+    state:        Arc<ResourceEditorState>,
+    operation:    fn(&ResourceEditorState, Request) -> EditorResult<Response>,
+    request:      Option<Request>,
+    cancellation: nwnrs_nwscript::CancellationToken,
+}
+
+pub struct ResourceOpenBytesRequest {
+    request:  NativeResourceOpenRequest,
+    contents: Vec<u8>,
+}
+
+pub struct ResourceScriptDebugRequest {
+    document_id:   String,
+    configuration: ResourceScriptDebugConfiguration,
+}
+
+#[derive(Default)]
+pub struct ResourceScriptDebugConfiguration {
+    ncs:      Option<Vec<u8>>,
+    ndb:      Option<Vec<u8>>,
+    langspec: Option<Vec<u8>>,
+    sources:  Option<BTreeMap<String, Vec<u8>>>,
+}
+
+pub struct ResourceApplyEditRequest {
+    document_id: String,
+    edit:        ResourceEdit,
+}
+
+pub struct ResourceBinaryMutationRequest {
+    document_id: String,
+    edit:        Value,
+}
+
+pub struct ResourceEntryReadTask {
+    state:        Arc<ResourceEditorState>,
+    document_id:  String,
+    resource:     String,
+    cancellation: nwnrs_nwscript::CancellationToken,
+}
+
+pub struct ResourceDocumentBytesTask {
+    state:        Arc<ResourceEditorState>,
+    document_id:  String,
+    operation:    fn(&EditorContent) -> EditorResult<Vec<u8>>,
+    cancellation: nwnrs_nwscript::CancellationToken,
+}
+
+pub struct ResourceExportTask {
+    state:        Arc<ResourceEditorState>,
+    document_id:  String,
+    cancellation: nwnrs_nwscript::CancellationToken,
+}
+
+impl Task for ResourceExportTask {
+    type JsValue = Buffer;
+    type Output = Vec<u8>;
+
+    fn compute(&mut self) -> napi::Result<Self::Output> {
+        self.cancellation
+            .check()
+            .map_err(|error| napi::Error::from_reason(error.to_string()))?;
+        let document = {
+            let documents = self.state.documents.lock().map_err(|error| {
+                napi::Error::from_reason(format!("resource document map is poisoned: {error}"))
+            })?;
+            Arc::clone(documents.get(&self.document_id).ok_or_else(|| {
+                napi::Error::from_reason(format!(
+                    "resource document is not open: {}",
+                    self.document_id
+                ))
+            })?)
+        };
+        let mut document = document.lock().map_err(|error| {
+            napi::Error::from_reason(format!("resource document is poisoned: {error}"))
+        })?;
+        let text_context = document.text_context;
+        let output = document
+            .content
+            .serialize(text_context)
+            .map_err(napi::Error::from_reason)?;
+        self.cancellation
+            .check()
+            .map_err(|error| napi::Error::from_reason(error.to_string()))?;
+        Ok(output)
+    }
+
+    fn resolve(&mut self, _env: napi::Env, output: Self::Output) -> napi::Result<Self::JsValue> {
+        Ok(output.into())
+    }
+}
+
+impl Task for ResourceEntryReadTask {
+    type JsValue = Buffer;
+    type Output = Vec<u8>;
+
+    fn compute(&mut self) -> napi::Result<Self::Output> {
+        self.cancellation
+            .check()
+            .map_err(|error| napi::Error::from_reason(error.to_string()))?;
+        let document = {
+            let documents = self.state.documents.lock().map_err(|error| {
+                napi::Error::from_reason(format!("resource document map is poisoned: {error}"))
+            })?;
+            Arc::clone(documents.get(&self.document_id).ok_or_else(|| {
+                napi::Error::from_reason(format!(
+                    "resource document is not open: {}",
+                    self.document_id
+                ))
+            })?)
+        };
+        let document = document.lock().map_err(|error| {
+            napi::Error::from_reason(format!("resource document is poisoned: {error}"))
+        })?;
+        let output = document
+            .content
+            .read_entry(&self.resource)
+            .map_err(napi::Error::from_reason)?;
+        self.cancellation
+            .check()
+            .map_err(|error| napi::Error::from_reason(error.to_string()))?;
+        Ok(output)
+    }
+
+    fn resolve(&mut self, _env: napi::Env, output: Self::Output) -> napi::Result<Self::JsValue> {
+        Ok(output.into())
+    }
+}
+
+impl Task for ResourceDocumentBytesTask {
+    type JsValue = Buffer;
+    type Output = Vec<u8>;
+
+    fn compute(&mut self) -> napi::Result<Self::Output> {
+        self.cancellation
+            .check()
+            .map_err(|error| napi::Error::from_reason(error.to_string()))?;
+        let document = {
+            let documents = self.state.documents.lock().map_err(|error| {
+                napi::Error::from_reason(format!("resource document map is poisoned: {error}"))
+            })?;
+            Arc::clone(documents.get(&self.document_id).ok_or_else(|| {
+                napi::Error::from_reason(format!(
+                    "resource document is not open: {}",
+                    self.document_id
+                ))
+            })?)
+        };
+        let document = document.lock().map_err(|error| {
+            napi::Error::from_reason(format!("resource document is poisoned: {error}"))
+        })?;
+        let output = (self.operation)(&document.content).map_err(napi::Error::from_reason)?;
+        self.cancellation
+            .check()
+            .map_err(|error| napi::Error::from_reason(error.to_string()))?;
+        Ok(output)
+    }
+
+    fn resolve(&mut self, _env: napi::Env, output: Self::Output) -> napi::Result<Self::JsValue> {
+        Ok(output.into())
+    }
+}
+
+impl<Request, Response> Task for ResourceTask<Request, Response>
+where
+    Request: Send + 'static,
+    Response: Serialize + Send + 'static,
+{
+    type JsValue = Unknown<'static>;
+    type Output = Response;
+
+    fn compute(&mut self) -> napi::Result<Self::Output> {
+        self.cancellation
+            .check()
+            .map_err(|error| napi::Error::from_reason(error.to_string()))?;
+        let request = self
+            .request
+            .take()
+            .ok_or_else(|| napi::Error::from_reason("resource task was already executed"))?;
+        let response = (self.operation)(&self.state, request).map_err(napi::Error::from_reason)?;
+        self.cancellation
+            .check()
+            .map_err(|error| napi::Error::from_reason(error.to_string()))?;
+        Ok(response)
+    }
+
+    fn resolve(&mut self, env: napi::Env, output: Self::Output) -> napi::Result<Self::JsValue> {
+        env.to_js_value(&output)
+    }
+}
+
+fn require_document_id(document_id: &str) -> EditorResult<&str> {
+    (!document_id.is_empty())
+        .then_some(document_id)
+        .ok_or_else(|| "documentId is required".to_string())
+}
+
+fn with_document<Response>(
+    state: &ResourceEditorState,
+    document_id: &str,
+    operation: impl FnOnce(&EditorDocument) -> EditorResult<Response>,
+) -> EditorResult<Response> {
+    let id = require_document_id(document_id)?;
+    let document = {
+        let documents = state
+            .documents
+            .lock()
+            .map_err(|error| format!("resource document map is poisoned: {error}"))?;
+        Arc::clone(
+            documents
+                .get(id)
+                .ok_or_else(|| format!("resource document is not open: {id}"))?,
+        )
+    };
+    let document = document
+        .lock()
+        .map_err(|error| format!("resource document is poisoned: {error}"))?;
+    operation(&document)
+}
+
+fn with_document_mut<Response>(
+    state: &ResourceEditorState,
+    document_id: &str,
+    operation: impl FnOnce(&mut EditorDocument) -> EditorResult<Response>,
+) -> EditorResult<Response> {
+    let id = require_document_id(document_id)?;
+    let document = {
+        let documents = state
+            .documents
+            .lock()
+            .map_err(|error| format!("resource document map is poisoned: {error}"))?;
+        Arc::clone(
+            documents
+                .get(id)
+                .ok_or_else(|| format!("resource document is not open: {id}"))?,
+        )
+    };
+    let mut document = document
+        .lock()
+        .map_err(|error| format!("resource document is poisoned: {error}"))?;
+    operation(&mut document)
+}
+
+fn close_document(
+    state: &ResourceEditorState,
+    request: NativeResourceDocumentIdRequest,
+) -> EditorResult<ResourceCloseResult> {
+    let id = require_document_id(&request.document_id)?;
+    let mut documents = state
+        .documents
+        .lock()
+        .map_err(|error| format!("resource document map is poisoned: {error}"))?;
+    documents.remove(id);
+    Ok(ResourceCloseResult {
+        closed: true
+    })
+}
+
+fn open_document(
+    state: &ResourceEditorState,
+    request: NativeResourceOpenRequest,
+) -> EditorResult<ResourceSnapshot> {
+    let id = require_document_id(&request.document_id)?.to_string();
+    let path = required_nonempty_path(&request.path, "path")?;
+    let read_only_origin = request.read_only_origin.unwrap_or(false);
+    let text_context = resource_text_context(&path, request.language.as_deref())?;
+    let backup_path = request.backup_path.map(PathBuf::from);
+    let mut document = if let Some(backup_path) = backup_path {
+        EditorDocument::from_backup(path, backup_path, read_only_origin, text_context)?
+    } else {
+        EditorDocument::open(path, read_only_origin, text_context)?
+    };
+    let response = document.snapshot(&ResourceViewOptions::default())?;
+    let mut documents = state
+        .documents
+        .lock()
+        .map_err(|error| format!("resource document map is poisoned: {error}"))?;
+    documents.insert(id, Arc::new(Mutex::new(document)));
+    Ok(response)
+}
+
+fn open_document_bytes(
+    state: &ResourceEditorState,
+    request: ResourceOpenBytesRequest,
+) -> EditorResult<ResourceSnapshot> {
+    let id = require_document_id(&request.request.document_id)?.to_string();
+    let path = required_nonempty_path(&request.request.path, "path")?;
+    let text_context = resource_text_context(&path, request.request.language.as_deref())?;
+    let bytes = request.contents;
+    let content = EditorContent::parse(&path, &bytes, text_context)?;
+    let fingerprint = FileFingerprint {
+        size:           u64::try_from(bytes.len()).unwrap_or(u64::MAX),
+        modified_nanos: 0,
+        sha1:           Some(sha1_digest(&bytes).to_string()),
+    };
+    let mut document = EditorDocument {
+        path,
+        read_only_origin: true,
+        fingerprint,
+        related_fingerprints: BTreeMap::new(),
+        revision: 0,
+        content,
+        binary_inverses: HashMap::new(),
+        next_binary_token: 1,
+        text_context,
+    };
+    let response = document.snapshot(&ResourceViewOptions::default())?;
+    let mut documents = state
+        .documents
+        .lock()
+        .map_err(|error| format!("resource document map is poisoned: {error}"))?;
+    documents.insert(id, Arc::new(Mutex::new(document)));
+    Ok(response)
+}
+
+#[derive(Clone, Debug, Default)]
+struct ResourceViewOptions {
+    offset: usize,
+    limit:  Option<usize>,
+    query:  String,
+}
+
+impl ResourceViewOptions {
+    fn from_snapshot(request: &NativeResourceSnapshotRequest) -> Self {
+        Self {
+            offset: usize::try_from(request.offset.unwrap_or(0)).unwrap_or(usize::MAX),
+            limit:  request
+                .limit
+                .map(|value| usize::try_from(value).unwrap_or(usize::MAX)),
+            query:  request.query.clone().unwrap_or_default(),
+        }
+    }
+
+    fn legacy_value(&self) -> Value {
+        json!({
+            "offset": self.offset,
+            "limit": self.limit,
+            "query": self.query,
+        })
+    }
+}
+
+fn typed_value<T: DeserializeOwned>(value: Value, context: &str) -> EditorResult<T> {
+    serde_json::from_value(value)
+        .map_err(|error| format!("failed to decode typed {context} response: {error}"))
+}
+
+fn required_nonempty_path(value: &str, field: &str) -> EditorResult<PathBuf> {
+    (!value.is_empty())
+        .then(|| PathBuf::from(value))
+        .ok_or_else(|| format!("{field} is required"))
+}
+
+fn snapshot_document(
+    state: &ResourceEditorState,
+    request: NativeResourceSnapshotRequest,
+) -> EditorResult<ResourceSnapshot> {
+    let options = ResourceViewOptions::from_snapshot(&request);
+    with_document_mut(state, &request.document_id, |document| {
+        document.snapshot(&options)
+    })
+}
+
+fn gff_document_node(
+    state: &ResourceEditorState,
+    request: NativeResourceGffNodeRequest,
+) -> EditorResult<JsonValue> {
+    with_document(state, &request.document_id, |document| {
+        document.gff_node(&request)
+    })
+}
+
+fn configure_script_debug(
+    state: &ResourceEditorState,
+    request: ResourceScriptDebugRequest,
+) -> EditorResult<ResourceSnapshot> {
+    with_document_mut(state, &request.document_id, |document| {
+        document.configure_script_debug(&request.configuration)?;
+        document.snapshot(&ResourceViewOptions::default())
+    })
+}
+
+fn apply_resource_edit(
+    state: &ResourceEditorState,
+    request: ResourceApplyEditRequest,
+) -> EditorResult<ResourceEditResult> {
+    with_document_mut(state, &request.document_id, |document| {
+        document.apply_edit(&request.edit)
+    })
+}
+
+fn apply_binary_resource_edit(
+    state: &ResourceEditorState,
+    request: ResourceBinaryMutationRequest,
+) -> EditorResult<ResourceBinaryEditResult> {
+    with_document_mut(state, &request.document_id, |document| {
+        document.apply_binary_edit(&request.edit)
+    })
+}
+
+fn remove_archive_entry(
+    state: &ResourceEditorState,
+    request: NativeResourceArchiveEntryRequest,
+) -> EditorResult<ResourceBinaryEditResult> {
+    with_document_mut(state, &request.document_id, |document| {
+        document.apply_binary_edit(&json!({
+            "action": "removeEntry",
+            "resource": request.resource,
+            "bifIndex": request.bif_index,
+        }))
+    })
+}
+
+fn apply_binary_resource_undo(
+    state: &ResourceEditorState,
+    request: NativeResourceBinaryUndoRequest,
+) -> EditorResult<ResourceBinaryEditResult> {
+    with_document_mut(state, &request.document_id, |document| {
+        document.apply_binary_undo(&request.token)
+    })
+}
+
+fn save_document(
+    state: &ResourceEditorState,
+    request: NativeResourceSaveRequest,
+) -> EditorResult<ResourceSaveResult> {
+    with_document_mut(state, &request.document_id, |document| {
+        document.save(request.force.unwrap_or(false))
+    })
+}
+
+fn plan_save_document_as(
+    state: &ResourceEditorState,
+    request: NativeResourcePathRequest,
+) -> EditorResult<ResourceSaveAsPlan> {
+    let path = required_nonempty_path(&request.path, "path")?;
+    with_document(state, &request.document_id, |document| {
+        document.plan_save_as(&path)
+    })
+}
+
+fn save_document_as(
+    state: &ResourceEditorState,
+    request: NativeResourceSaveAsRequest,
+) -> EditorResult<ResourceSaveResult> {
+    let path = required_nonempty_path(&request.path, "path")?;
+    with_document_mut(state, &request.document_id, |document| {
+        document.save_as(path, request.confirmation_token.as_deref())
+    })
+}
+
+fn backup_document(
+    state: &ResourceEditorState,
+    request: NativeResourcePathRequest,
+) -> EditorResult<ResourceBackupResult> {
+    let path = required_nonempty_path(&request.path, "path")?;
+    with_document_mut(state, &request.document_id, |document| {
+        document.backup(path)
+    })
+}
+
+fn revert_document(
+    state: &ResourceEditorState,
+    request: NativeResourceSnapshotRequest,
+) -> EditorResult<ResourceSnapshot> {
+    let options = ResourceViewOptions::from_snapshot(&request);
+    with_document_mut(state, &request.document_id, |document| {
+        document.revert(&options)
+    })
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct FileFingerprint {
+    size:           u64,
+    modified_nanos: u128,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    sha1:           Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SaveAsConflict {
+    path:        PathBuf,
+    fingerprint: FileFingerprint,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SaveAsPlan {
+    targets:            Vec<PathBuf>,
+    conflicts:          Vec<SaveAsConflict>,
+    confirmation_token: Option<String>,
+}
+
+impl FileFingerprint {
+    fn read(path: &Path) -> EditorResult<Self> {
+        let file = File::open(path)
+            .map_err(|error| format!("failed to open {}: {error}", path.display()))?;
+        let metadata = fs::metadata(path)
+            .map_err(|error| format!("failed to inspect {}: {error}", path.display()))?;
+        let sha1 = sha1_digest_reader(file)
+            .map_err(|error| format!("failed to fingerprint {}: {error}", path.display()))?
+            .to_string();
+        Ok(Self::from_metadata(metadata, Some(sha1)))
+    }
+
+    fn from_bytes(path: &Path, bytes: &[u8]) -> EditorResult<Self> {
+        let metadata = fs::metadata(path)
+            .map_err(|error| format!("failed to inspect {}: {error}", path.display()))?;
+        Ok(Self::from_metadata(
+            metadata,
+            Some(sha1_digest(bytes).to_string()),
+        ))
+    }
+
+    fn metadata_only(path: &Path) -> EditorResult<Self> {
+        let metadata = fs::metadata(path)
+            .map_err(|error| format!("failed to inspect {}: {error}", path.display()))?;
+        Ok(Self::from_metadata(metadata, None))
+    }
+
+    fn from_metadata(metadata: fs::Metadata, sha1: Option<String>) -> Self {
+        let modified_nanos = metadata
+            .modified()
+            .unwrap_or(UNIX_EPOCH)
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        Self {
+            size: metadata.len(),
+            modified_nanos,
+            sha1,
+        }
+    }
+
+    fn matches_path(&self, path: &Path) -> EditorResult<bool> {
+        let current = if self.sha1.is_some() {
+            Self::read(path)?
+        } else {
+            Self::metadata_only(path)?
+        };
+        Ok(current == *self)
+    }
+}
+
+struct EditorDocument {
+    path:                 PathBuf,
+    read_only_origin:     bool,
+    fingerprint:          FileFingerprint,
+    related_fingerprints: BTreeMap<PathBuf, FileFingerprint>,
+    revision:             u64,
+    content:              EditorContent,
+    binary_inverses:      HashMap<u64, StoredBinaryInverse>,
+    next_binary_token:    u64,
+    text_context:         NwnTextContext,
+}
+
+struct StoredBinaryInverse {
+    expected_revision: u64,
+    edit:              Value,
+}
+
+enum EditorContent {
+    Gff(GffDocument),
+    TwoDa(TwoDa),
+    Tlk(SingleTlk),
+    Dds(DdsTexture),
+    Tga(TgaTexture),
+    Plt(PltTexture),
+    Erf(ErfDocument),
+    Key(KeyDocument),
+    ScriptDebug(ScriptDebugDocument),
+}
+
+#[derive(Clone, Copy)]
+enum GffSourceEncoding {
+    Binary,
+    Json,
+}
+
+struct GffDocument {
+    root:     GffRoot,
+    encoding: GffSourceEncoding,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ScriptDebugPrimary {
+    Ncs,
+    Ndb,
+}
+
+struct ScriptDebugDocument {
+    primary:     ScriptDebugPrimary,
+    primary_raw: Vec<u8>,
+    ncs:         Option<Vec<u8>>,
+    ndb:         Option<Ndb>,
+    langspec:    Option<LangSpec>,
+    sources:     BTreeMap<String, Vec<String>>,
+}
+
+impl EditorDocument {
+    fn open(
+        path: PathBuf,
+        read_only_origin: bool,
+        text_context: NwnTextContext,
+    ) -> EditorResult<Self> {
+        let bytes = fs::read(&path)
+            .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
+        let fingerprint = FileFingerprint::from_bytes(&path, &bytes)?;
+        let content = EditorContent::parse(&path, &bytes, text_context)?;
+        let related_fingerprints = content.related_fingerprints(&path)?;
+        Ok(Self {
+            path,
+            read_only_origin,
+            fingerprint,
+            related_fingerprints,
+            revision: 0,
+            content,
+            binary_inverses: HashMap::new(),
+            next_binary_token: 1,
+            text_context,
+        })
+    }
+
+    fn from_backup(
+        path: PathBuf,
+        backup_path: PathBuf,
+        read_only_origin: bool,
+        text_context: NwnTextContext,
+    ) -> EditorResult<Self> {
+        let mut backup = File::open(&backup_path)
+            .map_err(|error| format!("failed to read backup {}: {error}", backup_path.display()))?;
+        let mut magic = [0_u8; BACKUP_MAGIC.len()];
+        let is_streaming_backup = backup
+            .read_exact(&mut magic)
+            .map(|()| magic == *BACKUP_MAGIC)
+            .unwrap_or(false);
+        if is_streaming_backup {
+            let header = read_backup_header(&mut backup)?;
+            let content = match &header.payload {
+                BackupPayload::Single => {
+                    EditorContent::parse_streaming_backup(&path, &mut backup, text_context)?
+                }
+                BackupPayload::KeyBundle {
+                    files,
+                } => EditorContent::parse_streaming_key_backup(&mut backup, files)?,
+            };
+            ensure_backup_eof(&mut backup)?;
+            return Ok(Self {
+                path,
+                read_only_origin,
+                fingerprint: header.fingerprint,
+                related_fingerprints: header.related_fingerprints,
+                revision: header.revision,
+                content,
+                binary_inverses: HashMap::new(),
+                next_binary_token: 1,
+                text_context,
+            });
+        }
+
+        // Backups written before the streaming format remain readable.
+        backup
+            .seek(SeekFrom::Start(0))
+            .map_err(|error| format!("failed to rewind legacy backup: {error}"))?;
+        let mut envelope_bytes = Vec::new();
+        backup
+            .read_to_end(&mut envelope_bytes)
+            .map_err(|error| format!("failed to read legacy backup: {error}"))?;
+        let envelope: LegacyBackupEnvelope = serde_json::from_slice(&envelope_bytes)
+            .map_err(|error| format!("invalid nwnrs resource backup: {error}"))?;
+        let bytes = BASE64
+            .decode(envelope.contents)
+            .map_err(|error| format!("invalid resource backup payload: {error}"))?;
+        let content = EditorContent::parse_backup(&path, &bytes, text_context)?;
+        Ok(Self {
+            path,
+            read_only_origin,
+            fingerprint: envelope.fingerprint,
+            related_fingerprints: envelope.related_fingerprints,
+            revision: envelope.revision,
+            content,
+            binary_inverses: HashMap::new(),
+            next_binary_token: 1,
+            text_context,
+        })
+    }
+
+    fn snapshot(&mut self, options: &ResourceViewOptions) -> EditorResult<ResourceSnapshot> {
+        let data = self.content.snapshot(&options.legacy_value())?;
+        typed_value(
+            json!({
+                "path": self.path,
+                "kind": self.content.kind(),
+                "readOnlyOrigin": self.read_only_origin,
+                "revision": self.revision,
+                "fingerprint": self.fingerprint,
+                "data": data,
+            }),
+            "resource snapshot",
+        )
+    }
+
+    fn configure_script_debug(
+        &mut self,
+        configuration: &ResourceScriptDebugConfiguration,
+    ) -> EditorResult<()> {
+        match &mut self.content {
+            EditorContent::ScriptDebug(value) => value.configure(configuration),
+            _ => Err(format!(
+                "{} is not an NCS/NDB document",
+                self.content.kind()
+            )),
+        }
+    }
+
+    fn gff_node(&self, request: &NativeResourceGffNodeRequest) -> EditorResult<JsonValue> {
+        let path = request
+            .path
+            .iter()
+            .map(|segment| match segment {
+                Either::A(field) => Value::String(field.clone()),
+                Either::B(index) => Value::from(*index),
+            })
+            .collect::<Vec<_>>();
+        let value = json!({
+            "path": path,
+            "offset": request.offset.unwrap_or(0),
+            "limit": request.limit,
+        });
+        match &self.content {
+            EditorContent::Gff(document) => {
+                typed_value(gff_node_page(&document.root, &value)?, "GFF node")
+            }
+            _ => Err(format!("{} is not a GFF document", self.content.kind())),
+        }
+    }
+
+    fn apply_edit(&mut self, edit: &ResourceEdit) -> EditorResult<ResourceEditResult> {
+        let edit = serde_json::to_value(edit).map_err(display_error)?;
+        let (label, inverse) = self.content.apply_edit(&edit)?;
+        self.revision = self.revision.saturating_add(1);
+        Ok(ResourceEditResult {
+            label,
+            inverse: typed_value(inverse, "inverse resource edit")?,
+            revision: self.revision,
+            snapshot: self.snapshot(&ResourceViewOptions::default())?,
+        })
+    }
+
+    fn apply_binary_edit(&mut self, edit: &Value) -> EditorResult<ResourceBinaryEditResult> {
+        let token_id = self.next_binary_token;
+        let next_token = token_id
+            .checked_add(1)
+            .ok_or_else(|| "binary undo token space is exhausted".to_string())?;
+        let previous_revision = self.revision;
+        let (label, inverse) = self.content.apply_edit(edit)?;
+        self.revision = self.revision.saturating_add(1);
+        let snapshot = match self.snapshot(&ResourceViewOptions::default()) {
+            Ok(snapshot) => snapshot,
+            Err(error) => {
+                let rollback = self.content.apply_edit(&inverse);
+                self.revision = previous_revision;
+                return match rollback {
+                    Ok(_) => Err(error),
+                    Err(rollback_error) => Err(format!(
+                        "{error}; additionally failed to roll back binary edit: {rollback_error}"
+                    )),
+                };
+            }
+        };
+        let inverse_token = format!("{token_id:016x}");
+        self.binary_inverses.insert(
+            token_id,
+            StoredBinaryInverse {
+                expected_revision: self.revision,
+                edit:              inverse,
+            },
+        );
+        self.next_binary_token = next_token;
+        Ok(ResourceBinaryEditResult {
+            label,
+            inverse_token,
+            revision: self.revision,
+            snapshot,
+        })
+    }
+
+    fn apply_binary_undo(&mut self, token: &str) -> EditorResult<ResourceBinaryEditResult> {
+        let token_id = u64::from_str_radix(token, 16)
+            .ok()
+            .filter(|_| token.len() == 16)
+            .ok_or_else(|| "binary undo token is malformed".to_string())?;
+        let stored = self
+            .binary_inverses
+            .remove(&token_id)
+            .ok_or_else(|| "binary undo token is unknown or was already consumed".to_string())?;
+        if stored.expected_revision != self.revision {
+            let expected = stored.expected_revision;
+            self.binary_inverses.insert(token_id, stored);
+            return Err(format!(
+                "binary undo token belongs to revision {expected}, but the document is at \
+                 revision {}",
+                self.revision
+            ));
+        }
+        match self.apply_binary_edit(&stored.edit) {
+            Ok(result) => Ok(result),
+            Err(error) => {
+                self.binary_inverses.insert(token_id, stored);
+                Err(error)
+            }
+        }
+    }
+
+    fn save(&mut self, force: bool) -> EditorResult<ResourceSaveResult> {
+        if self.read_only_origin {
+            return Err(
+                "READ_ONLY_ORIGIN: installed game resources must be saved as an override"
+                    .to_string(),
+            );
+        }
+        if !force {
+            if self.path.exists() && !self.fingerprint.matches_path(&self.path)? {
+                return Err(
+                    "EXTERNAL_CHANGE: the file changed on disk after it was opened".to_string(),
+                );
+            }
+            for (path, fingerprint) in &self.related_fingerprints {
+                if !path.exists() || !fingerprint.matches_path(path)? {
+                    return Err(format!(
+                        "EXTERNAL_CHANGE: {} changed on disk after the KEY table was opened",
+                        path.display()
+                    ));
+                }
+            }
+        }
+        self.persist_to(self.path.clone())?;
+        typed_value(
+            json!({ "saved": true, "path": self.path, "fingerprint": self.fingerprint }),
+            "resource save",
+        )
+    }
+
+    fn save_as(
+        &mut self,
+        path: PathBuf,
+        confirmation_token: Option<&str>,
+    ) -> EditorResult<ResourceSaveResult> {
+        let plan = self.build_save_as_plan(&path)?;
+        if let Some(expected) = plan.confirmation_token.as_deref()
+            && confirmation_token != Some(expected)
+        {
+            let encoded = serde_json::to_string(&plan).map_err(display_error)?;
+            return Err(format!("SAVE_AS_CONFIRMATION_REQUIRED:{encoded}"));
+        }
+        self.persist_to(path.clone())?;
+        self.path = path;
+        self.read_only_origin = false;
+        typed_value(
+            json!({ "saved": true, "path": self.path, "fingerprint": self.fingerprint }),
+            "resource save-as",
+        )
+    }
+
+    fn plan_save_as(&self, path: &Path) -> EditorResult<ResourceSaveAsPlan> {
+        typed_value(
+            serde_json::to_value(self.build_save_as_plan(path)?).map_err(display_error)?,
+            "resource save-as plan",
+        )
+    }
+
+    fn build_save_as_plan(&self, path: &Path) -> EditorResult<SaveAsPlan> {
+        let (targets, requires_set_confirmation) = match &self.content {
+            EditorContent::Key(key) => (key.output_paths(path)?, true),
+            _ => (vec![path.to_path_buf()], false),
+        };
+        let mut conflicts = Vec::new();
+        for target in targets.iter().filter(|_| requires_set_confirmation) {
+            match fs::symlink_metadata(target) {
+                Ok(metadata) if !metadata.file_type().is_file() => {
+                    return Err(format!(
+                        "refused to replace non-file save destination {}",
+                        target.display()
+                    ));
+                }
+                Ok(_) => conflicts.push(SaveAsConflict {
+                    path:        target.clone(),
+                    fingerprint: FileFingerprint::read(target)?,
+                }),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    return Err(format!(
+                        "failed to inspect save destination {}: {error}",
+                        target.display()
+                    ));
+                }
+            }
+        }
+        let confirmation_token = if conflicts.is_empty() {
+            None
+        } else {
+            Some(
+                sha1_digest(
+                    serde_json::to_vec(&conflicts)
+                        .map_err(|error| format!("failed to encode save conflicts: {error}"))?,
+                )
+                .to_string(),
+            )
+        };
+        Ok(SaveAsPlan {
+            targets,
+            conflicts,
+            confirmation_token,
+        })
+    }
+
+    fn persist_to(&mut self, path: PathBuf) -> EditorResult<()> {
+        match &mut self.content {
+            EditorContent::Key(key) => key.write_atomic(&path)?,
+            content => atomic_write_with(&path, |output| {
+                content.write_for_path(&path, output, self.text_context)
+            })?,
+        }
+        self.content.update_path_encoding(&path)?;
+        self.fingerprint = FileFingerprint::read(&path)?;
+        self.related_fingerprints = self.content.related_fingerprints(&path)?;
+        Ok(())
+    }
+
+    fn backup(&mut self, path: PathBuf) -> EditorResult<ResourceBackupResult> {
+        match &mut self.content {
+            EditorContent::Key(key) => key.write_backup(
+                &path,
+                self.revision,
+                &self.fingerprint,
+                &self.related_fingerprints,
+            )?,
+            content => {
+                let header = BackupHeader {
+                    revision:             self.revision,
+                    fingerprint:          self.fingerprint.clone(),
+                    related_fingerprints: self.related_fingerprints.clone(),
+                    payload:              BackupPayload::Single,
+                };
+                atomic_write_with(&path, |output| {
+                    write_backup_header(output, &header)?;
+                    content.write_backup_payload(output, self.text_context)
+                })?;
+            }
+        }
+        Ok(ResourceBackupResult {
+            backed_up: true,
+            path:      nwnrs_nwscript::physical_path_display(&path),
+        })
+    }
+
+    fn revert(&mut self, options: &ResourceViewOptions) -> EditorResult<ResourceSnapshot> {
+        let replacement = Self::open(self.path.clone(), self.read_only_origin, self.text_context)?;
+        self.fingerprint = replacement.fingerprint;
+        self.related_fingerprints = replacement.related_fingerprints;
+        self.content = replacement.content;
+        self.revision = self.revision.saturating_add(1);
+        self.snapshot(options)
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LegacyBackupEnvelope {
+    revision:             u64,
+    fingerprint:          FileFingerprint,
+    #[serde(default)]
+    related_fingerprints: BTreeMap<PathBuf, FileFingerprint>,
+    contents:             String,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BackupHeader {
+    revision:             u64,
+    fingerprint:          FileFingerprint,
+    #[serde(default)]
+    related_fingerprints: BTreeMap<PathBuf, FileFingerprint>,
+    payload:              BackupPayload,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+enum BackupPayload {
+    Single,
+    KeyBundle { files: Vec<BackupFile> },
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BackupFile {
+    path: String,
+    size: u64,
+}
+
+struct TemporaryStorage {
+    path: PathBuf,
+}
+
+impl Drop for TemporaryStorage {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.path);
+    }
+}
+
+impl EditorContent {
+    fn parse(path: &Path, bytes: &[u8], text_context: NwnTextContext) -> EditorResult<Self> {
+        let extension = path
+            .extension()
+            .and_then(|value| value.to_str())
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        let mut cursor = Cursor::new(bytes.to_vec());
+        if let Some(encoding) = gff_source_encoding(path) {
+            let root = match encoding {
+                GffSourceEncoding::Binary => {
+                    read_gff_root(&mut cursor, text_context).map_err(display_error)?
+                }
+                GffSourceEncoding::Json => {
+                    gff_root_from_json_bytes(bytes).map_err(display_error)?
+                }
+            };
+            return Ok(Self::Gff(GffDocument {
+                root,
+                encoding,
+            }));
+        }
+        match resource_handler(&extension) {
+            Some("2da") => read_twoda(&mut cursor, text_context)
+                .map(Self::TwoDa)
+                .map_err(display_error),
+            Some("tlk") => read_single_tlk(cursor, CachePolicy::Use)
+                .map(Self::Tlk)
+                .map_err(display_error),
+            Some("dds") => read_dds(&mut cursor).map(Self::Dds).map_err(display_error),
+            Some("tga") => read_tga(&mut cursor).map(Self::Tga).map_err(display_error),
+            Some("plt") => read_plt(&mut cursor).map(Self::Plt).map_err(display_error),
+            Some("erf") => read_erf(cursor, path.display().to_string())
+                .and_then(ErfDocument::new)
+                .map(Self::Erf)
+                .map_err(display_error),
+            Some("key") => read_key_table_from_file(path)
+                .and_then(KeyDocument::new)
+                .map(Self::Key)
+                .map_err(display_error),
+            Some("ncs") => ScriptDebugDocument::from_ncs(bytes).map(Self::ScriptDebug),
+            Some("ndb") => ScriptDebugDocument::from_ndb(bytes).map(Self::ScriptDebug),
+            _ => Err(format!(
+                "unsupported nwnrs resource type: {}",
+                path.display()
+            )),
+        }
+    }
+
+    fn parse_backup(path: &Path, bytes: &[u8], text_context: NwnTextContext) -> EditorResult<Self> {
+        if path
+            .extension()
+            .and_then(|value| value.to_str())
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("key"))
+        {
+            let bundle: Value = serde_json::from_slice(bytes)
+                .map_err(|error| format!("invalid KEY/BIF backup bundle: {error}"))?;
+            if bundle.get("kind").and_then(Value::as_str) != Some("keyBundle") {
+                return Err("invalid KEY/BIF backup bundle kind".to_string());
+            }
+            let temporary = std::env::temp_dir().join(format!(
+                "nwnrs-key-restore-{}-{}",
+                std::process::id(),
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_nanos()
+            ));
+            fs::create_dir(&temporary).map_err(display_error)?;
+            let result = (|| -> EditorResult<Self> {
+                let files = bundle
+                    .get("files")
+                    .and_then(Value::as_array)
+                    .ok_or_else(|| "KEY/BIF backup has no files".to_string())?;
+                for file in files {
+                    let relative = PathBuf::from(required_string(file, "path")?);
+                    if relative.is_absolute()
+                        || relative
+                            .components()
+                            .any(|component| matches!(component, std::path::Component::ParentDir))
+                    {
+                        return Err("KEY/BIF backup contains an unsafe path".to_string());
+                    }
+                    let destination = temporary.join(&relative);
+                    if let Some(parent) = destination.parent() {
+                        fs::create_dir_all(parent).map_err(display_error)?;
+                    }
+                    let contents = BASE64
+                        .decode(required_string(file, "contents")?)
+                        .map_err(display_error)?;
+                    fs::write(&destination, contents).map_err(display_error)?;
+                }
+                let key_path = temporary.join("backup.key");
+                let table = read_key_table_from_file(&key_path).map_err(display_error)?;
+                let mut document = KeyDocument::new(table).map_err(display_error)?;
+                document.materialize()?;
+                Ok(Self::Key(document))
+            })();
+            let _ = fs::remove_dir_all(&temporary);
+            return result;
+        }
+        Self::parse(path, bytes, text_context)
+    }
+
+    fn parse_streaming_backup(
+        path: &Path,
+        backup: &mut File,
+        text_context: NwnTextContext,
+    ) -> EditorResult<Self> {
+        if path
+            .extension()
+            .and_then(|value| value.to_str())
+            .is_some_and(|extension| {
+                matches!(
+                    extension.to_ascii_lowercase().as_str(),
+                    "erf" | "hak" | "mod" | "nwm"
+                )
+            })
+        {
+            let storage = create_temporary_storage("resource-backup")?;
+            let payload_path = storage.path.join("payload.erf");
+            let mut payload = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&payload_path)
+                .map_err(|error| {
+                    format!(
+                        "failed to create restored archive {}: {error}",
+                        payload_path.display()
+                    )
+                })?;
+            io::copy(backup, &mut payload)
+                .map_err(|error| format!("failed to restore archive backup payload: {error}"))?;
+            payload
+                .sync_all()
+                .map_err(|error| format!("failed to sync restored archive backup: {error}"))?;
+            drop(payload);
+            let source = File::open(&payload_path).map_err(display_error)?;
+            let metadata = read_erf(source, path.display().to_string()).map_err(display_error)?;
+            let mut document = ErfDocument::new(metadata).map_err(display_error)?;
+            document._temporary_storage = Some(storage);
+            return Ok(Self::Erf(document));
+        }
+        if path
+            .extension()
+            .and_then(|value| value.to_str())
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("key"))
+        {
+            return Err("streaming KEY backups require a keyBundle payload".to_string());
+        }
+        let mut bytes = Vec::new();
+        backup
+            .read_to_end(&mut bytes)
+            .map_err(|error| format!("failed to read resource backup payload: {error}"))?;
+        Self::parse(path, &bytes, text_context)
+    }
+
+    fn parse_streaming_key_backup(backup: &mut File, files: &[BackupFile]) -> EditorResult<Self> {
+        if files.is_empty() {
+            return Err("KEY/BIF backup contains no files".to_string());
+        }
+        if files.len() > MAX_BACKUP_FILE_COUNT {
+            return Err(format!(
+                "KEY/BIF backup contains {} files, exceeding the {}-file safety limit",
+                files.len(),
+                MAX_BACKUP_FILE_COUNT
+            ));
+        }
+        let storage = create_temporary_storage("key-backup")?;
+        let mut unique = HashSet::with_capacity(files.len());
+        let mut key_path = None;
+        for file in files {
+            let relative = safe_backup_relative_path(&file.path)?;
+            if !unique.insert(relative.clone()) {
+                return Err(format!(
+                    "KEY/BIF backup contains duplicate path {}",
+                    relative.display()
+                ));
+            }
+            let destination = storage.path.join(&relative);
+            if let Some(parent) = destination.parent() {
+                fs::create_dir_all(parent).map_err(|error| {
+                    format!(
+                        "failed to create backup restore directory {}: {error}",
+                        parent.display()
+                    )
+                })?;
+            }
+            let mut output = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&destination)
+                .map_err(|error| {
+                    format!(
+                        "failed to create restored KEY/BIF file {}: {error}",
+                        destination.display()
+                    )
+                })?;
+            let mut limited = Read::by_ref(backup).take(file.size);
+            let copied = io::copy(&mut limited, &mut output)
+                .map_err(|error| format!("failed to restore {}: {error}", file.path))?;
+            if copied != file.size {
+                return Err(format!(
+                    "KEY/BIF backup file {} is truncated: expected {} bytes, found {copied}",
+                    file.path, file.size
+                ));
+            }
+            output
+                .sync_all()
+                .map_err(|error| format!("failed to sync restored {}: {error}", file.path))?;
+            if relative == Path::new("backup.key") {
+                key_path = Some(destination);
+            }
+        }
+        let key_path =
+            key_path.ok_or_else(|| "KEY/BIF backup does not contain backup.key".to_string())?;
+        let table = read_key_table_from_file(&key_path).map_err(display_error)?;
+        let mut document = KeyDocument::new(table).map_err(display_error)?;
+        document._temporary_storage = Some(storage);
+        Ok(Self::Key(document))
+    }
+
+    fn kind(&self) -> &'static str {
+        match self {
+            Self::Gff(_) => "gff",
+            Self::TwoDa(_) => "2da",
+            Self::Tlk(_) => "tlk",
+            Self::Dds(_) => "dds",
+            Self::Tga(_) => "tga",
+            Self::Plt(_) => "plt",
+            Self::Erf(_) => "erf",
+            Self::Key(_) => "key",
+            Self::ScriptDebug(value) => match value.primary {
+                ScriptDebugPrimary::Ncs => "ncs",
+                ScriptDebugPrimary::Ndb => "ndb",
+            },
+        }
+    }
+
+    fn related_fingerprints(
+        &self,
+        path: &Path,
+    ) -> EditorResult<BTreeMap<PathBuf, FileFingerprint>> {
+        let mut result = BTreeMap::new();
+        if let Self::Key(value) = self {
+            let parent = path
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+                .unwrap_or_else(|| Path::new("."));
+            for bif in &value.bifs {
+                let bif_path = parent.join(key_bif_relative_path(bif).map_err(display_error)?);
+                if bif_path.exists() {
+                    result.insert(bif_path.clone(), FileFingerprint::metadata_only(&bif_path)?);
+                }
+            }
+        }
+        Ok(result)
+    }
+
+    fn snapshot(&mut self, request: &Value) -> EditorResult<Value> {
+        match self {
+            Self::Gff(value) => Ok(gff_document_snapshot(&value.root)),
+            Self::TwoDa(value) => Ok(twoda_to_json(value)),
+            Self::Tlk(value) => Ok(tlk_snapshot(value, request)?),
+            Self::Dds(value) => texture_snapshot(
+                value.width,
+                value.height,
+                json!({
+                    "format": match value.format { DdsFormat::Dxt1 => "DXT1", DdsFormat::Dxt5 => "DXT5" },
+                    "mipCount": value.mip_count(),
+                    "alphaMean": value.nwn_header.alpha_mean,
+                }),
+            ),
+            Self::Tga(value) => texture_snapshot(
+                u32::from(value.width),
+                u32::from(value.height),
+                json!({
+                    "pixelDepth": value.pixel_depth,
+                    "imageType": format!("{:?}", value.image_type),
+                    "topToBottom": value.top_to_bottom(),
+                }),
+            ),
+            Self::Plt(value) => {
+                texture_snapshot(value.width, value.height, json!({ "format": "PLT" }))
+            }
+            Self::Erf(value) => Ok(value.snapshot(request)),
+            Self::Key(value) => Ok(value.snapshot(request)),
+            Self::ScriptDebug(value) => value.snapshot(),
+        }
+        .map(|mut snapshot| {
+            if let Some(object) = snapshot.as_object_mut() {
+                object.insert(
+                    "page".to_string(),
+                    json!({
+                        "offset": request.get("offset").and_then(Value::as_u64).unwrap_or(0),
+                        "limit": page_limit(request),
+                    }),
+                );
+            }
+            snapshot
+        })
+    }
+
+    fn apply_edit(&mut self, edit: &Value) -> EditorResult<(String, Value)> {
+        let action = required_string(edit, "action")?;
+        match self {
+            Self::Gff(value) if action == "replaceGff" => {
+                let before = gff_root_to_json(&value.root);
+                let root = edit
+                    .get("root")
+                    .ok_or_else(|| "root is required".to_string())?;
+                let mut candidate = value.root.clone();
+                merge_gff_root(&mut candidate, root)?;
+                value.root = candidate;
+                Ok((
+                    "Edit GFF".to_string(),
+                    json!({ "action": "replaceGff", "root": before }),
+                ))
+            }
+            Self::Gff(value) => apply_gff_edit_transactional(value, action, edit),
+            Self::TwoDa(value) => apply_twoda_edit(value, action, edit),
+            Self::Tlk(value) => apply_tlk_edit(value, action, edit),
+            Self::Dds(value) if action == "replaceTexture" => {
+                let inverse = encoded_texture_inverse(write_dds_bytes(value)?);
+                let (width, height, rgba) = decode_texture_edit(edit)?;
+                *value = DdsTexture::encode_rgba8(width, height, value.format, &rgba)
+                    .map_err(display_error)?;
+                Ok(("Replace DDS pixels".to_string(), inverse))
+            }
+            Self::Dds(value) if action == "restoreTextureBytes" => {
+                let inverse = encoded_texture_inverse(write_dds_bytes(value)?);
+                let bytes = decode_encoded_texture(edit)?;
+                *value = read_dds(&mut Cursor::new(bytes)).map_err(display_error)?;
+                Ok(("Restore DDS texture".to_string(), inverse))
+            }
+            Self::Tga(value) if action == "replaceTexture" => {
+                let inverse = encoded_texture_inverse(write_tga_bytes(value)?);
+                let (width, height, rgba) = decode_texture_edit(edit)?;
+                *value = TgaTexture::encode_rgba8(
+                    u16::try_from(width)
+                        .map_err(|error| format!("TGA width exceeds 65535: {error}"))?,
+                    u16::try_from(height)
+                        .map_err(|error| format!("TGA height exceeds 65535: {error}"))?,
+                    &rgba,
+                )
+                .map_err(display_error)?;
+                Ok(("Replace TGA pixels".to_string(), inverse))
+            }
+            Self::Tga(value) if action == "restoreTextureBytes" => {
+                let inverse = encoded_texture_inverse(write_tga_bytes(value)?);
+                let bytes = decode_encoded_texture(edit)?;
+                *value = read_tga(&mut Cursor::new(bytes)).map_err(display_error)?;
+                Ok(("Restore TGA texture".to_string(), inverse))
+            }
+            Self::Plt(value) if action == "setPltPixel" => apply_plt_edit(value, edit),
+            Self::Erf(value) => value.apply_edit(action, edit),
+            Self::Key(value) => value.apply_edit(action, edit),
+            Self::ScriptDebug(_) => Err("NCS/NDB workbench documents are read-only".to_string()),
+            _ => Err(format!("edit {action} is not valid for {}", self.kind())),
+        }
+    }
+
+    fn read_entry(&self, resource: &str) -> EditorResult<Vec<u8>> {
+        match self {
+            Self::Erf(value) => value.read_entry(resource),
+            Self::Key(value) => value.read_entry(resource),
+            _ => Err(format!("{} is not an archive", self.kind())),
+        }
+    }
+
+    fn texture_pixels(&self) -> EditorResult<Vec<u8>> {
+        let (width, height, pixels) = match self {
+            Self::Dds(value) => (
+                value.width,
+                value.height,
+                value.decode_rgba8().map_err(display_error)?,
+            ),
+            Self::Tga(value) => (
+                u32::from(value.width),
+                u32::from(value.height),
+                value.decode_rgba8().map_err(display_error)?,
+            ),
+            Self::Plt(value) => (
+                value.width,
+                value.height,
+                value
+                    .render_rgba8(&PltRenderSpec::default())
+                    .map_err(display_error)?,
+            ),
+            _ => return Err(format!("{} is not a texture document", self.kind())),
+        };
+        let expected = texture_byte_length(width, height)?;
+        if pixels.len() != expected {
+            return Err(format!(
+                "texture expected {expected} RGBA bytes, got {}",
+                pixels.len()
+            ));
+        }
+        Ok(pixels)
+    }
+
+    fn plt_pixels(&self) -> EditorResult<Vec<u8>> {
+        let Self::Plt(value) = self else {
+            return Err(format!("{} is not a PLT document", self.kind()));
+        };
+        Ok(value
+            .pixels
+            .iter()
+            .flat_map(|pixel| [pixel.value, pixel.layer_id])
+            .collect())
+    }
+
+    fn serialize(&mut self, text_context: NwnTextContext) -> EditorResult<Vec<u8>> {
+        let mut cursor = Cursor::new(Vec::new());
+        match self {
+            Self::Gff(value) => match value.encoding {
+                GffSourceEncoding::Binary => {
+                    write_gff_root(&mut cursor, &value.root, text_context)
+                        .map_err(display_error)?;
+                }
+                GffSourceEncoding::Json => {
+                    return gff_root_to_json_bytes(&value.root).map_err(display_error)
+                }
+            },
+            Self::TwoDa(value) => {
+                write_twoda(&mut cursor, value, false, text_context).map_err(display_error)?;
+            }
+            Self::Tlk(value) => write_single_tlk(&mut cursor, value).map_err(display_error)?,
+            Self::Dds(value) => write_dds(&mut cursor, value).map_err(display_error)?,
+            Self::Tga(value) => write_tga(&mut cursor, value).map_err(display_error)?,
+            Self::Plt(value) => write_plt(&mut cursor, value).map_err(display_error)?,
+            Self::Erf(value) => value.write(&mut cursor)?,
+            Self::Key(_) => {
+                return Err("KEY/BIF sets require transactional path serialization".to_string())
+            }
+            Self::ScriptDebug(value) => return Ok(value.primary_raw.clone()),
+        }
+        Ok(cursor.into_inner())
+    }
+
+    fn write_for_path(
+        &mut self,
+        path: &Path,
+        output: &mut File,
+        text_context: NwnTextContext,
+    ) -> EditorResult<()> {
+        match self {
+            Self::Gff(value) => match gff_source_encoding(path)
+                .ok_or_else(|| format!("{} is not a supported GFF destination", path.display()))?
+            {
+                GffSourceEncoding::Binary => {
+                    write_gff_root(output, &value.root, text_context).map_err(display_error)
+                }
+                GffSourceEncoding::Json => output
+                    .write_all(&gff_root_to_json_bytes(&value.root).map_err(display_error)?)
+                    .map_err(display_error),
+            },
+            _ if gff_source_encoding(path).is_some() => Err(format!(
+                "cannot save {} content as GFF source {}",
+                self.kind(),
+                path.display()
+            )),
+            Self::TwoDa(value) => {
+                write_twoda(output, value, false, text_context).map_err(display_error)
+            }
+            Self::Tlk(value) => write_single_tlk(output, value).map_err(display_error),
+            Self::Dds(value) => write_dds(output, value).map_err(display_error),
+            Self::Tga(value) => write_tga(output, value).map_err(display_error),
+            Self::Plt(value) => write_plt(output, value).map_err(display_error),
+            Self::Erf(value) => value.write(output),
+            Self::ScriptDebug(value) => output.write_all(&value.primary_raw).map_err(display_error),
+            Self::Key(_) => {
+                Err("KEY/BIF sets require transactional path serialization".to_string())
+            }
+        }
+    }
+
+    fn update_path_encoding(&mut self, path: &Path) -> EditorResult<()> {
+        if let Self::Gff(value) = self {
+            value.encoding = gff_source_encoding(path)
+                .ok_or_else(|| format!("{} is not a supported GFF destination", path.display()))?;
+        }
+        Ok(())
+    }
+
+    fn write_backup_payload(
+        &mut self,
+        output: &mut File,
+        text_context: NwnTextContext,
+    ) -> EditorResult<()> {
+        match self {
+            Self::Gff(value) => match value.encoding {
+                GffSourceEncoding::Binary => {
+                    write_gff_root(output, &value.root, text_context).map_err(display_error)
+                }
+                GffSourceEncoding::Json => output
+                    .write_all(&gff_root_to_json_bytes(&value.root).map_err(display_error)?)
+                    .map_err(display_error),
+            },
+            Self::TwoDa(value) => {
+                write_twoda(output, value, false, text_context).map_err(display_error)
+            }
+            Self::Tlk(value) => write_single_tlk(output, value).map_err(display_error),
+            Self::Dds(value) => write_dds(output, value).map_err(display_error),
+            Self::Tga(value) => write_tga(output, value).map_err(display_error),
+            Self::Plt(value) => write_plt(output, value).map_err(display_error),
+            Self::Erf(value) => value.write(output),
+            Self::ScriptDebug(value) => output
+                .write_all(&value.primary_raw)
+                .map_err(|error| format!("failed to write script backup payload: {error}")),
+            Self::Key(_) => Err("KEY/BIF backups require a keyBundle payload".to_string()),
+        }
+    }
+}
+
+impl ScriptDebugDocument {
+    fn from_ncs(bytes: &[u8]) -> EditorResult<Self> {
+        decode_ncs_header(bytes).map_err(display_error)?;
+        decode_ncs_instructions(bytes).map_err(display_error)?;
+        Ok(Self {
+            primary:     ScriptDebugPrimary::Ncs,
+            primary_raw: bytes.to_vec(),
+            ncs:         Some(bytes.to_vec()),
+            ndb:         None,
+            langspec:    None,
+            sources:     BTreeMap::new(),
+        })
+    }
+
+    fn from_ndb(bytes: &[u8]) -> EditorResult<Self> {
+        let ndb = read_ndb(&mut Cursor::new(bytes)).map_err(display_error)?;
+        Ok(Self {
+            primary:     ScriptDebugPrimary::Ndb,
+            primary_raw: bytes.to_vec(),
+            ncs:         None,
+            ndb:         Some(ndb),
+            langspec:    None,
+            sources:     BTreeMap::new(),
+        })
+    }
+
+    fn configure(&mut self, configuration: &ResourceScriptDebugConfiguration) -> EditorResult<()> {
+        if let Some(bytes) = &configuration.ncs {
+            decode_ncs_header(bytes).map_err(display_error)?;
+            decode_ncs_instructions(bytes).map_err(display_error)?;
+            self.ncs = Some(bytes.clone());
+        }
+        if let Some(bytes) = &configuration.ndb {
+            self.ndb = Some(read_ndb(&mut Cursor::new(bytes)).map_err(display_error)?);
+        }
+        if let Some(bytes) = &configuration.langspec {
+            self.langspec =
+                Some(parse_langspec_bytes("nwscript.nss", bytes).map_err(display_error)?);
+        }
+        if let Some(source_values) = &configuration.sources {
+            self.sources.clear();
+            for (name, bytes) in source_values {
+                self.sources.insert(
+                    name.clone(),
+                    NwnText::decode(bytes, LegacyEncoding::Windows1252)
+                        .display_text()
+                        .lines()
+                        .map(str::to_string)
+                        .collect(),
+                );
+            }
+        }
+        Ok(())
+    }
+
+    fn snapshot(&self) -> EditorResult<Value> {
+        let source_files = self
+            .ndb
+            .as_ref()
+            .map(|ndb| {
+                ndb.files
+                    .iter()
+                    .enumerate()
+                    .map(|(index, file)| {
+                        json!({
+                            "index": index,
+                            "name": file.name,
+                            "isRoot": file.is_root,
+                            "available": self.sources.contains_key(&file.name),
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let Some(bytes) = self.ncs.as_deref() else {
+            return Ok(json!({
+                "primary": "ndb",
+                "hasNcs": false,
+                "hasNdb": true,
+                "hasLangspec": self.langspec.is_some(),
+                "sourceFiles": source_files,
+                "summary": self.debug_summary(),
+                "functions": self.debug_functions(&[]),
+                "instructions": [],
+                "diagnostics": ["Matching NCS bytecode was not resolved."],
+            }));
+        };
+
+        let header = decode_ncs_header(bytes).map_err(display_error)?;
+        let decoded = decode_ncs_instructions(bytes).map_err(display_error)?;
+        let asm = disassemble_ncs(
+            bytes,
+            self.langspec.as_ref(),
+            NcsDisassemblyOptions {
+                max_string_length: 4096,
+                ..NcsDisassemblyOptions::default()
+            },
+        )
+        .map_err(display_error)?;
+        if decoded.len() != asm.len() {
+            return Err("NCS decoder and disassembler produced different instruction counts".into());
+        }
+        let code_size = decoded
+            .iter()
+            .map(NcsInstruction::encoded_len)
+            .sum::<usize>();
+        let functions = self.workbench_functions(&decoded, code_size);
+        let valid_offsets = instruction_offsets(&decoded)
+            .into_iter()
+            .collect::<BTreeSet<_>>();
+        let mut diagnostics = Vec::new();
+        if usize::try_from(header.code_size).unwrap_or(usize::MAX) != bytes.len() {
+            diagnostics.push(format!(
+                "Header declares {} bytes but the resource contains {} bytes.",
+                header.code_size,
+                bytes.len()
+            ));
+        }
+        let offsets = instruction_offsets(&decoded);
+        let instructions = decoded
+            .iter()
+            .zip(&asm)
+            .zip(&offsets)
+            .enumerate()
+            .map(|(index, ((instruction, rendered), offset))| {
+                let target = ncs_jump_target(instruction, *offset);
+                if let Some(target) = target
+                    && !valid_offsets.contains(&target)
+                {
+                    diagnostics.push(format!(
+                        "Instruction at offset {offset} targets non-instruction offset {target}."
+                    ));
+                }
+                let function_index = functions
+                    .iter()
+                    .position(|function| *offset >= function.start && *offset < function.end);
+                let local_offset = function_index
+                    .and_then(|index| functions.get(index))
+                    .map(|function| offset.saturating_sub(function.start));
+                let next_offset = offsets.get(index + 1).copied();
+                let successors = instruction_successors(instruction.opcode, target, next_offset);
+                let source = self.source_location(*offset);
+                let action = self.action_details(instruction);
+                let raw = std::iter::once(instruction.opcode as u8)
+                    .chain(std::iter::once(instruction.auxcode as u8))
+                    .chain(instruction.extra.iter().copied())
+                    .collect::<Vec<_>>();
+                json!({
+                    "index": index,
+                    "offset": offset,
+                    "localOffset": local_offset,
+                    "size": instruction.encoded_len(),
+                    "label": rendered.label,
+                    "opcode": instruction.opcode.canonical_name(),
+                    "opcodeInternal": instruction.opcode.internal_name(),
+                    "auxcode": instruction.auxcode.canonical_name(),
+                    "auxcodeInternal": instruction.auxcode.internal_name(),
+                    "operand": rendered.extra,
+                    "action": action,
+                    "rawHex": hex_bytes(&raw),
+                    "jumpTarget": target,
+                    "callTarget": (instruction.opcode == NcsOpcode::Jsr).then_some(target).flatten(),
+                    "successors": successors,
+                    "functionIndex": function_index,
+                    "source": source,
+                })
+            })
+            .collect::<Vec<_>>();
+        let function_values = functions
+            .iter()
+            .enumerate()
+            .map(|(index, function)| {
+                let blocks = control_flow_blocks(index, function, &decoded, &offsets);
+                json!({
+                    "index": index,
+                    "name": function.name,
+                    "start": function.start,
+                    "end": function.end,
+                    "returnType": function.return_type,
+                    "arguments": function.arguments,
+                    "synthetic": function.synthetic,
+                    "source": function.source,
+                    "blocks": blocks,
+                })
+            })
+            .collect::<Vec<_>>();
+
+        Ok(json!({
+            "primary": if self.primary == ScriptDebugPrimary::Ncs { "ncs" } else { "ndb" },
+            "hasNcs": true,
+            "hasNdb": self.ndb.is_some(),
+            "hasLangspec": self.langspec.is_some(),
+            "sourceFiles": source_files,
+            "header": {
+                "format": "NCS V1.0",
+                "fileSize": bytes.len(),
+                "declaredSize": header.code_size,
+                "codeSize": code_size,
+                "instructionCount": decoded.len(),
+            },
+            "summary": self.debug_summary(),
+            "functions": function_values,
+            "instructions": instructions,
+            "diagnostics": diagnostics,
+        }))
+    }
+
+    fn debug_summary(&self) -> Value {
+        let Some(ndb) = &self.ndb else {
+            return json!({ "files": 0, "structs": 0, "functions": 0, "variables": 0, "lineMappings": 0 });
+        };
+        json!({
+            "files": ndb.files.len(),
+            "structs": ndb.structs.len(),
+            "functions": ndb.functions.len(),
+            "variables": ndb.variables.len(),
+            "lineMappings": ndb.lines.len(),
+            "structEntries": ndb.structs.iter().map(|entry| json!({
+                "name": entry.label,
+                "fields": entry.fields.iter().map(|field| json!({ "name": field.label, "type": field.ty.to_string() })).collect::<Vec<_>>(),
+            })).collect::<Vec<_>>(),
+            "variableEntries": ndb.variables.iter().map(|entry| json!({
+                "name": entry.label,
+                "type": entry.ty.to_string(),
+                "start": ncs_code_offset_u32(entry.binary_start),
+                "end": ncs_code_offset_u32(entry.binary_end),
+                "stackLocation": entry.stack_loc,
+            })).collect::<Vec<_>>(),
+        })
+    }
+
+    fn debug_functions(&self, _decoded: &[NcsInstruction]) -> Vec<Value> {
+        self.ndb
+            .as_ref()
+            .map(|ndb| {
+                ndb.functions
+                    .iter()
+                    .enumerate()
+                    .map(|(index, function)| json!({
+                        "index": index,
+                        "name": function.label,
+                        "start": ncs_code_offset_u32(function.binary_start),
+                        "end": ncs_code_offset_u32(function.binary_end),
+                        "returnType": function.return_type.to_string(),
+                        "arguments": function.args.iter().map(ToString::to_string).collect::<Vec<_>>(),
+                        "synthetic": false,
+                        "blocks": [],
+                    }))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    fn workbench_functions(
+        &self,
+        decoded: &[NcsInstruction],
+        code_size: usize,
+    ) -> Vec<WorkbenchFunction> {
+        if let Some(ndb) = &self.ndb
+            && !ndb.functions.is_empty()
+        {
+            let mut debug_functions = ndb
+                .functions
+                .iter()
+                .map(|function| {
+                    let start = ncs_code_offset(function.binary_start);
+                    let end = ncs_code_offset(function.binary_end);
+                    WorkbenchFunction {
+                        name: function.label.clone(),
+                        start,
+                        end: end.max(start).min(code_size),
+                        return_type: function.return_type.to_string(),
+                        arguments: function.args.iter().map(ToString::to_string).collect(),
+                        synthetic: false,
+                        source: self.source_location(start),
+                    }
+                })
+                .collect::<Vec<_>>();
+            debug_functions.sort_by_key(|function| function.start);
+            let mut functions = Vec::new();
+            let mut covered_until = 0usize;
+            for function in debug_functions {
+                if function.start > covered_until {
+                    functions.push(WorkbenchFunction {
+                        name:        if covered_until == 0 {
+                            "entry".to_string()
+                        } else {
+                            format!("code_{covered_until:04}")
+                        },
+                        start:       covered_until,
+                        end:         function.start.min(code_size),
+                        return_type: "?".to_string(),
+                        arguments:   Vec::new(),
+                        synthetic:   true,
+                        source:      self.source_location(covered_until),
+                    });
+                }
+                covered_until = covered_until.max(function.end);
+                functions.push(function);
+            }
+            if covered_until < code_size {
+                functions.push(WorkbenchFunction {
+                    name:        format!("code_{covered_until:04}"),
+                    start:       covered_until,
+                    end:         code_size,
+                    return_type: "?".to_string(),
+                    arguments:   Vec::new(),
+                    synthetic:   true,
+                    source:      self.source_location(covered_until),
+                });
+            }
+            return functions;
+        }
+        let offsets = instruction_offsets(decoded);
+        let mut entries = BTreeSet::from([0usize]);
+        for (instruction, offset) in decoded.iter().zip(&offsets) {
+            if instruction.opcode == NcsOpcode::Jsr
+                && let Some(target) = ncs_jump_target(instruction, *offset)
+            {
+                entries.insert(target);
+            }
+        }
+        let entries = entries
+            .into_iter()
+            .filter(|offset| *offset < code_size)
+            .collect::<Vec<_>>();
+        entries
+            .iter()
+            .enumerate()
+            .map(|(index, start)| WorkbenchFunction {
+                name:        if index == 0 {
+                    "entry".to_string()
+                } else {
+                    format!("sub_{start:04}")
+                },
+                start:       *start,
+                end:         entries.get(index + 1).copied().unwrap_or(code_size),
+                return_type: "?".to_string(),
+                arguments:   Vec::new(),
+                synthetic:   true,
+                source:      None,
+            })
+            .collect()
+    }
+
+    fn source_location(&self, offset: usize) -> Option<Value> {
+        let ndb = self.ndb.as_ref()?;
+        let matches = ndb
+            .lines
+            .iter()
+            .filter(|line| {
+                let start = ncs_code_offset(line.binary_start);
+                let end = ncs_code_offset(line.binary_end);
+                (start..end).contains(&offset)
+            })
+            .collect::<Vec<_>>();
+        let [line] = matches.as_slice() else {
+            return None;
+        };
+        let file = ndb.files.get(line.file_num)?;
+        let text = self
+            .sources
+            .get(&file.name)
+            .and_then(|lines| lines.get(line.line_num.saturating_sub(1)))
+            .map(|line| line.trim().to_string());
+        Some(json!({
+            "file": file.name,
+            "line": line.line_num,
+            "text": text,
+            "available": self.sources.contains_key(&file.name),
+        }))
+    }
+
+    fn action_details(&self, instruction: &NcsInstruction) -> Option<Value> {
+        if instruction.opcode != NcsOpcode::ExecuteCommand || instruction.extra.len() != 3 {
+            return None;
+        }
+        let id = usize::from(u16::from_be_bytes(
+            instruction.extra.get(..2)?.try_into().ok()?,
+        ));
+        let argument_count = instruction.extra.get(2).copied()?;
+        let function = self.langspec.as_ref()?.functions.get(id)?;
+        Some(json!({
+            "id": id,
+            "argumentCount": argument_count,
+            "name": function.name,
+            "returnType": function.return_type,
+            "parameters": function.parameters,
+            "arityMatches": usize::from(argument_count) == function.parameters.len(),
+        }))
+    }
+}
+
+struct WorkbenchFunction {
+    name:        String,
+    start:       usize,
+    end:         usize,
+    return_type: String,
+    arguments:   Vec<String>,
+    synthetic:   bool,
+    source:      Option<Value>,
+}
+
+fn ncs_code_offset_u32(binary_offset: u32) -> u32 {
+    binary_offset.saturating_sub(u32::try_from(NCS_BINARY_HEADER_SIZE).unwrap_or(u32::MAX))
+}
+
+fn ncs_code_offset(binary_offset: u32) -> usize {
+    usize::try_from(ncs_code_offset_u32(binary_offset)).unwrap_or(usize::MAX)
+}
+
+fn instruction_offsets(instructions: &[NcsInstruction]) -> Vec<usize> {
+    instructions
+        .iter()
+        .scan(0usize, |offset, instruction| {
+            let current = *offset;
+            *offset = offset.saturating_add(instruction.encoded_len());
+            Some(current)
+        })
+        .collect()
+}
+
+fn ncs_jump_target(instruction: &NcsInstruction, offset: usize) -> Option<usize> {
+    if !matches!(
+        instruction.opcode,
+        NcsOpcode::Jmp | NcsOpcode::Jsr | NcsOpcode::Jz | NcsOpcode::Jnz
+    ) || instruction.extra.len() != 4
+    {
+        return None;
+    }
+    let relative = i32::from_be_bytes(instruction.extra.as_slice().try_into().ok()?);
+    let origin = i64::try_from(offset).ok()?;
+    usize::try_from(origin.saturating_add(i64::from(relative))).ok()
+}
+
+fn instruction_successors(
+    opcode: NcsOpcode,
+    target: Option<usize>,
+    next: Option<usize>,
+) -> Vec<Value> {
+    let mut successors = Vec::new();
+    match opcode {
+        NcsOpcode::Jmp => {
+            if let Some(target) = target {
+                successors.push(json!({ "offset": target, "kind": "jump" }));
+            }
+        }
+        NcsOpcode::Jz | NcsOpcode::Jnz => {
+            if let Some(target) = target {
+                successors.push(json!({ "offset": target, "kind": "branch" }));
+            }
+            if let Some(next) = next {
+                successors.push(json!({ "offset": next, "kind": "fallthrough" }));
+            }
+        }
+        NcsOpcode::Ret => {}
+        _ => {
+            if let Some(next) = next {
+                successors.push(json!({ "offset": next, "kind": "fallthrough" }));
+            }
+        }
+    }
+    successors
+}
+
+fn control_flow_blocks(
+    function_index: usize,
+    function: &WorkbenchFunction,
+    instructions: &[NcsInstruction],
+    offsets: &[usize],
+) -> Vec<Value> {
+    let function_rows = offsets
+        .iter()
+        .enumerate()
+        .filter(|(_index, offset)| **offset >= function.start && **offset < function.end)
+        .collect::<Vec<_>>();
+    if function_rows.is_empty() {
+        return Vec::new();
+    }
+    let valid = function_rows
+        .iter()
+        .map(|(_index, offset)| **offset)
+        .collect::<BTreeSet<_>>();
+    let mut leaders = BTreeSet::from([function.start]);
+    for (row, (instruction_index, offset)) in function_rows.iter().enumerate() {
+        let Some(instruction) = instructions.get(*instruction_index) else {
+            continue;
+        };
+        if let Some(target) = ncs_jump_target(instruction, **offset)
+            && valid.contains(&target)
+        {
+            leaders.insert(target);
+        }
+        if matches!(
+            instruction.opcode,
+            NcsOpcode::Jmp | NcsOpcode::Jz | NcsOpcode::Jnz | NcsOpcode::Ret
+        ) && let Some((_next_index, next_offset)) = function_rows.get(row + 1)
+        {
+            leaders.insert(**next_offset);
+        }
+    }
+    let leaders = leaders.into_iter().collect::<Vec<_>>();
+    leaders
+        .iter()
+        .enumerate()
+        .map(|(block_index, start)| {
+            let end = leaders
+                .get(block_index + 1)
+                .copied()
+                .unwrap_or(function.end);
+            let rows = function_rows
+                .iter()
+                .filter(|(_index, offset)| **offset >= *start && **offset < end)
+                .map(|(index, _offset)| *index)
+                .collect::<Vec<_>>();
+            let last = rows.last().copied();
+            let successors = last.map_or_else(Vec::new, |last| {
+                let Some(instruction) = instructions.get(last) else {
+                    return Vec::new();
+                };
+                let Some(offset) = offsets.get(last).copied() else {
+                    return Vec::new();
+                };
+                let target = ncs_jump_target(instruction, offset);
+                let next = offsets
+                    .get(last + 1)
+                    .copied()
+                    .filter(|offset| *offset < function.end);
+                instruction_successors(instruction.opcode, target, next)
+                    .into_iter()
+                    .filter(|successor| {
+                        successor
+                            .get("offset")
+                            .and_then(Value::as_u64)
+                            .and_then(|offset| usize::try_from(offset).ok())
+                            .is_some_and(|offset| valid.contains(&offset))
+                    })
+                    .collect()
+            });
+            let calls = rows
+                .iter()
+                .filter_map(|index| {
+                    let instruction = instructions.get(*index)?;
+                    let offset = offsets.get(*index).copied()?;
+                    (instruction.opcode == NcsOpcode::Jsr)
+                        .then(|| ncs_jump_target(instruction, offset))
+                        .flatten()
+                })
+                .collect::<Vec<_>>();
+            json!({
+                "id": format!("f{function_index}b{block_index}"),
+                "start": start,
+                "end": end,
+                "instructionIndices": rows,
+                "successors": successors,
+                "calls": calls,
+            })
+        })
+        .collect()
+}
+
+fn hex_bytes(bytes: &[u8]) -> String {
+    bytes
+        .iter()
+        .map(|byte| format!("{byte:02X}"))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn gff_source_encoding(path: &Path) -> Option<GffSourceEncoding> {
+    let extension = path.extension()?.to_str()?;
+    if is_gff_extension(&extension.to_ascii_lowercase()) {
+        return Some(GffSourceEncoding::Binary);
+    }
+    if !extension.eq_ignore_ascii_case("json") {
+        return None;
+    }
+    let resource_name = path.file_stem()?.to_str()?;
+    let resource_extension = Path::new(resource_name).extension()?.to_str()?;
+    is_gff_extension(&resource_extension.to_ascii_lowercase()).then_some(GffSourceEncoding::Json)
+}
+
+fn display_error(error: impl std::fmt::Display) -> String {
+    error.to_string()
+}
+
+fn required_string<'a>(value: &'a Value, field: &str) -> EditorResult<&'a str> {
+    value
+        .get(field)
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("{field} is required"))
+}
+
+fn page_limit(request: &Value) -> usize {
+    request
+        .get("limit")
+        .and_then(Value::as_u64)
+        .and_then(|value| usize::try_from(value).ok())
+        .unwrap_or(DEFAULT_PAGE_SIZE)
+        .clamp(1, MAX_PAGE_SIZE)
+}
+
+fn atomic_write_with(
+    path: &Path,
+    write: impl FnOnce(&mut File) -> EditorResult<()>,
+) -> EditorResult<()> {
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    fs::create_dir_all(parent)
+        .map_err(|error| format!("failed to create {}: {error}", parent.display()))?;
+    let filename = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("resource");
+    let mut attempt = 0_u32;
+    let (temporary_path, mut temporary) = loop {
+        let candidate = parent.join(format!(
+            ".{filename}.nwnrs-{}-{attempt}.tmp",
+            std::process::id()
+        ));
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&candidate)
+        {
+            Ok(file) => break (candidate, file),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists && attempt < 100 => {
+                attempt += 1;
+            }
+            Err(error) => {
+                return Err(format!(
+                    "failed to create temporary file {}: {error}",
+                    candidate.display()
+                ));
+            }
+        }
+    };
+    let result = (|| -> EditorResult<()> {
+        write(&mut temporary)?;
+        temporary.sync_all().map_err(display_error)?;
+        if let Ok(metadata) = fs::metadata(path) {
+            fs::set_permissions(&temporary_path, metadata.permissions()).map_err(display_error)?;
+        }
+        drop(temporary);
+        fs::rename(&temporary_path, path).map_err(display_error)?;
+        if let Ok(directory) = File::open(parent) {
+            let _ = directory.sync_all();
+        }
+        Ok(())
+    })();
+    if let Err(error) = result {
+        let _ = fs::remove_file(&temporary_path);
+        return Err(format!(
+            "failed to atomically write {}: {error}",
+            path.display()
+        ));
+    }
+    Ok(())
+}
+
+fn write_backup_header(output: &mut File, header: &BackupHeader) -> EditorResult<()> {
+    let encoded = serde_json::to_vec(header)
+        .map_err(|error| format!("failed to encode resource backup header: {error}"))?;
+    let length = u64::try_from(encoded.len())
+        .map_err(|error| format!("resource backup header is too large: {error}"))?;
+    if length > MAX_BACKUP_HEADER_SIZE {
+        return Err(format!(
+            "resource backup header exceeds the {} byte safety limit",
+            MAX_BACKUP_HEADER_SIZE
+        ));
+    }
+    output
+        .write_all(BACKUP_MAGIC)
+        .and_then(|()| output.write_all(&length.to_le_bytes()))
+        .and_then(|()| output.write_all(&encoded))
+        .map_err(|error| format!("failed to write resource backup header: {error}"))
+}
+
+fn read_backup_header(input: &mut File) -> EditorResult<BackupHeader> {
+    let mut length = [0_u8; 8];
+    input
+        .read_exact(&mut length)
+        .map_err(|error| format!("resource backup header length is missing: {error}"))?;
+    let length = u64::from_le_bytes(length);
+    if length > MAX_BACKUP_HEADER_SIZE {
+        return Err(format!(
+            "resource backup header exceeds the {} byte safety limit",
+            MAX_BACKUP_HEADER_SIZE
+        ));
+    }
+    let length = usize::try_from(length)
+        .map_err(|error| format!("resource backup header cannot fit in memory: {error}"))?;
+    let mut encoded = vec![0_u8; length];
+    input
+        .read_exact(&mut encoded)
+        .map_err(|error| format!("resource backup header is truncated: {error}"))?;
+    serde_json::from_slice(&encoded)
+        .map_err(|error| format!("invalid resource backup header: {error}"))
+}
+
+fn ensure_backup_eof(input: &mut File) -> EditorResult<()> {
+    let mut trailing = [0_u8; 1];
+    match input.read(&mut trailing) {
+        Ok(0) => Ok(()),
+        Ok(_) => Err("resource backup contains trailing data".to_string()),
+        Err(error) => Err(format!(
+            "failed to validate resource backup length: {error}"
+        )),
+    }
+}
+
+fn create_temporary_storage(label: &str) -> EditorResult<TemporaryStorage> {
+    let root = std::env::temp_dir();
+    for attempt in 0..100_u32 {
+        let path = root.join(format!(
+            "nwnrs-{label}-{}-{}-{attempt}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        match fs::create_dir(&path) {
+            Ok(()) => {
+                return Ok(TemporaryStorage {
+                    path,
+                })
+            }
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+            Err(error) => {
+                return Err(format!(
+                    "failed to create temporary storage {}: {error}",
+                    path.display()
+                ));
+            }
+        }
+    }
+    Err(format!(
+        "failed to allocate temporary storage for {label} after 100 attempts"
+    ))
+}
+
+fn safe_backup_relative_path(value: &str) -> EditorResult<PathBuf> {
+    if value.is_empty() || value.contains(['\\', ':']) {
+        return Err("backup paths must be non-empty and use forward slashes".to_string());
+    }
+    if value.len() > MAX_BACKUP_PATH_LENGTH {
+        return Err(format!(
+            "backup path exceeds the {MAX_BACKUP_PATH_LENGTH}-byte safety limit"
+        ));
+    }
+    let path = PathBuf::from(value);
+    if path
+        .components()
+        .all(|component| matches!(component, std::path::Component::Normal(_)))
+    {
+        Ok(path)
+    } else {
+        Err(format!("backup contains unsafe path: {value}"))
+    }
+}
+
+fn portable_relative_path(path: &Path) -> EditorResult<String> {
+    let mut parts = Vec::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::Normal(value) => {
+                parts.push(
+                    value
+                        .to_str()
+                        .ok_or_else(|| "backup paths must be valid UTF-8".to_string())?,
+                );
+            }
+            _ => return Err(format!("backup contains unsafe path: {}", path.display())),
+        }
+    }
+    if parts.is_empty() {
+        return Err("backup paths cannot be empty".to_string());
+    }
+    Ok(parts.join("/"))
+}
+
+fn texture_snapshot(width: u32, height: u32, metadata: Value) -> EditorResult<Value> {
+    texture_byte_length(width, height)?;
+    Ok(json!({
+        "width": width,
+        "height": height,
+        "metadata": metadata,
+    }))
+}
+
+fn texture_byte_length(width: u32, height: u32) -> EditorResult<usize> {
+    usize::try_from(width)
+        .ok()
+        .and_then(|width| {
+            usize::try_from(height)
+                .ok()
+                .and_then(|height| width.checked_mul(height))
+        })
+        .and_then(|pixels| pixels.checked_mul(4))
+        .ok_or_else(|| "texture dimensions overflow".to_string())
+}
+
+fn decode_texture_edit(edit: &Value) -> EditorResult<(u32, u32, Vec<u8>)> {
+    let width = edit
+        .get("width")
+        .and_then(Value::as_u64)
+        .and_then(|value| u32::try_from(value).ok())
+        .filter(|value| *value > 0)
+        .ok_or_else(|| "texture width must be a positive 32-bit integer".to_string())?;
+    let height = edit
+        .get("height")
+        .and_then(Value::as_u64)
+        .and_then(|value| u32::try_from(value).ok())
+        .filter(|value| *value > 0)
+        .ok_or_else(|| "texture height must be a positive 32-bit integer".to_string())?;
+    let rgba = BASE64
+        .decode(required_string(edit, "rgba")?)
+        .map_err(|error| format!("invalid RGBA payload: {error}"))?;
+    let expected = texture_byte_length(width, height)?;
+    if rgba.len() != expected {
+        return Err(format!(
+            "texture expected {expected} RGBA bytes, got {}",
+            rgba.len()
+        ));
+    }
+    Ok((width, height, rgba))
+}
+
+fn encoded_texture_inverse(bytes: Vec<u8>) -> Value {
+    json!({ "action": "restoreTextureBytes", "contents": BASE64.encode(bytes) })
+}
+
+fn decode_encoded_texture(edit: &Value) -> EditorResult<Vec<u8>> {
+    BASE64
+        .decode(required_string(edit, "contents")?)
+        .map_err(|error| format!("invalid encoded texture payload: {error}"))
+}
+
+fn write_dds_bytes(value: &DdsTexture) -> EditorResult<Vec<u8>> {
+    let mut bytes = Vec::new();
+    write_dds(&mut bytes, value).map_err(display_error)?;
+    Ok(bytes)
+}
+
+fn write_tga_bytes(value: &TgaTexture) -> EditorResult<Vec<u8>> {
+    let mut bytes = Vec::new();
+    write_tga(&mut bytes, value).map_err(display_error)?;
+    Ok(bytes)
+}
+
+fn apply_plt_edit(value: &mut PltTexture, edit: &Value) -> EditorResult<(String, Value)> {
+    let x = edit
+        .get("x")
+        .and_then(Value::as_u64)
+        .and_then(|v| u32::try_from(v).ok())
+        .ok_or_else(|| "x is required".to_string())?;
+    let y = edit
+        .get("y")
+        .and_then(Value::as_u64)
+        .and_then(|v| u32::try_from(v).ok())
+        .ok_or_else(|| "y is required".to_string())?;
+    let pixel = value.pixel_at(x, y).map_err(display_error)?;
+    let new_value = edit
+        .get("value")
+        .and_then(Value::as_u64)
+        .and_then(|v| u8::try_from(v).ok())
+        .ok_or_else(|| "PLT value must be between 0 and 255".to_string())?;
+    let layer = edit
+        .get("layer")
+        .and_then(Value::as_u64)
+        .and_then(|v| u8::try_from(v).ok())
+        .filter(|v| *v <= 9)
+        .ok_or_else(|| "PLT layer must be between 0 and 9".to_string())?;
+    let index = usize::try_from(y)
+        .ok()
+        .and_then(|row| {
+            usize::try_from(value.width)
+                .ok()
+                .and_then(|width| row.checked_mul(width))
+        })
+        .and_then(|row| {
+            usize::try_from(x)
+                .ok()
+                .and_then(|column| row.checked_add(column))
+        })
+        .ok_or_else(|| "PLT pixel index overflow".to_string())?;
+    let slot = value
+        .pixels
+        .get_mut(index)
+        .ok_or_else(|| "PLT pixel out of range".to_string())?;
+    *slot = PltPixel {
+        value:    new_value,
+        layer_id: layer,
+    };
+    Ok((
+        "Edit PLT pixel".to_string(),
+        json!({ "action": "setPltPixel", "x": x, "y": y, "value": pixel.value, "layer": pixel.layer_id }),
+    ))
+}
+
+fn twoda_to_json(value: &TwoDa) -> Value {
+    let encoding = value.encoding();
+    let rows = value
+        .rows
+        .iter()
+        .enumerate()
+        .map(|(index, row)| {
+            json!({
+                "label": display_legacy_preserving(
+                    encoding,
+                    value.row_label(index).unwrap_or(""),
+                ),
+                "cells": row.iter().map(|cell| cell.as_ref().map(|text| {
+                    display_legacy_preserving(encoding, text)
+                })).collect::<Vec<_>>(),
+                "nativeCells": row.iter().map(|cell| cell.as_ref().map(|text| {
+                    native_text_from_internal(encoding, text)
+                })).collect::<Vec<_>>(),
+            })
+        })
+        .collect::<Vec<_>>();
+    json!({
+        "columns": value.columns().iter().map(|column| {
+            display_legacy_preserving(encoding, column)
+        }).collect::<Vec<_>>(),
+        "default": value.default().map(|text| display_legacy_preserving(encoding, &text)),
+        "rows": rows,
+    })
+}
+
+fn native_text_from_internal(encoding: LegacyEncoding, value: &str) -> Value {
+    match nwnrs_types::encoding::encode_legacy_preserving(encoding, value) {
+        Ok(bytes) => nwn_text_to_json(&NwnText::decode(&bytes, encoding)),
+        Err(error) => json!({
+            "encoding": encoding.label(),
+            "display": value,
+            "segments": [{ "kind": "encodingError", "message": error.to_string() }],
+        }),
+    }
+}
+
+fn apply_twoda_edit(
+    value: &mut TwoDa,
+    action: &str,
+    edit: &Value,
+) -> EditorResult<(String, Value)> {
+    match action {
+        "set2daCell" => {
+            let row = json_usize(edit, "row")?;
+            let column = required_string(edit, "column")?;
+            let old = value
+                .rows
+                .get(row)
+                .and_then(|row_data| {
+                    value
+                        .columns()
+                        .iter()
+                        .position(|candidate| candidate.eq_ignore_ascii_case(column))
+                        .and_then(|index| row_data.get(index).cloned())
+                })
+                .flatten();
+            let new_value = optional_cell(edit.get("value"))?;
+            value
+                .set_cell(row, column, new_value)
+                .map_err(display_error)?;
+            Ok((
+                "Edit 2DA cell".to_string(),
+                json!({ "action": action, "row": row, "column": column, "value": old }),
+            ))
+        }
+        "set2daRowLabel" => {
+            let row = json_usize(edit, "row")?;
+            let before = value
+                .row_label(row)
+                .ok_or_else(|| "2DA row out of bounds".to_string())?
+                .to_string();
+            let label = required_string(edit, "label")?;
+            value.set_row_label(row, label).map_err(display_error)?;
+            Ok((
+                "Edit 2DA row label".to_string(),
+                json!({ "action": action, "row": row, "label": before }),
+            ))
+        }
+        "replace2da" => {
+            let before = twoda_to_json(value);
+            let mut candidate = value.clone();
+            replace_twoda(
+                &mut candidate,
+                edit.get("table")
+                    .ok_or_else(|| "table is required".to_string())?,
+            )?;
+            *value = candidate;
+            Ok((
+                "Edit 2DA structure".to_string(),
+                json!({ "action": action, "table": before }),
+            ))
+        }
+        _ => Err(format!("unknown 2DA edit: {action}")),
+    }
+}
+
+fn replace_twoda(value: &mut TwoDa, table: &Value) -> EditorResult<()> {
+    let columns = table
+        .get("columns")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "2DA columns are required".to_string())?
+        .iter()
+        .map(|value| {
+            value
+                .as_str()
+                .map(str::to_string)
+                .ok_or_else(|| "2DA column names must be strings".to_string())
+        })
+        .collect::<EditorResult<Vec<_>>>()?;
+    let rows_json = table
+        .get("rows")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "2DA rows are required".to_string())?;
+    let mut rows = Vec::with_capacity(rows_json.len());
+    let mut labels = Vec::with_capacity(rows_json.len());
+    for row in rows_json {
+        labels.push(required_string(row, "label")?.to_string());
+        let cells = row
+            .get("cells")
+            .and_then(Value::as_array)
+            .ok_or_else(|| "2DA row cells are required".to_string())?
+            .iter()
+            .map(|cell| optional_cell(Some(cell)))
+            .collect::<EditorResult<Vec<_>>>()?;
+        rows.push(cells);
+    }
+    value.set_columns(columns).map_err(display_error)?;
+    value.replace_rows(rows, labels).map_err(display_error)?;
+    value.set_default(optional_cell(table.get("default"))?);
+    Ok(())
+}
+
+fn optional_cell(value: Option<&Value>) -> EditorResult<Option<String>> {
+    match value {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(value)) => Ok(Some(value.clone())),
+        _ => Err("2DA cells must be strings or null".to_string()),
+    }
+}
+
+fn apply_tlk_edit(
+    value: &mut SingleTlk,
+    action: &str,
+    edit: &Value,
+) -> EditorResult<(String, Value)> {
+    match action {
+        "setTlkEntry" => {
+            let str_ref = edit
+                .get("strRef")
+                .and_then(Value::as_u64)
+                .and_then(|v| u32::try_from(v).ok())
+                .ok_or_else(|| "strRef must be a 32-bit unsigned integer".to_string())?;
+            let had_override = value.has_override(str_ref);
+            let before = value.get(str_ref).map_err(display_error)?.map(|entry| {
+                tlk_entry_to_json(
+                    str_ref,
+                    &entry,
+                    LegacyEncoding::for_language_id(value.language.id()),
+                )
+            });
+            match edit.get("entry") {
+                None | Some(Value::Null) => {
+                    value.remove_override(str_ref);
+                }
+                Some(entry) => value.set_entry(str_ref, tlk_entry_from_json(entry)?),
+            }
+            let inverse = if had_override {
+                json!({ "action": action, "strRef": str_ref, "entry": before })
+            } else {
+                json!({ "action": "clearTlkOverride", "strRef": str_ref })
+            };
+            Ok(("Edit TLK entry".to_string(), inverse))
+        }
+        "clearTlkOverride" => {
+            let str_ref = edit
+                .get("strRef")
+                .and_then(Value::as_u64)
+                .and_then(|v| u32::try_from(v).ok())
+                .ok_or_else(|| "strRef must be a 32-bit unsigned integer".to_string())?;
+            let before = value.get(str_ref).map_err(display_error)?.map(|entry| {
+                tlk_entry_to_json(
+                    str_ref,
+                    &entry,
+                    LegacyEncoding::for_language_id(value.language.id()),
+                )
+            });
+            value.remove_override(str_ref);
+            Ok((
+                "Restore TLK entry".to_string(),
+                json!({ "action": "setTlkEntry", "strRef": str_ref, "entry": before }),
+            ))
+        }
+        "setTlkLanguage" => {
+            let before = value.language.id();
+            let language = edit
+                .get("language")
+                .and_then(Value::as_u64)
+                .and_then(|v| u32::try_from(v).ok())
+                .and_then(Language::from_id)
+                .ok_or_else(|| "unsupported TLK language id".to_string())?;
+            value.language = language;
+            Ok((
+                "Change TLK language".to_string(),
+                json!({ "action": action, "language": before }),
+            ))
+        }
+        _ => Err(format!("unknown TLK edit: {action}")),
+    }
+}
+
+fn tlk_snapshot(value: &mut SingleTlk, request: &Value) -> EditorResult<Value> {
+    let offset = request
+        .get("offset")
+        .and_then(Value::as_u64)
+        .and_then(|value| usize::try_from(value).ok())
+        .unwrap_or(0);
+    let limit = page_limit(request);
+    let query = request
+        .get("query")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let highest = value.highest();
+    if query.is_empty() {
+        let total = usize::try_from(highest.saturating_add(1)).unwrap_or(usize::MAX);
+        let end = offset.saturating_add(limit).min(total);
+        let mut entries = Vec::with_capacity(end.saturating_sub(offset));
+        for index in offset..end {
+            let str_ref = u32::try_from(index)
+                .map_err(|error| format!("TLK string reference exceeds 32-bit range: {error}"))?;
+            if let Some(entry) = value.get(str_ref).map_err(display_error)? {
+                entries.push(tlk_entry_to_json(
+                    str_ref,
+                    &entry,
+                    LegacyEncoding::for_language_id(value.language.id()),
+                ));
+            }
+        }
+        return Ok(json!({
+            "language": value.language.id(),
+            "highest": highest,
+            "total": total,
+            "offset": offset,
+            "limit": limit,
+            "entries": entries,
+        }));
+    }
+    let mut matched = 0_usize;
+    let mut entries = Vec::with_capacity(limit);
+    if highest >= 0 {
+        for str_ref in 0..=u32::try_from(highest).unwrap_or(u32::MAX) {
+            let Some(entry) = value.get(str_ref).map_err(display_error)? else {
+                continue;
+            };
+            if !str_ref.to_string().contains(&query)
+                && !entry.text.to_ascii_lowercase().contains(&query)
+                && !entry.sound_res_ref.to_ascii_lowercase().contains(&query)
+            {
+                continue;
+            }
+            if matched >= offset && entries.len() < limit {
+                entries.push(tlk_entry_to_json(
+                    str_ref,
+                    &entry,
+                    LegacyEncoding::for_language_id(value.language.id()),
+                ));
+            }
+            matched = matched.saturating_add(1);
+        }
+    }
+    Ok(json!({
+        "language": value.language.id(),
+        "highest": highest,
+        "total": matched,
+        "offset": offset,
+        "limit": limit,
+        "entries": entries,
+    }))
+}
+
+fn tlk_entry_to_json(str_ref: u32, entry: &TlkEntry, encoding: LegacyEncoding) -> Value {
+    json!({
+        "strRef": str_ref,
+        "text": entry.text,
+        "nativeText": nwn_text_to_json(&entry.native_text(encoding)),
+        "soundResRef": entry.sound_res_ref,
+        "soundLength": entry.sound_length,
+        "flags": entry.flags,
+        "volumeVariance": entry.volume_variance,
+        "pitchVariance": entry.pitch_variance,
+    })
+}
+
+fn nwn_text_to_json(text: &NwnText) -> Value {
+    let segments = text
+        .segments()
+        .iter()
+        .map(|segment| match segment {
+            NwnTextSegment::Text(value) => json!({ "kind": "text", "text": value }),
+            NwnTextSegment::Opaque(bytes) => {
+                json!({ "kind": "opaque", "bytes": BASE64.encode(bytes) })
+            }
+            NwnTextSegment::ColorStart(rgb) => {
+                json!({ "kind": "colorStart", "rgb": rgb })
+            }
+            NwnTextSegment::ColorEnd => json!({ "kind": "colorEnd" }),
+        })
+        .collect::<Vec<_>>();
+    json!({
+        "encoding": text.encoding().label(),
+        "display": text.display_text(),
+        "segments": segments,
+    })
+}
+
+fn tlk_entry_from_json(value: &Value) -> EditorResult<TlkEntry> {
+    let text = value
+        .get("text")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let sound_res_ref = value
+        .get("soundResRef")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    if !sound_res_ref.is_ascii() {
+        return Err("TLK sound resource references must be ASCII".to_string());
+    }
+    if sound_res_ref.len() > 16 {
+        return Err("TLK sound resource references cannot exceed 16 bytes".to_string());
+    }
+    let sound_length = checked_f32(
+        value
+            .get("soundLength")
+            .and_then(Value::as_f64)
+            .unwrap_or(0.0),
+        "TLK sound length",
+    )?;
+    let native_text = value
+        .get("nativeText")
+        .map(nwn_text_from_json)
+        .transpose()?
+        .filter(|native| native.display_text() == text);
+    let mut entry = native_text.map_or_else(
+        || TlkEntry::new(text, sound_res_ref.clone(), sound_length),
+        |native| TlkEntry::new_native(native, sound_res_ref.clone(), sound_length),
+    );
+    entry.flags = value
+        .get("flags")
+        .and_then(Value::as_i64)
+        .and_then(|v| i32::try_from(v).ok())
+        .unwrap_or(entry.flags);
+    entry.volume_variance = value
+        .get("volumeVariance")
+        .and_then(Value::as_i64)
+        .and_then(|v| i32::try_from(v).ok())
+        .unwrap_or(0);
+    entry.pitch_variance = value
+        .get("pitchVariance")
+        .and_then(Value::as_i64)
+        .and_then(|v| i32::try_from(v).ok())
+        .unwrap_or(0);
+    Ok(entry)
+}
+
+fn nwn_text_from_json(value: &Value) -> EditorResult<NwnText> {
+    let encoding = value
+        .get("encoding")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "nativeText.encoding must be a string".to_string())
+        .and_then(|label| LegacyEncoding::from_label(label).map_err(display_error))?;
+    let segments = value
+        .get("segments")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "nativeText.segments must be an array".to_string())?
+        .iter()
+        .map(|segment| {
+            let kind = segment
+                .get("kind")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "native text segment kind must be a string".to_string())?;
+            match kind {
+                "text" => Ok(NwnTextSegment::Text(
+                    segment
+                        .get("text")
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| "native text segment text must be a string".to_string())?
+                        .to_string(),
+                )),
+                "opaque" => {
+                    Ok(NwnTextSegment::Opaque(
+                        BASE64
+                            .decode(segment.get("bytes").and_then(Value::as_str).ok_or_else(
+                                || "opaque native text bytes must be base64".to_string(),
+                            )?)
+                            .map_err(|error| {
+                                format!("invalid opaque native text bytes: {error}")
+                            })?,
+                    ))
+                }
+                "colorStart" => {
+                    let values = segment
+                        .get("rgb")
+                        .and_then(Value::as_array)
+                        .ok_or_else(|| "colorStart.rgb must be an array".to_string())?;
+                    if values.len() != 3 {
+                        return Err("colorStart.rgb must contain exactly three bytes".to_string());
+                    }
+                    let mut rgb = [0_u8; 3];
+                    for (target, value) in rgb.iter_mut().zip(values) {
+                        *target = value
+                            .as_u64()
+                            .and_then(|value| u8::try_from(value).ok())
+                            .ok_or_else(|| "colorStart.rgb values must be bytes".to_string())?;
+                    }
+                    Ok(NwnTextSegment::ColorStart(rgb))
+                }
+                "colorEnd" => Ok(NwnTextSegment::ColorEnd),
+                _ => Err(format!("unknown native text segment kind {kind:?}")),
+            }
+        })
+        .collect::<EditorResult<Vec<_>>>()?;
+    Ok(NwnText::from_segments(segments, encoding))
+}
+
+fn json_usize(value: &Value, field: &str) -> EditorResult<usize> {
+    value
+        .get(field)
+        .and_then(Value::as_u64)
+        .and_then(|v| usize::try_from(v).ok())
+        .ok_or_else(|| format!("{field} must be a non-negative integer"))
+}
+
+fn gff_root_to_json(value: &GffRoot) -> Value {
+    json!({
+        "fileType": value.file_type,
+        "fileVersion": value.file_version,
+        "root": gff_struct_to_json(&value.root),
+    })
+}
+
+fn gff_document_snapshot(value: &GffRoot) -> Value {
+    json!({
+        "fileType": value.file_type,
+        "fileVersion": value.file_version,
+        "root": gff_struct_page(&value.root, &[], 0, DEFAULT_PAGE_SIZE),
+    })
+}
+
+enum GffNodeRef<'a> {
+    Struct(&'a GffStruct),
+    List(&'a [GffStruct]),
+}
+
+fn gff_node_page(value: &GffRoot, request: &Value) -> EditorResult<Value> {
+    let path = gff_path(request)?;
+    let offset = request
+        .get("offset")
+        .and_then(Value::as_u64)
+        .and_then(|value| usize::try_from(value).ok())
+        .unwrap_or(0);
+    let limit = page_limit(request);
+    match resolve_gff_node(&value.root, &path)? {
+        GffNodeRef::Struct(structure) => Ok(gff_struct_page(structure, &path, offset, limit)),
+        GffNodeRef::List(entries) => Ok(gff_list_page(entries, &path, offset, limit)),
+    }
+}
+
+fn gff_path(request: &Value) -> EditorResult<Vec<Value>> {
+    let path = request
+        .get("path")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    if path.iter().all(|segment| {
+        segment.as_str().is_some_and(|label| !label.is_empty())
+            || segment
+                .as_u64()
+                .and_then(|index| usize::try_from(index).ok())
+                .is_some()
+    }) {
+        Ok(path)
+    } else {
+        Err("GFF path segments must be field labels or non-negative list indices".to_string())
+    }
+}
+
+fn resolve_gff_node<'a>(root: &'a GffStruct, path: &[Value]) -> EditorResult<GffNodeRef<'a>> {
+    let Some((label_segment, tail)) = path.split_first() else {
+        return Ok(GffNodeRef::Struct(root));
+    };
+    let label = label_segment
+        .as_str()
+        .ok_or_else(|| "GFF structure path expected a field label".to_string())?;
+    let value = root
+        .get_field(label)
+        .ok_or_else(|| format!("GFF field not found: {label}"))?
+        .value();
+    match value {
+        GffValue::Struct(structure) => {
+            if tail.is_empty() {
+                Ok(GffNodeRef::Struct(structure))
+            } else {
+                resolve_gff_node(structure, tail)
+            }
+        }
+        GffValue::List(entries) => {
+            let Some((index_segment, remainder)) = tail.split_first() else {
+                return Ok(GffNodeRef::List(entries));
+            };
+            let index = index_segment
+                .as_u64()
+                .and_then(|value| usize::try_from(value).ok())
+                .ok_or_else(|| format!("GFF list {label} expected an item index"))?;
+            let entry = entries
+                .get(index)
+                .ok_or_else(|| format!("GFF list {label} index {index} is out of range"))?;
+            if remainder.is_empty() {
+                Ok(GffNodeRef::Struct(entry))
+            } else {
+                resolve_gff_node(entry, remainder)
+            }
+        }
+        _ => Err(format!("GFF path field {label} is not a struct or list")),
+    }
+}
+
+fn gff_struct_page(structure: &GffStruct, path: &[Value], offset: usize, limit: usize) -> Value {
+    let total = structure.fields().len();
+    let fields = structure
+        .fields()
+        .iter()
+        .skip(offset)
+        .take(limit)
+        .map(|(label, field)| {
+            let mut child_path = path.to_vec();
+            child_path.push(json!(label));
+            let (value, child) = match field.value() {
+                GffValue::Struct(value) => (
+                    Value::Null,
+                    Some(json!({
+                        "kind": "struct",
+                        "path": child_path,
+                        "id": value.id,
+                        "total": value.fields().len(),
+                    })),
+                ),
+                GffValue::List(value) => (
+                    Value::Null,
+                    Some(json!({
+                        "kind": "list",
+                        "path": child_path,
+                        "total": value.len(),
+                    })),
+                ),
+                value => (gff_value_to_json(value), None),
+            };
+            json!({
+                "label": label,
+                "kind": gff_kind_name(field.value()),
+                "value": value,
+                "nativeText": field.native_text().iter().map(nwn_text_to_json).collect::<Vec<_>>(),
+                "child": child,
+            })
+        })
+        .collect::<Vec<_>>();
+    json!({
+        "kind": "struct",
+        "path": path,
+        "id": structure.id,
+        "total": total,
+        "offset": offset.min(total),
+        "limit": limit,
+        "fields": fields,
+    })
+}
+
+fn gff_list_page(entries: &[GffStruct], path: &[Value], offset: usize, limit: usize) -> Value {
+    let total = entries.len();
+    let items = entries
+        .iter()
+        .enumerate()
+        .skip(offset)
+        .take(limit)
+        .map(|(index, structure)| {
+            let mut item_path = path.to_vec();
+            item_path.push(json!(index));
+            json!({
+                "index": index,
+                "path": item_path,
+                "id": structure.id,
+                "total": structure.fields().len(),
+            })
+        })
+        .collect::<Vec<_>>();
+    json!({
+        "kind": "list",
+        "path": path,
+        "total": total,
+        "offset": offset.min(total),
+        "limit": limit,
+        "items": items,
+    })
+}
+
+fn gff_struct_to_json(value: &GffStruct) -> Value {
+    json!({
+        "id": value.id,
+        "fields": value.fields().iter().map(|(label, field)| json!({
+            "label": label,
+            "kind": gff_kind_name(field.value()),
+            "value": gff_value_to_json(field.value()),
+        })).collect::<Vec<_>>(),
+    })
+}
+
+fn gff_kind_name(value: &GffValue) -> &'static str {
+    match value {
+        GffValue::Byte(_) => "byte",
+        GffValue::Char(_) => "char",
+        GffValue::Word(_) => "word",
+        GffValue::Short(_) => "short",
+        GffValue::Dword(_) => "dword",
+        GffValue::Int(_) => "int",
+        GffValue::Float(_) => "float",
+        GffValue::Dword64(_) => "dword64",
+        GffValue::Int64(_) => "int64",
+        GffValue::Double(_) => "double",
+        GffValue::CExoString(_) => "string",
+        GffValue::ResRef(_) => "resref",
+        GffValue::CExoLocString(_) => "locstring",
+        GffValue::Void(_) => "void",
+        GffValue::Struct(_) => "struct",
+        GffValue::List(_) => "list",
+    }
+}
+
+fn gff_value_to_json(value: &GffValue) -> Value {
+    match value {
+        GffValue::Byte(v) => json!(v),
+        GffValue::Char(v) => json!(v),
+        GffValue::Word(v) => json!(v),
+        GffValue::Short(v) => json!(v),
+        GffValue::Dword(v) => json!(v),
+        GffValue::Int(v) => json!(v),
+        GffValue::Float(v) => json!(v),
+        GffValue::Dword64(v) => json!(v.to_string()),
+        GffValue::Int64(v) => json!(v.to_string()),
+        GffValue::Double(v) => json!(v),
+        GffValue::CExoString(v) | GffValue::ResRef(v) => json!(v),
+        GffValue::CExoLocString(v) => {
+            json!({ "strRef": v.str_ref, "entries": v.entries.iter().map(|(language, text)| json!({ "language": language, "text": text })).collect::<Vec<_>>() })
+        }
+        GffValue::Void(v) => json!(BASE64.encode(v)),
+        GffValue::Struct(v) => gff_struct_to_json(v),
+        GffValue::List(v) => Value::Array(v.iter().map(gff_struct_to_json).collect()),
+    }
+}
+
+fn apply_gff_edit_transactional(
+    document: &mut GffDocument,
+    action: &str,
+    edit: &Value,
+) -> EditorResult<(String, Value)> {
+    let mut candidate = document.root.clone();
+    let result = apply_gff_edit(&mut candidate, action, edit)?;
+    document.root = candidate;
+    Ok(result)
+}
+
+fn apply_gff_edit(root: &mut GffRoot, action: &str, edit: &Value) -> EditorResult<(String, Value)> {
+    let path = gff_path(edit)?;
+    match action {
+        "setGffValue" => {
+            let label = required_string(edit, "label")?;
+            let structure = resolve_gff_struct_mut(&mut root.root, &path)?;
+            let field = structure
+                .get_field_mut(label)
+                .ok_or_else(|| format!("GFF field not found: {label}"))?;
+            let kind = gff_kind_name(field.value());
+            if matches!(field.value(), GffValue::Struct(_) | GffValue::List(_)) {
+                return Err(format!(
+                    "GFF {kind} values require structural edit operations"
+                ));
+            }
+            let before = gff_value_to_json(field.value());
+            let replacement = edit
+                .get("value")
+                .ok_or_else(|| "GFF value is required".to_string())?;
+            *field.value_mut() = gff_value_from_json(kind, replacement)?;
+            Ok((
+                "Edit GFF value".to_string(),
+                json!({ "action": action, "path": path, "label": label, "value": before }),
+            ))
+        }
+        "renameGffField" => {
+            let label = required_string(edit, "label")?;
+            let new_label = required_string(edit, "newLabel")?;
+            let structure = resolve_gff_struct_mut(&mut root.root, &path)?;
+            structure
+                .rename_field(label, new_label)
+                .map_err(display_error)?;
+            Ok((
+                "Rename GFF field".to_string(),
+                json!({
+                    "action": action,
+                    "path": path,
+                    "label": new_label,
+                    "newLabel": label,
+                }),
+            ))
+        }
+        "setGffKind" => {
+            let label = required_string(edit, "label")?;
+            let kind = required_string(edit, "kind")?;
+            let structure = resolve_gff_struct_mut(&mut root.root, &path)?;
+            let field = structure
+                .get_field_mut(label)
+                .ok_or_else(|| format!("GFF field not found: {label}"))?;
+            let before_kind = gff_kind_name(field.value());
+            let before_value = gff_value_to_json(field.value());
+            let replacement = edit
+                .get("value")
+                .cloned()
+                .map_or_else(|| default_gff_json_value(kind), Ok)?;
+            *field.value_mut() = gff_value_from_json(kind, &replacement)?;
+            Ok((
+                "Change GFF field type".to_string(),
+                json!({
+                    "action": action,
+                    "path": path,
+                    "label": label,
+                    "kind": before_kind,
+                    "value": before_value,
+                }),
+            ))
+        }
+        "addGffField" => {
+            let label = required_string(edit, "label")?;
+            let kind = required_string(edit, "kind")?;
+            let structure = resolve_gff_struct_mut(&mut root.root, &path)?;
+            let index = edit
+                .get("index")
+                .and_then(Value::as_u64)
+                .and_then(|value| usize::try_from(value).ok())
+                .unwrap_or(structure.fields().len())
+                .min(structure.fields().len());
+            let value = edit
+                .get("value")
+                .cloned()
+                .map_or_else(|| default_gff_json_value(kind), Ok)?;
+            structure
+                .insert_field(
+                    index,
+                    label,
+                    GffField::new(gff_value_from_json(kind, &value)?),
+                )
+                .map_err(display_error)?;
+            Ok((
+                "Add GFF field".to_string(),
+                json!({ "action": "removeGffField", "path": path, "label": label }),
+            ))
+        }
+        "removeGffField" => {
+            let label = required_string(edit, "label")?;
+            let structure = resolve_gff_struct_mut(&mut root.root, &path)?;
+            let index = structure
+                .fields()
+                .iter()
+                .position(|(candidate, _)| candidate == label)
+                .ok_or_else(|| format!("GFF field not found: {label}"))?;
+            let field = structure
+                .remove(label)
+                .ok_or_else(|| format!("GFF field not found: {label}"))?;
+            Ok((
+                "Remove GFF field".to_string(),
+                json!({
+                    "action": "addGffField",
+                    "path": path,
+                    "label": label,
+                    "kind": gff_kind_name(field.value()),
+                    "value": gff_value_to_json(field.value()),
+                    "index": index,
+                }),
+            ))
+        }
+        "addGffListStruct" => {
+            let entries = resolve_gff_list_mut(&mut root.root, &path)?;
+            let index = edit
+                .get("index")
+                .and_then(Value::as_u64)
+                .and_then(|value| usize::try_from(value).ok())
+                .unwrap_or(entries.len())
+                .min(entries.len());
+            let structure = match edit.get("value") {
+                Some(value) => gff_struct_from_json(value)?,
+                None => GffStruct::new(
+                    edit.get("id")
+                        .and_then(Value::as_i64)
+                        .and_then(|value| i32::try_from(value).ok())
+                        .unwrap_or_default(),
+                ),
+            };
+            entries.insert(index, structure);
+            Ok((
+                "Add GFF list struct".to_string(),
+                json!({ "action": "removeGffListStruct", "path": path, "index": index }),
+            ))
+        }
+        "removeGffListStruct" => {
+            let index = json_usize(edit, "index")?;
+            let entries = resolve_gff_list_mut(&mut root.root, &path)?;
+            if index >= entries.len() {
+                return Err(format!("GFF list index {index} is out of range"));
+            }
+            let structure = entries.remove(index);
+            Ok((
+                "Remove GFF list struct".to_string(),
+                json!({
+                    "action": "addGffListStruct",
+                    "path": path,
+                    "index": index,
+                    "value": gff_struct_to_json(&structure),
+                }),
+            ))
+        }
+        _ => Err(format!("unknown GFF edit: {action}")),
+    }
+}
+
+fn resolve_gff_struct_mut<'a>(
+    root: &'a mut GffStruct,
+    path: &[Value],
+) -> EditorResult<&'a mut GffStruct> {
+    let Some((label_segment, tail)) = path.split_first() else {
+        return Ok(root);
+    };
+    let label = label_segment
+        .as_str()
+        .ok_or_else(|| "GFF structure path expected a field label".to_string())?;
+    let value = root
+        .get_field_mut(label)
+        .ok_or_else(|| format!("GFF field not found: {label}"))?
+        .value_mut();
+    match value {
+        GffValue::Struct(structure) => resolve_gff_struct_mut(structure, tail),
+        GffValue::List(entries) => {
+            let (index_segment, remainder) = tail
+                .split_first()
+                .ok_or_else(|| format!("GFF list {label} expected an item index"))?;
+            let index = index_segment
+                .as_u64()
+                .and_then(|value| usize::try_from(value).ok())
+                .ok_or_else(|| format!("GFF list {label} expected an item index"))?;
+            let entry = entries
+                .get_mut(index)
+                .ok_or_else(|| format!("GFF list {label} index {index} is out of range"))?;
+            resolve_gff_struct_mut(entry, remainder)
+        }
+        _ => Err(format!("GFF path field {label} is not a struct or list")),
+    }
+}
+
+fn resolve_gff_list_mut<'a>(
+    root: &'a mut GffStruct,
+    path: &[Value],
+) -> EditorResult<&'a mut Vec<GffStruct>> {
+    let (label, parent_path) = path
+        .split_last()
+        .ok_or_else(|| "GFF list path cannot be empty".to_string())?;
+    let label = label
+        .as_str()
+        .ok_or_else(|| "GFF list path must end with a field label".to_string())?;
+    let parent = resolve_gff_struct_mut(root, parent_path)?;
+    match parent
+        .get_field_mut(label)
+        .ok_or_else(|| format!("GFF field not found: {label}"))?
+        .value_mut()
+    {
+        GffValue::List(entries) => Ok(entries),
+        _ => Err(format!("GFF field {label} is not a list")),
+    }
+}
+
+fn default_gff_json_value(kind: &str) -> EditorResult<Value> {
+    Ok(match kind {
+        "byte" | "char" | "word" | "short" | "dword" | "int" | "float" | "double" => {
+            json!(0)
+        }
+        "dword64" | "int64" => json!("0"),
+        "string" | "resref" | "void" => json!(""),
+        "locstring" => json!({ "strRef": u32::MAX, "entries": [] }),
+        "struct" => json!({ "id": 0, "fields": [] }),
+        "list" => json!([]),
+        _ => return Err(format!("unsupported GFF field kind: {kind}")),
+    })
+}
+
+fn merge_gff_root(target: &mut GffRoot, value: &Value) -> EditorResult<()> {
+    let file_type = required_string(value, "fileType")?;
+    let file_version = required_string(value, "fileVersion")?;
+    if file_type.len() != 4 || file_version.len() != 4 {
+        return Err("GFF file type and version must be exactly four bytes".to_string());
+    }
+    target.file_type = file_type.to_string();
+    target.file_version = file_version.to_string();
+    merge_gff_struct(
+        &mut target.root,
+        value
+            .get("root")
+            .ok_or_else(|| "GFF root is required".to_string())?,
+    )
+}
+
+fn merge_gff_struct(target: &mut GffStruct, value: &Value) -> EditorResult<()> {
+    target.id = value
+        .get("id")
+        .and_then(Value::as_i64)
+        .and_then(|v| i32::try_from(v).ok())
+        .ok_or_else(|| "GFF struct id must be a 32-bit integer".to_string())?;
+    let fields = value
+        .get("fields")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "GFF fields are required".to_string())?;
+    let labels = fields
+        .iter()
+        .map(|field| required_string(field, "label").map(str::to_string))
+        .collect::<EditorResult<Vec<_>>>()?;
+    let mut unique_labels = HashSet::with_capacity(labels.len());
+    for label in &labels {
+        let byte_length = label.len();
+        if byte_length == 0 || byte_length > 16 {
+            return Err(format!(
+                "GFF field label {label:?} must contain between 1 and 16 bytes"
+            ));
+        }
+        if !unique_labels.insert(label.as_str()) {
+            return Err(format!(
+                "GFF structure contains duplicate field label {label}"
+            ));
+        }
+    }
+    let existing = target
+        .fields()
+        .iter()
+        .map(|(label, _)| label.clone())
+        .collect::<Vec<_>>();
+    for label in existing {
+        if !labels.contains(&label) {
+            target.remove(&label);
+        }
+    }
+    for field_json in fields {
+        let label = required_string(field_json, "label")?;
+        let kind = required_string(field_json, "kind")?;
+        let raw_value = field_json
+            .get("value")
+            .ok_or_else(|| format!("GFF field {label} has no value"))?;
+        if let Some(field) = target.get_field_mut(label)
+            && gff_kind_name(field.value()) == kind
+        {
+            merge_gff_value(field.value_mut(), kind, raw_value)?;
+            continue;
+        }
+        target
+            .put_field(label, GffField::new(gff_value_from_json(kind, raw_value)?))
+            .map_err(display_error)?;
+    }
+    Ok(())
+}
+
+fn merge_gff_value(target: &mut GffValue, kind: &str, value: &Value) -> EditorResult<()> {
+    match (target, kind) {
+        (GffValue::Struct(target), "struct") => merge_gff_struct(target, value),
+        (GffValue::List(target), "list") => {
+            let values = value
+                .as_array()
+                .ok_or_else(|| "GFF list value must be an array".to_string())?;
+            for (index, source) in values.iter().enumerate() {
+                if let Some(existing) = target.get_mut(index) {
+                    merge_gff_struct(existing, source)?;
+                } else {
+                    target.push(gff_struct_from_json(source)?);
+                }
+            }
+            target.truncate(values.len());
+            Ok(())
+        }
+        (target, _) => {
+            *target = gff_value_from_json(kind, value)?;
+            Ok(())
+        }
+    }
+}
+
+fn gff_struct_from_json(value: &Value) -> EditorResult<GffStruct> {
+    let id = value
+        .get("id")
+        .and_then(Value::as_i64)
+        .and_then(|v| i32::try_from(v).ok())
+        .ok_or_else(|| "GFF struct id must be a 32-bit integer".to_string())?;
+    let mut result = GffStruct::new(id);
+    merge_gff_struct(&mut result, value)?;
+    Ok(result)
+}
+
+fn gff_value_from_json(kind: &str, value: &Value) -> EditorResult<GffValue> {
+    let signed = || {
+        value
+            .as_i64()
+            .ok_or_else(|| format!("GFF {kind} must be an integer"))
+    };
+    let unsigned = || {
+        value
+            .as_u64()
+            .ok_or_else(|| format!("GFF {kind} must be a non-negative integer"))
+    };
+    Ok(match kind {
+        "byte" => GffValue::Byte(
+            u8::try_from(unsigned()?).map_err(|error| format!("GFF byte out of range: {error}"))?,
+        ),
+        "char" => GffValue::Char(
+            i8::try_from(signed()?).map_err(|error| format!("GFF char out of range: {error}"))?,
+        ),
+        "word" => GffValue::Word(
+            u16::try_from(unsigned()?)
+                .map_err(|error| format!("GFF word out of range: {error}"))?,
+        ),
+        "short" => GffValue::Short(
+            i16::try_from(signed()?).map_err(|error| format!("GFF short out of range: {error}"))?,
+        ),
+        "dword" => GffValue::Dword(
+            u32::try_from(unsigned()?)
+                .map_err(|error| format!("GFF dword out of range: {error}"))?,
+        ),
+        "int" => GffValue::Int(
+            i32::try_from(signed()?).map_err(|error| format!("GFF int out of range: {error}"))?,
+        ),
+        "float" => GffValue::Float(checked_f32(
+            value
+                .as_f64()
+                .ok_or_else(|| "GFF float must be numeric".to_string())?,
+            "GFF float",
+        )?),
+        "dword64" => GffValue::Dword64(
+            required_json_integer_string(value)?
+                .parse()
+                .map_err(|error| format!("GFF dword64 out of range: {error}"))?,
+        ),
+        "int64" => GffValue::Int64(
+            required_json_integer_string(value)?
+                .parse()
+                .map_err(|error| format!("GFF int64 out of range: {error}"))?,
+        ),
+        "double" => GffValue::Double(
+            value
+                .as_f64()
+                .ok_or_else(|| "GFF double must be numeric".to_string())?,
+        ),
+        "string" => GffValue::CExoString(
+            value
+                .as_str()
+                .ok_or_else(|| "GFF string must be text".to_string())?
+                .to_string(),
+        ),
+        "resref" => {
+            let text = value
+                .as_str()
+                .ok_or_else(|| "GFF resref must be text".to_string())?;
+            if text.len() > 255 {
+                return Err("GFF resref exceeds 255 bytes".to_string());
+            }
+            GffValue::ResRef(text.to_string())
+        }
+        "locstring" => {
+            let str_ref = value
+                .get("strRef")
+                .and_then(Value::as_u64)
+                .and_then(|v| u32::try_from(v).ok())
+                .ok_or_else(|| {
+                    "GFF locstring strRef must be a 32-bit unsigned integer".to_string()
+                })?;
+            let entries = value
+                .get("entries")
+                .and_then(Value::as_array)
+                .ok_or_else(|| "GFF locstring entries are required".to_string())?
+                .iter()
+                .map(|entry| {
+                    Ok((
+                        entry
+                            .get("language")
+                            .and_then(Value::as_i64)
+                            .and_then(|v| i32::try_from(v).ok())
+                            .ok_or_else(|| "invalid locstring language".to_string())?,
+                        required_string(entry, "text")?.to_string(),
+                    ))
+                })
+                .collect::<EditorResult<Vec<_>>>()?;
+            GffValue::CExoLocString(GffCExoLocString {
+                str_ref,
+                entries,
+            })
+        }
+        "void" => GffValue::Void(
+            BASE64
+                .decode(
+                    value
+                        .as_str()
+                        .ok_or_else(|| "GFF void must be base64 text".to_string())?,
+                )
+                .map_err(|error| format!("invalid GFF void data: {error}"))?,
+        ),
+        "struct" => GffValue::Struct(gff_struct_from_json(value)?),
+        "list" => GffValue::List(
+            value
+                .as_array()
+                .ok_or_else(|| "GFF list must be an array".to_string())?
+                .iter()
+                .map(gff_struct_from_json)
+                .collect::<EditorResult<Vec<_>>>()?,
+        ),
+        _ => return Err(format!("unsupported GFF field kind: {kind}")),
+    })
+}
+
+fn required_json_integer_string(value: &Value) -> EditorResult<String> {
+    match value {
+        Value::String(value) => Ok(value.clone()),
+        Value::Number(value) => Ok(value.to_string()),
+        _ => Err("64-bit GFF integers must be decimal strings".to_string()),
+    }
+}
+
+fn checked_f32(value: f64, label: &str) -> EditorResult<f32> {
+    if !value.is_finite() || value < f64::from(f32::MIN) || value > f64::from(f32::MAX) {
+        return Err(format!("{label} is outside the finite 32-bit float range"));
+    }
+    #[allow(clippy::cast_possible_truncation)]
+    let converted = value as f32;
+    Ok(converted)
+}
+
+#[derive(Clone)]
+struct ArchiveEntry {
+    resref:      ResRef,
+    original:    Option<Res>,
+    replacement: Option<Vec<u8>>,
+    algorithm:   Algorithm,
+}
+
+impl ArchiveEntry {
+    fn bytes(&self) -> EditorResult<Vec<u8>> {
+        if let Some(bytes) = &self.replacement {
+            return Ok(bytes.clone());
+        }
+        self.original
+            .as_ref()
+            .ok_or_else(|| format!("missing payload for {}", self.resref))?
+            .read_all(CachePolicy::Bypass)
+            .map_err(display_error)
+    }
+}
+
+struct ErfDocument {
+    metadata:           Erf,
+    entries:            Vec<ArchiveEntry>,
+    _temporary_storage: Option<TemporaryStorage>,
+}
+
+impl ErfDocument {
+    fn new(metadata: Erf) -> Result<Self, nwnrs_types::erf::ErfError> {
+        let entries = metadata
+            .entries()
+            .iter()
+            .map(|(resref, res)| ArchiveEntry {
+                resref:      resref.clone(),
+                original:    Some(res.clone()),
+                replacement: None,
+                algorithm:   res.compressed_buf_algorithm().unwrap_or(Algorithm::None),
+            })
+            .collect();
+        Ok(Self {
+            metadata,
+            entries,
+            _temporary_storage: None,
+        })
+    }
+
+    fn snapshot(&self, request: &Value) -> Value {
+        let (entries, total, offset, limit) = archive_page(&self.entries, request);
+        json!({
+            "fileType": self.metadata.file_type.trim(),
+            "version": match self.metadata.file_version { ErfVersion::V1 => "V1.0", ErfVersion::E1 => "E1.0" },
+            "buildYear": self.metadata.build_year,
+            "buildDay": self.metadata.build_day,
+            "strRef": self.metadata.str_ref,
+            "oid": self.metadata.oid(),
+            "localizedStrings": self.metadata.loc_strings().iter().map(|(language, text)| json!({
+                "language": language,
+                "text": text,
+                "nativeText": self.metadata.localized_native_text(*language).map(nwn_text_to_json),
+            })).collect::<Vec<_>>(),
+            "entries": entries,
+            "total": total,
+            "offset": offset,
+            "limit": limit,
+            "query": request.get("query").and_then(Value::as_str).unwrap_or_default(),
+        })
+    }
+
+    fn read_entry(&self, resource: &str) -> EditorResult<Vec<u8>> {
+        self.entries
+            .iter()
+            .find(|entry| resource_name(&entry.resref) == resource)
+            .ok_or_else(|| format!("archive resource not found: {resource}"))?
+            .bytes()
+    }
+
+    fn apply_edit(&mut self, action: &str, edit: &Value) -> EditorResult<(String, Value)> {
+        apply_archive_edit_transactional(&mut self.entries, action, edit)
+    }
+
+    fn write<W: Write + Seek>(&self, cursor: &mut W) -> EditorResult<()> {
+        let entries = self
+            .entries
+            .iter()
+            .map(|entry| entry.resref.clone())
+            .collect::<Vec<_>>();
+        let entry_by_resref = self
+            .entries
+            .iter()
+            .map(|entry| (entry.resref.clone(), entry))
+            .collect::<HashMap<_, _>>();
+        let mut algorithms = BTreeMap::new();
+        let mut exocomp = ExoResFileCompressionType::None;
+        for entry in &self.entries {
+            algorithms.insert(entry.resref.clone(), entry.algorithm);
+            if entry.algorithm != Algorithm::None {
+                exocomp = ExoResFileCompressionType::CompressedBuf;
+            }
+        }
+        write_erf_with_native_text(
+            cursor,
+            &self.metadata.file_type,
+            self.metadata.file_version,
+            u32::try_from(self.metadata.build_year)
+                .map_err(|error| format!("ERF build year cannot be negative: {error}"))?,
+            u32::try_from(self.metadata.build_day)
+                .map_err(|error| format!("ERF build day cannot be negative: {error}"))?,
+            exocomp,
+            Algorithm::None,
+            self.metadata.loc_strings(),
+            self.metadata.localized_native_texts(),
+            self.metadata.str_ref,
+            &entries,
+            self.metadata.oid(),
+            ErfWriteOptions {
+                resource_list_padding: self.metadata.resource_list_padding(),
+            },
+            |resref, output| {
+                let entry = entry_by_resref
+                    .get(resref)
+                    .ok_or_else(|| io::Error::other(format!("missing payload for {resref}")))?;
+                let bytes = entry.bytes().map_err(io::Error::other)?;
+                output.write_all(&bytes)?;
+                Ok((bytes.len(), sha1_digest(&bytes)))
+            },
+            |resref| algorithms.get(resref).copied().unwrap_or(Algorithm::None),
+        )
+        .map_err(display_error)
+    }
+}
+
+struct KeyDocument {
+    metadata:           KeyTable,
+    bifs:               Vec<KeyBifEntry>,
+    entries:            Vec<ArchiveEntry>,
+    entry_by_resource:  HashMap<String, usize>,
+    bif_by_resref:      HashMap<ResRef, usize>,
+    _temporary_storage: Option<TemporaryStorage>,
+}
+
+impl KeyDocument {
+    fn new(metadata: KeyTable) -> Result<Self, nwnrs_types::key::KeyError> {
+        let bifs = metadata.archive_layout()?;
+        let entries = bifs
+            .iter()
+            .flat_map(|bif| bif.entries.iter())
+            .map(|resref| {
+                let res = metadata.demand(resref)?;
+                Ok(ArchiveEntry {
+                    resref:      resref.clone(),
+                    original:    Some(res.clone()),
+                    replacement: None,
+                    algorithm:   res.compressed_buf_algorithm().unwrap_or(Algorithm::None),
+                })
+            })
+            .collect::<Result<Vec<_>, nwnrs_types::resman::ResManError>>()
+            .map_err(nwnrs_types::key::KeyError::from)?;
+        let mut document = Self {
+            metadata,
+            bifs,
+            entries,
+            entry_by_resource: HashMap::new(),
+            bif_by_resref: HashMap::new(),
+            _temporary_storage: None,
+        };
+        document
+            .rebuild_indexes()
+            .map_err(nwnrs_types::key::KeyError::Message)?;
+        Ok(document)
+    }
+
+    fn rebuild_indexes(&mut self) -> EditorResult<()> {
+        let mut entry_by_resource = HashMap::with_capacity(self.entries.len());
+        for (index, entry) in self.entries.iter().enumerate() {
+            let resource = resource_name(&entry.resref);
+            if entry_by_resource.insert(resource.clone(), index).is_some() {
+                return Err(format!(
+                    "KEY contains duplicate resource identity: {resource}"
+                ));
+            }
+        }
+
+        let entry_count = self.bifs.iter().map(|bif| bif.entries.len()).sum();
+        let mut bif_by_resref = HashMap::with_capacity(entry_count);
+        for (bif_index, bif) in self.bifs.iter().enumerate() {
+            for resref in &bif.entries {
+                if let Some(previous) = bif_by_resref.insert(resref.clone(), bif_index) {
+                    return Err(format!(
+                        "KEY resource {} belongs to both BIF {previous} and BIF {bif_index}",
+                        resource_name(resref)
+                    ));
+                }
+            }
+        }
+
+        self.entry_by_resource = entry_by_resource;
+        self.bif_by_resref = bif_by_resref;
+        Ok(())
+    }
+
+    fn snapshot(&self, request: &Value) -> Value {
+        let bifs = self
+            .bifs
+            .iter()
+            .enumerate()
+            .map(|(index, bif)| {
+                json!({
+                    "index": index,
+                    "filename": bif.recorded_filename.as_deref().unwrap_or(""),
+                    "drives": bif.drives,
+                    "oid": bif.bif_oid,
+                    "entryCount": bif.entries.len(),
+                })
+            })
+            .collect::<Vec<_>>();
+        let query = request
+            .get("query")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        let offset = request
+            .get("offset")
+            .and_then(Value::as_u64)
+            .and_then(|v| usize::try_from(v).ok())
+            .unwrap_or(0);
+        let limit = page_limit(request);
+        let matches = |entry: &&ArchiveEntry| {
+            query.is_empty()
+                || resource_name(&entry.resref)
+                    .to_ascii_lowercase()
+                    .contains(&query)
+        };
+        let total = self.entries.iter().filter(matches).count();
+        let entries = self
+            .entries
+            .iter()
+            .filter(matches)
+            .skip(offset)
+            .take(limit)
+            .map(|entry| {
+                let mut value = archive_entry_json(entry);
+                if let Some(object) = value.as_object_mut() {
+                    let bif_index = self.bif_by_resref.get(&entry.resref).copied();
+                    object.insert("bifIndex".to_string(), json!(bif_index));
+                    object.insert(
+                        "bif".to_string(),
+                        json!(
+                            bif_index
+                                .and_then(|index| self.bifs.get(index))
+                                .and_then(|bif| bif.recorded_filename.as_deref())
+                        ),
+                    );
+                }
+                value
+            })
+            .collect::<Vec<_>>();
+        json!({
+            "version": match self.metadata.version() { KeyBifVersion::V1 => "V1.0", KeyBifVersion::E1 => "E1.0" },
+            "buildYear": self.metadata.build_year(), "buildDay": self.metadata.build_day(),
+            "oid": self.metadata.oid(), "bifs": bifs, "entries": entries,
+            "total": total, "offset": offset, "limit": limit,
+            "query": query,
+        })
+    }
+
+    fn materialize(&mut self) -> EditorResult<()> {
+        for entry in &mut self.entries {
+            let bytes = entry.bytes()?;
+            entry.original = None;
+            entry.replacement = Some(bytes);
+        }
+        Ok(())
+    }
+
+    fn read_entry(&self, resource: &str) -> EditorResult<Vec<u8>> {
+        self.entry_by_resource
+            .get(resource)
+            .and_then(|index| self.entries.get(*index))
+            .ok_or_else(|| format!("KEY resource not found: {resource}"))?
+            .bytes()
+    }
+
+    fn output_paths(&self, key_path: &Path) -> EditorResult<Vec<PathBuf>> {
+        let parent = key_path
+            .parent()
+            .filter(|path| !path.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        let mut paths = Vec::with_capacity(self.bifs.len() + 1);
+        let mut unique = HashSet::with_capacity(self.bifs.len() + 1);
+        paths.push(key_path.to_path_buf());
+        unique.insert(key_path.to_path_buf());
+        for bif in &self.bifs {
+            let relative = key_bif_relative_path(bif).map_err(display_error)?;
+            let path = parent.join(relative);
+            if !unique.insert(path.clone()) {
+                return Err(format!(
+                    "KEY/BIF save set contains duplicate target {}",
+                    path.display()
+                ));
+            }
+            paths.push(path);
+        }
+        Ok(paths)
+    }
+
+    fn apply_edit(&mut self, action: &str, edit: &Value) -> EditorResult<(String, Value)> {
+        if self.bifs.is_empty() {
+            return Err("KEY table contains no BIF files".to_string());
+        }
+        let requested_bif = edit
+            .get("bifIndex")
+            .and_then(Value::as_u64)
+            .and_then(|value| usize::try_from(value).ok());
+        if requested_bif.is_some_and(|index| index >= self.bifs.len()) {
+            return Err("BIF index out of range".to_string());
+        }
+        let owning_bif = edit
+            .get("resource")
+            .and_then(Value::as_str)
+            .and_then(|resource| {
+                self.entry_by_resource
+                    .get(resource)
+                    .and_then(|index| self.entries.get(*index))
+                    .and_then(|entry| self.bif_by_resref.get(&entry.resref))
+                    .copied()
+            });
+        let previous_entries = self.entries.clone();
+        let previous_bifs = self.bifs.clone();
+        let previous_entry_by_resource = self.entry_by_resource.clone();
+        let previous_bif_by_resref = self.bif_by_resref.clone();
+        let result = (|| {
+            let result = apply_archive_edit(&mut self.entries, action, edit)?;
+            let target_bif = requested_bif.or(owning_bif);
+            self.rebuild_bif_entries(target_bif)?;
+            Ok(result)
+        })();
+        if result.is_err() {
+            self.entries = previous_entries;
+            self.bifs = previous_bifs;
+            self.entry_by_resource = previous_entry_by_resource;
+            self.bif_by_resref = previous_bif_by_resref;
+        }
+        result
+    }
+
+    fn rebuild_bif_entries(&mut self, requested_bif: Option<usize>) -> EditorResult<()> {
+        if self.bifs.is_empty() {
+            return Err("KEY table contains no BIF files".to_string());
+        }
+        let target = requested_bif.unwrap_or(0);
+        if target >= self.bifs.len() {
+            return Err("BIF index out of range".to_string());
+        }
+        let existing = self
+            .bifs
+            .iter()
+            .flat_map(|bif| bif.entries.iter().cloned())
+            .collect::<HashSet<_>>();
+        let live = self
+            .entries
+            .iter()
+            .map(|entry| entry.resref.clone())
+            .collect::<HashSet<_>>();
+        for bif in &mut self.bifs {
+            bif.entries.retain(|entry| live.contains(entry));
+        }
+        let additions = self
+            .entries
+            .iter()
+            .map(|entry| &entry.resref)
+            .filter(|entry| !existing.contains(*entry))
+            .cloned()
+            .collect::<Vec<_>>();
+        let target_bif = self
+            .bifs
+            .get_mut(target)
+            .ok_or_else(|| "BIF index out of range".to_string())?;
+        target_bif.entries.extend(additions);
+        let mut by_resref = self
+            .entries
+            .drain(..)
+            .map(|entry| (entry.resref.clone(), entry))
+            .collect::<HashMap<_, _>>();
+        for resref in self.bifs.iter().flat_map(|bif| &bif.entries) {
+            if let Some(entry) = by_resref.remove(resref) {
+                self.entries.push(entry);
+            }
+        }
+        self.entries.extend(by_resref.into_values());
+        self.rebuild_indexes()
+    }
+
+    fn write_atomic(&self, key_path: &Path) -> EditorResult<()> {
+        let parent = key_path
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        let key_name = key_path
+            .file_stem()
+            .and_then(|v| v.to_str())
+            .ok_or_else(|| "KEY destination has no valid filename".to_string())?;
+        let staging = parent.join(format!(
+            ".nwnrs-key-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        fs::create_dir(&staging).map_err(display_error)?;
+        let preparation = {
+            let entry_by_resref = self
+                .entries
+                .iter()
+                .map(|entry| (entry.resref.clone(), entry))
+                .collect::<HashMap<_, _>>();
+            let exocomp = if self
+                .entries
+                .iter()
+                .any(|entry| entry.algorithm != Algorithm::None)
+            {
+                ExoResFileCompressionType::CompressedBuf
+            } else {
+                ExoResFileCompressionType::None
+            };
+            let algorithm = self
+                .entries
+                .iter()
+                .map(|entry| entry.algorithm)
+                .find(|algorithm| *algorithm != Algorithm::None)
+                .unwrap_or(Algorithm::None);
+            write_key_and_bif(
+                self.metadata.version(),
+                exocomp,
+                algorithm,
+                &staging,
+                key_name,
+                "",
+                &self.bifs,
+                self.metadata.build_year(),
+                self.metadata.build_day(),
+                self.metadata.raw_oid(),
+                |resref, output| {
+                    let entry = entry_by_resref
+                        .get(resref)
+                        .ok_or_else(|| io::Error::other(format!("missing payload for {resref}")))?;
+                    let bytes = entry.bytes().map_err(io::Error::other)?;
+                    output.write_all(&bytes)?;
+                    Ok((bytes.len(), sha1_digest(&bytes)))
+                },
+            )
+            .map_err(display_error)
+        };
+        if let Err(error) = preparation {
+            return discard_key_staging(&staging, error);
+        }
+        commit_key_staging(&staging, parent)
+    }
+
+    fn write_backup(
+        &self,
+        backup_path: &Path,
+        revision: u64,
+        fingerprint: &FileFingerprint,
+        related_fingerprints: &BTreeMap<PathBuf, FileFingerprint>,
+    ) -> EditorResult<()> {
+        let storage = create_temporary_storage("key-backup-write")?;
+        let key_path = storage.path.join("backup.key");
+        self.write_atomic(&key_path)?;
+
+        let mut relative_files = Vec::new();
+        collect_relative_files(&storage.path, &storage.path, &mut relative_files)?;
+        let files = relative_files
+            .iter()
+            .map(|relative| {
+                let path = storage.path.join(relative);
+                let size = fs::metadata(&path)
+                    .map_err(|error| format!("failed to inspect {}: {error}", path.display()))?
+                    .len();
+                Ok(BackupFile {
+                    path: portable_relative_path(relative)?,
+                    size,
+                })
+            })
+            .collect::<EditorResult<Vec<_>>>()?;
+        let header = BackupHeader {
+            revision,
+            fingerprint: fingerprint.clone(),
+            related_fingerprints: related_fingerprints.clone(),
+            payload: BackupPayload::KeyBundle {
+                files,
+            },
+        };
+        atomic_write_with(backup_path, |output| {
+            write_backup_header(output, &header)?;
+            for relative in &relative_files {
+                let source_path = storage.path.join(relative);
+                let expected = fs::metadata(&source_path)
+                    .map_err(|error| {
+                        format!("failed to inspect {}: {error}", source_path.display())
+                    })?
+                    .len();
+                let mut source = File::open(&source_path).map_err(|error| {
+                    format!("failed to open {}: {error}", source_path.display())
+                })?;
+                let copied = io::copy(&mut source, output).map_err(|error| {
+                    format!(
+                        "failed to stream {} into backup: {error}",
+                        source_path.display()
+                    )
+                })?;
+                if copied != expected {
+                    return Err(format!(
+                        "backup source {} changed while being copied",
+                        source_path.display()
+                    ));
+                }
+            }
+            Ok(())
+        })
+    }
+}
+
+fn archive_entry_json(entry: &ArchiveEntry) -> Value {
+    json!({
+        "resource": resource_name(&entry.resref),
+        "resref": entry.resref.res_ref(),
+        "extension": get_res_ext(entry.resref.res_type()),
+        "typeId": entry.resref.res_type().0,
+        "size": entry.replacement.as_ref().map(Vec::len).unwrap_or_else(|| entry.original.as_ref().map(|res| res.uncompressed_size()).unwrap_or(0)),
+        "modified": entry.replacement.is_some(),
+        "compression": format!("{:?}", entry.algorithm),
+    })
+}
+
+fn archive_page(entries: &[ArchiveEntry], request: &Value) -> (Vec<Value>, usize, usize, usize) {
+    let query = request
+        .get("query")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let offset = request
+        .get("offset")
+        .and_then(Value::as_u64)
+        .and_then(|value| usize::try_from(value).ok())
+        .unwrap_or(0);
+    let limit = page_limit(request);
+    let matches = |entry: &&ArchiveEntry| {
+        query.is_empty()
+            || resource_name(&entry.resref)
+                .to_ascii_lowercase()
+                .contains(&query)
+    };
+    let total = entries.iter().filter(matches).count();
+    let page = entries
+        .iter()
+        .filter(matches)
+        .skip(offset)
+        .take(limit)
+        .map(archive_entry_json)
+        .collect();
+    (page, total, offset, limit)
+}
+
+fn resource_name(resref: &ResRef) -> String {
+    let extension = get_res_ext(resref.res_type());
+    if extension.is_empty() {
+        resref.res_ref().to_string()
+    } else {
+        format!("{}.{}", resref.res_ref(), extension)
+    }
+}
+
+fn apply_archive_edit(
+    entries: &mut Vec<ArchiveEntry>,
+    action: &str,
+    edit: &Value,
+) -> EditorResult<(String, Value)> {
+    match action {
+        "replaceEntry" => {
+            let resource = required_string(edit, "resource")?;
+            let bytes = BASE64
+                .decode(required_string(edit, "contents")?)
+                .map_err(display_error)?;
+            let entry = entries
+                .iter_mut()
+                .find(|entry| resource_name(&entry.resref) == resource)
+                .ok_or_else(|| format!("archive resource not found: {resource}"))?;
+            let before = entry.replacement.as_ref().map(|bytes| BASE64.encode(bytes));
+            entry.replacement = Some(bytes);
+            Ok((
+                "Replace archive resource".to_string(),
+                json!({ "action": "setEntryOverlay", "resource": resource, "contents": before }),
+            ))
+        }
+        "setEntryOverlay" => {
+            let resource = required_string(edit, "resource")?;
+            let entry = entries
+                .iter_mut()
+                .find(|entry| resource_name(&entry.resref) == resource)
+                .ok_or_else(|| format!("archive resource not found: {resource}"))?;
+            let before = entry.replacement.as_ref().map(|bytes| BASE64.encode(bytes));
+            entry.replacement = match edit.get("contents") {
+                None | Some(Value::Null) => None,
+                Some(Value::String(contents)) => Some(
+                    BASE64
+                        .decode(contents)
+                        .map_err(|error| format!("invalid archive payload: {error}"))?,
+                ),
+                _ => return Err("archive overlay contents must be base64 text or null".to_string()),
+            };
+            Ok((
+                "Restore archive resource".to_string(),
+                json!({ "action": "setEntryOverlay", "resource": resource, "contents": before }),
+            ))
+        }
+        "removeEntry" => {
+            let resource = required_string(edit, "resource")?;
+            let index = entries
+                .iter()
+                .position(|entry| resource_name(&entry.resref) == resource)
+                .ok_or_else(|| format!("archive resource not found: {resource}"))?;
+            let entry = entries.remove(index);
+            let bytes = entry.bytes()?;
+            Ok((
+                "Remove archive resource".to_string(),
+                json!({ "action": "addEntry", "resource": resource, "contents": BASE64.encode(bytes), "index": index, "algorithm": format!("{:?}", entry.algorithm) }),
+            ))
+        }
+        "addEntry" => {
+            let resource = required_string(edit, "resource")?;
+            if entries
+                .iter()
+                .any(|entry| resource_name(&entry.resref).eq_ignore_ascii_case(resource))
+            {
+                return Err(format!("archive already contains {resource}"));
+            }
+            let resref = ResolvedResRef::from_filename(resource)
+                .map_err(display_error)?
+                .base()
+                .clone();
+            let bytes = BASE64
+                .decode(required_string(edit, "contents")?)
+                .map_err(display_error)?;
+            let index = edit
+                .get("index")
+                .and_then(Value::as_u64)
+                .and_then(|v| usize::try_from(v).ok())
+                .unwrap_or(entries.len())
+                .min(entries.len());
+            let algorithm = edit
+                .get("algorithm")
+                .and_then(Value::as_str)
+                .map(algorithm_from_name)
+                .transpose()?
+                .unwrap_or(Algorithm::None);
+            entries.insert(
+                index,
+                ArchiveEntry {
+                    resref,
+                    original: None,
+                    replacement: Some(bytes),
+                    algorithm,
+                },
+            );
+            Ok((
+                "Add archive resource".to_string(),
+                json!({ "action": "removeEntry", "resource": resource }),
+            ))
+        }
+        "renameEntry" => {
+            let resource = required_string(edit, "resource")?;
+            let new_resource = required_string(edit, "newResource")?;
+            if entries
+                .iter()
+                .any(|entry| resource_name(&entry.resref).eq_ignore_ascii_case(new_resource))
+            {
+                return Err(format!("archive already contains {new_resource}"));
+            }
+            let entry = entries
+                .iter_mut()
+                .find(|entry| resource_name(&entry.resref) == resource)
+                .ok_or_else(|| format!("archive resource not found: {resource}"))?;
+            let old = resource_name(&entry.resref);
+            entry.resref = ResolvedResRef::from_filename(new_resource)
+                .map_err(display_error)?
+                .base()
+                .clone();
+            Ok((
+                "Rename archive resource".to_string(),
+                json!({ "action": action, "resource": new_resource, "newResource": old }),
+            ))
+        }
+        _ => Err(format!("unknown archive edit: {action}")),
+    }
+}
+
+fn apply_archive_edit_transactional(
+    entries: &mut Vec<ArchiveEntry>,
+    action: &str,
+    edit: &Value,
+) -> EditorResult<(String, Value)> {
+    let mut candidate = entries.clone();
+    let result = apply_archive_edit(&mut candidate, action, edit)?;
+    *entries = candidate;
+    Ok(result)
+}
+
+fn algorithm_from_name(value: &str) -> EditorResult<Algorithm> {
+    match value.to_ascii_lowercase().as_str() {
+        "none" => Ok(Algorithm::None),
+        "zlib" => Ok(Algorithm::Zlib),
+        "zstd" => Ok(Algorithm::Zstd),
+        _ => Err(format!(
+            "unsupported archive compression algorithm: {value}"
+        )),
+    }
+}
+
+fn commit_key_staging(staging: &Path, destination: &Path) -> EditorResult<()> {
+    let mut relative_files = Vec::new();
+    if let Err(error) = collect_relative_files(staging, staging, &mut relative_files) {
+        return discard_key_staging(staging, error);
+    }
+    let rollback = staging.join(".rollback");
+    if let Err(error) = fs::create_dir(&rollback) {
+        return discard_key_staging(
+            staging,
+            format!(
+                "failed to create KEY/BIF rollback directory {}: {error}",
+                rollback.display()
+            ),
+        );
+    }
+    let mut committed = Vec::new();
+    for relative in &relative_files {
+        let source = staging.join(relative);
+        let target = destination.join(relative);
+        if let Some(parent) = target.parent()
+            && let Err(error) = fs::create_dir_all(parent)
+        {
+            return fail_key_commit(
+                staging,
+                &committed,
+                format!("failed to create {}: {error}", parent.display()),
+            );
+        }
+        let backup = rollback.join(relative);
+        if let Some(parent) = backup.parent()
+            && let Err(error) = fs::create_dir_all(parent)
+        {
+            return fail_key_commit(
+                staging,
+                &committed,
+                format!(
+                    "failed to create rollback directory {}: {error}",
+                    parent.display()
+                ),
+            );
+        }
+        match fs::symlink_metadata(&target) {
+            Ok(metadata) if !metadata.file_type().is_file() => {
+                return fail_key_commit(
+                    staging,
+                    &committed,
+                    format!(
+                        "refused to replace non-file KEY/BIF destination {}",
+                        target.display()
+                    ),
+                );
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return fail_key_commit(
+                    staging,
+                    &committed,
+                    format!("failed to inspect existing {}: {error}", target.display()),
+                );
+            }
+        }
+        let original = match fs::rename(&target, &backup) {
+            Ok(()) => Some(backup),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+            Err(error) => {
+                return fail_key_commit(
+                    staging,
+                    &committed,
+                    format!("failed to stage existing {}: {error}", target.display()),
+                );
+            }
+        };
+        if let Err(error) = fs::rename(&source, &target) {
+            committed.push(KeyCommitRecord {
+                target,
+                original,
+                installed: false,
+            });
+            return fail_key_commit(
+                staging,
+                &committed,
+                format!("failed to commit {}: {error}", source.display()),
+            );
+        }
+        committed.push(KeyCommitRecord {
+            target,
+            original,
+            installed: true,
+        });
+    }
+    fs::remove_dir_all(staging).map_err(|error| {
+        format!(
+            "KEY/BIF files were committed, but previous-file backups could not be removed from \
+             {}: {error}",
+            staging.display()
+        )
+    })
+}
+
+fn discard_key_staging(staging: &Path, failure: String) -> EditorResult<()> {
+    match fs::remove_dir_all(staging) {
+        Ok(()) => Err(failure),
+        Err(error) => Err(format!(
+            "{failure}. Failed to remove incomplete staging directory {}; inspect or remove it \
+             manually: {error}",
+            staging.display()
+        )),
+    }
+}
+
+struct KeyCommitRecord {
+    target:    PathBuf,
+    original:  Option<PathBuf>,
+    installed: bool,
+}
+
+fn fail_key_commit(
+    staging: &Path,
+    committed: &[KeyCommitRecord],
+    failure: String,
+) -> EditorResult<()> {
+    let rollback_errors = rollback_key_commit(committed);
+    if !rollback_errors.is_empty() {
+        return Err(format!(
+            "{failure}. Rollback was incomplete; original files and recovery data are preserved \
+             at {}. Recovery errors: {}",
+            staging.display(),
+            rollback_errors.join("; ")
+        ));
+    }
+
+    match fs::remove_dir_all(staging) {
+        Ok(()) => Err(format!("{failure}. All original files were restored.")),
+        Err(error) => Err(format!(
+            "{failure}. All original files were restored, but the staging directory could not be \
+             removed and remains at {}: {error}",
+            staging.display()
+        )),
+    }
+}
+
+fn rollback_key_commit(committed: &[KeyCommitRecord]) -> Vec<String> {
+    let mut errors = Vec::new();
+    for record in committed.iter().rev() {
+        if record.installed
+            && let Err(error) = fs::remove_file(&record.target)
+            && error.kind() != io::ErrorKind::NotFound
+        {
+            errors.push(format!(
+                "could not remove newly installed {}: {error}",
+                record.target.display()
+            ));
+            continue;
+        }
+
+        let Some(original) = &record.original else {
+            continue;
+        };
+        match fs::symlink_metadata(&record.target) {
+            Ok(_) => {
+                errors.push(format!(
+                    "refused to overwrite unexpected rollback target {}",
+                    record.target.display()
+                ));
+                continue;
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => {
+                errors.push(format!(
+                    "could not inspect rollback target {}: {error}",
+                    record.target.display()
+                ));
+                continue;
+            }
+        }
+        if let Err(error) = fs::rename(original, &record.target) {
+            errors.push(format!(
+                "could not restore {} from {}: {error}",
+                record.target.display(),
+                original.display()
+            ));
+        }
+    }
+    errors
+}
+
+fn collect_relative_files(
+    root: &Path,
+    directory: &Path,
+    output: &mut Vec<PathBuf>,
+) -> EditorResult<()> {
+    for entry in fs::read_dir(directory).map_err(display_error)? {
+        let entry = entry.map_err(display_error)?;
+        let path = entry.path();
+        if path.file_name().is_some_and(|name| name == ".rollback") {
+            continue;
+        }
+        if entry.file_type().map_err(display_error)?.is_dir() {
+            collect_relative_files(root, &path, output)?;
+        } else {
+            output.push(
+                path.strip_prefix(root)
+                    .map_err(display_error)?
+                    .to_path_buf(),
+            );
+        }
+    }
+    output.sort();
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temporary_directory(label: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "nwnrs-vscode-{label}-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        fs::create_dir(&path).expect("create temporary directory");
+        path
+    }
+
+    #[test]
+    fn gff_merge_preserves_unchanged_fields_and_supports_nested_values() {
+        let mut root = GffRoot::new("UTC ");
+        root.put_value("Tag", GffValue::CExoString("before".to_string()))
+            .expect("insert tag");
+        let mut nested = GffStruct::new(7);
+        nested
+            .put_value("Count", GffValue::Int(1))
+            .expect("insert nested value");
+        root.put_value("Nested", GffValue::Struct(nested))
+            .expect("insert nested struct");
+
+        let mut edited = gff_root_to_json(&root);
+        *edited
+            .pointer_mut("/root/fields/0/value")
+            .expect("tag value") = json!("after");
+        *edited
+            .pointer_mut("/root/fields/1/value/fields/0/value")
+            .expect("nested value") = json!(2);
+        merge_gff_root(&mut root, &edited).expect("merge gff");
+
+        assert!(matches!(
+            root.root.get_field("Tag").map(GffField::value),
+            Some(GffValue::CExoString(value)) if value == "after"
+        ));
+        let Some(GffValue::Struct(nested)) = root.root.get_field("Nested").map(GffField::value)
+        else {
+            panic!("nested struct missing");
+        };
+        assert!(matches!(
+            nested.get_field("Count").map(GffField::value),
+            Some(GffValue::Int(2))
+        ));
+    }
+
+    #[test]
+    fn gff_merge_rejects_duplicate_labels_without_mutating_document() {
+        let mut root = GffRoot::new("UTC ");
+        root.put_value("First", GffValue::Int(1))
+            .expect("insert first field");
+        root.put_value("Second", GffValue::Int(2))
+            .expect("insert second field");
+        let before = root.clone();
+        let mut edited = gff_root_to_json(&root);
+        *edited
+            .pointer_mut("/root/fields/0/label")
+            .expect("first label") = json!("Second");
+
+        let mut candidate = root.clone();
+        let error =
+            merge_gff_root(&mut candidate, &edited).expect_err("duplicate labels must be rejected");
+        assert!(error.contains("duplicate field label Second"));
+        assert_eq!(root, before);
+    }
+
+    #[test]
+    fn gff_nodes_page_and_granular_edits_preserve_unrelated_data() {
+        let mut root = GffRoot::new("UTC ");
+        for index in 0..205 {
+            root.put_value(format!("Field{index}"), GffValue::Int(index))
+                .expect("insert paged field");
+        }
+        let mut list_entry = GffStruct::new(7);
+        list_entry
+            .put_value("Name", GffValue::CExoString("before".to_string()))
+            .expect("insert nested value");
+        root.put_value("Entries", GffValue::List(vec![list_entry]))
+            .expect("insert list");
+
+        let first = gff_document_snapshot(&root);
+        assert_eq!(
+            first.pointer("/root/total").and_then(Value::as_u64),
+            Some(206)
+        );
+        assert_eq!(
+            first
+                .pointer("/root/fields")
+                .and_then(Value::as_array)
+                .map(Vec::len),
+            Some(DEFAULT_PAGE_SIZE)
+        );
+        let final_page = gff_node_page(&root, &json!({ "path": [], "offset": 200, "limit": 200 }))
+            .expect("read final page");
+        assert_eq!(
+            final_page
+                .get("fields")
+                .and_then(Value::as_array)
+                .map(Vec::len),
+            Some(6)
+        );
+        let list_page =
+            gff_node_page(&root, &json!({ "path": ["Entries"] })).expect("read list page");
+        assert_eq!(list_page.get("kind").and_then(Value::as_str), Some("list"));
+        assert_eq!(list_page.get("total").and_then(Value::as_u64), Some(1));
+
+        let untouched = root.root.get_field("Field0").cloned();
+        apply_gff_edit(
+            &mut root,
+            "setGffValue",
+            &json!({ "path": ["Entries", 0], "label": "Name", "value": "after" }),
+        )
+        .expect("edit nested scalar");
+        assert_eq!(root.root.get_field("Field0").cloned(), untouched);
+        let Some(GffValue::List(entries)) = root.root.get_field("Entries").map(GffField::value)
+        else {
+            panic!("list field missing");
+        };
+        assert!(matches!(
+            entries.first().and_then(|entry| entry.get_field("Name")).map(GffField::value),
+            Some(GffValue::CExoString(value)) if value == "after"
+        ));
+    }
+
+    #[test]
+    fn failed_archive_removal_does_not_mutate_entries() {
+        let resource = ResolvedResRef::from_filename("missing.utc")
+            .expect("resource reference")
+            .base()
+            .clone();
+        let mut entries = vec![ArchiveEntry {
+            resref:      resource,
+            original:    None,
+            replacement: None,
+            algorithm:   Algorithm::None,
+        }];
+
+        let error = apply_archive_edit_transactional(
+            &mut entries,
+            "removeEntry",
+            &json!({ "resource": "missing.utc" }),
+        )
+        .expect_err("missing payload must fail removal");
+        assert!(error.contains("missing payload"));
+        assert_eq!(entries.len(), 1);
+        assert_eq!(
+            entries
+                .first()
+                .map(|entry| resource_name(&entry.resref))
+                .as_deref(),
+            Some("missing.utc")
+        );
+    }
+
+    #[test]
+    fn dialog_json_documents_remain_canonical_json_after_typed_edits() {
+        let directory = temporary_directory("dialog-json");
+        let source_path = directory.join("conversation.dlg.json");
+        let binary_path = directory.join("conversation.dlg");
+        let mut root = GffRoot::new("DLG ");
+        root.put_value("EndConverAbort", GffValue::ResRef("before".to_string()))
+            .expect("insert dialog field");
+        fs::write(
+            &source_path,
+            gff_root_to_json_bytes(&root).expect("encode dialog JSON"),
+        )
+        .expect("write dialog JSON");
+
+        let mut document =
+            EditorDocument::open(source_path.clone(), false, NwnTextContext::default())
+                .expect("open dialog JSON document");
+        let snapshot = document
+            .snapshot(&ResourceViewOptions::default())
+            .expect("snapshot dialog");
+        let snapshot = serde_json::to_value(snapshot).expect("encode typed snapshot");
+        let mut edited = snapshot.get("data").expect("snapshot data").clone();
+        *edited
+            .pointer_mut("/root/fields/0/value")
+            .expect("dialog field") = json!("after");
+        let edit = serde_json::from_value(json!({
+            "action": "replaceGff",
+            "root": edited,
+        }))
+        .expect("decode typed dialog edit");
+        document.apply_edit(&edit).expect("edit dialog JSON");
+        document.save(false).expect("save dialog JSON");
+        let saved = fs::read(&source_path).expect("read saved dialog JSON");
+        let saved_json: Value = serde_json::from_slice(&saved).expect("parse saved dialog JSON");
+        assert_eq!(
+            saved_json.get("__data_type").and_then(Value::as_str),
+            Some("DLG ")
+        );
+        assert_eq!(
+            saved_json
+                .pointer("/EndConverAbort/value")
+                .and_then(Value::as_str),
+            Some("after")
+        );
+
+        document
+            .save_as(binary_path, None)
+            .expect("save dialog as binary");
+        let binary = fs::read(directory.join("conversation.dlg")).expect("read binary dialog");
+        assert_eq!(binary.get(..4), Some(b"DLG ".as_slice()));
+        let reopened = EditorDocument::open(
+            directory.join("conversation.dlg"),
+            false,
+            NwnTextContext::default(),
+        )
+        .expect("reopen binary dialog");
+        let EditorContent::Gff(reopened) = reopened.content else {
+            panic!("binary dialog did not reopen as GFF");
+        };
+        assert!(matches!(
+            reopened.root.root.get_field("EndConverAbort").map(GffField::value),
+            Some(GffValue::ResRef(value)) if value == "after"
+        ));
+
+        fs::remove_dir_all(directory).expect("remove temporary directory");
+    }
+
+    #[test]
+    fn erf_editor_replaces_payload_and_roundtrips_archive_metadata() {
+        let resource = ResolvedResRef::from_filename("sample.utc")
+            .expect("resource reference")
+            .base()
+            .clone();
+        let mut encoded = Cursor::new(Vec::new());
+        nwnrs_types::erf::write_erf_with_options(
+            &mut encoded,
+            "ERF ",
+            ErfVersion::V1,
+            2026,
+            203,
+            ExoResFileCompressionType::None,
+            Algorithm::None,
+            &BTreeMap::new(),
+            -1,
+            std::slice::from_ref(&resource),
+            None,
+            ErfWriteOptions::default(),
+            |_resource, output| {
+                output.write_all(b"before")?;
+                Ok((6, sha1_digest(b"before")))
+            },
+            |_resource| Algorithm::None,
+        )
+        .expect("write source erf");
+        let archive =
+            read_erf(Cursor::new(encoded.into_inner()), "test.erf").expect("read source erf");
+        let mut document = ErfDocument::new(archive).expect("create editor document");
+        document
+            .apply_edit(
+                "replaceEntry",
+                &json!({
+                    "resource": "sample.utc",
+                    "contents": BASE64.encode(b"after"),
+                }),
+            )
+            .expect("replace payload");
+        let mut rewritten = Cursor::new(Vec::new());
+        document.write(&mut rewritten).expect("write edited erf");
+        let reparsed =
+            read_erf(Cursor::new(rewritten.into_inner()), "test.erf").expect("reparse edited erf");
+        assert_eq!(reparsed.build_year, 2026);
+        assert_eq!(
+            reparsed
+                .demand(&resource)
+                .expect("resource")
+                .read_all(CachePolicy::Bypass)
+                .expect("payload"),
+            b"after"
+        );
+    }
+
+    #[test]
+    fn key_editor_commits_key_and_bif_as_one_resource_set() {
+        let directory = temporary_directory("key");
+        let resource = ResolvedResRef::from_filename("sample.utc")
+            .expect("resource reference")
+            .base()
+            .clone();
+        let bif = KeyBifEntry {
+            directory:         String::new(),
+            name:              "demo".to_string(),
+            recorded_filename: Some("demo.bif".to_string()),
+            drives:            0,
+            bif_oid:           None,
+            entries:           vec![resource.clone()],
+        };
+        write_key_and_bif(
+            KeyBifVersion::V1,
+            ExoResFileCompressionType::None,
+            Algorithm::None,
+            &directory,
+            "demo",
+            "",
+            &[bif],
+            2026,
+            203,
+            None,
+            |_resource, output| {
+                output.write_all(b"before")?;
+                Ok((6, sha1_digest(b"before")))
+            },
+        )
+        .expect("write key set");
+
+        let table = read_key_table_from_file(directory.join("demo.key")).expect("read key");
+        let mut document = KeyDocument::new(table).expect("create key editor");
+        assert_eq!(document.entry_by_resource.get("sample.utc"), Some(&0));
+        assert_eq!(document.bif_by_resref.get(&resource), Some(&0));
+        let snapshot = document.snapshot(&json!({}));
+        assert_eq!(
+            snapshot
+                .pointer("/entries/0/bifIndex")
+                .and_then(Value::as_u64),
+            Some(0)
+        );
+        assert_eq!(
+            snapshot.pointer("/entries/0/bif").and_then(Value::as_str),
+            Some("demo.bif")
+        );
+        document
+            .apply_edit(
+                "replaceEntry",
+                &json!({
+                    "resource": "sample.utc",
+                    "contents": BASE64.encode(b"after"),
+                }),
+            )
+            .expect("replace key payload");
+        document
+            .write_atomic(&directory.join("demo.key"))
+            .expect("transactional key write");
+
+        let reparsed = read_key_table_from_file(directory.join("demo.key")).expect("reparse key");
+        assert_eq!(
+            reparsed
+                .demand(&resource)
+                .expect("resource")
+                .read_all(CachePolicy::Bypass)
+                .expect("payload"),
+            b"after"
+        );
+
+        let key_path = directory.join("demo.key");
+        let mut editor = EditorDocument::open(key_path.clone(), false, NwnTextContext::default())
+            .expect("open key editor document");
+        let plan = editor
+            .build_save_as_plan(&key_path)
+            .expect("build KEY save plan");
+        assert_eq!(plan.targets.len(), 2);
+        assert_eq!(plan.conflicts.len(), 2);
+        let confirmation_token = plan
+            .confirmation_token
+            .expect("existing KEY set requires confirmation");
+        let error = editor
+            .save_as(key_path.clone(), None)
+            .expect_err("unconfirmed KEY overwrite must fail");
+        assert!(error.contains("SAVE_AS_CONFIRMATION_REQUIRED"));
+        editor
+            .save_as(
+                directory.join("demo.key"),
+                Some(confirmation_token.as_str()),
+            )
+            .expect("confirmed KEY overwrite");
+
+        let backup_path = directory.join("demo.resource-backup");
+        editor
+            .backup(backup_path.clone())
+            .expect("stream KEY/BIF backup");
+        let backup_bytes = fs::read(&backup_path).expect("read backup header");
+        assert_eq!(
+            backup_bytes.get(..BACKUP_MAGIC.len()),
+            Some(BACKUP_MAGIC.as_slice())
+        );
+        drop(editor);
+        fs::remove_file(directory.join("demo.key")).expect("remove source KEY");
+        fs::remove_file(directory.join("demo.bif")).expect("remove source BIF");
+        let restored = EditorDocument::from_backup(
+            directory.join("demo.key"),
+            backup_path,
+            false,
+            NwnTextContext::default(),
+        )
+        .expect("restore streaming KEY/BIF backup");
+        assert_eq!(
+            restored
+                .content
+                .read_entry("sample.utc")
+                .expect("read restored resource"),
+            b"after"
+        );
+        fs::remove_dir_all(directory).expect("remove temporary directory");
+    }
+
+    #[test]
+    fn streaming_backup_roundtrips_edits_without_base64_envelopes() {
+        let directory = temporary_directory("stream-backup");
+        let source_path = directory.join("demo.2da");
+        let backup_path = directory.join("demo.resource-backup");
+        fs::write(&source_path, b"2DA V2.0\n\nValue\n0 before\n").expect("write source");
+        let mut document =
+            EditorDocument::open(source_path.clone(), false, NwnTextContext::default())
+                .expect("open 2DA document");
+        let edit = serde_json::from_value(json!({
+            "action": "set2daCell",
+            "row": 0,
+            "column": "Value",
+            "value": "after",
+        }))
+        .expect("decode typed 2DA edit");
+        document.apply_edit(&edit).expect("edit 2DA");
+        document
+            .backup(backup_path.clone())
+            .expect("write streaming backup");
+        let backup = fs::read(&backup_path).expect("read backup");
+        assert_eq!(
+            backup.get(..BACKUP_MAGIC.len()),
+            Some(BACKUP_MAGIC.as_slice())
+        );
+        assert!(!backup.windows(10).any(|window| window == b"contents\":"));
+
+        let mut restored =
+            EditorDocument::from_backup(source_path, backup_path, false, NwnTextContext::default())
+                .expect("restore backup");
+        let snapshot = restored
+            .snapshot(&ResourceViewOptions::default())
+            .expect("snapshot restored 2DA");
+        let snapshot = serde_json::to_value(snapshot).expect("encode typed snapshot");
+        assert_eq!(
+            snapshot
+                .pointer("/data/rows/0/cells/0")
+                .and_then(Value::as_str),
+            Some("after")
+        );
+        fs::remove_dir_all(directory).expect("remove temporary directory");
+    }
+
+    #[test]
+    fn streaming_key_backup_rejects_unsafe_manifest_paths() {
+        for value in ["../outside.bif", "/absolute.bif", ".", "C:\\outside.bif"] {
+            assert!(
+                safe_backup_relative_path(value).is_err(),
+                "{value} must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn key_commit_rollback_restores_every_original_before_cleanup() {
+        let directory = temporary_directory("key-rollback");
+        let staging = directory.join(".staging");
+        let rollback = staging.join(".rollback");
+        fs::create_dir_all(&rollback).expect("create rollback directory");
+        let target = directory.join("demo.key");
+        let original = rollback.join("demo.key");
+        fs::write(&target, b"replacement").expect("write replacement");
+        fs::write(&original, b"original").expect("write original backup");
+
+        let result = fail_key_commit(
+            &staging,
+            &[KeyCommitRecord {
+                target:    target.clone(),
+                original:  Some(original),
+                installed: true,
+            }],
+            "injected commit failure".to_string(),
+        );
+
+        let error = result.expect_err("commit must report failure");
+        assert!(error.contains("All original files were restored"));
+        assert_eq!(
+            fs::read(&target).expect("read restored target"),
+            b"original"
+        );
+        assert!(!staging.exists());
+        fs::remove_dir_all(directory).expect("remove temporary directory");
+    }
+
+    #[test]
+    fn key_commit_rollback_preserves_recovery_data_when_restore_is_incomplete() {
+        let directory = temporary_directory("key-recovery");
+        let staging = directory.join(".staging");
+        let rollback = staging.join(".rollback");
+        fs::create_dir_all(&rollback).expect("create rollback directory");
+        let target = directory.join("demo.key");
+        fs::create_dir(&target).expect("create conflicting target directory");
+        let original = rollback.join("demo.key");
+        fs::write(&original, b"original").expect("write original backup");
+
+        let result = fail_key_commit(
+            &staging,
+            &[KeyCommitRecord {
+                target:    target.clone(),
+                original:  Some(original.clone()),
+                installed: true,
+            }],
+            "injected commit failure".to_string(),
+        );
+
+        let error = result.expect_err("commit must report rollback failure");
+        assert!(error.contains("Rollback was incomplete"));
+        assert!(error.contains(&nwnrs_nwscript::physical_path_display(&staging)));
+        assert!(staging.exists());
+        assert_eq!(
+            fs::read(&original).expect("recovery backup must remain"),
+            b"original"
+        );
+        fs::remove_dir_all(directory).expect("remove temporary directory");
+    }
+}

@@ -1,47 +1,58 @@
-# nwnrs-types
+# NWN text encoding
 
-`nwnrs-types` is the workspace policy boundary for text encoding.
+`nwnrs-types` is the workspace policy boundary for text stored by Neverwinter
+Nights. Native resources are byte-oriented and do not use UTF-8.
 
-## Why This Crate Exists
+## Explicit policy
 
-NWN stores text in a non-UTF-8 encoding that varies by platform and language.
-Without a central policy boundary, every format crate would embed its own
-encoding assumptions and diverge silently. This crate makes the workspace
-encoding policy explicit and gives all format crates a single place to
-transcode NWN byte storage to and from Rust `String` values.
+Every native reader, writer, resource manager, and editor session receives an
+immutable `NwnTextContext`. There is no process-global or thread-local
+encoding. The currently supported language mapping is:
 
-## Scope
+- English, French, German, Italian, and Spanish: Windows-1252
+- Polish: Windows-1250
 
-- define the default NWN text encoding
-- detect host-native encoding when needed
-- expose conversion routines between NWN byte storage and Rust `String` values
-- make encoding policy explicit instead of scattering it across format crates
+`LegacyEncoding` names these code pages. `NwnTextContext` carries both the NWN
+language identifier and its selected encoding. Callers must derive it from the
+package, installed-game language, embedded resource language, or an explicit
+standalone choice.
 
-The central operations are `to_nwnrs_encoding`, `from_nwnrs_encoding`,
-`to_native_encoding`, and `from_native_encoding`.
+## Lossless native text
 
-## Public Surface
+`NwnText` preserves:
 
-- `get_nwnrs_encoding`
-- `get_nwnrs_encoding_name`
-- `set_nwnrs_encoding`
-- `from_nwnrs_encoding`
-- `to_nwnrs_encoding`
-- `get_native_encoding`
-- `get_native_encoding_name`
-- `detect_system_native_encoding`
-- `set_native_encoding`
-- `from_native_encoding`
-- `to_native_encoding`
-- `UnknownEncodingError`
-- `EncodingConversionError`
+- decoded legacy text
+- bytes undefined by the selected code page as opaque segments
+- NWN `<cRGB>` color starts with their exact three RGB bytes
+- `</c>` color ends
 
-## Non-goals
+Unknown angle-bracket content, including TLK-style tokens, remains ordinary
+text. An unchanged value emits its original bytes. Edited text is encoded
+strictly, while opaque and control segments are copied exactly.
 
-- provide a complete transcoding framework for arbitrary encodings
-- own higher-level localization semantics
+For text formats whose parsers retain authored layout in strings,
+`decode_legacy_preserving` maps opaque bytes to a private internal scalar and
+`encode_legacy_preserving` reverses that mapping. This representation is an
+implementation detail for lossless parsing, not a Unicode file format.
+
+## Public surface
+
+- `LegacyEncoding`
+- `NwnTextContext`
+- `NwnText`
+- `NwnTextSegment`
+- `encode_legacy` and `decode_legacy`
+- `encode_legacy_preserving` and `decode_legacy_preserving`
+- `decode_legacy_lossy` for display-only fallback
+- `display_legacy_preserving`
+- `EncodingConversionError` and `UnknownEncodingError`
+
+Modern nwnrs-owned files such as TOML, JSON, TypeScript, and Markdown remain
+UTF-8. Strict engine identifiers use their own ASCII/byte-bounded types instead
+of the human-text encoding policy.
 
 ## See also
 
-- [`crate::localization`], which defines the language and string-reference
-  vocabulary built on top of this encoding layer
+- [`crate::localization`], which owns NWN language and string-reference
+  vocabulary
+- [`crate::resman`], whose managers retain one immutable text context

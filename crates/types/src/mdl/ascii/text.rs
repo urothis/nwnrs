@@ -1,13 +1,17 @@
 //! Byte-transparent MDL text conversion.
 
+use nwnrs_types::encoding::{
+    EncodingConversionError, NwnTextContext, decode_legacy_preserving, encode_legacy_preserving,
+};
+
 /// Decodes model text without requiring UTF-8.
 ///
 /// Cleanmodels treats ASCII MDL input as an arbitrary byte stream carried in
 /// strings. Mapping each byte to the same-valued Unicode scalar gives the Rust
 /// parser equivalent byte-transparent behavior while retaining its `String`
 /// based syntax tree.
-pub(crate) fn decode_model_text(bytes: &[u8]) -> String {
-    bytes.iter().copied().map(char::from).collect()
+pub(crate) fn decode_model_text(bytes: &[u8], context: NwnTextContext) -> String {
+    decode_legacy_preserving(context.encoding(), bytes)
 }
 
 /// Encodes model text while reversing [`decode_model_text`].
@@ -15,30 +19,11 @@ pub(crate) fn decode_model_text(bytes: &[u8]) -> String {
 /// Scalars from `U+0000` through `U+00FF` are emitted as one byte so decoded
 /// source bytes round-trip exactly. Scalars above `U+00FF` supplied through
 /// the `&str` APIs retain their normal UTF-8 representation.
-pub(crate) fn encode_model_text(text: &str) -> Vec<u8> {
-    let mut bytes = Vec::with_capacity(model_text_byte_len(text));
-    for character in text.chars() {
-        let value = u32::from(character);
-        if let Ok(byte) = u8::try_from(value) {
-            bytes.push(byte);
-        } else {
-            let mut encoded = [0_u8; 4];
-            bytes.extend_from_slice(character.encode_utf8(&mut encoded).as_bytes());
-        }
-    }
-    bytes
-}
-
-pub(crate) fn model_text_byte_len(text: &str) -> usize {
-    text.chars()
-        .map(|character| {
-            if u32::from(character) <= u32::from(u8::MAX) {
-                1
-            } else {
-                character.len_utf8()
-            }
-        })
-        .sum()
+pub(crate) fn encode_model_text(
+    text: &str,
+    context: NwnTextContext,
+) -> Result<Vec<u8>, EncodingConversionError> {
+    encode_legacy_preserving(context.encoding(), text)
 }
 
 /// Parses ordinary Rust floats and the non-standard spellings emitted by
@@ -57,21 +42,31 @@ pub(crate) fn parse_legacy_f32(value: &str) -> Option<f32> {
 
 #[cfg(test)]
 mod tests {
-    use super::{decode_model_text, encode_model_text, model_text_byte_len, parse_legacy_f32};
+    use nwnrs_types::encoding::NwnTextContext;
+
+    use super::{decode_model_text, encode_model_text, parse_legacy_f32};
 
     #[test]
     fn arbitrary_bytes_roundtrip() {
         let bytes = b"demo\x80\xff";
-        let decoded = decode_model_text(bytes);
-        assert_eq!(encode_model_text(&decoded), bytes);
-        assert_eq!(model_text_byte_len(&decoded), bytes.len());
+        let context = NwnTextContext::english();
+        let decoded = decode_model_text(bytes, context);
+        assert_eq!(encode_model_text(&decoded, context).expect("encode"), bytes);
+        assert_eq!(
+            encode_model_text(&decoded, context).expect("encode").len(),
+            bytes.len()
+        );
     }
 
     #[test]
-    fn unicode_str_input_remains_utf8() {
+    fn unicode_str_input_uses_windows_1252() {
         let text = "demo \u{20ac}";
-        assert_eq!(encode_model_text(text), text.as_bytes());
-        assert_eq!(model_text_byte_len(text), text.len());
+        let context = NwnTextContext::english();
+        assert_eq!(
+            encode_model_text(text, context).expect("encode"),
+            b"demo \x80"
+        );
+        assert_eq!(encode_model_text(text, context).expect("encode").len(), 6);
     }
 
     #[test]

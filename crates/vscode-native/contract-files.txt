@@ -1,0 +1,9 @@
+src/language_service.rs
+src/viewer.rs
+src/resource_editor.rs
+src/resource_contracts.rs
+../../editors/vscode-nwnrs/resource-capabilities.json
+../types/src/scene/dependency.rs
+../types/src/scene/inspection.rs
+../types/src/scene/packet.rs
+../types/src/scene/types.rs

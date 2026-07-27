@@ -1,6 +1,7 @@
 # nwnrs
 
-`nwnrs` is the command-line frontend for this workspace.
+`nwnrs` is the command-line frontend and native server launcher for this
+workspace.
 
 It is the tool you use when you want to inspect, convert, scaffold, pack,
 unpack, or package Neverwinter Nights resources without writing Rust code
@@ -16,13 +17,17 @@ cover, and how they fit together with `nwnrs-types`, `nwnrs-nwscript`, and
 `nwnrs` exposes these high-level workflows behind one executable:
 
 - inspect typed NWN resources and archives
+- compile NWScript or inspect its fully macro-expanded source
 - convert between authored and compiled representations such as `MDL`, `OBJ`,
   and image formats
-- scaffold `nwproject` workspaces for resource, ERF, and KEY/BIF packaging
+- scaffold nwpkg projects for include libraries and resource, ERF, or
+  KEY/BIF packaging
 - pack source trees back into distributable resources and archives
 - unpack existing resources and archives into editable source trees
 - work with `NWSync` manifests and repositories
 - build slim install-backed KEY/BIF package views for deployment workflows
+- identify and launch native macOS, Linux, or Windows servers with the exact matching
+  nwnrs runtime target pack
 
 ## Quick Start
 
@@ -45,6 +50,8 @@ cargo run -p nwnrs -- convert --root /path/to/NWN --user /path/to/NWN path/to/cr
 cargo run -p nwnrs -- unpack path/to/module.mod -d out/
 cargo run -p nwnrs -- pack out/ rebuilt.mod
 cargo run -p nwnrs -- compile -g -o rebuilt/script.ncs path/to/script.nss
+cargo run -p nwnrs -- expand --trace-macros path/to/script.nss
+cargo run -p nwnrs -- expand -o rebuilt/script.expanded.nss path/to/script.nss
 cargo run -p nwnrs -- compile -R -d rebuilt/scripts scripts/
 cargo run -p nwnrs -- compile -R -d rebuilt/scripts --graphviz graphs --graphviz-format svg scripts/
 cargo run -p nwnrs -- compile --optimization O0 --optimization-flag remove-dead-branches path/to/script.nss
@@ -57,7 +64,31 @@ cargo run -p nwnrs -- nwsync fetch https://example.com/manifest/abc123 -o repo/
 cargo run -p nwnrs -- nwsync prune path/to/repository --dry-run
 cargo run -p nwnrs -- nwsync prune path/to/repository
 cargo run -p nwnrs -- nwsync write path/to/resources/ output.manifest
+cargo run -p nwnrs -- run -- -module module_name
 ```
+
+Native launching discovers the Steam or Beamdog installation, the
+platform-specific NWServer executable, the adjacent runtime library, and the
+workspace or installed target packs automatically on Linux, macOS, and
+Windows.
+
+The default build enables both Cargo features:
+
+- `tooling` provides the resource, package, compiler, and NWSync commands.
+- `supervisor` provides the native `run` hypervisor.
+
+Build only the supervisor for a deployment image without pulling the resource
+toolchain into the executable:
+
+```bash
+cargo build --release --package nwnrs \
+  --no-default-features --features supervisor
+```
+
+The feature split is additive. Normal installs retain the complete CLI and its
+host-side Docker mode, while supervisor-only builds expose only the native
+`nwnrs run` interface used inside the container. A build with neither feature
+is rejected.
 
 ## Command Overview
 
@@ -65,12 +96,12 @@ cargo run -p nwnrs -- nwsync write path/to/resources/ output.manifest
 
 These commands scaffold project directories with:
 
-- `nwproject.toml`
+- `nwpkg.toml`
 - `nwpkg.lock`
 - starter source content appropriate for the requested kind
 
 Use `new` when you want a fresh directory. Use `init` when you want to turn an
-existing directory into an `nwproject`.
+existing directory into an nwpkg project.
 
 ### `inspect`
 
@@ -138,6 +169,25 @@ preserving directory hierarchy for recursive builds. SVG is the default;
 and PDF rendering require the Graphviz `dot` executable. Recompiling without
 debug output removes a stale sibling NDB.
 
+Editor and automation integrations can pass `--diagnostic-format json`. The
+command then writes newline-delimited JSON diagnostic records followed by one
+summary record. Source lines and columns are one-based. Combine it with
+`--simulate --continue-on-error` for a non-mutating whole-project check; the
+command still exits unsuccessfully when any input fails.
+
+### `expand`
+
+`expand` loads one `.nss` file with the same local, repeated `--include-dir`,
+local `nwpkg` dependency, and optional NWN installation lookup used by
+compilation. It preprocesses includes and object-like defines, collects source
+`macro_rules!` and `proc_macro!` definitions, recursively expands bang macros,
+and prints canonical NWScript to stdout without compiling or writing files.
+
+Use `--trace-macros` to write each invocation, its source location, nesting
+depth, input, and immediate output to stderr. `-o`/`--output` writes source to
+an explicit file instead; an existing file requires `--force`, and the input
+source itself is never a valid output target.
+
 `inspect` uses the same installation-backed `nwscript.nss` lookup for NCS
 action names and falls back to installed NSS resources when weaving NDB source
 references. Use its matching `--root`, `--user`, `--language`, and `--load-ovr`
@@ -157,6 +207,137 @@ The `nwsync` command family provides repository and manifest utilities:
 - fetch a manifest or repository state
 - prune unused repository content
 - write a manifest from a resource set
+
+### `run`
+
+`run` is the native macOS, Linux, and Windows launcher. It computes the
+complete server SHA-256, reads its Mach-O, ELF, or PE architecture, selects
+only the exact matching target pack, validates the runtime library
+architecture, and supervises the server process. macOS uses
+`DYLD_INSERT_LIBRARIES`; Linux uses `LD_PRELOAD`. Windows creates the server
+suspended, loads and initializes the matching runtime DLL, and resumes the
+primary thread only after initialization succeeds.
+
+On Windows, `run` is headless by default: NWServer retains its hidden native
+window and message loop for compatibility while launcher and server output is
+rendered in the terminal. Pass `--gui` to show the native control panel.
+
+When enabled, the runtime themes the native NWServer control panel. The
+title bar, background, labels, inputs, lists, buttons, checkboxes, combo boxes,
+and numeric spinners use a dark palette; orange is limited to the window
+border, focus/checked states, dropdown and spinner glyphs, and a two-pixel
+client accent line. Painting is control-local and leaves the original native
+input and command behavior intact.
+
+The launcher mirrors new server-log output to its terminal. macOS and Linux
+follow `logs.0/nwserverLog1.txt` and `logs.0/nwserverError1.txt`. Windows uses
+its native `logs` directory and follows `nwserverLog1.txt`,
+`nwserverError1.txt`, and the more detailed `nwengineLog.txt`. It cleans up the
+log followers and returns the server's exit status.
+
+On Unix the launcher forwards `TERM` and `HUP` to the server.
+Terminal `INT` (`Ctrl-C`) requests a clean NWServer shutdown. On Unix this
+sends the native interactive `quit` command; on Windows it posts `WM_QUIT` to
+the server's primary thread. Typing `quit` at the Windows launcher prompt uses
+the same path. A second shutdown request forces the server to terminate.
+Interactive terminal input is otherwise proxied directly to NWServer. The
+launcher obtains the log root from the last forwarded
+`-userdirectory` option, or uses normal NWN user-directory discovery when that
+option is absent. Pass `--no-tail-logs` before `--` to disable log mirroring.
+
+Launcher messages, NWServer console output, and followed server logs use
+structured `tracing` levels. NWServer console lines use `nwnrs::console`;
+normal server-log lines are `INFO`; error-log lines are `ERROR`; supervision
+details are `DEBUG`; forced shutdowns are `WARN`; and the injected runtime uses
+`nwnrs::runtime` for initialization and bridge diagnostics. NWScript messages
+emitted by `NWNRS_Log` use `nwnrs::script` and retain their requested level.
+Configure filtering with `RUST_LOG`, for example:
+
+```bash
+RUST_LOG=nwnrs::launcher=debug,nwnrs::console=info,nwnrs::server=info,nwnrs::runtime=info,nwnrs::script=debug nwnrs run ...
+```
+
+Color defaults to automatic terminal detection and honors `NO_COLOR`. Use
+`--color always` or `--color never` before the server path to override it. The
+launcher owns final rendering for both NWServer and injected-runtime output, so
+each emitted line uses the same color policy.
+
+Native mode is the default. With no path overrides, `nwnrs run` uses the shared
+installation discovery to locate Steam or Beamdog, selects the host NWServer
+executable, finds the platform runtime library next to `nwnrs`, and resolves
+the installed or workspace target packs. `NWNRS_RUNTIME` and
+`NWNRS_TARGET_DIR` provide environment overrides.
+
+Put `--` before NWServer options so they are forwarded without interpretation:
+
+```bash
+nwnrs run -- -module module_name -userdirectory path/to/server-home
+```
+
+The lower-level paths remain optional overrides for development and unusual
+install layouts:
+
+```bash
+nwnrs run \
+  --runtime path/to/libnwnrs_runtime_sys.dylib \
+  --targets crates/runtime/targets \
+  -- /path/to/nwserver -module module_name -userdirectory path/to/server-home
+```
+
+The full/default CLI can instead start the published Linux image through the
+host Docker daemon:
+
+```bash
+nwnrs run --docker
+```
+
+This defaults to the development tag `nwserver:local`, publishes
+`5121:5121/udp`, and mounts the `nwserver-home` volume at `/nwn/home`. Registry
+pulling is disabled by default, so a missing local tag fails instead of
+contacting Docker Hub. Registry images are selected explicitly with
+`--docker-image` and `--docker-arg pull=always`. Common overrides and exact
+server arguments can be supplied without changing the image:
+
+```bash
+nwnrs run --docker \
+  --docker-name my-server \
+  --docker-publish 127.0.0.1:5121:5121/udp \
+  --docker-arg pull=always \
+  -- -module custom
+```
+
+Use `--docker-image` for another image, `--docker-home` for another named
+volume or host path, and repeat `--docker-publish` or `--docker-arg` as needed.
+Docker arguments are long options written without their leading dashes, such
+as `--docker-arg env=NWN_MODULE=custom`; nwnrs adds the two leading dashes
+before invoking Docker.
+When any publish option is supplied it replaces the default mapping. The full
+CLI replaces itself with the local Docker client so attached input, terminal
+behavior, signals, daemon compatibility, and the final exit status stay under
+Docker's control.
+
+Docker mode is compiled only when both the `supervisor` and `tooling` features
+are present. The supervisor-only executable inside the image has no Docker
+flag, Docker dependency, or Docker-in-Docker behavior.
+
+Host Docker mode applies a read-only root filesystem, drops all Linux
+capabilities, enables `no-new-privileges`, and mounts writable tmpfs instances
+at `/nwn/run` and `/tmp`. These defaults can still be replaced by invoking
+Docker directly when an unusual deployment requires a different policy.
+
+The Docker image builds this supervisor-only executable and
+`nwnrs-runtime-sys` in a repository-root multi-stage build. The shell-free
+distroless entrypoint invokes the internal `nwnrs run --container` mode, which
+owns volume/configuration setup, process supervision, runtime injection,
+target-pack selection, signal handling, crash-log preservation, and native
+server-log following.
+
+Once injected, the runtime installs the NWScript bridge described by the
+source-controlled `include/nwnrs/nwnrs.nss` include package. It reports runtime identity,
+server state, and scoped JSON event payloads, and exposes validated
+administration operations such as session settings, ban lists, graceful
+shutdown, rules reload, TURD recovery, and deferred server-vault character
+deletion. No HTTP or metrics service is started.
 
 ## Common Workflows
 
@@ -178,12 +359,29 @@ The `nwsync` command family provides repository and manifest utilities:
 
 `nwnrs` relies on the `nwnrs-nwpkg` crate for project control files:
 
-- `nwproject.toml` describes project identity, kind, and source root
-- `nwpkg.lock` stores repack metadata that helps preserve archive structure
-  and reuse original content when possible
+- `nwpkg.toml` describes project identity, kind, and source root
+- `[dependencies]` maps include-library names to live local paths or explicitly
+  fetched Git sources; `pack` and `compile` add their resolved source roots to
+  NWScript include resolution
+- `nwpkg.lock` combines exact Git dependency pins with repack metadata that
+  preserves archive structure and enables original-content reuse
 
 That metadata is what makes unpack-edit-repack workflows more faithful than a
 blind “read everything and write everything from scratch” loop.
+
+For example, a module can consume a neighboring include package without
+copying its source into the module:
+
+```toml
+[dependencies]
+nwnrs = { path = "../include/nwnrs" }
+```
+
+Dependency paths are resolved relative to the declaring `nwpkg.toml`. Git
+dependencies accept one of `rev`, `tag`, or `branch`, an optional `subdir`, or
+no selector to follow the default branch. Use `nwnrs nwpkg fetch` to create and
+materialize pins, `nwnrs nwpkg update` to preview changes, and
+`nwnrs nwpkg update --apply` to atomically accept the preview.
 
 ## Relationship To The Other Crates
 
@@ -194,7 +392,9 @@ blind “read everything and write everything from scratch” loop.
   provides the NWScript frontend, compiler, debugger-oriented VM, and
   associated language machinery.
 - [`nwnrs-nwpkg`](https://docs.rs/nwnrs-nwpkg/latest/nwnrs_nwpkg/) provides the
-  typed `nwproject` manifest and lockfile model used by the packaging flows.
+  typed nwpkg manifest and lockfile model used by the packaging flows.
+- [`nwnrs-runtime`](https://docs.rs/nwnrs-runtime/latest/nwnrs_runtime/)
+  provides executable identification and exact target-pack validation.
 
 `nwnrs` is the operational shell that composes those crates into one CLI.
 
@@ -219,6 +419,7 @@ The command implementations live in:
 - [`pack.rs`](./src/pack.rs)
 - [`package.rs`](./src/package.rs)
 - [`project.rs`](./src/project.rs)
+- [`run.rs`](./src/run.rs)
 - [`unpack.rs`](./src/unpack.rs)
 
 The library and binary entrypoints live in:

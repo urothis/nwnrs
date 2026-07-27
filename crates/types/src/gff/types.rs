@@ -1,6 +1,10 @@
 use std::{fmt, io};
 
-use nwnrs_types::{io::prelude::*, localization::prelude::*};
+use nwnrs_types::{
+    encoding::{EncodingConversionError, NwnText},
+    io::prelude::*,
+    localization::prelude::*,
+};
 
 type GffByte = u8;
 type GffChar = i8;
@@ -249,6 +253,25 @@ impl GffField {
     pub fn value(&self) -> &GffValue {
         &self.value
     }
+
+    /// Returns mutable access to the stored value.
+    ///
+    /// Mutating a parsed field retains its on-disk provenance, allowing the
+    /// writer to preserve every unaffected field while encoding the changed
+    /// value canonically.
+    pub fn value_mut(&mut self) -> &mut GffValue {
+        &mut self.value
+    }
+
+    /// Returns byte-preserving native text values when this parsed field is
+    /// unchanged from its source representation.
+    #[must_use]
+    pub fn native_text(&self) -> &[NwnText] {
+        self.provenance
+            .as_ref()
+            .filter(|provenance| provenance.original_value == self.value)
+            .map_or(&[], |provenance| provenance.native_text.as_slice())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -257,6 +280,7 @@ pub(crate) struct GffFieldProvenance {
     pub(crate) original_value:     GffValue,
     pub(crate) raw_data_or_offset: i32,
     pub(crate) raw_field_data:     Option<Vec<u8>>,
+    pub(crate) native_text:        Vec<NwnText>,
 }
 
 /// A GFF structure containing labeled fields.
@@ -339,6 +363,52 @@ impl GffStruct {
         Ok(())
     }
 
+    /// Inserts a new field at a specific stored-order position.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GffError`] when the label is invalid or already exists.
+    pub fn insert_field(
+        &mut self,
+        index: usize,
+        label: impl Into<String>,
+        field: GffField,
+    ) -> GffResult<()> {
+        let label = label.into();
+        ensure_label(&label)?;
+        if self.fields.iter().any(|(name, _)| *name == label) {
+            return Err(GffError::msg(format!(
+                "GFF structure already contains field {label}"
+            )));
+        }
+        self.fields
+            .insert(index.min(self.fields.len()), (label, field));
+        Ok(())
+    }
+
+    /// Renames a field without changing its stored position or value.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GffError`] when either label is invalid, the source field is
+    /// absent, or the destination label already exists.
+    pub fn rename_field(&mut self, old_label: &str, new_label: impl Into<String>) -> GffResult<()> {
+        let new_label = new_label.into();
+        ensure_label(&new_label)?;
+        if old_label != new_label && self.fields.iter().any(|(name, _)| *name == new_label) {
+            return Err(GffError::msg(format!(
+                "GFF structure already contains field {new_label}"
+            )));
+        }
+        let (label, _) = self
+            .fields
+            .iter_mut()
+            .find(|(name, _)| name == old_label)
+            .ok_or_else(|| GffError::msg(format!("GFF field not found: {old_label}")))?;
+        *label = new_label;
+        Ok(())
+    }
+
     /// Inserts or replaces a labeled value.
     ///
     /// # Errors
@@ -353,6 +423,13 @@ impl GffStruct {
     pub fn get_field(&self, label: &str) -> Option<&GffField> {
         self.fields
             .iter()
+            .find_map(|(name, field)| (name == label).then_some(field))
+    }
+
+    /// Returns mutable access to a field by label.
+    pub fn get_field_mut(&mut self, label: &str) -> Option<&mut GffField> {
+        self.fields
+            .iter_mut()
             .find_map(|(name, field)| (name == label).then_some(field))
     }
 
@@ -452,6 +529,8 @@ pub enum GffError {
     Io(io::Error),
     /// A format invariant was violated.
     Expectation(ExpectationError),
+    /// Native text could not be encoded.
+    Encoding(EncodingConversionError),
     /// The document could not be interpreted or encoded.
     Message(String),
 }
@@ -467,6 +546,7 @@ impl fmt::Display for GffError {
         match self {
             Self::Io(error) => error.fmt(f),
             Self::Expectation(error) => error.fmt(f),
+            Self::Encoding(error) => error.fmt(f),
             Self::Message(message) => f.write_str(message),
         }
     }
@@ -486,13 +566,19 @@ impl From<ExpectationError> for GffError {
     }
 }
 
+impl From<EncodingConversionError> for GffError {
+    fn from(value: EncodingConversionError) -> Self {
+        Self::Encoding(value)
+    }
+}
+
 /// A result alias for GFF operations.
 pub type GffResult<T> = Result<T, GffError>;
 
 pub(crate) fn ensure_label(label: &str) -> GffResult<()> {
     nwnrs_types::io::expect(
-        label.len() <= 16,
-        format!("invalid GFF label length for {label:?}"),
+        !label.is_empty() && label.len() <= 16 && label.is_ascii(),
+        format!("GFF labels must contain 1-16 ASCII bytes: {label:?}"),
     )?;
     Ok(())
 }

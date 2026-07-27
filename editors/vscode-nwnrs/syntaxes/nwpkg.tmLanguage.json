@@ -1,0 +1,65 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "nwpkg Manifest",
+  "scopeName": "source.nwpkg",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#tables" },
+    { "include": "#keys" },
+    { "include": "#strings" },
+    { "include": "#values" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        { "name": "comment.line.number-sign.nwpkg", "match": "#.*$" }
+      ]
+    },
+    "tables": {
+      "patterns": [
+        {
+          "name": "meta.tag.table.nwpkg",
+          "match": "^(\\s*)(\\[\\[?)([^]#]+)(\\]\\]?)(?=\\s*(?:#|$))",
+          "captures": {
+            "2": { "name": "punctuation.definition.table.begin.nwpkg" },
+            "3": { "name": "entity.name.section.nwpkg" },
+            "4": { "name": "punctuation.definition.table.end.nwpkg" }
+          }
+        }
+      ]
+    },
+    "keys": {
+      "patterns": [
+        {
+          "match": "^\\s*([A-Za-z0-9_-]+)(?=\\s*=)",
+          "captures": { "1": { "name": "variable.other.key.nwpkg" } }
+        },
+        {
+          "match": "([A-Za-z0-9_-]+)(?=\\s*=)",
+          "captures": { "1": { "name": "variable.other.key.nwpkg" } }
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.nwpkg",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [
+            { "name": "constant.character.escape.nwpkg", "match": "\\\\(?:[btnfr\"\\\\]|u[0-9A-Fa-f]{4}|U[0-9A-Fa-f]{8})" }
+          ]
+        },
+        { "name": "string.quoted.single.nwpkg", "begin": "'", "end": "'" }
+      ]
+    },
+    "values": {
+      "patterns": [
+        { "name": "constant.language.boolean.nwpkg", "match": "\\b(?:true|false)\\b" },
+        { "name": "constant.numeric.nwpkg", "match": "(?<![A-Za-z0-9_])[-+]?(?:0x[0-9A-Fa-f_]+|0o[0-7_]+|0b[01_]+|[0-9][0-9_]*(?:\\.[0-9_]+)?)(?![A-Za-z0-9_])" },
+        { "name": "keyword.operator.assignment.nwpkg", "match": "=" },
+        { "name": "punctuation.separator.nwpkg", "match": "," }
+      ]
+    }
+  }
+}

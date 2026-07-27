@@ -4,6 +4,11 @@ use std::{error::Error, fmt, str::FromStr};
 pub type StrRef = u32;
 /// The sentinel string reference used for “no string”.
 pub const BAD_STRREF: StrRef = u32::MAX;
+/// First string reference reserved for a module custom talk table.
+///
+/// The stored reference is converted to a custom-TLK row by subtracting this
+/// offset. Lower references address the installation's `dialog.tlk`.
+pub const CUSTOM_STRREF_OFFSET: StrRef = 0x0100_0000;
 
 /// A supported NWN language identifier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

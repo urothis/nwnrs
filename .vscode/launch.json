@@ -1,0 +1,15 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Run nwnrs Extension",
+      "type": "extensionHost",
+      "request": "launch",
+      "preLaunchTask": "nwnrs: Build Native Extension",
+      "args": [
+        "--extensionDevelopmentPath=${workspaceFolder}/editors/vscode-nwnrs"
+      ],
+      "outFiles": []
+    }
+  ]
+}

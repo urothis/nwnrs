@@ -1,0 +1,100 @@
+name: Native runtime checks
+
+env:
+    NWNRS_UNIFIED_COMMIT: 3d4c4e13c6bf01b032ffe90534fc4a19eb036c03
+
+on:
+    pull_request:
+        paths:
+            - crates/runtime/**
+            - crates/runtime-sys/**
+            - crates/nwnrs/**
+            - crates/nwpkg/**
+            - crates/nwscript/**
+            - include/nwnrs/**
+            - module/nwnrs_startup.nss
+            - Cargo.toml
+            - Cargo.lock
+            - .github/actions/rust-toolchain/**
+            - .github/workflows/runtime-check.yml
+
+concurrency:
+    group: ${{ github.workflow }}-${{ github.event.pull_request.head.repo.full_name
+        || github.repository }}-${{ github.head_ref || github.ref_name }}
+    cancel-in-progress: true
+
+jobs:
+    native:
+        name: ${{ matrix.name }}
+        runs-on:
+            [self-hosted, nwnrs, "${{ matrix.os_label }}", "${{ matrix.arch_label }}"]
+        timeout-minutes: 30
+        permissions:
+            contents: read
+        strategy:
+            fail-fast: false
+            matrix:
+                include:
+                    - name: macOS ARM64
+                      os_label: macOS
+                      arch_label: ARM64
+                    - name: Linux x86_64
+                      os_label: Linux
+                      arch_label: X64
+                    - name: Linux ARM64
+                      os_label: Linux
+                      arch_label: ARM64
+                    - name: Windows x86_64
+                      os_label: Windows
+                      arch_label: X64
+        steps:
+            - uses: actions/checkout@v6.0.3
+              with:
+                  persist-credentials: false
+            - name: Check out pinned Unified ABI source
+              uses: actions/checkout@v6.0.3
+              with:
+                  repository: nwnxee/unified
+                  ref: ${{ env.NWNRS_UNIFIED_COMMIT }}
+                  path: sources/unified
+                  persist-credentials: false
+            - uses: ./.github/actions/rust-toolchain
+            - name: Configure LLVM on Windows
+              if: runner.os == 'Windows'
+              shell: pwsh
+              run: |
+                  $llvm = 'C:\Program Files\LLVM\bin'
+                  if (-not (Test-Path -LiteralPath (Join-Path $llvm 'libclang.dll'))) {
+                      throw "libclang.dll is unavailable in $llvm"
+                  }
+                  $llvm | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+                  "LIBCLANG_PATH=$llvm" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+            - name: Verify target layouts from Unified on Unix
+              if: runner.os != 'Windows'
+              run: |
+                  crates/runtime/scripts/verify-unified-abi.sh \
+                    sources/unified \
+                    target/unified-abi.toml
+            - name: Verify target layouts from Unified on Windows
+              if: runner.os == 'Windows'
+              shell: pwsh
+              run: >-
+                  powershell.exe -NoProfile -ExecutionPolicy Bypass
+                  -File crates/runtime/scripts/verify-unified-abi.ps1
+                  sources/unified target/unified-abi.toml
+            - name: Run Frida Gum interception probe
+              run: cargo run --locked --package nwnrs-runtime-sys --example frida-probe
+            - name: Enforce event subscription hot-path budget
+              run: >-
+                  cargo run --locked --release --package nwnrs-runtime
+                  --example event-hot-path
+            - name: Test launcher and injected runtime on Unix
+              if: runner.os != 'Windows'
+              run: crates/runtime-sys/scripts/test-native-runtime.sh
+            - name: Test launcher and injected runtime on Windows
+              if: runner.os == 'Windows'
+              shell: pwsh
+              run: >-
+                  powershell.exe -NoProfile -ExecutionPolicy Bypass
+                  -File crates/runtime-sys/scripts/test-native-runtime.ps1
+                  -SkipGui

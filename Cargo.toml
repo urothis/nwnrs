@@ -11,14 +11,18 @@ repository = "https://github.com/urothis/nwnrs"
 homepage = "https://github.com/urothis/nwnrs"
 
 [workspace.dependencies]
+arc-swap = { version = "1.9", default-features = false }
 argh = { version = "0.1", default-features = false, features = ["help"] }
-base64 = { version = "0.22", default-features = false, features = ["std"] }
-codepage = { version = "0.1", default-features = false }
+base64 = { version = "0.23", default-features = false, features = ["std"] }
+cc = { version = "1.4", default-features = false }
 encoding_rs = { version = "0.8", default-features = false, features = [
     "alloc",
 ] }
 flate2 = { version = "1.1", default-features = false, features = [
     "rust_backend",
+] }
+frida-gum-sys = { version = "0.17.2", default-features = false, features = [
+    "auto-download",
 ] }
 image = { version = "0.25", default-features = false, features = [
     "jpeg",
@@ -28,6 +32,7 @@ image = { version = "0.25", default-features = false, features = [
 ] }
 indexmap = { version = "2.14", default-features = false }
 md5 = { version = "0.8", default-features = false }
+nix = { version = "0.31", default-features = false, features = ["signal"] }
 reqwest = { version = "0.13", default-features = false, features = [
     "json",
     "rustls",
@@ -46,18 +51,25 @@ serde-wasm-bindgen = { version = "0.6", default-features = false, features = [
 ] }
 sha1 = { version = "0.11", default-features = false }
 sha2 = { version = "0.11", default-features = false }
+same-file = { version = "1.0" }
 tracing = { version = "0.1", default-features = false, features = [
     "attributes",
     "std",
 ] }
 tracing-subscriber = { version = "0.3", default-features = false, features = [
+    "ansi",
     "env-filter",
     "fmt",
 ] }
-tokio = { version = "1.52", default-features = false, features = ["full"] }
+tokio = { version = "1.53", default-features = false, features = ["full"] }
 texpresso = { version = "2.0", default-features = false }
 toml = { version = "1.1" }
+toml_parser = { version = "1.1", default-features = false, features = ["alloc", "std"] }
+ts-rs = { version = "12.0.1", default-features = false, features = ["serde-compat"] }
+tempfile = { version = "3.27" }
+url = { version = "2.5", default-features = false, features = ["std"] }
 winreg = { version = "0.56", default-features = false }
+windows-sys = { version = "0.61", default-features = false }
 zstd = { version = "0.13", default-features = false, features = [
     "arrays",
     "legacy",

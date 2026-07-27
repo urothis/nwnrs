@@ -13,11 +13,16 @@ keywords = ["nwn", "neverwinter-nights", "nwscript", "compiler", "ncs"]
 categories = ["compilers", "parser-implementations", "game-development"]
 
 [dependencies]
-nwnrs-types = { path = "../types", version = "0.0.1", default-features = false, features = ["io", "resman"] }
+nwnrs-types = { path = "../types", version = "0.0.1", default-features = false, features = ["encoding", "io", "resman"] }
 serde.workspace = true
+tempfile.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+same-file.workspace = true
 
 [dev-dependencies]
 nwnrs-types = { path = "../types", version = "0.0.1", features = ["install"] }
+serde_json.workspace = true
 
 [lints]
 workspace = true

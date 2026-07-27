@@ -1,6 +1,7 @@
 use std::error::Error;
 
 use nwnrs_types::{
+    encoding::{LegacyEncoding, NwnText, NwnTextContext},
     mdl::{
         AsciiModel, AsciiPayloadKind, BinaryModel, BinaryToAsciiOptions, MODEL_RES_TYPE,
         lower_binary_model_to_ascii, lower_binary_model_to_ascii_with_options, parse_ascii_model,
@@ -67,11 +68,12 @@ fn canonical_write_roundtrips_through_parse() -> Result<(), Box<dyn Error>> {
     };
 
     let mut encoded = Vec::new();
-    if let Err(error) = write_ascii_model(&mut encoded, &parsed) {
+    if let Err(error) = write_ascii_model(&mut encoded, &parsed, NwnTextContext::english()) {
         panic!("write ascii model: {error}");
     }
 
-    let reparsed = parse_ascii_model(&String::from_utf8_lossy(&encoded)).unwrap_or_else(|error| {
+    let text = NwnText::decode(&encoded, LegacyEncoding::Windows1252).display_text();
+    let reparsed = parse_ascii_model(&text).unwrap_or_else(|error| {
         panic!("reparse canonical text: {error}");
     });
 

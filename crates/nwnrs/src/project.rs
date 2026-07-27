@@ -8,7 +8,7 @@ use nwnrs_nwpkg::{
     ProjectKind, ProjectLayout, write_new_erf_pack_metadata, write_new_key_pack_metadata,
     write_new_resource_pack_metadata, write_project_manifest,
 };
-use nwnrs_types::prelude::*;
+use nwnrs_types::{encoding::NwnTextContext, prelude::*};
 
 use crate::{
     args::{InitCmd, NewCmd},
@@ -33,14 +33,24 @@ pub(crate) fn run_new(cmd: NewCmd) -> Result<(), String> {
 
 fn scaffold_project(target: &Path, kind: &ProjectKind) -> Result<(), String> {
     let project_name = project_name_for_path(target)?;
-    let output_kind = project_output_kind(*kind)?;
     match kind.layout() {
+        ProjectLayout::Include => scaffold_include_project(target, &project_name),
         ProjectLayout::Resource => {
-            scaffold_resource_project(target, &project_name, *kind, output_kind)
+            scaffold_resource_project(target, &project_name, *kind, project_output_kind(*kind)?)
         }
         ProjectLayout::Erf => scaffold_erf_project(target, &project_name, *kind),
         ProjectLayout::Key => scaffold_key_project(target, &project_name, *kind),
     }
+}
+
+fn scaffold_include_project(target: &Path, project_name: &str) -> Result<(), String> {
+    let file_name = format!("{project_name}.nss");
+    let file_path = target.join(&file_name);
+    ensure_output_file_ready(&file_path, false)?;
+    fs::write(&file_path, format!("/// {project_name} include library.\n"))
+        .map_err(|error| format!("failed to write {}: {error}", file_path.display()))?;
+    write_project_manifest(target, ProjectKind::Include, project_name, ".", false)?;
+    Ok(())
 }
 
 fn resolve_project_kind(kind: Option<String>) -> Result<ProjectKind, String> {
@@ -142,7 +152,8 @@ fn scaffold_resource_project(
     } else {
         kind.as_str()
     };
-    write_new_resource_pack_metadata(target, source_kind, &file_name, false)
+    write_new_resource_pack_metadata(target, source_kind, &file_name, false)?;
+    Ok(())
 }
 
 fn scaffold_erf_project(
@@ -159,7 +170,8 @@ fn scaffold_erf_project(
         &infer_erf_type(Path::new(&format!("placeholder.{kind}")), None),
         erf::ErfVersion::V1,
         false,
-    )
+    )?;
+    Ok(())
 }
 
 fn scaffold_key_project(
@@ -171,7 +183,8 @@ fn scaffold_key_project(
     fs::create_dir_all(&source_root)
         .map_err(|error| format!("failed to create {}: {error}", source_root.display()))?;
     write_project_manifest(target, kind, project_name, "data", false)?;
-    write_new_key_pack_metadata(target, false)
+    write_new_key_pack_metadata(target, false)?;
+    Ok(())
 }
 
 fn write_resource_starter(
@@ -185,7 +198,7 @@ fn write_resource_starter(
         Kind::Gff => {
             let mut bytes = Cursor::new(Vec::new());
             let root = gff::GffRoot::new(gff_file_type_from_extension(manifest_kind));
-            gff::write_gff_root(&mut bytes, &root)
+            gff::write_gff_root(&mut bytes, &root, NwnTextContext::default())
                 .map_err(|error| format!("failed to write {}: {error}", path.display()))?;
             fs::write(path, bytes.into_inner())
                 .map_err(|error| format!("failed to write {}: {error}", path.display()))
@@ -197,7 +210,7 @@ fn write_resource_starter(
                 .set_columns(vec!["Label".to_string()])
                 .map_err(|error| format!("failed to build {}: {error}", path.display()))?;
             table.set_row(0, vec![Some(project_name.to_string())]);
-            twoda::write_twoda(&mut bytes, &table, false)
+            twoda::write_twoda(&mut bytes, &table, false, NwnTextContext::default())
                 .map_err(|error| format!("failed to write {}: {error}", path.display()))?;
             fs::write(path, bytes)
                 .map_err(|error| format!("failed to write {}: {error}", path.display()))
@@ -275,6 +288,9 @@ fn write_resource_starter(
 }
 
 fn project_output_kind(kind: ProjectKind) -> Result<Kind, String> {
+    if kind == ProjectKind::Include {
+        return Err("include projects do not produce a packed resource".to_string());
+    }
     detect_kind(Path::new(&format!("placeholder.{kind}")))
         .ok_or_else(|| format!("unsupported project kind: {kind}"))
 }
@@ -313,7 +329,7 @@ fn project_name_for_path(path: &Path) -> Result<String, String> {
     {
         return Ok(sanitize_project_name(name));
     }
-    Ok("nwproject".to_string())
+    Ok("nwpkg".to_string())
 }
 
 fn sanitize_project_name(name: &str) -> String {
@@ -328,7 +344,7 @@ fn sanitize_project_name(name: &str) -> String {
         })
         .collect::<String>();
     if sanitized.is_empty() {
-        "nwproject".to_string()
+        "nwpkg".to_string()
     } else {
         sanitized
     }
@@ -377,7 +393,7 @@ mod tests {
         })
         .expect("scaffold utc project");
 
-        assert!(target.join("nwproject.toml").is_file());
+        assert!(target.join("nwpkg.toml").is_file());
         assert!(target.join("nwpkg.lock").is_file());
         assert!(target.join(format!("{expected_name}.utc")).is_file());
 
@@ -425,6 +441,23 @@ mod tests {
             .expect("read lock")
             .expect("erf lock present");
         assert_eq!(metadata.file_type, "MOD ");
+
+        let _ = fs::remove_dir_all(target);
+    }
+
+    #[test]
+    fn new_scaffolds_include_project_without_artifact_lock() {
+        let target = unique_test_dir("new-include-project");
+        let expected_name = project_name_for_path(&target).expect("derive project name");
+        run_new(NewCmd {
+            kind: Some("include".to_string()),
+            path: target.clone(),
+        })
+        .expect("scaffold include project");
+
+        assert!(target.join("nwpkg.toml").is_file());
+        assert!(target.join(format!("{expected_name}.nss")).is_file());
+        assert!(!target.join("nwpkg.lock").exists());
 
         let _ = fs::remove_dir_all(target);
     }

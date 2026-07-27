@@ -6,7 +6,7 @@ use std::{
 };
 
 use image::{DynamicImage, ImageFormat, RgbaImage};
-use nwnrs_types::{install, prelude::*};
+use nwnrs_types::{encoding::NwnTextContext, install, prelude::*};
 use tracing::info;
 
 use crate::{args::ConvertCmd, util::ensure_output_file_ready};
@@ -52,6 +52,12 @@ pub(crate) fn run_convert(cmd: &ConvertCmd) -> Result<(), String> {
     Ok(())
 }
 
+fn convert_text_context(cmd: &ConvertCmd) -> Result<NwnTextContext, String> {
+    let language =
+        localization::resolve_language(&cmd.language).map_err(|error| error.to_string())?;
+    Ok(NwnTextContext::for_language_id(language.id()))
+}
+
 fn is_obj_conversion(output: &Path) -> Result<bool, String> {
     Ok(output_extension(output)? == "obj")
 }
@@ -75,12 +81,13 @@ fn run_convert_obj(cmd: &ConvertCmd) -> Result<(), String> {
 
     match input_ext.as_str() {
         "mdl" => {
-            let scene = mdl::NwnScene::from_auto_file(&cmd.input).map_err(|error| {
-                format!(
-                    "failed to parse {} as scene MDL: {error}",
-                    cmd.input.display()
-                )
-            })?;
+            let scene = mdl::NwnScene::from_auto_file(&cmd.input, convert_text_context(cmd)?)
+                .map_err(|error| {
+                    format!(
+                        "failed to parse {} as scene MDL: {error}",
+                        cmd.input.display()
+                    )
+                })?;
             let scene = snapshot_scene_for_export(&scene, cmd)?;
             let mut output_file = File::create(output)
                 .map_err(|error| format!("failed to create {}: {error}", output.display()))?;
@@ -88,7 +95,7 @@ fn run_convert_obj(cmd: &ConvertCmd) -> Result<(), String> {
                 .map_err(|error| format!("failed to write {}: {error}", output.display()))
         }
         "utc" => {
-            let root = read_gff_root_from_file(&cmd.input)?;
+            let root = read_gff_root_from_file(&cmd.input, convert_text_context(cmd)?)?;
             let mut resman = build_install_resman(cmd)?;
             let composed =
                 mdl::compose_player_creature_from_utc(&mut resman, &root).map_err(|error| {
@@ -125,7 +132,7 @@ fn run_convert_model(cmd: &ConvertCmd) -> Result<(), String> {
         return Err("mdl conversion to obj should have been handled earlier".to_string());
     }
 
-    let parsed = mdl::ParsedModel::from_file(&cmd.input)
+    let parsed = mdl::ParsedModel::from_file(&cmd.input, convert_text_context(cmd)?)
         .map_err(|error| format!("failed to parse {} as MDL: {error}", cmd.input.display()))?;
     let mut output_bytes = Vec::new();
 
@@ -158,7 +165,7 @@ fn run_convert_model(cmd: &ConvertCmd) -> Result<(), String> {
                     cmd.input.display()
                 )
             })?;
-            mdl::write_ascii_model(&mut output_bytes, &ascii)
+            mdl::write_ascii_model(&mut output_bytes, &ascii, convert_text_context(cmd)?)
                 .map_err(|error| format!("failed to encode {}: {error}", output.display()))?;
         }
     }
@@ -267,10 +274,13 @@ fn output_extension(path: &Path) -> Result<String, String> {
         .ok_or_else(|| format!("failed to infer format from {}", path.display()))
 }
 
-fn read_gff_root_from_file(path: &Path) -> Result<gff::GffRoot, String> {
+fn read_gff_root_from_file(
+    path: &Path,
+    text_context: NwnTextContext,
+) -> Result<gff::GffRoot, String> {
     let bytes = std::fs::read(path)
         .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
-    gff::read_gff_root(&mut Cursor::new(bytes))
+    gff::read_gff_root(&mut Cursor::new(bytes), text_context)
         .map_err(|error| format!("failed to parse {}: {error}", path.display()))
 }
 
@@ -330,16 +340,17 @@ fn run_list_animations(cmd: &ConvertCmd) -> Result<(), String> {
     let input_ext = output_extension(&cmd.input)?;
     let animations = match input_ext.as_str() {
         "mdl" => {
-            let scene = mdl::NwnScene::from_auto_file(&cmd.input).map_err(|error| {
-                format!(
-                    "failed to parse {} as scene MDL: {error}",
-                    cmd.input.display()
-                )
-            })?;
+            let scene = mdl::NwnScene::from_auto_file(&cmd.input, convert_text_context(cmd)?)
+                .map_err(|error| {
+                    format!(
+                        "failed to parse {} as scene MDL: {error}",
+                        cmd.input.display()
+                    )
+                })?;
             mdl::scene_animation_names(&scene)
         }
         "utc" => {
-            let root = read_gff_root_from_file(&cmd.input)?;
+            let root = read_gff_root_from_file(&cmd.input, convert_text_context(cmd)?)?;
             let mut resman = build_install_resman(cmd)?;
             let composed =
                 mdl::compose_player_creature_from_utc(&mut resman, &root).map_err(|error| {
@@ -409,6 +420,7 @@ mod tests {
 
     use image::{DynamicImage, ImageFormat, RgbImage, RgbaImage};
     use nwnrs_types::{
+        encoding::NwnTextContext,
         prelude::{dds, mdl, tga},
         resman::CachePolicy,
         test_support::{
@@ -587,7 +599,8 @@ mod tests {
         run_convert(&base_convert_cmd(input, output.clone()))
             .expect("convert compiled mdl to ascii");
 
-        let ascii = mdl::AsciiModel::from_file(&output).expect("read canonical ascii mdl");
+        let ascii = mdl::AsciiModel::from_file(&output, NwnTextContext::english())
+            .expect("read canonical ascii mdl");
         assert_eq!(ascii.geometry_name, "a_ba2");
         assert!(!ascii.to_text().contains("# nwnrs-compiled-source begin"));
         Ok(())
@@ -663,7 +676,7 @@ mod tests {
         let binary = mdl::BinaryModel::from_res(&res, CachePolicy::Use)?;
         let ascii = mdl::lower_binary_model_to_ascii(&binary)?;
         let mut bytes = Vec::new();
-        mdl::write_ascii_model(&mut bytes, &ascii)?;
+        mdl::write_ascii_model(&mut bytes, &ascii, NwnTextContext::english())?;
         Ok(materialize_bytes_to_temp_file(&bytes, "a_ba2_ascii.mdl")?)
     }
 
@@ -674,7 +687,7 @@ mod tests {
             Ok(path) => path,
             Err(error) => return skip_if_game_resources_unavailable(error),
         };
-        let scene = mdl::NwnScene::from_auto_file(&input)?;
+        let scene = mdl::NwnScene::from_auto_file(&input, NwnTextContext::english())?;
         let available = mdl::scene_animation_names(&scene);
         assert!(!available.is_empty(), "fixture should expose animations");
 

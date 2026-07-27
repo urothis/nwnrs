@@ -4,7 +4,7 @@ version = "0.0.1"
 edition.workspace = true
 license.workspace = true
 publish = true
-description = "Typed nwproject manifest and lockfile behavior for Neverwinter Nights package workflows"
+description = "Typed nwpkg manifest and lockfile behavior for Neverwinter Nights package workflows"
 repository.workspace = true
 homepage.workspace = true
 documentation = "https://docs.rs/nwnrs-nwpkg"
@@ -13,6 +13,8 @@ keywords = ["nwn", "neverwinter-nights", "package", "toml", "json"]
 categories = ["config", "game-development"]
 
 [dependencies]
+nwnrs-nwscript = { path = "../nwscript", version = "0.0.1" }
+nwnrs-runtime = { path = "../runtime", version = "0.0.1" }
 nwnrs-types = { path = "../types", version = "0.0.1", default-features = false, features = [
     "checksums",
     "compressedbuf",
@@ -22,7 +24,11 @@ nwnrs-types = { path = "../types", version = "0.0.1", default-features = false, 
 ] }
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 toml.workspace = true
+toml_parser.workspace = true
+tempfile.workspace = true
+url.workspace = true
 
 [lints]
 workspace = true

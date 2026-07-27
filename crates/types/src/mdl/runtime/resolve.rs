@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use nwnrs_types::{
+    encoding::NwnTextContext,
     mtr::{MTR_RES_TYPE, MtrMaterial},
     resman::{CachePolicy, Res, ResMan, ResRef, ResType, ResolvedResRef, get_res_type},
     txi::TxiFile,
@@ -265,7 +266,14 @@ pub fn resolve_scene_texture_ref(
     resman: &mut ResMan,
     options: &TextureResolverOptions,
 ) -> Result<ResolvedTexture, UnresolvedTexture> {
-    match resolve_scene_texture_ref_with_policy(scene, material, texture, resman, options) {
+    match resolve_scene_texture_ref_with_context(
+        scene,
+        material,
+        texture,
+        resman,
+        options,
+        resman.text_context(),
+    ) {
         SceneTextureResolution::Resolved(hit) => Ok(hit),
         SceneTextureResolution::Ignored => Err(UnresolvedTexture {
             texture:   texture.clone(),
@@ -284,6 +292,18 @@ pub fn resolve_scene_texture_ref_with_policy(
     resman: &mut ResMan,
     options: &TextureResolverOptions,
 ) -> SceneTextureResolution {
+    let text_context = resman.text_context();
+    resolve_scene_texture_ref_with_context(scene, material, texture, resman, options, text_context)
+}
+
+fn resolve_scene_texture_ref_with_context(
+    scene: &NwnScene,
+    material: &NwnMaterial,
+    texture: &NwnTextureRef,
+    resman: &mut ResMan,
+    options: &TextureResolverOptions,
+    text_context: NwnTextContext,
+) -> SceneTextureResolution {
     let mut visited_models = BTreeSet::new();
     resolve_scene_texture_ref_internal(
         scene,
@@ -291,6 +311,7 @@ pub fn resolve_scene_texture_ref_with_policy(
         texture,
         resman,
         options,
+        text_context,
         &mut visited_models,
     )
 }
@@ -303,11 +324,19 @@ pub fn resolve_material_textures(
     resman: &mut ResMan,
     options: &TextureResolverOptions,
 ) -> ResolvedMaterialTextures {
+    let text_context = resman.text_context();
     let mut resolved = Vec::new();
     let mut missing = Vec::new();
 
     for texture in &material.textures {
-        match resolve_scene_texture_ref_with_policy(scene, material, texture, resman, options) {
+        match resolve_scene_texture_ref_with_context(
+            scene,
+            material,
+            texture,
+            resman,
+            options,
+            text_context,
+        ) {
             SceneTextureResolution::Resolved(hit) => resolved.push(hit),
             SceneTextureResolution::Ignored => {}
             SceneTextureResolution::Missing(miss) => missing.push(miss),
@@ -349,12 +378,20 @@ pub fn resolve_scene_materials(
     resman: &mut ResMan,
     options: &TextureResolverOptions,
 ) -> ModelResult<Vec<ResolvedSceneMaterial>> {
+    let text_context = resman.text_context();
     scene
         .materials
         .iter()
         .enumerate()
         .map(|(material_index, material)| {
-            resolve_scene_material(scene, material_index, material, resman, options)
+            resolve_scene_material_with_context(
+                scene,
+                material_index,
+                material,
+                resman,
+                options,
+                text_context,
+            )
         })
         .collect()
 }
@@ -367,7 +404,26 @@ pub fn resolve_scene_material(
     resman: &mut ResMan,
     options: &TextureResolverOptions,
 ) -> ModelResult<ResolvedSceneMaterial> {
-    let (mtr, missing_mtr) = resolve_mtr_material(material, resman)?;
+    let text_context = resman.text_context();
+    resolve_scene_material_with_context(
+        scene,
+        material_index,
+        material,
+        resman,
+        options,
+        text_context,
+    )
+}
+
+fn resolve_scene_material_with_context(
+    scene: &NwnScene,
+    material_index: usize,
+    material: &NwnMaterial,
+    resman: &mut ResMan,
+    options: &TextureResolverOptions,
+    text_context: NwnTextContext,
+) -> ModelResult<ResolvedSceneMaterial> {
+    let (mtr, missing_mtr) = resolve_mtr_material(material, resman, text_context)?;
     let mut effective =
         BTreeMap::<NwnMaterialTextureRole, (NwnMaterialTextureSource, NwnTextureRef)>::new();
     for texture in &material.textures {
@@ -397,8 +453,14 @@ pub fn resolve_scene_material(
 
     let mut slots = Vec::with_capacity(effective.len());
     for (role, (source, texture)) in effective {
-        let resolution =
-            resolve_scene_texture_ref_with_policy(scene, material, &texture, resman, options);
+        let resolution = resolve_scene_texture_ref_with_context(
+            scene,
+            material,
+            &texture,
+            resman,
+            options,
+            text_context,
+        );
         let (resolved, missing, txi) = match resolution {
             SceneTextureResolution::Resolved(resolved) => {
                 let txi = TxiFile::optional_from_resman(
@@ -445,6 +507,7 @@ pub fn resolve_scene_material(
 fn resolve_mtr_material(
     material: &NwnMaterial,
     resman: &mut ResMan,
+    text_context: NwnTextContext,
 ) -> ModelResult<(Option<ResolvedMtrMaterial>, Option<ResolvedResRef>)> {
     let Some(material_name) = material
         .material_name
@@ -463,7 +526,7 @@ fn resolve_mtr_material(
     let Some(resource) = resman.get_resolved(&resolved) else {
         return Ok((None, Some(resolved)));
     };
-    let parsed = MtrMaterial::from_res(&resource, CachePolicy::Use)
+    let parsed = MtrMaterial::from_res(&resource, CachePolicy::Use, text_context)
         .map_err(|error| ModelError::msg(format!("failed to parse {resolved}: {error}")))?;
     Ok((
         Some(ResolvedMtrMaterial {
@@ -496,6 +559,7 @@ fn resolve_scene_texture_ref_internal(
     texture: &NwnTextureRef,
     resman: &mut ResMan,
     options: &TextureResolverOptions,
+    text_context: NwnTextContext,
     visited_models: &mut BTreeSet<String>,
 ) -> SceneTextureResolution {
     let resolution_names = scene_texture_resolution_names(scene, material, texture);
@@ -525,6 +589,7 @@ fn resolve_scene_texture_ref_internal(
             texture,
             resman,
             options,
+            text_context,
             visited_models,
         ) {
             SceneTextureResolution::Resolved(hit) => return SceneTextureResolution::Resolved(hit),
@@ -550,6 +615,7 @@ fn resolve_model_backed_texture_candidate(
     original_texture: &NwnTextureRef,
     resman: &mut ResMan,
     options: &TextureResolverOptions,
+    text_context: NwnTextContext,
     visited_models: &mut BTreeSet<String>,
 ) -> SceneTextureResolution {
     let trimmed = candidate_name.trim();
@@ -576,7 +642,8 @@ fn resolve_model_backed_texture_candidate(
         return SceneTextureResolution::Ignored;
     }
 
-    let Ok(nested_scene) = NwnScene::from_auto_res(&model_resource, CachePolicy::Use) else {
+    let Ok(nested_scene) = NwnScene::from_auto_res(&model_resource, CachePolicy::Use, text_context)
+    else {
         visited_models.remove(&trimmed.to_ascii_lowercase());
         return SceneTextureResolution::Ignored;
     };
@@ -596,6 +663,7 @@ fn resolve_model_backed_texture_candidate(
             nested_texture,
             resman,
             options,
+            text_context,
             visited_models,
         ) {
             SceneTextureResolution::Resolved(mut hit) => {
@@ -729,7 +797,10 @@ fn explicit_texture_candidate(name: &str) -> Option<(TextureResourceKind, Resolv
 mod tests {
     use std::sync::Arc;
 
-    use nwnrs_types::resman::{ResContainer, ResMan, ResolvedResRef, read_resmemfile};
+    use nwnrs_types::{
+        encoding::NwnTextContext,
+        resman::{ResContainer, ResMan, ResolvedResRef, read_resmemfile},
+    };
 
     use crate::mdl::{
         NwnMaterial, NwnMaterialTextureRole, NwnMaterialTextureSource, NwnTextureRef,
@@ -740,7 +811,7 @@ mod tests {
     };
 
     fn build_manager(entries: &[(&str, &str, &[u8])]) -> ResMan {
-        let mut manager = ResMan::new(1);
+        let mut manager = ResMan::new(1, NwnTextContext::english());
         for (label, filename, bytes) in entries {
             let resref = ResolvedResRef::from_filename(filename)
                 .unwrap_or_else(|error| panic!("resolved {filename}: {error}"));

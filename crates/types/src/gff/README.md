@@ -18,16 +18,20 @@ The principal entry points are `read_gff_root`, `write_gff_root`, and
 ```rust
 use std::io::Cursor;
 
-use nwnrs_types::gff::{GffRoot, GffValue, read_gff_root, write_gff_root};
+use nwnrs_types::{
+    encoding::NwnTextContext,
+    gff::{GffRoot, GffValue, read_gff_root, write_gff_root},
+};
 
 let mut root = GffRoot::new("UTC ");
 root.put_value("Tag", GffValue::CExoString("nw_chicken".to_string()))?;
 
 let mut bytes = Cursor::new(Vec::new());
-write_gff_root(&mut bytes, &root)?;
+let context = NwnTextContext::english();
+write_gff_root(&mut bytes, &root, context)?;
 bytes.set_position(0);
 
-let decoded = read_gff_root(&mut bytes)?;
+let decoded = read_gff_root(&mut bytes, context)?;
 assert_eq!(decoded.file_type, "UTC ");
 assert_eq!(decoded.fields().len(), 1);
 # Ok::<(), nwnrs_types::gff::GffError>(())

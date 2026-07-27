@@ -473,7 +473,8 @@ fn collect_matching_files(
         Err(error) => return Err(error.into()),
     };
     let mut entries = entries;
-    entries.sort_by_key(|entry| entry.file_name().to_string_lossy().to_ascii_lowercase());
+    entries
+        .sort_by_key(|entry| crate::native_path::ascii_folded_key(Path::new(&entry.file_name())));
 
     for entry in entries {
         let file_type = entry.file_type()?;

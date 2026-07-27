@@ -1,0 +1,508 @@
+{
+  "name": "nwnrs",
+  "displayName": "nwnrs",
+  "description": "NWScript diagnostics and language support powered by the nwnrs compiler.",
+  "version": "0.0.2",
+  "publisher": "nwnrs",
+  "license": "GPL-3.0-only",
+  "icon": "images/icon.png",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/urothis/nwnrs.git",
+    "directory": "editors/vscode-nwnrs"
+  },
+  "engines": {
+    "vscode": "^1.125.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Linters"
+  ],
+  "keywords": [
+    "neverwinter nights",
+    "nwscript",
+    "nss",
+    "nwn"
+  ],
+  "extensionKind": [
+    "workspace"
+  ],
+  "main": "./dist/src/extension.js",
+  "contributes": {
+    "configurationDefaults": {
+      "[nwscript]": {
+        "files.encoding": "windows1252",
+        "files.autoGuessEncoding": false
+      }
+    },
+    "languages": [
+      {
+        "id": "nwscript",
+        "aliases": [
+          "NWScript",
+          "nwscript"
+        ],
+        "extensions": [
+          ".nss"
+        ],
+        "configuration": "./language-configuration.json"
+      },
+      {
+        "id": "nwpkg",
+        "aliases": [
+          "nwpkg Manifest",
+          "nwpkg"
+        ],
+        "filenames": [
+          "nwpkg.toml"
+        ],
+        "configuration": "./nwpkg-language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "nwscript",
+        "scopeName": "source.nwscript",
+        "path": "./syntaxes/nwscript.tmLanguage.json"
+      },
+      {
+        "language": "nwpkg",
+        "scopeName": "source.nwpkg",
+        "path": "./syntaxes/nwpkg.tmLanguage.json"
+      }
+    ],
+    "customEditors": [
+      {
+        "viewType": "nwnrs.resourceEditor",
+        "displayName": "nwnrs Resource Editor",
+        "selector": [
+          {
+            "filenamePattern": "*.2da"
+          },
+          {
+            "filenamePattern": "*.tlk"
+          },
+          {
+            "filenamePattern": "*.dds"
+          },
+          {
+            "filenamePattern": "*.tga"
+          },
+          {
+            "filenamePattern": "*.plt"
+          },
+          {
+            "filenamePattern": "*.gff"
+          },
+          {
+            "filenamePattern": "*.utc"
+          },
+          {
+            "filenamePattern": "*.utd"
+          },
+          {
+            "filenamePattern": "*.ute"
+          },
+          {
+            "filenamePattern": "*.uti"
+          },
+          {
+            "filenamePattern": "*.utm"
+          },
+          {
+            "filenamePattern": "*.utp"
+          },
+          {
+            "filenamePattern": "*.uts"
+          },
+          {
+            "filenamePattern": "*.utt"
+          },
+          {
+            "filenamePattern": "*.utw"
+          },
+          {
+            "filenamePattern": "*.git"
+          },
+          {
+            "filenamePattern": "*.are"
+          },
+          {
+            "filenamePattern": "*.gic"
+          },
+          {
+            "filenamePattern": "*.ifo"
+          },
+          {
+            "filenamePattern": "*.fac"
+          },
+          {
+            "filenamePattern": "*.dlg"
+          },
+          {
+            "filenamePattern": "*.dlg.json"
+          },
+          {
+            "filenamePattern": "*.itp"
+          },
+          {
+            "filenamePattern": "*.bic"
+          },
+          {
+            "filenamePattern": "*.jrl"
+          },
+          {
+            "filenamePattern": "*.gui"
+          },
+          {
+            "filenamePattern": "*.erf"
+          },
+          {
+            "filenamePattern": "*.hak"
+          },
+          {
+            "filenamePattern": "*.mod"
+          },
+          {
+            "filenamePattern": "*.nwm"
+          },
+          {
+            "filenamePattern": "*.key"
+          },
+          {
+            "filenamePattern": "*.ncs"
+          },
+          {
+            "filenamePattern": "*.ndb"
+          },
+          {
+            "filenamePattern": "*.mdl"
+          },
+          {
+            "filenamePattern": "*.wok"
+          },
+          {
+            "filenamePattern": "*.dwk"
+          },
+          {
+            "filenamePattern": "*.pwk"
+          }
+        ],
+        "priority": "default"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "nwnrs",
+          "title": "nwnrs",
+          "icon": "images/activity-bar.svg"
+        }
+      ]
+    },
+    "views": {
+      "nwnrs": [
+        {
+          "id": "nwnrs.packages",
+          "name": "Packages",
+          "icon": "$(package)",
+          "visibility": "visible"
+        },
+        {
+          "id": "nwnrs.resources",
+          "name": "Resources",
+          "icon": "$(files)",
+          "visibility": "collapsed"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "nwnrs.packages",
+        "contents": "No nwnrs packages found.\n[Refresh Packages](command:nwnrs.sidebar.refreshPackages)"
+      },
+      {
+        "view": "nwnrs.resources",
+        "contents": "No resources were found. Check your Neverwinter Nights paths in [nwnrs Settings](command:nwnrs.openSettings)."
+      }
+    ],
+    "commands": [
+      {
+        "command": "nwnrs.checkCurrentFile",
+        "title": "nwnrs: Check Current NWScript File"
+      },
+      {
+        "command": "nwnrs.checkWorkspace",
+        "title": "nwnrs: Check NWScript Workspace"
+      },
+      {
+        "command": "nwnrs.showStatusMenu",
+        "title": "nwnrs: Show Status Menu"
+      },
+      {
+        "command": "nwnrs.showCompilerOutput",
+        "title": "nwnrs: Show Compiler Output"
+      },
+      {
+        "command": "nwnrs.reindexCurrentPackage",
+        "title": "nwnrs: Reindex Current Package",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "nwnrs.restartLanguageService",
+        "title": "nwnrs: Restart Language Service"
+      },
+      {
+        "command": "nwnrs.clearDiagnostics",
+        "title": "nwnrs: Clear Diagnostics"
+      },
+      {
+        "command": "nwnrs.openSettings",
+        "title": "nwnrs: Open nwnrs Settings"
+      },
+      {
+        "command": "nwnrs.nwpkg.fetchDependencies",
+        "title": "nwnrs: Fetch nwpkg Dependencies",
+        "icon": "$(cloud-download)"
+      },
+      {
+        "command": "nwnrs.nwpkg.updateDependencies",
+        "title": "nwnrs: Update nwpkg Dependencies",
+        "icon": "$(sync)"
+      },
+      {
+        "command": "nwnrs.nwpkg.cleanCache",
+        "title": "nwnrs: Clean Unused nwpkg Cache",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "nwnrs.sidebar.refreshPackages",
+        "title": "Refresh Packages",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "nwnrs.sidebar.unpinPackage",
+        "title": "Follow Active Editor",
+        "icon": "$(pinned-dirty)"
+      },
+      {
+        "command": "nwnrs.sidebar.refreshResources",
+        "title": "Refresh Resources",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "nwnrs.sidebar.fetchDependency",
+        "title": "Fetch Dependency",
+        "icon": "$(cloud-download)"
+      },
+      {
+        "command": "nwnrs.sidebar.updateDependency",
+        "title": "Update Dependency",
+        "icon": "$(sync)"
+      },
+      {
+        "command": "nwnrs.sidebar.copyDependencySource",
+        "title": "Copy Dependency Source",
+        "icon": "$(copy)"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "nwnrs.checkCurrentFile",
+          "when": "editorLangId == nwscript",
+          "group": "navigation"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "nwnrs.sidebar.refreshPackages",
+          "when": "view == nwnrs.packages",
+          "group": "navigation@1"
+        },
+        {
+          "command": "nwnrs.sidebar.unpinPackage",
+          "when": "view == nwnrs.packages && nwnrs.packagePinned",
+          "group": "navigation@2"
+        },
+        {
+          "command": "nwnrs.sidebar.refreshResources",
+          "when": "view == nwnrs.resources",
+          "group": "navigation@1"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "nwnrs.sidebar.fetchDependency",
+          "when": "view == nwnrs.packages && viewItem =~ /nwnrsDependency/",
+          "group": "inline@1"
+        },
+        {
+          "command": "nwnrs.sidebar.updateDependency",
+          "when": "view == nwnrs.packages && viewItem =~ /nwnrsDependency.git/",
+          "group": "inline@2"
+        },
+        {
+          "command": "nwnrs.sidebar.copyDependencySource",
+          "when": "view == nwnrs.packages && viewItem =~ /nwnrsDependency/",
+          "group": "navigation@10"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "nwnrs",
+      "properties": {
+        "nwnrs.checkOnSave": {
+          "type": "boolean",
+          "default": true,
+          "description": "Run the bundled in-process NWScript compiler whenever an NSS document is saved."
+        },
+        "nwnrs.checkOnChange": {
+          "type": "boolean",
+          "default": true,
+          "description": "Run an in-memory compiler check while an NSS document is edited."
+        },
+        "nwnrs.checkOnOpen": {
+          "type": "boolean",
+          "default": true,
+          "description": "Run the bundled in-process NWScript compiler when an NSS document is opened."
+        },
+        "nwnrs.debounceMilliseconds": {
+          "type": "number",
+          "default": 250,
+          "minimum": 0,
+          "maximum": 5000,
+          "description": "Delay before an automatic compiler check. Newer checks cancel older checks for the same file."
+        },
+        "nwnrs.noEntrypointCheck": {
+          "type": "boolean",
+          "default": true,
+          "description": "Allow include-style NSS files without main() or StartingConditional()."
+        },
+        "nwnrs.includeDirectories": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "description": "Additional NWScript include directories. Relative paths resolve from the owning project. Supports ${workspaceFolder} and ${projectRoot}."
+        },
+        "nwnrs.langspecPath": {
+          "type": "string",
+          "default": "",
+          "description": "Optional explicit nwscript.nss path. The game resource is used when empty. Supports ${workspaceFolder} and ${projectRoot}."
+        },
+        "nwnrs.rootPath": {
+          "type": "string",
+          "default": "",
+          "description": "Optional Neverwinter Nights installation root. Empty uses nwnrs auto-discovery."
+        },
+        "nwnrs.userPath": {
+          "type": "string",
+          "default": "",
+          "description": "Optional Neverwinter Nights user directory. Empty uses nwnrs auto-discovery."
+        },
+        "nwnrs.overrideDirectory": {
+          "type": "string",
+          "default": "",
+          "description": "Default save destination for protected game resources. Empty uses the configured userPath/override directory or prompts for a destination."
+        },
+        "nwnrs.git.path": {
+          "type": "string",
+          "default": "",
+          "description": "System Git executable used only for explicit nwpkg fetch and update operations. Empty uses NWNRS_GIT or the system git command."
+        },
+        "nwnrs.packageCachePath": {
+          "type": "string",
+          "default": "",
+          "description": "Immutable nwpkg Git dependency cache directory. Empty uses NWNRS_PACKAGE_CACHE or the platform cache directory."
+        },
+        "nwnrs.language": {
+          "type": "string",
+          "default": "english",
+          "description": "Installation language used to resolve nwscript.nss and other resources."
+        },
+        "nwnrs.loadOvr": {
+          "type": "boolean",
+          "default": false,
+          "description": "Include the Neverwinter Nights override directory in compiler resource lookup."
+        },
+        "nwnrs.maxIncludeDepth": {
+          "type": "number",
+          "default": 16,
+          "minimum": 1,
+          "maximum": 200,
+          "description": "Maximum recursive include depth passed to the compiler."
+        },
+        "nwnrs.maxDiagnosticsPerFile": {
+          "type": "number",
+          "default": 50,
+          "minimum": 1,
+          "maximum": 200,
+          "description": "Maximum number of independent compiler diagnostics recovered for one NSS input."
+        },
+        "nwnrs.inlayHints.enumValues": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show compiler-resolved automatic integer enum values beside variants that omit an explicit value."
+        },
+        "nwnrs.inlayHints.parameterNames": {
+          "type": "string",
+          "enum": [
+            "off",
+            "literals",
+            "all"
+          ],
+          "default": "literals",
+          "description": "Show parameter-name hints at call sites: never, only for literal arguments, or for every argument."
+        }
+      }
+    },
+    "semanticTokenScopes": [
+      {
+        "language": "nwscript",
+        "scopes": {
+          "function": [
+            "entity.name.function.nwscript"
+          ],
+          "parameter": [
+            "variable.parameter.nwscript"
+          ],
+          "variable": [
+            "variable.other.readwrite.nwscript"
+          ],
+          "property": [
+            "variable.other.property.nwscript"
+          ],
+          "type": [
+            "storage.type.nwscript"
+          ],
+          "enum": [
+            "entity.name.type.enum.nwscript"
+          ],
+          "enumMember": [
+            "constant.other.enum.nwscript"
+          ],
+          "macro": [
+            "entity.name.function.preprocessor.nwscript"
+          ]
+        }
+      }
+    ]
+  },
+  "scripts": {
+    "clean": "rimraf dist",
+    "prebuild": "npm run generate:contracts --prefix ../..",
+    "build": "npm run clean && tsc -p tsconfig.build.json && node dist/scripts/sync-resource-capabilities.js --check && tsc -p tsconfig.webview.json",
+    "prebuild-native": "npm run generate:contracts --prefix ../..",
+    "build-native": "npm run build && node dist/scripts/build-native.js",
+    "vscode:prepublish": "npm run build-native && npm run check && npm test",
+    "precheck": "npm run generate:contracts --prefix ../..",
+    "check": "tsc -p tsconfig.build.json && node dist/scripts/sync-resource-capabilities.js --check && tsc -p tsconfig.json --noEmit",
+    "prepackage": "npm run generate:contracts --prefix ../..",
+    "package": "vsce package --no-dependencies",
+    "sync:capabilities": "tsc -p tsconfig.build.json && node dist/scripts/sync-resource-capabilities.js --write",
+    "pretest": "npm run generate:contracts --prefix ../..",
+    "test": "npm run build && node --test test/*.test.ts"
+  }
+}

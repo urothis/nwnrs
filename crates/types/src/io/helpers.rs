@@ -25,24 +25,30 @@ pub fn read_bytes_or_err<R: Read + ?Sized>(reader: &mut R, size: usize) -> io::R
     Ok(bytes)
 }
 
-/// Reads exactly `size` bytes and decodes them as UTF-8.
+/// Reads exactly `size` bytes and validates them as an ASCII engine identifier.
 ///
 /// # Errors
 ///
 /// Returns an [`io::Error`] if the reader cannot supply exactly `size` bytes or
-/// the bytes are not valid UTF-8.
+/// the bytes are not ASCII.
 ///
 /// # Examples
 ///
 /// ```
 /// let mut reader = std::io::Cursor::new(*b"tile");
-/// let text = nwnrs_types::io::read_str_or_err(&mut reader, 4)?;
+/// let text = nwnrs_types::io::read_ascii_or_err(&mut reader, 4)?;
 /// assert_eq!(text, "tile");
 /// # Ok::<(), std::io::Error>(())
 /// ```
 #[instrument(level = "debug", skip_all, err, fields(size))]
-pub fn read_str_or_err<R: Read + ?Sized>(reader: &mut R, size: usize) -> io::Result<String> {
+pub fn read_ascii_or_err<R: Read + ?Sized>(reader: &mut R, size: usize) -> io::Result<String> {
     let bytes = read_bytes_or_err(reader, size)?;
+    if !bytes.is_ascii() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "engine identifier contains non-ASCII bytes",
+        ));
+    }
     String::from_utf8(bytes).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
 }
 

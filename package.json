@@ -1,0 +1,29 @@
+{
+  "name": "nwnrs-workspace",
+  "private": true,
+  "packageManager": "npm@11.11.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "workspaces": [
+    "editors/vscode-nwnrs"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "build:native": "npm run build-native --workspace=nwnrs",
+    "check": "npm run check --workspaces --if-present",
+    "clean": "npm run clean --workspaces --if-present",
+    "generate:contracts": "rimraf editors/vscode-nwnrs/src/generated && cargo run -p nwnrs-vscode-native --features contract-codegen --bin generate_contracts -- editors/vscode-nwnrs/src/generated && napi build --cwd . --manifest-path crates/vscode-native/Cargo.toml --package nwnrs-vscode-native --output-dir editors/vscode-nwnrs/src/generated --platform --no-js --dts native.d.ts && rimraf --glob \"editors/vscode-nwnrs/src/generated/*.node\"",
+    "package:vscode": "npm exec --workspace=nwnrs -- vsce package --no-dependencies",
+    "postinstall": "npm run generate:contracts",
+    "test": "npm test --workspaces --if-present"
+  },
+  "devDependencies": {
+    "@napi-rs/cli": "^3.7.4",
+    "@types/node": "^22.0.0",
+    "@types/vscode": "^1.125.0",
+    "@vscode/vsce": "^3.9.2",
+    "rimraf": "^6.1.3",
+    "typescript": "^7.0.2"
+  }
+}

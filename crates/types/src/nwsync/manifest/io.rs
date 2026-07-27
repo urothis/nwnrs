@@ -256,7 +256,15 @@ fn read_resref<R: Read>(reader: &mut R) -> ManifestResult<(ResRef, [u8; 16])> {
     let mut raw = [0_u8; 16];
     reader.read_exact(&mut raw)?;
     let end = raw.iter().position(|byte| *byte == 0).unwrap_or(raw.len());
-    let res_ref = String::from_utf8_lossy(raw.get(..end).unwrap_or(&raw)).to_ascii_lowercase();
+    let res_ref_bytes = raw.get(..end).unwrap_or(&raw);
+    if !res_ref_bytes.is_ascii() {
+        return Err(ManifestError::msg(
+            "NWSync manifest resref contains non-ASCII bytes",
+        ));
+    }
+    let res_ref = String::from_utf8(res_ref_bytes.to_vec())
+        .map_err(|error| ManifestError::msg(format!("invalid ASCII manifest resref: {error}")))?
+        .to_ascii_lowercase();
     let res_type = ResType(read_u16(reader)?);
     Ok((ResRef::new(res_ref, res_type)?, raw))
 }
@@ -281,6 +289,12 @@ fn read_sha1_digest<R: Read>(reader: &mut R) -> ManifestResult<Sha1Digest> {
 fn read_fixed_string<R: Read>(reader: &mut R, size: usize) -> io::Result<String> {
     let mut bytes = vec![0_u8; size];
     reader.read_exact(&mut bytes)?;
+    if !bytes.is_ascii() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "NWSync fixed identifier contains non-ASCII bytes",
+        ));
+    }
     String::from_utf8(bytes).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
 }
 

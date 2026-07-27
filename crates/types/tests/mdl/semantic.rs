@@ -1,6 +1,7 @@
 use std::{error::Error, io::Cursor};
 
 use nwnrs_types::{
+    encoding::NwnTextContext,
     mdl::{
         BinaryModel, MODEL_RES_TYPE, Model, NodeKind, SemanticController, SemanticModel,
         compile_ascii_model, compile_semantic_model, lower_ascii_model,
@@ -128,7 +129,7 @@ donemodel fx
     assert_eq!(animated_cloth.period, Some(0.5));
 
     let mut encoded = Vec::new();
-    write_semantic_model(&mut encoded, &semantic)?;
+    write_semantic_model(&mut encoded, &semantic, NwnTextContext::english())?;
     let rewritten = String::from_utf8(encoded)?;
     let reparsed = parse_semantic_model(&rewritten)?;
     let reparsed_sparks = reparsed
@@ -165,7 +166,8 @@ fn semantic_ascii_writer_rejects_opaque_compiled_controllers() -> Result<(), Box
         keys:         Vec::new(),
     });
 
-    let error = write_semantic_model(&mut Vec::new(), &semantic).unwrap_err();
+    let error =
+        write_semantic_model(&mut Vec::new(), &semantic, NwnTextContext::english()).unwrap_err();
     assert!(error.to_string().contains("cannot be written as ASCII"));
     Ok(())
 }
@@ -235,9 +237,11 @@ fn model_parse_semantic_lowers_raw_bytes() -> Result<(), Box<dyn Error>> {
         Ok(bytes) => bytes,
         Err(error) => return skip_if_game_resources_unavailable(error),
     };
-    let model = Model::new(bytes).parse_semantic().unwrap_or_else(|error| {
-        panic!("parse semantic from model bytes: {error}");
-    });
+    let model = Model::new(bytes)
+        .parse_semantic(NwnTextContext::english())
+        .unwrap_or_else(|error| {
+            panic!("parse semantic from model bytes: {error}");
+        });
     assert!(model.node("torso_g").is_some());
     Ok(())
 }
@@ -250,14 +254,15 @@ fn semantic_writer_roundtrips_canonical_model() -> Result<(), Box<dyn Error>> {
     };
 
     let mut encoded = Vec::new();
-    if let Err(error) = write_semantic_model(&mut encoded, &model) {
+    if let Err(error) = write_semantic_model(&mut encoded, &model, NwnTextContext::english()) {
         panic!("write semantic model: {error}");
     }
 
     let mut cursor = Cursor::new(encoded);
-    let reparsed = read_semantic_model(&mut cursor).unwrap_or_else(|error| {
-        panic!("read rewritten semantic model: {error}");
-    });
+    let reparsed =
+        read_semantic_model(&mut cursor, NwnTextContext::english()).unwrap_or_else(|error| {
+            panic!("read rewritten semantic model: {error}");
+        });
     assert_eq!(
         normalize_semantic_model(reparsed),
         normalize_semantic_model(model)
@@ -275,8 +280,11 @@ fn shipped_ascii_semantic_fixture() -> Result<SemanticModel, Box<dyn Error>> {
     let binary = BinaryModel::from_res(&res, CachePolicy::Use)?;
     let ascii = lower_binary_model_to_ascii(&binary)?;
     let mut bytes = Vec::new();
-    write_ascii_model(&mut bytes, &ascii)?;
-    Ok(read_semantic_model(&mut Cursor::new(bytes))?)
+    write_ascii_model(&mut bytes, &ascii, NwnTextContext::english())?;
+    Ok(read_semantic_model(
+        &mut Cursor::new(bytes),
+        NwnTextContext::english(),
+    )?)
 }
 
 fn shipped_ascii_semantic_fixture_bytes() -> Result<Vec<u8>, Box<dyn Error>> {
@@ -284,11 +292,15 @@ fn shipped_ascii_semantic_fixture_bytes() -> Result<Vec<u8>, Box<dyn Error>> {
     let binary = BinaryModel::from_res(&res, CachePolicy::Use)?;
     let ascii = lower_binary_model_to_ascii(&binary)?;
     let mut bytes = Vec::new();
-    write_ascii_model(&mut bytes, &ascii)?;
+    write_ascii_model(&mut bytes, &ascii, NwnTextContext::english())?;
     Ok(bytes)
 }
 
 fn shipped_compiled_semantic_fixture() -> Result<SemanticModel, Box<dyn Error>> {
     let res = require_game_resource(demand_resource("a_ba2", MODEL_RES_TYPE))?;
-    Ok(SemanticModel::from_auto_res(&res, CachePolicy::Use)?)
+    Ok(SemanticModel::from_auto_res(
+        &res,
+        CachePolicy::Use,
+        NwnTextContext::english(),
+    )?)
 }

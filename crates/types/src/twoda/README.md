@@ -15,7 +15,10 @@ and `TwoDa`.
 ## Example
 
 ```rust
-use nwnrs_types::twoda::{TwoDa, read_twoda, write_twoda};
+use nwnrs_types::{
+    encoding::NwnTextContext,
+    twoda::{TwoDa, read_twoda, write_twoda},
+};
 
 let mut table = TwoDa::new();
 table.set_columns(vec!["Label".to_string(), "Value".to_string()])?;
@@ -25,9 +28,10 @@ table.replace_rows(
 )?;
 
 let mut bytes = Vec::new();
-write_twoda(&mut bytes, &table, false)?;
+let context = NwnTextContext::english();
+write_twoda(&mut bytes, &table, false, context)?;
 
-let decoded = read_twoda(bytes.as_slice())?;
+let decoded = read_twoda(bytes.as_slice(), context)?;
 assert_eq!(decoded.cell_or(0, "Value", ""), "42");
 # Ok::<(), nwnrs_types::twoda::TwoDaError>(())
 ```

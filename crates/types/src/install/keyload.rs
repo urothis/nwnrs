@@ -89,7 +89,7 @@ mod tests {
         fs::create_dir_all(root.join("data"))
             .unwrap_or_else(|error| panic!("create data: {error}"));
         fs::create_dir_all(&lang_root).unwrap_or_else(|error| panic!("create lang root: {error}"));
-        let mut manager = ResMan::new(0);
+        let mut manager = ResMan::new(0, crate::encoding::NwnTextContext::english());
 
         load_key(&mut manager, &root, &lang_root, "missing")
             .unwrap_or_else(|error| panic!("load missing key: {error}"));

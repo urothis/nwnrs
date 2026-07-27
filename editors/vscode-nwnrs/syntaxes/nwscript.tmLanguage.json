@@ -1,0 +1,187 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "NWScript",
+  "scopeName": "source.nwscript",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#preprocessor" },
+    { "include": "#compilerAttributes" },
+    { "include": "#macros" },
+    { "include": "#strings" },
+    { "include": "#numbers" },
+    { "include": "#constants" },
+    { "include": "#types" },
+    { "include": "#control" },
+    { "include": "#functions" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.double-slash.nwscript",
+          "match": "//.*$"
+        },
+        {
+          "name": "comment.block.nwscript",
+          "begin": "/\\*",
+          "end": "\\*/"
+        }
+      ]
+    },
+    "preprocessor": {
+      "patterns": [
+        {
+          "name": "meta.preprocessor.nwscript",
+          "match": "^\\s*#\\s*(include|define)\\b.*$",
+          "captures": {
+            "1": { "name": "keyword.control.directive.nwscript" }
+          }
+        }
+      ]
+    },
+    "compilerAttributes": {
+      "patterns": [
+        {
+          "name": "meta.attribute.nwscript",
+          "begin": "#\\[",
+          "end": "\\]",
+          "patterns": [
+            { "name": "entity.name.function.attribute.nwscript", "match": "\\b(nwnrs|events|default|alias)\\b" },
+            { "name": "punctuation.accessor.nwscript", "match": "::" }
+          ]
+        }
+      ]
+    },
+    "macros": {
+      "patterns": [
+        {
+          "name": "meta.macro.declaration.nwscript",
+          "match": "\\b(macro_rules)(!)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "storage.type.macro.nwscript" },
+            "2": { "name": "punctuation.definition.macro.nwscript" },
+            "3": { "name": "entity.name.function.macro.nwscript" }
+          }
+        },
+        {
+          "name": "meta.macro.declaration.nwscript",
+          "match": "\\b(proc_macro)(!)\\s+((?:[A-Za-z_][A-Za-z0-9_]*::)*[A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "storage.type.macro.nwscript" },
+            "2": { "name": "punctuation.definition.macro.nwscript" },
+            "3": { "name": "entity.name.function.macro.nwscript" }
+          }
+        },
+        {
+          "name": "meta.macro.invocation.nwscript",
+          "match": "\\b((?:[A-Za-z_][A-Za-z0-9_]*::)*[A-Za-z_][A-Za-z0-9_]*)(!)\\s*(?=[({\\[])",
+          "captures": {
+            "1": { "name": "entity.name.function.macro.nwscript" },
+            "2": { "name": "punctuation.definition.macro.nwscript" }
+          }
+        },
+        {
+          "name": "variable.other.interpolation.nwscript",
+          "match": "\\$\\$|\\$[A-Za-z_][A-Za-z0-9_]*"
+        },
+        {
+          "name": "storage.type.macro.fragment.nwscript",
+          "match": "(?<=:)\\b(?:tt|ident|literal|expr|tokens)\\b"
+        },
+        {
+          "name": "punctuation.definition.macro.repetition.nwscript",
+          "match": "\\$(?=\\()|(?<=\\))[*+?]"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.nwscript",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [
+            { "name": "constant.character.escape.nwscript", "match": "\\\\[\\\\\"nrt]" }
+          ]
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.float.nwscript",
+          "match": "(?<![A-Za-z0-9_])(?:[0-9]+\\.[0-9]*|\\.[0-9]+)(?:[eE][+-]?[0-9]+)?[fF]?\\b"
+        },
+        {
+          "name": "constant.numeric.integer.nwscript",
+          "match": "(?<![A-Za-z0-9_])(?:0[xX][0-9A-Fa-f]+|[0-9]+)\\b"
+        }
+      ]
+    },
+    "constants": {
+      "patterns": [
+        {
+          "name": "constant.language.nwscript",
+          "match": "\\b(?:TRUE|FALSE|OBJECT_INVALID|LOCATION_INVALID|JSON_NULL)\\b"
+        }
+      ]
+    },
+    "types": {
+      "patterns": [
+        {
+          "name": "meta.enum.declaration.nwscript",
+          "match": "\\b(enum)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "storage.type.enum.nwscript" },
+            "2": { "name": "entity.name.type.enum.nwscript" }
+          }
+        },
+        {
+          "name": "meta.type-alias.declaration.nwscript",
+          "match": "\\b(type)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "storage.type.nwscript" },
+            "2": { "name": "entity.name.type.alias.nwscript" }
+          }
+        },
+        {
+          "name": "storage.type.nwscript",
+          "match": "\\b(?:void|int|float|string|object|vector|location|effect|event|talent|itemproperty|action|json|sqlquery|cassowary|struct|tokenstream|tokenstream_list|token_cursor|quote_bindings)\\b"
+        },
+        {
+          "name": "meta.enum.variant.nwscript",
+          "match": "\\b([A-Za-z_][A-Za-z0-9_]*)(::)([A-Za-z_][A-Za-z0-9_]*)\\b",
+          "captures": {
+            "1": { "name": "entity.name.type.enum.nwscript" },
+            "2": { "name": "punctuation.accessor.nwscript" },
+            "3": { "name": "constant.other.enum.nwscript" }
+          }
+        }
+      ]
+    },
+    "control": {
+      "patterns": [
+        {
+          "name": "keyword.control.nwscript",
+          "match": "\\b(?:if|else|switch|case|default|for|while|do|break|continue|return|match)\\b"
+        },
+        {
+          "name": "storage.modifier.nwscript",
+          "match": "\\b(?:const)\\b"
+        },
+        {
+          "name": "keyword.other.static-assert.nwscript",
+          "match": "\\bstatic_assert\\b"
+        }
+      ]
+    },
+    "functions": {
+      "patterns": [
+        {
+          "name": "entity.name.function.nwscript",
+          "match": "\\b[A-Za-z_][A-Za-z0-9_]*(?=\\s*\\()"
+        }
+      ]
+    }
+  }
+}

@@ -13,6 +13,8 @@ Rust tools and libraries for Neverwinter Nights: Enhanced Edition.
 
 ## Start Here
 
+- [Visual guide: zero to a packaged, running module](./docs/src/README.md)
+- [NWScript extensions for vanilla NWN:EE authors](./NWSCRIPT_EXTENSIONS.md)
 - [`nwnrs` rustdoc](https://docs.rs/nwnrs/latest/nwnrs/)
 
 ## Quick Start
@@ -39,7 +41,13 @@ nwnrs convert out/model_ascii.mdl rebuilt/model.mdl
 nwnrs convert path/to/model.mdl out/model.obj
 nwnrs unpack path/to/module.mod -d out/
 nwnrs pack out/ rebuilt.mod
+nwnrs run -- -module module_name
+nwnrs run --docker -- -module module_name
 ```
+
+Native runs discover the Steam or Beamdog installation, host NWServer binary,
+runtime library, and exact target packs automatically. `--runtime`, `--targets`,
+and an explicit server executable remain available as overrides.
 
 ### Rust
 
@@ -76,6 +84,14 @@ table.set_columns(vec!["Label".to_string()])?;
   packing, and unpacking workflows
 - [`nwnrs-nwscript`](./crates/nwscript/README.md): NWScript frontend
   and compiler
+- [`nwnrs for Visual Studio Code`](./editors/vscode-nwnrs/README.md): NSS
+  syntax support and external-compiler diagnostics in the editor
+- [`nwnrs` include library](./include/nwnrs/nwnrs.nss): the NWScript bridge API,
+  consumed by modules as a local `nwpkg` dependency
+- [`nwnrs-runtime`](./crates/runtime/README.md): safe executable identity and
+  exact target-pack selection
+- [`nwnrs-runtime-sys`](./crates/runtime-sys/README.md): Frida Gum and native
+  injected-runtime boundary
 - [`nwnrs-types::mdl`](./crates/types/src/mdl/README.md): MDL parsing,
   lowering, composition, and export
 - [`docker`](./docker/README.md): reproducible Linux AMD64/ARM64 dedicated
@@ -96,6 +112,21 @@ cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all -- --check
 ```
+
+The TypeScript tooling is also managed from the repository root as an npm
+workspace. Install it once with `npm install`; the root commands validate and
+package every applicable workspace member:
+
+```bash
+npm run check
+npm test
+npm run build:native
+npm run package:vscode -- --target darwin-arm64 --out nwnrs-0.0.2.vsix
+```
+
+The VS Code extension remains independently packageable, but its compiler,
+typings, and packaging tools are declared once in the private root
+[`package.json`](./package.json).
 
 ## License
 

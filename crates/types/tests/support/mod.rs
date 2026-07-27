@@ -15,6 +15,7 @@ pub use nwnrs_types::test_support::{
     shipped_archive_candidates, skip_if_game_resources_unavailable,
 };
 use nwnrs_types::{
+    encoding::NwnTextContext,
     erf::prelude::*,
     gff::prelude::*,
     resman::{ResType, ResolvedResRef, lookup_res_type},
@@ -37,9 +38,9 @@ pub fn filename_from_path(path: &Path) -> Result<String, Box<dyn Error>> {
 
 pub fn roundtrip_gff(bytes: &[u8]) -> Result<Vec<u8>, Box<dyn Error>> {
     let mut reader = Cursor::new(bytes);
-    let root = read_gff_root(&mut reader)?;
+    let root = read_gff_root(&mut reader, NwnTextContext::default())?;
     let mut writer = Cursor::new(Vec::new());
-    write_gff_root(&mut writer, &root)?;
+    write_gff_root(&mut writer, &root, NwnTextContext::default())?;
     Ok(writer.into_inner())
 }
 
@@ -58,9 +59,9 @@ pub fn roundtrip_tlk(bytes: &[u8]) -> Result<Vec<u8>, Box<dyn Error>> {
 }
 
 pub fn roundtrip_twoda(bytes: &[u8]) -> Result<Vec<u8>, Box<dyn Error>> {
-    let twoda = read_twoda(Cursor::new(bytes))?;
+    let twoda = read_twoda(Cursor::new(bytes), NwnTextContext::default())?;
     let mut writer = Cursor::new(Vec::new());
-    write_twoda(&mut writer, &twoda, false)?;
+    write_twoda(&mut writer, &twoda, false, NwnTextContext::default())?;
     Ok(writer.into_inner())
 }
 

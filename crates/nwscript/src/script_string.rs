@@ -1,5 +1,6 @@
-use std::{borrow::Cow, fmt};
+use std::fmt;
 
+use nwnrs_types::encoding::{LegacyEncoding, NwnText, encode_legacy};
 use serde::{Deserialize, Serialize};
 
 /// An encoding-neutral NWScript string payload.
@@ -42,15 +43,11 @@ impl ScriptString {
         self.0
     }
 
-    /// Returns this payload as UTF-8 when it is valid UTF-8.
-    pub fn as_str(&self) -> Result<&str, std::str::Utf8Error> {
-        std::str::from_utf8(&self.0)
-    }
-
-    /// Returns a lossily decoded view for display-only use.
+    /// Returns a Windows-1252 display form that escapes undefined bytes and
+    /// binary color payload bytes without replacing data.
     #[must_use]
-    pub fn to_string_lossy(&self) -> Cow<'_, str> {
-        String::from_utf8_lossy(&self.0)
+    pub fn display_text(&self) -> String {
+        NwnText::decode(&self.0, LegacyEncoding::Windows1252).display_text()
     }
 
     /// Concatenates two payloads without decoding or re-encoding either one.
@@ -63,17 +60,28 @@ impl ScriptString {
     }
 
     pub(crate) fn from_lexed_text(text: &str) -> Self {
-        let mut bytes = Vec::with_capacity(text.len());
-        for character in text.chars() {
-            let value = u32::from(character);
-            if let Ok(byte) = u8::try_from(value) {
-                bytes.push(byte);
-            } else {
-                let mut encoded = [0_u8; 4];
-                bytes.extend_from_slice(character.encode_utf8(&mut encoded).as_bytes());
-            }
-        }
-        Self(bytes)
+        Self(
+            text.chars()
+                .map(|character| match u8::try_from(u32::from(character)) {
+                    Ok(byte) => byte,
+                    Err(error) => unreachable!(
+                        "byte-oriented lexer produced a scalar outside U+0000 through U+00FF: \
+                         {error}"
+                    ),
+                })
+                .collect(),
+        )
+    }
+
+    /// Encodes authored text as an exact Windows-1252 runtime payload.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the text is not representable in Windows-1252.
+    pub fn try_from_text(
+        value: &str,
+    ) -> Result<Self, nwnrs_types::encoding::EncodingConversionError> {
+        encode_legacy(LegacyEncoding::Windows1252, value).map(Self)
     }
 }
 
@@ -92,18 +100,6 @@ impl fmt::Debug for ScriptString {
 impl From<Vec<u8>> for ScriptString {
     fn from(value: Vec<u8>) -> Self {
         Self(value)
-    }
-}
-
-impl From<String> for ScriptString {
-    fn from(value: String) -> Self {
-        Self(value.into_bytes())
-    }
-}
-
-impl From<&str> for ScriptString {
-    fn from(value: &str) -> Self {
-        Self(value.as_bytes().to_vec())
     }
 }
 

@@ -1,6 +1,40 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, str::FromStr};
 
 use argh::FromArgs;
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) enum ColorMode {
+    #[default]
+    Auto,
+    Always,
+    Never,
+}
+
+impl FromStr for ColorMode {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "auto" => Ok(Self::Auto),
+            "always" => Ok(Self::Always),
+            "never" => Ok(Self::Never),
+            _ => Err(format!(
+                "invalid color mode {value:?}; expected auto, always, or never"
+            )),
+        }
+    }
+}
+
+#[cfg(feature = "supervisor")]
+impl ColorMode {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Always => "always",
+            Self::Never => "never",
+        }
+    }
+}
 
 #[derive(FromArgs)]
 /// Neverwinter Nights utility CLI.
@@ -12,16 +46,100 @@ pub(crate) struct Cli {
 #[derive(FromArgs)]
 #[argh(subcommand)]
 pub(crate) enum Command {
+    #[cfg(feature = "tooling")]
     Compile(CompileCmd),
+    #[cfg(feature = "tooling")]
     Convert(ConvertCmd),
+    #[cfg(feature = "tooling")]
+    Expand(ExpandCmd),
+    #[cfg(feature = "tooling")]
     Inspect(InspectCmd),
+    #[cfg(feature = "tooling")]
     Init(InitCmd),
+    #[cfg(feature = "tooling")]
     New(NewCmd),
+    #[cfg(feature = "tooling")]
     Pack(PackCmd),
+    #[cfg(feature = "supervisor")]
+    Run(RunCmd),
+    #[cfg(feature = "tooling")]
     Unpack(UnpackCmd),
+    #[cfg(feature = "tooling")]
     Nwsync(NwsyncCmd),
+    #[cfg(feature = "tooling")]
+    Nwpkg(NwpkgCmd),
 }
 
+#[cfg(feature = "supervisor")]
+#[derive(FromArgs)]
+#[argh(subcommand, name = "run")]
+/// start an NWN server under nwnrs supervision
+pub(crate) struct RunCmd {
+    #[argh(switch, hidden_help)]
+    /// internal: configure the bundled server when already inside its image
+    pub(crate) container: bool,
+
+    #[cfg(feature = "tooling")]
+    #[argh(switch)]
+    /// start the supervised server image through the local Docker CLI
+    pub(crate) docker: bool,
+
+    #[cfg(feature = "tooling")]
+    #[argh(option, default = "String::from(\"nwserver:local\")")]
+    /// container image used by --docker
+    pub(crate) docker_image: String,
+
+    #[cfg(feature = "tooling")]
+    #[argh(option)]
+    /// optional container name used by --docker
+    pub(crate) docker_name: Option<String>,
+
+    #[cfg(feature = "tooling")]
+    #[argh(option, default = "String::from(\"nwserver-home\")")]
+    /// docker volume or host path mounted at /nwn/home
+    pub(crate) docker_home: String,
+
+    #[cfg(feature = "tooling")]
+    #[argh(option)]
+    /// published container port; may repeat and replaces 5121:5121/udp
+    pub(crate) docker_publish: Vec<String>,
+
+    #[cfg(feature = "tooling")]
+    #[argh(option)]
+    /// docker long option without leading dashes; may repeat
+    pub(crate) docker_arg: Vec<String>,
+
+    #[argh(option, default = "ColorMode::Auto")]
+    /// color output policy: auto, always, or never
+    pub(crate) color: ColorMode,
+
+    #[argh(switch)]
+    /// start the server without mirroring its log and error files
+    pub(crate) no_tail_logs: bool,
+
+    #[argh(switch)]
+    /// on Windows, show the dark native control panel instead of running
+    /// headless
+    pub(crate) gui: bool,
+
+    #[argh(option)]
+    /// override the automatically discovered native runtime library
+    pub(crate) runtime: Option<PathBuf>,
+
+    #[argh(option)]
+    /// override the automatically discovered runtime target-pack directory
+    pub(crate) targets: Option<PathBuf>,
+
+    #[argh(option)]
+    /// server working directory; defaults to the server binary directory
+    pub(crate) working_directory: Option<PathBuf>,
+
+    #[argh(positional, greedy)]
+    /// optional native server path followed by arguments, or Docker arguments
+    pub(crate) arguments: Vec<String>,
+}
+
+#[cfg(feature = "tooling")]
 #[derive(FromArgs, Clone)]
 #[argh(subcommand, name = "compile")]
 /// compile one or more NWScript source files
@@ -74,6 +192,10 @@ pub(crate) struct CompileCmd {
     /// compile and report outcomes without writing artifacts
     pub(crate) simulate: bool,
 
+    #[argh(option, default = "String::from(\"text\")")]
+    /// diagnostic output format: text or json
+    pub(crate) diagnostic_format: String,
+
     #[argh(switch, short = 'y')]
     /// continue compiling remaining inputs after an error
     pub(crate) continue_on_error: bool,
@@ -119,6 +241,53 @@ pub(crate) struct CompileCmd {
     pub(crate) paths: Vec<PathBuf>,
 }
 
+#[cfg(feature = "tooling")]
+#[derive(FromArgs, Clone)]
+#[argh(subcommand, name = "expand")]
+/// preprocess includes and print fully expanded NWScript source
+pub(crate) struct ExpandCmd {
+    #[argh(switch, short = 'f')]
+    /// overwrite an existing --output file
+    pub(crate) force: bool,
+
+    #[argh(switch)]
+    /// report each macro invocation and its immediate expansion on stderr
+    pub(crate) trace_macros: bool,
+
+    #[argh(option, short = 'o')]
+    /// write expanded source to this file instead of stdout
+    pub(crate) output: Option<PathBuf>,
+
+    #[argh(option)]
+    /// extra directory to search for #include files; may be repeated
+    pub(crate) include_dir: Vec<PathBuf>,
+
+    #[argh(option, default = "16")]
+    /// maximum recursive include depth from 1 through 200
+    pub(crate) max_include_depth: usize,
+
+    #[argh(option)]
+    /// explicit Neverwinter Nights installation root
+    pub(crate) root: Option<PathBuf>,
+
+    #[argh(option)]
+    /// explicit Neverwinter Nights user directory
+    pub(crate) user: Option<PathBuf>,
+
+    #[argh(option, default = "String::from(\"english\")")]
+    /// installation language used for resource lookup
+    pub(crate) language: String,
+
+    #[argh(switch)]
+    /// include the installation override directory in resource lookup
+    pub(crate) load_ovr: bool,
+
+    #[argh(positional)]
+    /// NWScript source file to expand
+    pub(crate) input: PathBuf,
+}
+
+#[cfg(feature = "tooling")]
 #[derive(FromArgs)]
 #[argh(subcommand, name = "convert")]
 /// convert supported NWN textures and mdl files
@@ -172,6 +341,7 @@ pub(crate) struct ConvertCmd {
     pub(crate) output: Option<PathBuf>,
 }
 
+#[cfg(feature = "tooling")]
 #[derive(FromArgs)]
 #[argh(subcommand, name = "inspect")]
 /// inspect a single NWN resource file by extension
@@ -245,6 +415,7 @@ pub(crate) struct InspectCmd {
     pub(crate) path: PathBuf,
 }
 
+#[cfg(feature = "tooling")]
 #[derive(FromArgs)]
 #[argh(subcommand, name = "unpack")]
 /// unpack a resource into a directory
@@ -257,18 +428,24 @@ pub(crate) struct UnpackCmd {
     /// overwrite existing output files
     pub(crate) force: bool,
 
+    #[argh(option, default = "String::from(\"english\")")]
+    /// language used for native resource text without embedded language
+    /// metadata
+    pub(crate) language: String,
+
     #[argh(positional)]
     /// input file to unpack
     pub(crate) input: PathBuf,
 }
 
+#[cfg(feature = "tooling")]
 #[derive(FromArgs)]
 #[argh(subcommand, name = "init")]
 /// initialize an NWN project in an existing directory
 pub(crate) struct InitCmd {
     #[argh(option)]
-    /// project output kind such as utc, 2da, tlk, ssf, mdl, tga, dds, plt, ncs,
-    /// mod, hak, nwm, erf, or key
+    /// project kind such as utc, 2da, tlk, ssf, mdl, tga, dds, plt, ncs,
+    /// mod, hak, nwm, erf, key, or include
     pub(crate) kind: Option<String>,
 
     #[argh(positional)]
@@ -276,13 +453,14 @@ pub(crate) struct InitCmd {
     pub(crate) path: Option<PathBuf>,
 }
 
+#[cfg(feature = "tooling")]
 #[derive(FromArgs)]
 #[argh(subcommand, name = "new")]
 /// create a new NWN project directory
 pub(crate) struct NewCmd {
     #[argh(option)]
-    /// project output kind such as utc, 2da, tlk, ssf, mdl, tga, dds, plt, ncs,
-    /// mod, hak, nwm, erf, or key
+    /// project kind such as utc, 2da, tlk, ssf, mdl, tga, dds, plt, ncs,
+    /// mod, hak, nwm, erf, key, or include
     pub(crate) kind: Option<String>,
 
     #[argh(positional)]
@@ -290,6 +468,7 @@ pub(crate) struct NewCmd {
     pub(crate) path: PathBuf,
 }
 
+#[cfg(feature = "tooling")]
 #[derive(FromArgs, Clone)]
 #[argh(subcommand, name = "pack")]
 /// pack resources into NWN binary form, including compiling NWScript source
@@ -366,6 +545,7 @@ pub(crate) struct PackCmd {
     pub(crate) paths: Vec<PathBuf>,
 }
 
+#[cfg(feature = "tooling")]
 pub(crate) struct KeyPackCmd {
     pub(crate) data_version:        String,
     pub(crate) data_compression:    String,
@@ -384,12 +564,15 @@ pub(crate) struct KeyPackCmd {
     pub(crate) destination:         PathBuf,
 }
 
+#[cfg(feature = "tooling")]
 pub(crate) struct KeyUnpackCmd {
     pub(crate) force:       bool,
     pub(crate) key:         PathBuf,
     pub(crate) destination: PathBuf,
+    pub(crate) language:    nwnrs_nwpkg::ProjectLanguage,
 }
 
+#[cfg(feature = "tooling")]
 #[derive(FromArgs)]
 #[argh(subcommand, name = "nwsync")]
 /// nwsync repository utilities
@@ -398,6 +581,7 @@ pub(crate) struct NwsyncCmd {
     pub(crate) command: NwsyncCommand,
 }
 
+#[cfg(feature = "tooling")]
 #[derive(FromArgs)]
 #[argh(subcommand)]
 pub(crate) enum NwsyncCommand {
@@ -407,6 +591,7 @@ pub(crate) enum NwsyncCommand {
     Write(NwsyncWriteCmd),
 }
 
+#[cfg(feature = "tooling")]
 #[derive(FromArgs)]
 #[argh(subcommand, name = "print")]
 /// print manifest contents from a manifest file or nwsync repository
@@ -420,6 +605,7 @@ pub(crate) struct NwsyncPrintCmd {
     pub(crate) input: PathBuf,
 }
 
+#[cfg(feature = "tooling")]
 #[derive(FromArgs)]
 #[argh(subcommand, name = "fetch")]
 /// download a manifest and its resources from a remote nwsync server
@@ -433,6 +619,7 @@ pub(crate) struct NwsyncFetchCmd {
     pub(crate) output: Option<PathBuf>,
 }
 
+#[cfg(feature = "tooling")]
 #[derive(FromArgs)]
 #[argh(subcommand, name = "prune")]
 /// trim unreferenced data from nwsync repository
@@ -446,6 +633,7 @@ pub(crate) struct NwsyncPruneCmd {
     pub(crate) dry_run: bool,
 }
 
+#[cfg(feature = "tooling")]
 #[derive(FromArgs)]
 #[argh(subcommand, name = "write")]
 /// generate a serverside `NWSync` manifest from directory
@@ -463,13 +651,182 @@ pub(crate) struct NwsyncWriteCmd {
     pub(crate) force: bool,
 }
 
-#[cfg(test)]
+#[cfg(feature = "tooling")]
+#[derive(FromArgs)]
+#[argh(subcommand, name = "nwpkg")]
+/// resolve and maintain nwpkg dependencies
+pub(crate) struct NwpkgCmd {
+    #[argh(subcommand)]
+    pub(crate) command: NwpkgCommand,
+}
+
+#[cfg(feature = "tooling")]
+#[derive(FromArgs)]
+#[argh(subcommand)]
+pub(crate) enum NwpkgCommand {
+    Fetch(NwpkgFetchCmd),
+    Update(NwpkgUpdateCmd),
+    Clean(NwpkgCleanCmd),
+}
+
+#[cfg(feature = "tooling")]
+#[derive(FromArgs)]
+#[argh(subcommand, name = "fetch")]
+/// fetch missing dependency pins and materialize the locked graph
+pub(crate) struct NwpkgFetchCmd {
+    #[argh(option)]
+    /// resolve only this direct dependency and its transitive graph
+    pub(crate) dependency: Option<String>,
+
+    #[argh(option)]
+    /// system Git executable; defaults to NWNRS_GIT or git
+    pub(crate) git: Option<PathBuf>,
+
+    #[argh(option)]
+    /// immutable dependency cache; defaults to NWNRS_PACKAGE_CACHE or platform
+    /// cache
+    pub(crate) cache: Option<PathBuf>,
+
+    #[argh(positional)]
+    /// package directory; defaults to the current directory
+    pub(crate) path: Option<PathBuf>,
+}
+
+#[cfg(feature = "tooling")]
+#[derive(FromArgs)]
+#[argh(subcommand, name = "update")]
+/// preview or apply updated Git dependency pins
+pub(crate) struct NwpkgUpdateCmd {
+    #[argh(option)]
+    /// update only this direct dependency and its transitive graph
+    pub(crate) dependency: Option<String>,
+
+    #[argh(option)]
+    /// system Git executable; defaults to NWNRS_GIT or git
+    pub(crate) git: Option<PathBuf>,
+
+    #[argh(option)]
+    /// immutable dependency cache; defaults to NWNRS_PACKAGE_CACHE or platform
+    /// cache
+    pub(crate) cache: Option<PathBuf>,
+
+    #[argh(switch)]
+    /// atomically apply the displayed update plan to nwpkg.lock
+    pub(crate) apply: bool,
+
+    #[argh(positional)]
+    /// package directory; defaults to the current directory
+    pub(crate) path: Option<PathBuf>,
+}
+
+#[cfg(feature = "tooling")]
+#[derive(FromArgs)]
+#[argh(subcommand, name = "clean")]
+/// remove dependency cache entries unused by this package lock
+pub(crate) struct NwpkgCleanCmd {
+    #[argh(option)]
+    /// immutable dependency cache; defaults to NWNRS_PACKAGE_CACHE or platform
+    /// cache
+    pub(crate) cache: Option<PathBuf>,
+
+    #[argh(positional)]
+    /// package directory; defaults to the current directory
+    pub(crate) path: Option<PathBuf>,
+}
+
+#[cfg(all(test, feature = "tooling"))]
 mod tests {
     use std::path::PathBuf;
 
     use argh::FromArgs;
 
     use super::{Cli, Command, InspectCmd, NwsyncCommand};
+
+    #[test]
+    #[cfg(feature = "supervisor")]
+    fn parses_native_run_without_manual_paths() {
+        let cli = Cli::from_args(&["nwnrs"], &["run"])
+            .unwrap_or_else(|error| panic!("parse native run args: {error:?}"));
+
+        let Command::Run(command) = cli.command else {
+            panic!("expected run command");
+        };
+        assert!(!command.container);
+        assert!(!command.docker);
+        assert_eq!(command.runtime, None);
+        assert_eq!(command.targets, None);
+        assert!(command.arguments.is_empty());
+    }
+
+    #[test]
+    #[cfg(feature = "supervisor")]
+    fn parses_run_command_and_preserves_server_arguments() {
+        let cli = Cli::from_args(
+            &["nwnrs"],
+            &[
+                "run",
+                "--gui",
+                "--runtime",
+                "libnwnrs_runtime.so",
+                "--targets",
+                "crates/runtime/targets",
+                "--",
+                "/opt/nwn/nwserver",
+                "-module",
+                "nwnrs",
+            ],
+        )
+        .unwrap_or_else(|error| panic!("parse run args: {error:?}"));
+
+        let Command::Run(command) = cli.command else {
+            panic!("expected run command");
+        };
+        assert_eq!(command.runtime, Some(PathBuf::from("libnwnrs_runtime.so")));
+        assert_eq!(
+            command.targets,
+            Some(PathBuf::from("crates/runtime/targets"))
+        );
+        assert_eq!(command.color, super::ColorMode::Auto);
+        assert!(!command.no_tail_logs);
+        assert!(command.gui);
+        assert_eq!(
+            command.arguments,
+            vec!["/opt/nwn/nwserver", "-module", "nwnrs"]
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "supervisor")]
+    fn parses_docker_run_without_native_artifacts() {
+        let cli = Cli::from_args(
+            &["nwnrs"],
+            &[
+                "run",
+                "--docker",
+                "--docker-name",
+                "my-server",
+                "--docker-publish",
+                "127.0.0.1:5121:5121/udp",
+                "--docker-arg",
+                "pull=always",
+                "--",
+                "-module",
+                "custom",
+            ],
+        )
+        .unwrap_or_else(|error| panic!("parse Docker run args: {error:?}"));
+
+        let Command::Run(command) = cli.command else {
+            panic!("expected run command");
+        };
+        assert!(command.docker);
+        assert_eq!(command.docker_name.as_deref(), Some("my-server"));
+        assert_eq!(command.docker_publish, vec!["127.0.0.1:5121:5121/udp"]);
+        assert_eq!(command.docker_arg, vec!["pull=always"]);
+        assert_eq!(command.runtime, None);
+        assert_eq!(command.targets, None);
+        assert_eq!(command.arguments, vec!["-module", "custom"]);
+    }
 
     #[test]
     fn parses_compile_command_with_compiler_controls() {
@@ -490,6 +847,8 @@ mod tests {
                 "32",
                 "--graphviz",
                 "graphs",
+                "--diagnostic-format",
+                "json",
                 "-d",
                 "build",
                 "scripts",
@@ -512,7 +871,41 @@ mod tests {
         assert_eq!(cmd.directory, Some(PathBuf::from("build")));
         assert_eq!(cmd.graphviz, Some(PathBuf::from("graphs")));
         assert_eq!(cmd.graphviz_format, "svg");
+        assert_eq!(cmd.diagnostic_format, "json");
         assert_eq!(cmd.paths, vec![PathBuf::from("scripts")]);
+    }
+
+    #[test]
+    fn parses_expand_command_with_trace_and_resolution_controls() {
+        let cli = Cli::from_args(
+            &["nwnrs"],
+            &[
+                "expand",
+                "--trace-macros",
+                "--include-dir",
+                "inc/a",
+                "--include-dir",
+                "inc/b",
+                "--max-include-depth",
+                "24",
+                "--output",
+                "expanded.nss",
+                "script.nss",
+            ],
+        )
+        .unwrap_or_else(|error| panic!("parse expand args: {error:?}"));
+
+        let Command::Expand(cmd) = cli.command else {
+            panic!("expected expand command");
+        };
+        assert!(cmd.trace_macros);
+        assert_eq!(
+            cmd.include_dir,
+            vec![PathBuf::from("inc/a"), PathBuf::from("inc/b")]
+        );
+        assert_eq!(cmd.max_include_depth, 24);
+        assert_eq!(cmd.output, Some(PathBuf::from("expanded.nss")));
+        assert_eq!(cmd.input, PathBuf::from("script.nss"));
     }
 
     #[test]
@@ -788,5 +1181,75 @@ mod tests {
                 PathBuf::from("docker/data/data")
             ]
         );
+    }
+}
+
+#[cfg(all(test, feature = "supervisor", not(feature = "tooling")))]
+mod supervisor_tests {
+    use std::path::PathBuf;
+
+    use argh::FromArgs;
+
+    use super::{Cli, Command};
+
+    #[test]
+    fn parses_run_command_and_preserves_server_arguments() -> Result<(), String> {
+        let cli = Cli::from_args(
+            &["nwnrs"],
+            &[
+                "run",
+                "--runtime",
+                "libnwnrs_runtime.so",
+                "--targets",
+                "crates/runtime/targets",
+                "--",
+                "/opt/nwn/nwserver",
+                "-module",
+                "nwnrs",
+            ],
+        )
+        .map_err(|error| format!("parse run args: {error:?}"))?;
+
+        let Command::Run(command) = cli.command;
+        assert_eq!(command.runtime, Some(PathBuf::from("libnwnrs_runtime.so")));
+        assert_eq!(
+            command.targets,
+            Some(PathBuf::from("crates/runtime/targets"))
+        );
+        assert!(!command.container);
+        assert_eq!(command.color, super::ColorMode::Auto);
+        assert!(!command.no_tail_logs);
+        assert!(!command.gui);
+        assert_eq!(
+            command.arguments,
+            vec!["/opt/nwn/nwserver", "-module", "nwnrs"]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_docker_mode_in_supervisor_only_build() -> Result<(), String> {
+        let result = Cli::from_args(&["nwnrs"], &["run", "--docker"]);
+        let error = result
+            .err()
+            .ok_or_else(|| "supervisor-only build unexpectedly accepted --docker".to_string())?;
+        assert!(error.output.contains("--docker"));
+        Ok(())
+    }
+
+    #[test]
+    fn parses_container_mode_without_native_paths() -> Result<(), String> {
+        let cli = Cli::from_args(
+            &["nwnrs"],
+            &["run", "--container", "--", "-module", "custom"],
+        )
+        .map_err(|error| format!("parse container args: {error:?}"))?;
+
+        let Command::Run(command) = cli.command;
+        assert!(command.container);
+        assert_eq!(command.runtime, None);
+        assert_eq!(command.targets, None);
+        assert_eq!(command.arguments, vec!["-module", "custom"]);
+        Ok(())
     }
 }

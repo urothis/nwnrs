@@ -3,18 +3,52 @@ name: Docker checks
 on:
     pull_request:
         paths:
+            - .dockerignore
+            - Cargo.lock
+            - Cargo.toml
+            - rust-toolchain.toml
+            - crates/nwnrs/**
+            - crates/runtime/**
+            - crates/runtime-sys/**
             - docker/**
+            - .github/actions/rust-toolchain/**
             - .github/workflows/docker*.yml
+
+concurrency:
+    group: ${{ github.workflow }}-${{ github.event.pull_request.head.repo.full_name
+        || github.repository }}-${{ github.head_ref || github.ref_name }}
+    cancel-in-progress: true
 
 jobs:
     check:
-        runs-on: ubuntu-latest
+        name: ${{ matrix.name }}
+        runs-on:
+            [self-hosted, nwnrs, "${{ matrix.os_label }}", "${{ matrix.arch_label }}"]
         timeout-minutes: 30
         permissions:
             contents: read
+        strategy:
+            fail-fast: false
+            matrix:
+                include:
+                    - name: Linux x86_64
+                      os_label: Linux
+                      arch_label: X64
+                    - name: Linux ARM64
+                      os_label: Linux
+                      arch_label: ARM64
         steps:
             - uses: actions/checkout@v6.0.3
               with:
                   persist-credentials: false
+            - uses: ./.github/actions/rust-toolchain
+              with:
+                  components: clippy
             - name: Check scripts
               run: bash -n docker/scripts/*.sh
+            - name: Check supervisor-only CLI
+              run: |
+                  cargo clippy --locked --package nwnrs --all-targets \
+                    --no-default-features --features supervisor -- -D warnings
+                  cargo test --locked --package nwnrs --all-targets \
+                    --no-default-features --features supervisor

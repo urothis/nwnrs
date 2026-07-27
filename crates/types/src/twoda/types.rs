@@ -84,6 +84,7 @@ pub struct TwoDa {
     pub(crate) source_bytes: Option<Vec<u8>>,
     pub(crate) source_snapshot: Option<TwoDaSnapshot>,
     pub(crate) source_layout: Option<TwoDaSourceLayout>,
+    pub(crate) encoding: LegacyEncoding,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -155,7 +156,14 @@ impl TwoDa {
             source_bytes:       None,
             source_snapshot:    None,
             source_layout:      None,
+            encoding:           LegacyEncoding::default(),
         }
+    }
+
+    /// Returns the legacy encoding carried by this table.
+    #[must_use]
+    pub const fn encoding(&self) -> LegacyEncoding {
+        self.encoding
     }
 
     /// Returns a cloned row by index.

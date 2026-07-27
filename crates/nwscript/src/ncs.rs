@@ -434,6 +434,13 @@ pub enum NcsReadError {
         /// Actual available payload bytes.
         actual_extra:   usize,
     },
+    /// Bytes remained after the size declared by the NCS header.
+    TrailingBytes {
+        /// Total size declared by the header.
+        declared_size: usize,
+        /// Actual input byte length.
+        actual_size:   usize,
+    },
 }
 
 impl fmt::Display for NcsReadError {
@@ -450,6 +457,14 @@ impl fmt::Display for NcsReadError {
                 f,
                 "truncated NCS instruction at byte {offset}: expected {expected_extra} payload \
                  bytes, got {actual_extra}"
+            ),
+            Self::TrailingBytes {
+                declared_size,
+                actual_size,
+            } => write!(
+                f,
+                "NCS contains trailing data: header declares {declared_size} bytes, input \
+                 contains {actual_size}"
             ),
         }
     }
@@ -644,6 +659,12 @@ pub fn decode_ncs_instructions(bytes: &[u8]) -> Result<Vec<NcsInstruction>, NcsR
             actual_extra: bytes.len(),
         });
     }
+    if bytes.len() > code_end {
+        return Err(NcsReadError::TrailingBytes {
+            declared_size: code_end,
+            actual_size:   bytes.len(),
+        });
+    }
 
     let mut instructions = Vec::new();
     while offset < code_end {
@@ -686,25 +707,90 @@ pub fn decode_ncs_instructions(bytes: &[u8]) -> Result<Vec<NcsInstruction>, NcsR
     Ok(instructions)
 }
 
+/// Failure while encoding an NCS instruction stream.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NcsEncodeError {
+    /// The encoded stream cannot be represented by the NCS 32-bit size field.
+    SizeOverflow,
+    /// Memory for the validated encoded size could not be reserved.
+    AllocationFailed(String),
+    /// The caller cancelled encoding.
+    Cancelled,
+}
+
+impl fmt::Display for NcsEncodeError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::SizeOverflow => {
+                formatter.write_str("encoded NCS exceeds the format's 32-bit size limit")
+            }
+            Self::AllocationFailed(error) => {
+                write!(
+                    formatter,
+                    "failed to reserve memory for encoded NCS: {error}"
+                )
+            }
+            Self::Cancelled => formatter.write_str("operation cancelled"),
+        }
+    }
+}
+
+impl Error for NcsEncodeError {}
+
 /// Encodes one `NCS V1.0` instruction stream with the fixed binary header.
-pub fn encode_ncs_instructions(instructions: &[NcsInstruction]) -> Vec<u8> {
+///
+/// # Errors
+///
+/// Returns [`NcsEncodeError`] when the result exceeds the NCS 32-bit size
+/// field or its validated allocation cannot be reserved.
+pub fn encode_ncs_instructions(instructions: &[NcsInstruction]) -> Result<Vec<u8>, NcsEncodeError> {
+    encode_ncs_instructions_impl(instructions, None)
+}
+
+/// Encodes one NCS instruction stream with cooperative cancellation.
+///
+/// # Errors
+///
+/// Returns the same failures as [`encode_ncs_instructions`] or
+/// [`NcsEncodeError::Cancelled`].
+pub fn encode_ncs_instructions_with_cancellation(
+    instructions: &[NcsInstruction],
+    cancellation: &crate::CancellationToken,
+) -> Result<Vec<u8>, NcsEncodeError> {
+    encode_ncs_instructions_impl(instructions, Some(cancellation))
+}
+
+fn encode_ncs_instructions_impl(
+    instructions: &[NcsInstruction],
+    cancellation: Option<&crate::CancellationToken>,
+) -> Result<Vec<u8>, NcsEncodeError> {
     let payload_size = instructions
         .iter()
-        .map(NcsInstruction::encoded_len)
-        .sum::<usize>();
-    let code_size = u32::try_from(NCS_BINARY_HEADER_SIZE.saturating_add(payload_size))
-        .ok()
-        .unwrap_or(u32::MAX);
-    let mut bytes = Vec::with_capacity(usize::try_from(code_size).ok().unwrap_or(usize::MAX));
+        .try_fold(0_usize, |total, instruction| {
+            total
+                .checked_add(instruction.encoded_len())
+                .ok_or(NcsEncodeError::SizeOverflow)
+        })?;
+    let total_size = NCS_BINARY_HEADER_SIZE
+        .checked_add(payload_size)
+        .ok_or(NcsEncodeError::SizeOverflow)?;
+    let code_size = u32::try_from(total_size).map_err(|_error| NcsEncodeError::SizeOverflow)?;
+    let mut bytes = Vec::new();
+    bytes
+        .try_reserve_exact(total_size)
+        .map_err(|error| NcsEncodeError::AllocationFailed(error.to_string()))?;
     bytes.extend_from_slice(NCS_HEADER.as_bytes());
     bytes.push(b'B');
     bytes.extend_from_slice(&code_size.to_be_bytes());
-    for instruction in instructions {
+    for (index, instruction) in instructions.iter().enumerate() {
+        if index & 0x0fff == 0 && cancellation.is_some_and(crate::CancellationToken::is_cancelled) {
+            return Err(NcsEncodeError::Cancelled);
+        }
         bytes.push(instruction.opcode as u8);
         bytes.push(instruction.auxcode as u8);
         bytes.extend_from_slice(&instruction.extra);
     }
-    bytes
+    Ok(bytes)
 }
 
 #[cfg(test)]
@@ -747,10 +833,42 @@ mod tests {
             },
         ];
 
-        let bytes = encode_ncs_instructions(&instructions);
+        let bytes = encode_ncs_instructions(&instructions)?;
         assert_eq!(decode_ncs_header(&bytes)?.code_size as usize, bytes.len());
         let decoded = decode_ncs_instructions(&bytes)?;
         assert_eq!(decoded, instructions);
         Ok(())
+    }
+
+    #[test]
+    fn decoder_rejects_bytes_after_declared_code_size() {
+        let mut bytes = encode_ncs_instructions(&[NcsInstruction {
+            opcode:  NcsOpcode::Ret,
+            auxcode: NcsAuxCode::None,
+            extra:   Vec::new(),
+        }])
+        .expect("encode fixture");
+        bytes.push(0xff);
+
+        assert!(matches!(
+            decode_ncs_instructions(&bytes),
+            Err(NcsReadError::TrailingBytes { .. })
+        ));
+    }
+
+    #[test]
+    fn encoder_honors_pre_cancelled_requests() {
+        let cancellation = crate::CancellationToken::new();
+        cancellation.cancel();
+        let error = encode_ncs_instructions_with_cancellation(
+            &[NcsInstruction {
+                opcode:  NcsOpcode::Ret,
+                auxcode: NcsAuxCode::None,
+                extra:   Vec::new(),
+            }],
+            &cancellation,
+        )
+        .expect_err("cancelled encode must fail");
+        assert_eq!(error, NcsEncodeError::Cancelled);
     }
 }

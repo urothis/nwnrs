@@ -139,12 +139,18 @@ impl NwnScene {
     /// # Examples
     ///
     /// ```no_run
-    /// let scene = nwnrs_types::mdl::NwnScene::from_file("model.mdl")?;
+    /// let scene = nwnrs_types::mdl::NwnScene::from_file(
+    ///     "model.mdl",
+    ///     nwnrs_types::encoding::NwnTextContext::english(),
+    /// )?;
     /// # Ok::<(), nwnrs_types::mdl::ModelError>(())
     /// ```
-    pub fn from_file(path: impl AsRef<Path>) -> ModelResult<Self> {
+    pub fn from_file(
+        path: impl AsRef<Path>,
+        context: nwnrs_types::encoding::NwnTextContext,
+    ) -> ModelResult<Self> {
         let mut file = File::open(path.as_ref())?;
-        read_scene_model(&mut file)
+        read_scene_model(&mut file, context)
     }
 
     /// Reads and lowers an engine-neutral scene from disk using automatic
@@ -157,12 +163,18 @@ impl NwnScene {
     /// # Examples
     ///
     /// ```no_run
-    /// let scene = nwnrs_types::mdl::NwnScene::from_auto_file("model.mdl")?;
+    /// let scene = nwnrs_types::mdl::NwnScene::from_auto_file(
+    ///     "model.mdl",
+    ///     nwnrs_types::encoding::NwnTextContext::english(),
+    /// )?;
     /// # Ok::<(), nwnrs_types::mdl::ModelError>(())
     /// ```
-    pub fn from_auto_file(path: impl AsRef<Path>) -> ModelResult<Self> {
+    pub fn from_auto_file(
+        path: impl AsRef<Path>,
+        context: nwnrs_types::encoding::NwnTextContext,
+    ) -> ModelResult<Self> {
         let mut file = File::open(path.as_ref())?;
-        read_scene_model_auto(&mut file)
+        read_scene_model_auto(&mut file, context)
     }
 
     /// Reads and lowers an engine-neutral scene from a [`Res`].
@@ -177,10 +189,18 @@ impl NwnScene {
     /// ```no_run
     /// # use nwnrs_types::resman::{CachePolicy, Res};
     /// fn scene(res: &Res) -> nwnrs_types::mdl::ModelResult<nwnrs_types::mdl::NwnScene> {
-    ///     nwnrs_types::mdl::NwnScene::from_res(res, CachePolicy::Use)
+    ///     nwnrs_types::mdl::NwnScene::from_res(
+    ///         res,
+    ///         CachePolicy::Use,
+    ///         nwnrs_types::encoding::NwnTextContext::english(),
+    ///     )
     /// }
     /// ```
-    pub fn from_res(res: &Res, cache_policy: CachePolicy) -> ModelResult<Self> {
+    pub fn from_res(
+        res: &Res,
+        cache_policy: CachePolicy,
+        context: nwnrs_types::encoding::NwnTextContext,
+    ) -> ModelResult<Self> {
         if res.resref().res_type() != MODEL_RES_TYPE {
             return Err(ModelError::msg(format!(
                 "expected mdl resource, got {}",
@@ -188,7 +208,7 @@ impl NwnScene {
             )));
         }
 
-        let semantic = crate::mdl::SemanticModel::from_res(res, cache_policy)?;
+        let semantic = crate::mdl::SemanticModel::from_res(res, cache_policy, context)?;
         lower_semantic_model_to_scene(&semantic)
     }
 
@@ -205,10 +225,18 @@ impl NwnScene {
     /// ```no_run
     /// # use nwnrs_types::resman::{CachePolicy, Res};
     /// fn scene(res: &Res) -> nwnrs_types::mdl::ModelResult<nwnrs_types::mdl::NwnScene> {
-    ///     nwnrs_types::mdl::NwnScene::from_auto_res(res, CachePolicy::Use)
+    ///     nwnrs_types::mdl::NwnScene::from_auto_res(
+    ///         res,
+    ///         CachePolicy::Use,
+    ///         nwnrs_types::encoding::NwnTextContext::english(),
+    ///     )
     /// }
     /// ```
-    pub fn from_auto_res(res: &Res, cache_policy: CachePolicy) -> ModelResult<Self> {
+    pub fn from_auto_res(
+        res: &Res,
+        cache_policy: CachePolicy,
+        context: nwnrs_types::encoding::NwnTextContext,
+    ) -> ModelResult<Self> {
         if res.resref().res_type() != MODEL_RES_TYPE {
             return Err(ModelError::msg(format!(
                 "expected mdl resource, got {}",
@@ -216,7 +244,7 @@ impl NwnScene {
             )));
         }
 
-        let semantic = crate::mdl::SemanticModel::from_auto_res(res, cache_policy)?;
+        let semantic = crate::mdl::SemanticModel::from_auto_res(res, cache_policy, context)?;
         lower_semantic_model_to_scene(&semantic)
     }
 }
@@ -861,8 +889,11 @@ impl Model {
     /// # Errors
     ///
     /// Returns [`ModelError`] if parsing or lowering fails.
-    pub fn parse_scene(&self) -> ModelResult<NwnScene> {
-        lower_semantic_model_to_scene(&self.parse_semantic()?)
+    pub fn parse_scene(
+        &self,
+        context: nwnrs_types::encoding::NwnTextContext,
+    ) -> ModelResult<NwnScene> {
+        lower_semantic_model_to_scene(&self.parse_semantic(context)?)
     }
 
     /// Parses and lowers the raw payload into an engine-neutral NWN scene
@@ -871,8 +902,11 @@ impl Model {
     /// # Errors
     ///
     /// Returns [`ModelError`] if parsing or lowering fails.
-    pub fn parse_scene_auto(&self) -> ModelResult<NwnScene> {
-        lower_semantic_model_to_scene(&self.parse_semantic_auto()?)
+    pub fn parse_scene_auto(
+        &self,
+        context: nwnrs_types::encoding::NwnTextContext,
+    ) -> ModelResult<NwnScene> {
+        lower_semantic_model_to_scene(&self.parse_semantic_auto(context)?)
     }
 }
 
@@ -924,12 +958,18 @@ pub fn parse_scene_model(text: &str) -> ModelResult<NwnScene> {
 /// # Examples
 ///
 /// ```
-/// let scene = nwnrs_types::mdl::parse_scene_model_auto(b"beginmodelgeom demo\nendmodelgeom demo\ndonemodel demo\n")?;
+/// let scene = nwnrs_types::mdl::parse_scene_model_auto(
+///     b"beginmodelgeom demo\nendmodelgeom demo\ndonemodel demo\n",
+///     nwnrs_types::encoding::NwnTextContext::english(),
+/// )?;
 /// assert_eq!(scene.name, "demo");
 /// # Ok::<(), nwnrs_types::mdl::ModelError>(())
 /// ```
-pub fn parse_scene_model_auto(bytes: &[u8]) -> ModelResult<NwnScene> {
-    lower_semantic_model_to_scene(&parse_semantic_model_auto(bytes)?)
+pub fn parse_scene_model_auto(
+    bytes: &[u8],
+    context: nwnrs_types::encoding::NwnTextContext,
+) -> ModelResult<NwnScene> {
+    lower_semantic_model_to_scene(&parse_semantic_model_auto(bytes, context)?)
 }
 
 /// Reads and lowers an engine-neutral scene from `reader`.
@@ -942,13 +982,19 @@ pub fn parse_scene_model_auto(bytes: &[u8]) -> ModelResult<NwnScene> {
 ///
 /// ```
 /// let mut input = b"beginmodelgeom demo\nendmodelgeom demo\ndonemodel demo\n".as_slice();
-/// let scene = nwnrs_types::mdl::read_scene_model(&mut input)?;
+/// let scene = nwnrs_types::mdl::read_scene_model(
+///     &mut input,
+///     nwnrs_types::encoding::NwnTextContext::english(),
+/// )?;
 /// assert_eq!(scene.name, "demo");
 /// # Ok::<(), nwnrs_types::mdl::ModelError>(())
 /// ```
 #[instrument(level = "debug", skip_all, err)]
-pub fn read_scene_model<R: Read>(reader: &mut R) -> ModelResult<NwnScene> {
-    let semantic = read_semantic_model(reader)?;
+pub fn read_scene_model<R: Read>(
+    reader: &mut R,
+    context: nwnrs_types::encoding::NwnTextContext,
+) -> ModelResult<NwnScene> {
+    let semantic = read_semantic_model(reader, context)?;
     lower_semantic_model_to_scene(&semantic)
 }
 
@@ -963,13 +1009,19 @@ pub fn read_scene_model<R: Read>(reader: &mut R) -> ModelResult<NwnScene> {
 ///
 /// ```
 /// let mut input = b"beginmodelgeom demo\nendmodelgeom demo\ndonemodel demo\n".as_slice();
-/// let scene = nwnrs_types::mdl::read_scene_model_auto(&mut input)?;
+/// let scene = nwnrs_types::mdl::read_scene_model_auto(
+///     &mut input,
+///     nwnrs_types::encoding::NwnTextContext::english(),
+/// )?;
 /// assert_eq!(scene.name, "demo");
 /// # Ok::<(), nwnrs_types::mdl::ModelError>(())
 /// ```
 #[instrument(level = "debug", skip_all, err)]
-pub fn read_scene_model_auto<R: Read>(reader: &mut R) -> ModelResult<NwnScene> {
-    let semantic = read_semantic_model_auto(reader)?;
+pub fn read_scene_model_auto<R: Read>(
+    reader: &mut R,
+    context: nwnrs_types::encoding::NwnTextContext,
+) -> ModelResult<NwnScene> {
+    let semantic = read_semantic_model_auto(reader, context)?;
     lower_semantic_model_to_scene(&semantic)
 }
 
@@ -997,15 +1049,23 @@ pub fn read_scene_model_auto<R: Read>(reader: &mut R) -> ModelResult<NwnScene> {
 /// ",
 /// )?;
 /// let mut bytes = Vec::new();
-/// nwnrs_types::mdl::write_scene_model(&mut bytes, &scene)?;
+/// nwnrs_types::mdl::write_scene_model(
+///     &mut bytes,
+///     &scene,
+///     nwnrs_types::encoding::NwnTextContext::english(),
+/// )?;
 /// let text = String::from_utf8(bytes).unwrap();
 /// assert!(text.contains("donemodel demo"));
 /// # Ok::<(), nwnrs_types::mdl::ModelError>(())
 /// ```
 #[instrument(level = "debug", skip_all, err, fields(model_name = %scene.name))]
-pub fn write_scene_model<W: Write>(writer: &mut W, scene: &NwnScene) -> ModelResult<()> {
+pub fn write_scene_model<W: Write>(
+    writer: &mut W,
+    scene: &NwnScene,
+    context: nwnrs_types::encoding::NwnTextContext,
+) -> ModelResult<()> {
     let semantic = raise_scene_to_semantic(scene)?;
-    crate::mdl::write_semantic_model(writer, &semantic)
+    crate::mdl::write_semantic_model(writer, &semantic, context)
 }
 
 fn raise_scene_to_semantic(scene: &NwnScene) -> ModelResult<SemanticModel> {
@@ -1715,11 +1775,6 @@ pub fn lower_semantic_model_to_scene(model: &SemanticModel) -> ModelResult<NwnSc
         .enumerate()
         .map(|(index, node)| (node.name.to_ascii_lowercase(), index))
         .collect::<BTreeMap<_, _>>();
-    let node_names = node_name_to_index
-        .keys()
-        .cloned()
-        .collect::<std::collections::BTreeSet<_>>();
-
     let mut nodes = Vec::with_capacity(model.nodes.len());
     let mut meshes = Vec::new();
     let mut materials = Vec::new();
@@ -1765,12 +1820,7 @@ pub fn lower_semantic_model_to_scene(model: &SemanticModel) -> ModelResult<NwnSc
 
         let mesh_index = node.mesh.as_ref().map(|mesh| {
             let material_index = materials.len();
-            materials.push(lower_material(
-                &node.material,
-                node_index,
-                &node.kind,
-                &node_names,
-            ));
+            materials.push(lower_material(&node.material, node_index, &node.kind));
             let lowered_mesh = lower_mesh(
                 mesh,
                 node.sample_period,
@@ -1849,17 +1899,13 @@ fn lower_material(
     material: &SemanticMaterial,
     source_node: usize,
     node_kind: &NodeKind,
-    node_names: &std::collections::BTreeSet<String>,
 ) -> NwnMaterial {
     let mut textures = Vec::new();
     let helper_bitmap = if matches!(node_kind, NodeKind::Aabb) {
-        material
-            .bitmap
-            .as_deref()
-            .and_then(|bitmap| normalize_texture_name(bitmap, node_names))
+        material.bitmap.as_deref().and_then(normalize_texture_name)
     } else {
         if let Some(bitmap) = &material.bitmap
-            && let Some(name) = normalize_texture_name(bitmap, node_names)
+            && let Some(name) = normalize_texture_name(bitmap)
         {
             textures.push(NwnTextureRef {
                 slot: NwnTextureSlot::Bitmap,
@@ -1869,7 +1915,7 @@ fn lower_material(
         None
     };
     for texture in &material.textures {
-        if let Some(texture) = lower_texture_ref(texture, node_names) {
+        if let Some(texture) = lower_texture_ref(texture) {
             textures.push(texture);
         }
     }
@@ -1897,27 +1943,17 @@ fn lower_material(
     }
 }
 
-fn lower_texture_ref(
-    binding: &SemanticTextureBinding,
-    node_names: &std::collections::BTreeSet<String>,
-) -> Option<NwnTextureRef> {
-    let name = normalize_texture_name(&binding.name, node_names)?;
+fn lower_texture_ref(binding: &SemanticTextureBinding) -> Option<NwnTextureRef> {
+    let name = normalize_texture_name(&binding.name)?;
     Some(NwnTextureRef {
         slot: NwnTextureSlot::Texture(binding.index),
         name,
     })
 }
 
-fn normalize_texture_name(
-    name: &str,
-    node_names: &std::collections::BTreeSet<String>,
-) -> Option<String> {
+fn normalize_texture_name(name: &str) -> Option<String> {
     let trimmed = name.trim();
     if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("null") {
-        return None;
-    }
-
-    if node_names.contains(&trimmed.to_ascii_lowercase()) {
         return None;
     }
 
@@ -2695,7 +2731,12 @@ donemodel demo
             .unwrap_or_else(|| panic!("writable scene fixture missing body node"))
             .parent = Some(usize::MAX);
 
-        let error = write_scene_model(&mut Vec::new(), &scene).unwrap_err();
+        let error = write_scene_model(
+            &mut Vec::new(),
+            &scene,
+            nwnrs_types::encoding::NwnTextContext::english(),
+        )
+        .unwrap_err();
         assert!(error.to_string().contains("invalid parent index"));
     }
 
@@ -2709,7 +2750,12 @@ donemodel demo
             .unwrap_or_else(|| panic!("writable scene fixture missing body primitive"))
             .material = Some(usize::MAX);
 
-        let error = write_scene_model(&mut Vec::new(), &scene).unwrap_err();
+        let error = write_scene_model(
+            &mut Vec::new(),
+            &scene,
+            nwnrs_types::encoding::NwnTextContext::english(),
+        )
+        .unwrap_err();
         assert!(error.to_string().contains("invalid material index"));
     }
 
@@ -2723,7 +2769,12 @@ donemodel demo
             .unwrap_or_else(|| panic!("writable scene fixture missing animation track"))
             .target_node = Some(usize::MAX);
 
-        let error = write_scene_model(&mut Vec::new(), &scene).unwrap_err();
+        let error = write_scene_model(
+            &mut Vec::new(),
+            &scene,
+            nwnrs_types::encoding::NwnTextContext::english(),
+        )
+        .unwrap_err();
         assert!(error.to_string().contains("invalid target index"));
     }
 
@@ -2737,7 +2788,12 @@ donemodel demo
             .local_transform
             .scale = [1.0, 2.0, 1.0];
 
-        let error = write_scene_model(&mut Vec::new(), &scene).unwrap_err();
+        let error = write_scene_model(
+            &mut Vec::new(),
+            &scene,
+            nwnrs_types::encoding::NwnTextContext::english(),
+        )
+        .unwrap_err();
         assert!(error.to_string().contains("non-uniform scale"));
     }
     fn writable_scene_fixture() -> NwnScene {

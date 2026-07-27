@@ -1,0 +1,424 @@
+use std::{collections::BTreeMap, ffi::c_void};
+
+use nwnrs_runtime::{
+    EventObjectId, EventValue, EventVector, PROJECTILE_SPELL_ID_WHITELIST,
+    PROJECTILE_TYPE_ID_WHITELIST,
+};
+
+use super::{
+    super::{
+        Engine, EventFrame, EventSpec,
+        abi::{
+            BroadcastSafeProjectile, CloseInventory, EngineVector, ObjectAction, OpenInventory,
+            SetExperience, UnlockObjectAction,
+        },
+        active_engine,
+        hook::{NativeHookSpec, NativeOriginal},
+    },
+    dispatch, native,
+};
+use crate::bridge::BridgeInstallError;
+
+const LOCK_HOOK: &str = "object_lock";
+const UNLOCK_HOOK: &str = "object_unlock";
+const USE_HOOK: &str = "object_use";
+const PLACEABLE_OPEN_HOOK: &str = "placeable_open";
+const PLACEABLE_CLOSE_HOOK: &str = "placeable_close";
+const BROADCAST_SAFE_PROJECTILE_HOOK: &str = "object_broadcast_safe_projectile";
+const SET_EXPERIENCE_HOOK: &str = "object_set_experience";
+
+static LOCK_ORIGINAL: NativeOriginal<ObjectAction> = NativeOriginal::new();
+static UNLOCK_ORIGINAL: NativeOriginal<UnlockObjectAction> = NativeOriginal::new();
+static USE_ORIGINAL: NativeOriginal<ObjectAction> = NativeOriginal::new();
+static PLACEABLE_OPEN_ORIGINAL: NativeOriginal<OpenInventory> = NativeOriginal::new();
+static PLACEABLE_CLOSE_ORIGINAL: NativeOriginal<CloseInventory> = NativeOriginal::new();
+static BROADCAST_SAFE_PROJECTILE_ORIGINAL: NativeOriginal<BroadcastSafeProjectile> =
+    NativeOriginal::new();
+static SET_EXPERIENCE_ORIGINAL: NativeOriginal<SetExperience> = NativeOriginal::new();
+
+pub(super) fn append_hook_specs(engine: &Engine, hooks: &mut Vec<NativeHookSpec>) {
+    append(
+        engine,
+        hooks,
+        LOCK_HOOK,
+        "CNWSObject::AddLockObjectAction events",
+        lock_replacement as ObjectAction,
+        &LOCK_ORIGINAL,
+    );
+    append(
+        engine,
+        hooks,
+        UNLOCK_HOOK,
+        "CNWSObject::AddUnlockObjectAction events",
+        unlock_replacement as UnlockObjectAction,
+        &UNLOCK_ORIGINAL,
+    );
+    append(
+        engine,
+        hooks,
+        USE_HOOK,
+        "CNWSObject::AddUseObjectAction events",
+        use_replacement as ObjectAction,
+        &USE_ORIGINAL,
+    );
+    append(
+        engine,
+        hooks,
+        PLACEABLE_OPEN_HOOK,
+        "CNWSPlaceable::OpenInventory events",
+        placeable_open_replacement as OpenInventory,
+        &PLACEABLE_OPEN_ORIGINAL,
+    );
+    append(
+        engine,
+        hooks,
+        PLACEABLE_CLOSE_HOOK,
+        "CNWSPlaceable::CloseInventory events",
+        placeable_close_replacement as CloseInventory,
+        &PLACEABLE_CLOSE_ORIGINAL,
+    );
+    append(
+        engine,
+        hooks,
+        BROADCAST_SAFE_PROJECTILE_HOOK,
+        "CNWSObject::BroadcastSafeProjectile events",
+        broadcast_safe_projectile_replacement as BroadcastSafeProjectile,
+        &BROADCAST_SAFE_PROJECTILE_ORIGINAL,
+    );
+    append(
+        engine,
+        hooks,
+        SET_EXPERIENCE_HOOK,
+        "CNWSCreatureStats::SetExperience events",
+        set_experience_replacement as SetExperience,
+        &SET_EXPERIENCE_ORIGINAL,
+    );
+}
+
+extern "C" fn set_experience_replacement(stats: *mut c_void, value: u32, do_level: i32) {
+    if native::read_field::<u32>(stats, "creature_stats_experience") == Some(value) {
+        return;
+    }
+    if do_level == 0 {
+        call_set_experience(stats, value, do_level);
+        return;
+    }
+    let Some(creature) = native::stats_creature(stats) else {
+        call_set_experience(stats, value, do_level);
+        return;
+    };
+    let data = BTreeMap::from([("xp".to_string(), EventValue::Unsigned(value))]);
+    let before = dispatch::game_object(
+        creature,
+        EventSpec::catalog("object.set_experience", "before"),
+        data.clone(),
+    );
+    if before.as_ref().is_none_or(|frame| !frame.skipped()) {
+        call_set_experience(stats, value, do_level);
+    } else if let Some(replacement) = before.as_ref().and_then(EventFrame::unsigned_result) {
+        call_set_experience(stats, replacement, do_level);
+    }
+    dispatch::game_object(
+        creature,
+        EventSpec::catalog("object.set_experience", "after"),
+        data,
+    );
+}
+
+fn call_set_experience(stats: *mut c_void, value: u32, do_level: i32) {
+    if let Some(original) = SET_EXPERIENCE_ORIGINAL.load() {
+        original(stats, value, do_level);
+    }
+}
+
+fn append<Function: Copy>(
+    engine: &Engine,
+    hooks: &mut Vec<NativeHookSpec>,
+    key: &'static str,
+    name: &'static str,
+    replacement: Function,
+    original: &'static NativeOriginal<Function>,
+) {
+    if let Some(target) = engine.event_hook_target(key) {
+        hooks.push(NativeHookSpec::typed_event(
+            key,
+            name,
+            target,
+            replacement,
+            original,
+        ));
+    }
+}
+
+extern "C" fn lock_replacement(object: *mut c_void, door: u32) -> i32 {
+    object_action(
+        object,
+        "object.lock",
+        BTreeMap::from([object_value("door", door)]),
+        &LOCK_ORIGINAL,
+        door,
+    )
+}
+
+extern "C" fn use_replacement(object: *mut c_void, used: u32) -> i32 {
+    object_action(
+        object,
+        "object.use",
+        BTreeMap::from([object_value("object", used)]),
+        &USE_ORIGINAL,
+        used,
+    )
+}
+
+fn object_action(
+    object: *mut c_void,
+    name: &'static str,
+    data: BTreeMap<String, EventValue>,
+    original: &'static NativeOriginal<ObjectAction>,
+    argument: u32,
+) -> i32 {
+    let skipped = emit(object, EventSpec::catalog(name, "before"), data.clone())
+        .is_some_and(|frame| frame.skipped());
+    let result = if skipped {
+        0
+    } else {
+        call_object_action(original, object, argument)
+    };
+    let mut after = data;
+    after.insert("action_result".to_string(), EventValue::Integer(result));
+    emit(object, EventSpec::catalog(name, "after"), after);
+    result
+}
+
+extern "C" fn unlock_replacement(
+    object: *mut c_void,
+    door: u32,
+    thieves_tool: u32,
+    active_property_index: i32,
+) -> i32 {
+    let data = BTreeMap::from([
+        (
+            "active_property_index".to_string(),
+            EventValue::Integer(active_property_index),
+        ),
+        object_value("door", door),
+        object_value("thieves_tool", thieves_tool),
+    ]);
+    let skipped = emit(
+        object,
+        EventSpec::catalog("object.unlock", "before"),
+        data.clone(),
+    )
+    .is_some_and(|frame| frame.skipped());
+    let result = if skipped {
+        0
+    } else {
+        call_unlock(object, door, thieves_tool, active_property_index)
+    };
+    let mut after = data;
+    after.insert("action_result".to_string(), EventValue::Integer(result));
+    emit(object, EventSpec::catalog("object.unlock", "after"), after);
+    result
+}
+
+extern "C" fn placeable_open_replacement(placeable: *mut c_void, opener: u32) {
+    let data = BTreeMap::from([object_value("object", opener)]);
+    let skipped = emit(
+        placeable,
+        EventSpec::catalog("placeable.open", "before"),
+        data.clone(),
+    )
+    .is_some_and(|frame| frame.skipped());
+    if !skipped {
+        call_open(placeable, opener);
+    }
+    let mut after = data;
+    after.insert("before_skipped".to_string(), EventValue::Boolean(skipped));
+    emit(
+        placeable,
+        EventSpec::catalog("placeable.open", "after"),
+        after,
+    );
+}
+
+extern "C" fn placeable_close_replacement(placeable: *mut c_void, closer: u32, update_player: i32) {
+    let data = BTreeMap::from([object_value("object", closer)]);
+    emit(
+        placeable,
+        EventSpec::catalog("placeable.close", "before"),
+        data.clone(),
+    );
+    call_close(placeable, closer, update_player);
+    emit(
+        placeable,
+        EventSpec::catalog("placeable.close", "after"),
+        data,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+extern "C" fn broadcast_safe_projectile_replacement(
+    object: *mut c_void,
+    originator: u32,
+    target: u32,
+    originator_position: EngineVector,
+    target_position: EngineVector,
+    delta: u32,
+    projectile_type: u8,
+    spell_id: u32,
+    attack_result: u8,
+    projectile_path_type: u8,
+) {
+    let whitelisted = active_engine().is_some_and(|engine| {
+        engine.event_id_is_whitelisted(PROJECTILE_TYPE_ID_WHITELIST, i32::from(projectile_type))
+            && engine.event_id_is_whitelisted(PROJECTILE_SPELL_ID_WHITELIST, spell_id as i32)
+    });
+    if !whitelisted {
+        call_broadcast_safe_projectile(
+            object,
+            originator,
+            target,
+            originator_position,
+            target_position,
+            delta,
+            projectile_type,
+            spell_id,
+            attack_result,
+            projectile_path_type,
+        );
+        return;
+    }
+    let data = BTreeMap::from([
+        object_value("originator", originator),
+        object_value("target", target),
+        (
+            "originator_position".to_string(),
+            EventValue::Vector(event_vector(originator_position)),
+        ),
+        (
+            "target_position".to_string(),
+            EventValue::Vector(event_vector(target_position)),
+        ),
+        ("delta".to_string(), EventValue::Unsigned(delta)),
+        (
+            "projectile_type".to_string(),
+            EventValue::Integer(i32::from(projectile_type)),
+        ),
+        ("spell_id".to_string(), EventValue::Unsigned(spell_id)),
+        (
+            "attack_result".to_string(),
+            EventValue::Integer(i32::from(attack_result)),
+        ),
+        (
+            "projectile_path_type".to_string(),
+            EventValue::Integer(i32::from(projectile_path_type)),
+        ),
+    ]);
+    let skipped = emit(
+        object,
+        EventSpec::catalog("object.broadcast_safe_projectile", "before"),
+        data.clone(),
+    )
+    .is_some_and(|frame| frame.skipped());
+    if !skipped {
+        call_broadcast_safe_projectile(
+            object,
+            originator,
+            target,
+            originator_position,
+            target_position,
+            delta,
+            projectile_type,
+            spell_id,
+            attack_result,
+            projectile_path_type,
+        );
+    }
+    emit(
+        object,
+        EventSpec::catalog("object.broadcast_safe_projectile", "after"),
+        data,
+    );
+}
+
+fn event_vector(value: EngineVector) -> EventVector {
+    EventVector {
+        x: value.x,
+        y: value.y,
+        z: value.z,
+    }
+}
+
+fn emit(
+    object: *mut c_void,
+    spec: Result<EventSpec, BridgeInstallError>,
+    data: BTreeMap<String, EventValue>,
+) -> Option<super::super::EventFrame> {
+    dispatch::game_object(object, spec, data)
+}
+
+fn object_value(name: &str, value: u32) -> (String, EventValue) {
+    (
+        name.to_string(),
+        EventValue::Object(EventObjectId::new(value)),
+    )
+}
+
+fn call_object_action(
+    original: &NativeOriginal<ObjectAction>,
+    object: *mut c_void,
+    argument: u32,
+) -> i32 {
+    original
+        .load()
+        .map_or(0, |original| original(object, argument))
+}
+
+fn call_unlock(object: *mut c_void, door: u32, thieves_tool: u32, index: i32) -> i32 {
+    let Some(original) = UNLOCK_ORIGINAL.load() else {
+        return 0;
+    };
+    original(object, door, thieves_tool, index)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn call_broadcast_safe_projectile(
+    object: *mut c_void,
+    originator: u32,
+    target: u32,
+    originator_position: EngineVector,
+    target_position: EngineVector,
+    delta: u32,
+    projectile_type: u8,
+    spell_id: u32,
+    attack_result: u8,
+    projectile_path_type: u8,
+) {
+    let Some(original) = BROADCAST_SAFE_PROJECTILE_ORIGINAL.load() else {
+        return;
+    };
+    original(
+        object,
+        originator,
+        target,
+        originator_position,
+        target_position,
+        delta,
+        projectile_type,
+        spell_id,
+        attack_result,
+        projectile_path_type,
+    );
+}
+
+fn call_open(placeable: *mut c_void, opener: u32) {
+    if let Some(original) = PLACEABLE_OPEN_ORIGINAL.load() {
+        original(placeable, opener);
+    }
+}
+
+fn call_close(placeable: *mut c_void, closer: u32, update_player: i32) {
+    if let Some(original) = PLACEABLE_CLOSE_ORIGINAL.load() {
+        original(placeable, closer, update_player);
+    }
+}

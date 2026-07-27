@@ -5,6 +5,7 @@ mod support;
 use std::{error::Error, io::Cursor};
 
 use nwnrs_types::{
+    encoding::NwnTextContext,
     gff::{GffRoot, GffStruct, GffValue, read_gff_root, write_gff_root},
     resman::lookup_res_type,
 };
@@ -20,8 +21,11 @@ fn edited_source_backed_gff_preserves_value_edit() -> Result<(), Box<dyn Error>>
     parsed.put_value("nr_test_cmt", GffValue::CExoString("after".to_string()))?;
 
     let mut output = Cursor::new(Vec::new());
-    write_gff_root(&mut output, &parsed)?;
-    let reparsed = read_gff_root(&mut Cursor::new(output.into_inner()))?;
+    write_gff_root(&mut output, &parsed, NwnTextContext::default())?;
+    let reparsed = read_gff_root(
+        &mut Cursor::new(output.into_inner()),
+        NwnTextContext::default(),
+    )?;
     let comment = reparsed
         .root
         .get_field("nr_test_cmt")
@@ -42,8 +46,11 @@ fn edited_source_backed_gff_allows_structural_field_edits() -> Result<(), Box<dy
     parsed.put_value("nr_test_str", GffValue::Struct(GffStruct::new(7)))?;
 
     let mut output = Cursor::new(Vec::new());
-    write_gff_root(&mut output, &parsed)?;
-    let reparsed = read_gff_root(&mut Cursor::new(output.into_inner()))?;
+    write_gff_root(&mut output, &parsed, NwnTextContext::default())?;
+    let reparsed = read_gff_root(
+        &mut Cursor::new(output.into_inner()),
+        NwnTextContext::default(),
+    )?;
 
     assert!(reparsed.root.get_field("nr_test_rm").is_none());
     assert!(matches!(
@@ -66,8 +73,11 @@ fn edited_source_backed_gff_allows_list_resize() -> Result<(), Box<dyn Error>> {
     parsed.put_value("nr_test_items", GffValue::List(vec![GffStruct::new(1)]))?;
 
     let mut output = Cursor::new(Vec::new());
-    write_gff_root(&mut output, &parsed)?;
-    let reparsed = read_gff_root(&mut Cursor::new(output.into_inner()))?;
+    write_gff_root(&mut output, &parsed, NwnTextContext::default())?;
+    let reparsed = read_gff_root(
+        &mut Cursor::new(output.into_inner()),
+        NwnTextContext::default(),
+    )?;
 
     assert!(matches!(
         reparsed
@@ -149,7 +159,10 @@ fn shipped_gff_fixture() -> Result<GffRoot, Box<dyn Error>> {
         lookup_res_type("gff").ok_or_else(|| std::io::Error::other("missing .gff res type"))?;
     let (_resref, bytes) = require_game_resource(read_first_shipped_resource_bytes_matching(
         gff_type,
-        |_resref, bytes| read_gff_root(&mut Cursor::new(bytes)).is_ok(),
+        |_resref, bytes| read_gff_root(&mut Cursor::new(bytes), NwnTextContext::default()).is_ok(),
     ))?;
-    Ok(read_gff_root(&mut Cursor::new(bytes))?)
+    Ok(read_gff_root(
+        &mut Cursor::new(bytes),
+        NwnTextContext::default(),
+    )?)
 }

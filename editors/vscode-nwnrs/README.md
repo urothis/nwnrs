@@ -1,0 +1,399 @@
+# nwnrs for Visual Studio Code
+
+This extension provides `.nss` language support and reports errors from the
+real nwnrs NWScript compiler in VS Code's Problems panel and directly in the
+editor. The compiler is linked into a bundled native Node module; the extension
+does not launch or require the `nwnrs` CLI.
+
+## Current support
+
+- NWScript (`.nss`) language registration and syntax highlighting.
+- Windows-1252 is enforced for every NSS document. The extension disables
+  encoding guessing for the `nwscript` language, verifies the document
+  encoding on open, and offers **Reopen as Windows-1252** when necessary.
+  Dirty incorrectly encoded documents require confirmation before their
+  unsaved edits are discarded.
+- Debounced compiler checks for unsaved edits, opens, and saves. Dirty NSS
+  buffers are encoded with VS Code's Windows-1252 encoder and passed to the
+  compiler as exact binary overlays, including dirty include files. A
+  decode-after-encode check marks every unrepresentable UTF-16 range and
+  suspends language features until the document is representable; stale source
+  is never substituted.
+- Manual checks for the current file or every NWScript project in the
+  workspace.
+- Multiple independent diagnostics per file, source locations, error codes,
+  included-file diagnostics, and compiler output.
+- Nearest-project discovery through `nwpkg.toml`.
+- An always-available nwnrs Activity Bar view that discovers every
+  `nwpkg.toml` in multi-root and nested workspaces. The active package follows
+  the active editor unless a package is explicitly pinned, and that pin is
+  retained in workspace state.
+- A lazy, precedence-aware resource browser for workspace resources,
+  transitive package dependencies, enabled overrides, archives, and winning
+  KEY/BIF game assets. Branches are grouped by family, resource type, and name
+  prefix in the persistent native worker rather than loading the complete game
+  catalog into the extension host. With no package open, the browser exposes a
+  clean Vanilla catalog from the configured or discovered game installation.
+- A package Source tree with IFO-authoritative Areas, editable Dialogs, and
+  NSS-only Code sections. Empty sections stay hidden, authored directories are
+  preserved, area nodes use their exact `Mod_Area_list` resource references,
+  and missing or unregistered area components are visible instead of guessed.
+  Selecting a complete area opens one read-only scene assembled from its
+  authored ARE/GIT/GIC sources rather than exposing those serialization files
+  as separate tree children. Expanding that area instead shows non-empty,
+  categorized Creatures, Doors, Placeables, Encounters, Sounds, Stores,
+  Triggers, and Waypoints groups from the authored GIT data. Selecting an
+  object opens the area, frames its complete logical visual/collision bounds,
+  and highlights it in the viewport.
+- Non-mutating checks through the reusable nwnrs compiler API.
+- Cancellable workspace progress, dependency-aware project deduplication,
+  project/include watchers, and one persistent language worker with isolated,
+  invalidatable indexes per `nwpkg.toml` package.
+- Go to Definition and hover documentation for functions, macros, strong enum
+  types, enum variants, enum compatibility aliases, and type aliases across
+  the current project, configured include directories, and transitive local or locked Git
+  `nwpkg` dependencies.
+- Runtime-catalog-backed hierarchical completion, semantic highlighting,
+  hover details, and Cmd/Ctrl+Click navigation for subjects and phases inside
+  `#[nwnrs::event::<subject>::<phase>]`. Relationship clauses complete and
+  navigate exact same-lane handler functions. Catalog navigation opens a
+  generated read-only document with
+  the event name, phase, control policy, result type, source, frequency, and
+  filter semantics; the extension does not maintain a second event list.
+- Go to Definition for vanilla functions, constants, and engine structures.
+  Workspace files, unsaved overlays, configured include roots, and enabled
+  game overrides take precedence over packed vanilla scripts. Packed fallbacks
+  open read-only. Vanilla function hover text is extracted directly from the
+  resolved source's adjacent `//` comments; no documentation sidecar or
+  modified game source is involved.
+- A compiler-backed Outline and breadcrumb tree for source-authored functions,
+  globals, constants, structs and fields, strong enums and variants, type
+  aliases, `#define` declarations, and extended macros. Enum variants and
+  struct fields are nested under their owning declarations; event handlers
+  show their canonical event routes and relationships beside the function
+  signature.
+- Outline updates use dirty in-memory buffers, remain available through common
+  parse and lexical errors, exclude included declarations and synthetic macro
+  output, and work in read-only packed game scripts as well as physical files.
+- Find References, safe package-wide Rename Symbol, workspace symbols, and
+  incoming/outgoing call hierarchy. References cross sibling scripts and
+  editable local dependencies while respecting local shadowing and enum
+  qualification and receiver types for same-named structure fields.
+  Packed/generated targets are read-only.
+- Compiler-backed semantic highlighting for functions, parameters, variables,
+  fields, types, enums, variants, macros, event subjects, phases, and
+  relationship targets.
+- Configurable enum-value and parameter-name inlay hints.
+- Quick fixes for a missing semicolon and for a missing `#include` when exactly
+  one accessible source provides the unresolved symbol.
+- Cmd/Ctrl+Click navigation on `#include` paths using compiler precedence.
+- `nwpkg.toml` syntax highlighting, typed validation, completion (including
+  local paths, Git selectors, project kinds, and languages), hover help,
+  Outline, dependency diagnostics, explicit fetch/update quick fixes, and
+  source/dependency navigation.
+- Editable custom documents for the GFF family, 2DA tables, TLK string tables,
+  DDS/TGA/PLT textures, ERF/HAK/MOD/NWM archives, and KEY-managed BIF sets,
+  plus read-only NCS/NDB workbenches.
+  These use the nwnrs typed parsers and writers in the bundled native service;
+  the webview never parses or rewrites a binary format itself.
+- Native undo/redo edits, streaming hot-exit backups, revert, multi-view
+  synchronization, external-change detection, and atomic single-file saves for
+  every editable custom document. KEY and its referenced BIF files are staged,
+  preflighted, and committed as one rollback-capable transaction; backup and
+  fingerprint paths stream large payloads instead of base64-expanding them.
+- Archive resource search, paging, add/remove/rename/replace, extraction, and
+  nested custom editors. Saving a nested editor updates and dirties its owning
+  archive instead of creating an unrelated temporary file.
+- Read-only WebGL 2 scene views for MDL/WOK/DWK/PWK, UTC/UTD/UTP/UTI,
+  ARE/GIT, and module IFO resources. The persistent native scene service uses
+  the same package-aware ResMan precedence as compilation and sends packed
+  binary geometry and texture buffers to the webview without JSON/base64
+  expansion.
+
+Remaining formats and editor features are tracked in
+[VSCODE_TODO.md](./VSCODE_TODO.md).
+
+## Resource editors
+
+Opening a supported resource uses `nwnrs Resource Editor` by default. A 2DA is
+always presented as a spreadsheet-style table, not as a plain text buffer.
+
+- GFF editors expose every field kind, nested structures and lists, exact
+  64-bit integer text, localized strings, and opaque byte payloads. Structures
+  and lists are fetched from the native document in bounded pages, and field,
+  type, and list changes use transactional granular edits rather than cloning
+  the complete tree into the webview. Unchanged parsed fields retain their
+  source provenance during an edited rewrite.
+  Dialog sources in canonical `*.dlg.json` use this same typed custom-document
+  lifecycle and remain canonical JSON after editing; binary `.dlg` documents
+  remain binary. Both formats share undo/redo, backups, revert, external-change
+  detection, and atomic saves.
+- TLK search and paging stay in the native worker, so the webview only receives
+  the visible entries. Text, sound references, lengths, flags, and language are
+  editable.
+- DDS and TGA show decoded RGBA pixels and encoded metadata. DDS preserves its
+  DXT payload and mip chain, and TGA supports its encoded orientation and
+  run-length variants. PLT remains
+  palette-aware: pixels are edited as value/layer pairs rather than being
+  incorrectly flattened into ordinary RGBA data.
+- ERF-family and KEY editors page large entry sets in native code. Supported
+  nested resources open in the same custom editor; other resource types can
+  still be extracted or replaced.
+- NCS and NDB open in a read-only bytecode workbench with a function/source
+  outline, searchable paged instructions, raw bytes, typed operands, named
+  engine actions, exact jump/call/source navigation, NDB debug tables, and a
+  function-scoped control-flow graph. Companion NDB, NSS, and `nwscript.nss`
+  resources follow normal workspace, package, archive, and game precedence;
+  missing debug information is reported without fabricating metadata.
+
+A BIF does not contain the resource names stored in its owning KEY table, so
+the extension opens BIF contents through `.key` rather than pretending a
+standalone BIF has enough identity information. KEY edits preserve BIF
+filenames, drive flags, resource order, OIDs, and compression policy.
+
+The custom-document lifecycle supports protected origins: Save prompts for a
+writable destination, with `nwnrs.overrideDirectory` controlling the default
+location. Ordinary workspace files and user-owned archives save normally.
+Resources opened from the Activity Bar use their actual winning
+origin: directory-backed files open normally, while packed assets use an
+immutable virtual document backed by the same package resource session.
+
+## 3D scene viewer
+
+Opening a model, walkmesh, visual blueprint, area, or module IFO selects the
+read-only scene viewer. Module views provide an area selector. Standalone-model
+animations are selected from the viewer toolbar; area-object animations appear
+in the selected-object inspector header so the control stays with the current
+selection. A resizable, collapsible inspector is docked beside the viewport and
+switches between Selected Object, Scene, and Dependencies contexts instead of
+stacking independent overlays. At narrow editor widths it becomes a responsive
+drawer. Selecting an area object automatically opens its context; the inspector
+width, collapsed state, context, query, technical-name preference, open
+sections, drill-down route, and per-object scroll position survive webview
+restoration.
+
+The inspector uses a compact property grid rather than one card per GFF field.
+Effective values and 2DA labels are primary, source layers are concise badges,
+resource values open directly, and full provenance remains available through
+the field-detail page. Search covers friendly and raw names, values, resource
+references, localized data, and 2DA metadata; a sticky section selector jumps
+within large objects. Long text expands in place. Complete authored data is
+requested lazily from the cached native scene. Applicable
+Identity & Text, Transform, Appearance, Stats & Gameplay, Inventory,
+Lock & Trap, Conversation, Scripts, Local Variables, Audio, and spawning
+sections expose every effective top-level GFF field without bloating the
+initial geometry packet. Localized strings follow the configured language,
+inline CExoLocString overrides, the installation dialog/dialogf TLKs, and the
+module custom TLK offset. Numeric appearance, race, class, feat, skill, spell,
+portrait, soundset, base-item, trap, phenotype, and body-bag fields include
+their resolved 2DA row labels when available. Resource-bearing values are
+clickable and use the same package/game precedence as the scene.
+
+Each value identifies whether it came from the area GIT instance or the exact
+winning blueprint and shows that resource's container origin. References,
+rendered components, raw source layers, nested structures, and list entries use
+breadcrumb-based inspector pages instead of indefinitely nested disclosures.
+Raw GFF browsing preserves every field, exact 64-bit integer, localized entry,
+and opaque payload from each source layer, so unknown or newly introduced
+fields never disappear behind curated UI coverage. Native
+inspection responses are cached with the scene under a bounded memory budget;
+session invalidation or scene-cache eviction removes the matching inspection
+data. These values describe
+authored module state rather than mutable live-server state.
+
+The Rendered Components page lists every visual and collision fragment.
+Hovering a component previews its exact oriented bounds, selecting it pins that
+highlight, double-clicking or pressing `F`
+frames it, and Open Resource opens its authoritative MDL/WOK/DWK/PWK source.
+Scene files and
+their supporting resources refresh automatically when workspace files change. One global
+environment light illuminates model surfaces uniformly from every direction,
+without a directional key, overhead sun, or rim light. Area day/night colors
+tint that omnidirectional illumination automatically; standalone resources use
+neutral white illumination. Explicit light nodes authored into scene content
+remain visible as local contributions.
+
+The scene service resolves supermodels, reference-model attachments, creature
+and item appearance composition, door/placeable collision companions, tile
+models and WOKs, skyboxes, 2DA appearance/light catalogs, DDS/TGA/PLT textures,
+TXI directives, MTR descriptors, and SHD source through the active package's
+resource graph. A physical workspace winner opens as its editable file from
+the Dependencies inspector context. A packed game winner opens as an immutable virtual
+resource; packed MTR/TXI/SHD/SET sources open as read-only text documents.
+Canonical compound GFF sources such as `start.are.json` and
+`creature.utc.json` are encoded in memory through the same codec used by the
+package build and participate in package precedence without temporary files.
+ARE and GIT are required for an authored-area preview; a missing GIC is
+reported but does not prevent rendering. Virtual area, model, and text-resource
+URIs retain their validated package-resolution request, so restored editor tabs
+rehydrate from source or ResMan after an extension-host restart instead of
+depending on process-local byte caches.
+
+The viewport supports mouse orbit/pan/zoom, keyboard arrow orbit and `+`/`-`
+zoom, and an elapsed-time fly camera while the canvas is focused: `W`/`S`
+move forward/backward, `A`/`D` strafe, `Q` descends, `E` ascends, and Shift
+temporarily triples movement speed. It also supports frame-to-scene, GPU
+skinning, transform and animmesh playback, transition
+blending, Bezier-key interpolation, timed animation-event display,
+normal/specular/roughness/emissive material channels, cyclic TXI atlas
+animation, model lights, tile light-color overrides, lens flares, unit-correct
+Aurora fountain emitters, camera-facing sprites, world-Z billboards, linked
+particle ribbons, additive blending, animated texture atlases, dangly motion,
+explosion chunk models, trigger/encounter polygons, sound radii,
+waypoint/store markers, authored vertex colors, and material-colored collision
+inspection. Standalone WOK/DWK/PWK resources open directly in Collision mode.
+Clicking an authored area object in the viewport selects its nearest logical
+object bounds and reveals the matching package-sidebar entry. Model objects use
+an authored-rotation-aware oriented selection box; polygons, sound radii, and
+markers also receive a
+bright overlay. Visual models and their DWK/PWK collision companions share one
+selection identity. Particle travel contributes to whole-scene framing but not
+to an object's selection box or selected-object camera distance, so emitters do
+not visually resize their owning placeables. The selected identity survives
+automatic scene reloads.
+Shader sources and all diagnostics are visible instead of being silently
+discarded. WebGL context loss is reported and the view reconstructs itself when
+VS Code restores the context.
+
+Scene catalogs keep animation tracks and texture pixels out of the initial
+payload. The viewer fetches exact model/animation assets and each referenced
+texture on demand, retains each packet with its owning binary buffer, and never
+mutates the scene catalog. Playback propagates only through the selected model's
+attachment tree. The viewer uploads authored DDS/DXT mip chains directly when the GPU supports S3TC,
+and falls back to decoded RGBA safely. Dependency changes invalidate only scenes
+that consume the changed resource. Per-scene render tables, uniforms, poses,
+matrices, overlays, packet assets, and effect buffers are retained and reused;
+evicted native scene assets are transparently rehydrated; native model bounds
+avoid repeatedly scanning packed vertex buffers; conservative frustum culling,
+static-tile and explosion-chunk instancing, capped priority-aware point lights,
+and scene-wide particle/chunk budgets keep large areas bounded. Dynamic models
+are never culled against bind-pose bounds. Animated views lower their internal
+resolution only when sustained frame cost requires it. Hidden editors release
+their WebGL context while VS Code state preserves the camera and selected
+animation for restoration.
+
+Scene documents intentionally remain read-only. Editing model/area content is
+deferred until it can share the typed custom-document undo, backup, conflict,
+and atomic-save guarantees used by the existing binary editors.
+
+## Prerequisite
+
+Building or packaging the extension requires the repository's pinned Rust
+toolchain and Node.js. Running the installed extension does not require Rust or
+a separately installed `nwnrs` executable.
+
+The currently bundled native target is macOS Apple Silicon. Windows, Linux,
+and Intel macOS packages are explicitly tracked in
+[VSCODE_TODO.md](./VSCODE_TODO.md).
+
+The extension icon is copied from the repository's canonical
+`assets/logo/icon.png` during the native/package build, so the VSIX carries the
+same project artwork without maintaining a second icon source.
+
+## Run the extension during development
+
+From the repository root, run `npm install`, open the repository root as the
+VS Code workspace, and press F5. The root npm workspace owns the shared
+TypeScript toolchain and includes `editors/vscode-nwnrs` as a workspace member.
+The included launch configuration type-checks and compiles the TypeScript
+extension and webview, builds the native compiler module, and opens an
+Extension Development Host. Open a folder containing `.nss` files in that host.
+
+TypeScript under `src`, `media`, `scripts`, and `test` is the source of truth.
+Generated JavaScript is written only to `dist` and is what VS Code and the test
+suite execute.
+
+## Package and install locally
+
+From the repository root:
+
+```sh
+npm run build:native
+npm run package:vscode -- --target darwin-arm64 --out nwnrs-0.0.2.vsix
+code --install-extension editors/vscode-nwnrs/nwnrs-0.0.2.vsix --force
+```
+
+`vsce package` automatically runs the native build through the extension's
+`vscode:prepublish` script, so the explicit first command is optional. It is
+shown because it provides a clearer build failure before packaging.
+
+## Commands
+
+- `nwnrs: Check Current NWScript File` checks the active NSS buffer without
+  forcing it to be saved.
+- `nwnrs: Check NWScript Workspace` finds `nwpkg.toml` manifests and checks
+  their source trees recursively. If there is no manifest, it checks the open
+  workspace folder.
+- `nwnrs: Show Compiler Output` opens compiler activity and failure details.
+
+Click the `nwnrs` status-bar item to reindex the current package, restart the
+language service, show compiler output, clear diagnostics, or open the nwnrs
+settings.
+
+The nwnrs Activity Bar's **Packages** view shows manifests, source directories,
+and direct dependency manifests. Expanding **Source** exposes only populated
+Areas, Dialogs, and Code sections. Folder nodes expand in place and ordinary
+file nodes open an editor. Area nodes instead open the combined read-only 3D
+preview directly. Selecting a package pins it; use the unpin action in
+the Packages view title to resume following the active editor.
+**Resources** displays only winning resources in resolver precedence, and
+clicking a supported resource opens its existing custom editor, scene viewer,
+or read-only packed text view. The five service actions remain available from
+the nwnrs status-bar menu and command palette without occupying a separate
+sidebar section.
+
+Cmd+Click a supported symbol on macOS, or Ctrl+Click it on Windows/Linux, to
+jump to its definition. The standard **Go to Definition** command and F12 use
+the same provider. A workspace override opens as its normal editable file;
+otherwise the resolved packed game script opens as an immutable `nwnrs-game`
+virtual document.
+
+Open VS Code's **Outline** view or use breadcrumbs to navigate the declarations
+in the active NSS document. The tree represents that document itself rather
+than the complete include graph, so opening an include or packed game script
+shows its own declarations without duplicating them into every consumer.
+
+Use **Find All References**, **Rename Symbol**, **Go to Symbol in Workspace**,
+and **Call Hierarchy** through their normal VS Code commands. Renaming is
+limited to editable physical sources and is computed from the compiler's
+resolved symbol identity; packed game sources are intentionally rejected.
+
+## Settings
+
+| Setting | Default | Purpose |
+| --- | --- | --- |
+| `nwnrs.checkOnSave` | `true` | Check an NSS file after it is saved. |
+| `nwnrs.checkOnChange` | `true` | Check dirty in-memory NSS contents while editing. |
+| `nwnrs.checkOnOpen` | `true` | Check an NSS file after it is opened. |
+| `nwnrs.debounceMilliseconds` | `250` | Delay automatic checks and supersede an older check for the same file. |
+| `nwnrs.noEntrypointCheck` | `true` | Accept include files without `main()` or `StartingConditional()`. |
+| `nwnrs.includeDirectories` | `[]` | Additional compiler include roots. Relative paths use the owning project root. |
+| `nwnrs.langspecPath` | empty | Explicit `nwscript.nss` path. |
+| `nwnrs.rootPath` | empty | Optional NWN installation root; empty uses platform discovery. |
+| `nwnrs.userPath` | empty | Optional NWN user directory; empty uses platform discovery. |
+| `nwnrs.overrideDirectory` | empty | Save-as destination for protected game resources; empty falls back to `userPath/override` or prompts. |
+| `nwnrs.language` | `english` | Installation language used for resource lookup. |
+| `nwnrs.loadOvr` | `false` | Include the user override directory during resource lookup. |
+| `nwnrs.maxIncludeDepth` | `16` | Maximum recursive include depth. |
+| `nwnrs.maxDiagnosticsPerFile` | `50` | Bound independent diagnostic recovery for one failed input. |
+| `nwnrs.inlayHints.enumValues` | `true` | Show automatic integer enum values. |
+| `nwnrs.inlayHints.parameterNames` | `literals` | Show parameter hints for `off`, literal arguments, or `all` arguments. |
+
+## Current limits
+
+- The current installer bundles macOS ARM64, Linux x64, and Windows x64.
+  Linux ARM64 has a defined loader target but its release module is
+  intentionally deferred. Other operating-system/architecture pairs are
+  rejected explicitly.
+- NSS is Windows-1252 only. Unrepresentable editor content remains visible but
+  is not synchronized, indexed, or compiled until corrected.
+- Vanilla constants without adjacent source comments navigate correctly but
+  intentionally have no fabricated hover description.
+
+## Verify
+
+```sh
+npm run build:native
+npm run check
+npm test
+```

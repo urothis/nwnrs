@@ -1,9 +1,9 @@
-use std::{collections::HashMap, error::Error, fmt};
+use std::{collections::HashMap, error::Error, fmt, path::PathBuf};
 
 use nwnrs_types::resman::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::CompilerErrorCode;
+use crate::{CancellationToken, CompilerErrorCode, CompilerResourceLimits};
 
 /// The built-in NWN resource type used for `NWScript` source files.
 pub const NW_SCRIPT_SOURCE_RES_TYPE: ResType = ResType(2009);
@@ -17,9 +17,20 @@ pub const DEFAULT_MAX_INCLUDE_DEPTH: usize = 16;
 /// Maximum distinct source files tracked by the native compiler.
 pub const MAX_SOURCE_FILES: usize = 512;
 
+/// Exact origin of compiler source bytes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ScriptSourceOrigin {
+    /// Editable or otherwise physically addressable source.
+    Physical(PathBuf),
+    /// Immutable or in-memory source exposed through an editor URI.
+    Virtual(String),
+}
+
 /// Errors returned while resolving or loading source files.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SourceError {
+    /// The caller cancelled source resolution.
+    Cancelled,
     /// The source resolver itself failed.
     Resolver(String),
     /// The requested source file could not be loaded or violated a compiler
@@ -40,6 +51,7 @@ impl SourceError {
     #[must_use]
     pub fn code(&self) -> Option<CompilerErrorCode> {
         match self {
+            Self::Cancelled => None,
             Self::Resolver(_) => None,
             Self::Compiler {
                 code, ..
@@ -100,11 +112,21 @@ impl SourceError {
             script_name,
         }
     }
+
+    /// Creates an error for a configured compiler resource bound.
+    pub fn resource_limit(script_name: impl Into<String>, message: impl Into<String>) -> Self {
+        Self::Compiler {
+            code:        CompilerErrorCode::UnknownStateInCompiler,
+            script_name: script_name.into(),
+            message:     message.into(),
+        }
+    }
 }
 
 impl fmt::Display for SourceError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Cancelled => f.write_str("operation cancelled"),
             Self::Resolver(message) => f.write_str(message),
             Self::Compiler {
                 message,
@@ -124,6 +146,8 @@ pub struct SourceLoadOptions {
     pub res_type:          ResType,
     /// Maximum recursive include depth.
     pub max_include_depth: usize,
+    /// Defensive memory and complexity bounds for this compiler operation.
+    pub resource_limits:   CompilerResourceLimits,
 }
 
 impl Default for SourceLoadOptions {
@@ -131,6 +155,7 @@ impl Default for SourceLoadOptions {
         Self {
             res_type:          NW_SCRIPT_SOURCE_RES_TYPE,
             max_include_depth: DEFAULT_MAX_INCLUDE_DEPTH,
+            resource_limits:   CompilerResourceLimits::default(),
         }
     }
 }
@@ -248,10 +273,13 @@ impl SourceFile {
         &self.contents
     }
 
-    /// Returns the source contents as UTF-8 when the file is valid UTF-8.
+    /// Returns a byte-preserving compiler-text view.
+    ///
+    /// Each source byte maps to the Unicode scalar with the same numeric
+    /// value. This is an internal lexical representation, not UTF-8 decoding.
     #[must_use]
-    pub fn text(&self) -> Option<&str> {
-        std::str::from_utf8(&self.contents).ok()
+    pub fn text(&self) -> String {
+        self.contents.iter().copied().map(char::from).collect()
     }
 
     /// Returns the raw bytes covered by `span` when it belongs to this file.
@@ -263,11 +291,11 @@ impl SourceFile {
         self.contents.get(span.start..span.end)
     }
 
-    /// Returns the text covered by `span` when it belongs to this file.
+    /// Returns a byte-preserving compiler-text view covered by `span`.
     #[must_use]
-    pub fn span_text(&self, span: Span) -> Option<&str> {
+    pub fn span_text(&self, span: Span) -> Option<String> {
         let bytes = self.span_bytes(span)?;
-        std::str::from_utf8(bytes).ok()
+        Some(bytes.iter().copied().map(char::from).collect())
     }
 
     /// Resolves a byte offset to a one-based line and column.
@@ -291,7 +319,7 @@ impl SourceFile {
 }
 
 /// A collection of loaded source files indexed by both id and normalized name.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 pub struct SourceMap {
     files: Vec<SourceFile>,
     names: HashMap<String, SourceId>,
@@ -313,10 +341,11 @@ impl SourceMap {
 
     /// Inserts a fully constructed source file.
     pub fn insert_file(&mut self, file: SourceFile) -> SourceId {
+        let id = self.next_id();
         let normalized = normalize_script_name(&file.name);
-        self.names.insert(normalized, file.id);
-        let id = file.id;
-        self.files.push(file);
+        self.names.insert(normalized, id);
+        self.files
+            .push(SourceFile::new(id, file.name, file.contents));
         id
     }
 
@@ -363,6 +392,40 @@ impl SourceMap {
     }
 }
 
+impl<'de> Deserialize<'de> for SourceMap {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct SerializedSourceMap {
+            files: Vec<SourceFile>,
+            #[serde(default)]
+            names: HashMap<String, SourceId>,
+        }
+
+        let serialized = SerializedSourceMap::deserialize(deserializer)?;
+        let _serialized_names = serialized.names;
+        let mut source_map = Self::new();
+        for file in serialized.files {
+            let normalized = normalize_script_name(&file.name);
+            if source_map.names.contains_key(&normalized) {
+                return Err(serde::de::Error::custom(format!(
+                    "duplicate normalized source name {:?}",
+                    file.name
+                )));
+            }
+            if source_map.files.len() >= u32::MAX as usize {
+                return Err(serde::de::Error::custom(
+                    "source map contains more files than SourceId can represent",
+                ));
+            }
+            source_map.insert_file(file);
+        }
+        Ok(source_map)
+    }
+}
+
 /// Loads script source text by logical name and resource type.
 pub trait ScriptResolver {
     /// Returns the source bytes for `script_name`, or `None` when it does not
@@ -377,24 +440,35 @@ pub trait ScriptResolver {
         res_type: ResType,
     ) -> Result<Option<Vec<u8>>, SourceError>;
 
-    /// Returns the source contents for `script_name`, or `None` when it does
-    /// not exist.
+    /// Resolves source bytes while enforcing a caller-provided size bound and
+    /// cooperative cancellation.
     ///
     /// # Errors
     ///
-    /// Returns [`SourceError`] if the underlying resource lookup or UTF-8
-    /// decoding fails.
-    fn resolve_script(
+    /// Returns [`SourceError`] when lookup fails, the source exceeds
+    /// `max_bytes`, or cancellation is requested.
+    fn resolve_script_bytes_with_cancellation(
         &self,
         script_name: &str,
         res_type: ResType,
-    ) -> Result<Option<String>, SourceError> {
-        match self.resolve_script_bytes(script_name, res_type)? {
-            Some(bytes) => String::from_utf8(bytes).map(Some).map_err(|error| {
-                SourceError::resolver(format!("source file is not valid UTF-8: {error}"))
-            }),
-            None => Ok(None),
-        }
+        max_bytes: usize,
+        cancellation: &CancellationToken,
+    ) -> Result<Option<Vec<u8>>, SourceError>;
+
+    /// Resolves the exact origin that would supply `script_name`.
+    ///
+    /// Resolvers without addressable origins may return `None`; callers then
+    /// retain the logical script name as an immutable virtual identity.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SourceError`] when origin lookup fails.
+    fn resolve_script_origin(
+        &self,
+        _script_name: &str,
+        _res_type: ResType,
+    ) -> Result<Option<ScriptSourceOrigin>, SourceError> {
+        Ok(None)
     }
 }
 
@@ -442,17 +516,42 @@ impl ScriptResolver for InMemoryScriptResolver {
             .cloned())
     }
 
-    fn resolve_script(
+    fn resolve_script_bytes_with_cancellation(
         &self,
         script_name: &str,
         res_type: ResType,
-    ) -> Result<Option<String>, SourceError> {
-        match self.resolve_script_bytes(script_name, res_type)? {
-            Some(bytes) => String::from_utf8(bytes).map(Some).map_err(|error| {
-                SourceError::resolver(format!("source file is not valid UTF-8: {error}"))
-            }),
-            None => Ok(None),
+        max_bytes: usize,
+        cancellation: &CancellationToken,
+    ) -> Result<Option<Vec<u8>>, SourceError> {
+        cancellation
+            .check()
+            .map_err(|_error| SourceError::Cancelled)?;
+        let Some(bytes) = self
+            .sources
+            .get(&(res_type, normalize_script_name(script_name)))
+        else {
+            return Ok(None);
+        };
+        if bytes.len() > max_bytes {
+            return Err(SourceError::resource_limit(
+                script_name,
+                format!(
+                    "source file contains {} bytes, exceeding configured maximum {max_bytes}",
+                    bytes.len()
+                ),
+            ));
         }
+        let mut copied = Vec::new();
+        copied.try_reserve_exact(bytes.len()).map_err(|error| {
+            SourceError::resolver(format!("failed to reserve source buffer: {error}"))
+        })?;
+        for chunk in bytes.chunks(1024 * 1024) {
+            cancellation
+                .check()
+                .map_err(|_error| SourceError::Cancelled)?;
+            copied.extend_from_slice(chunk);
+        }
+        Ok(Some(copied))
     }
 }
 
@@ -522,7 +621,7 @@ mod tests {
         let source = SourceFile::new(SourceId::new(1), "test.nss", "void main()");
         let span = Span::new(source.id, 5, 9);
 
-        assert_eq!(source.span_text(span), Some("main"));
+        assert_eq!(source.span_text(span), Some("main".to_string()));
     }
 
     #[test]
@@ -542,12 +641,47 @@ mod tests {
     }
 
     #[test]
+    fn source_map_reassigns_caller_supplied_ids_to_preserve_indexing() {
+        let mut sources = SourceMap::new();
+        let assigned =
+            sources.insert_file(SourceFile::new(SourceId::new(42), "wrong-id.nss", "value"));
+
+        assert_eq!(assigned, SourceId::new(0));
+        assert_eq!(sources.get(assigned).map(|file| file.id), Some(assigned));
+        assert_eq!(
+            sources.get_by_name("WRONG-ID.NSS").map(|file| file.id),
+            Some(assigned)
+        );
+        assert!(sources.get(SourceId::new(42)).is_none());
+    }
+
+    #[test]
+    fn source_map_deserialization_rebuilds_ids_and_line_tables() {
+        let encoded = r#"{
+            "files": [{
+                "id": 99,
+                "name": "main.nss",
+                "contents": [97, 10, 98],
+                "line_starts": [999]
+            }],
+            "names": {"broken": 99}
+        }"#;
+        let sources: SourceMap = serde_json::from_str(encoded).expect("deserialize source map");
+        let file = sources.get(SourceId::new(0)).expect("rebuilt source id");
+
+        assert_eq!(file.id, SourceId::new(0));
+        assert_eq!(file.location(2).map(|location| location.line), Some(2));
+        assert!(sources.get_by_name("broken").is_none());
+        assert!(sources.get_by_name("MAIN.NSS").is_some());
+    }
+
+    #[test]
     fn in_memory_resolver_matches_names_case_insensitively() {
         let mut resolver = InMemoryScriptResolver::new();
         resolver.insert_source("UTIL", "int X;");
 
-        let resolved = resolver.resolve_script("util", NW_SCRIPT_SOURCE_RES_TYPE);
-        assert_eq!(resolved.ok(), Some(Some("int X;".to_string())));
+        let resolved = resolver.resolve_script_bytes("util", NW_SCRIPT_SOURCE_RES_TYPE);
+        assert_eq!(resolved.ok(), Some(Some(b"int X;".to_vec())));
     }
 
     #[test]

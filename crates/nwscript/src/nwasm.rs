@@ -2,7 +2,6 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     error::Error,
     fmt,
-    fmt::Write,
 };
 
 use crate::{
@@ -67,6 +66,8 @@ impl Default for NcsDisassemblyOptions {
 pub enum NcsAsmError {
     /// Binary decoding failed before text rendering could begin.
     Read(NcsReadError),
+    /// Binary encoding failed after parsing asm text.
+    Encode(crate::NcsEncodeError),
     /// One instruction payload did not match the expected opcode shape.
     InvalidExtra {
         /// Instruction byte offset in the NCS code section.
@@ -91,6 +92,7 @@ impl fmt::Display for NcsAsmError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Read(error) => error.fmt(f),
+            Self::Encode(error) => error.fmt(f),
             Self::InvalidExtra {
                 offset,
                 opcode,
@@ -119,6 +121,12 @@ impl Error for NcsAsmError {}
 impl From<NcsReadError> for NcsAsmError {
     fn from(value: NcsReadError) -> Self {
         Self::Read(value)
+    }
+}
+
+impl From<crate::NcsEncodeError> for NcsAsmError {
+    fn from(value: crate::NcsEncodeError) -> Self {
+        Self::Encode(value)
     }
 }
 
@@ -279,7 +287,7 @@ fn decode_asm_lines(
 ) -> Result<Vec<DecodedAsmLine>, NcsAsmError> {
     let instructions = decode_ncs_instructions(bytes)?;
     let labels = if options.labels {
-        collect_jump_labels(&instructions)
+        collect_jump_labels(&instructions)?
     } else {
         BTreeMap::new()
     };
@@ -287,7 +295,7 @@ fn decode_asm_lines(
     let mut lines = Vec::with_capacity(instructions.len());
 
     for instruction in instructions {
-        let jump_target = jump_target_for_instruction(&instruction, offset);
+        let jump_target = jump_target_for_instruction(&instruction, offset)?;
         let extra = extra_string_for_instruction(
             &instruction,
             offset,
@@ -454,9 +462,7 @@ pub fn assemble_ncs_text(
 ///
 /// Returns [`NcsAsmError`] if parsing or encoding fails.
 pub fn assemble_ncs_bytes(text: &str, langspec: Option<&LangSpec>) -> Result<Vec<u8>, NcsAsmError> {
-    Ok(crate::encode_ncs_instructions(&assemble_ncs_text(
-        text, langspec,
-    )?))
+    crate::encode_ncs_instructions(&assemble_ncs_text(text, langspec)?).map_err(NcsAsmError::from)
 }
 
 /// Renders already-decoded disassembly lines into plain text.
@@ -473,7 +479,7 @@ pub fn render_disassembly_lines(lines: &[NcsAsmLine], options: NcsDisassemblyOpt
 
         let mut row = String::new();
         if options.offsets {
-            let _ = write!(row, "{:04}", line.offset);
+            row.push_str(&format!("{:04}", line.offset));
             row.push_str(": ");
         }
 
@@ -537,14 +543,14 @@ fn render_disassembly_with_ndb_lines(
 
         let mut row = String::new();
         if options.offsets {
-            let _ = write!(row, "{:04}", line.offset);
+            row.push_str(&format!("{:04}", line.offset));
             if options.local_offsets
                 && let Some(index) = current_function
                 && let Some(function) = functions.get(index)
             {
                 let local = local_offset(line.offset, function);
                 row.push(' ');
-                let _ = write!(row, "{local:04}");
+                row.push_str(&format!("{local:04}"));
             }
             row.push_str(": ");
         }
@@ -664,7 +670,7 @@ fn render_ndb_aware_extra<'a>(
 fn extra_string_for_instruction(
     instruction: &NcsInstruction,
     offset: usize,
-    langspec: Option<&LangSpec>,
+    _langspec: Option<&LangSpec>,
     labels: &BTreeMap<usize, String>,
     max_string_length: usize,
 ) -> Result<String, NcsAsmError> {
@@ -688,7 +694,14 @@ fn extra_string_for_instruction(
             _ => Ok(String::new()),
         },
         NcsOpcode::Jz | NcsOpcode::Jmp | NcsOpcode::Jsr | NcsOpcode::Jnz => {
-            let target = jump_target(offset, read_i32(extra, offset, instruction)?);
+            let target = jump_target_for_instruction(instruction, offset)?.ok_or_else(|| {
+                NcsAsmError::InvalidExtra {
+                    offset,
+                    opcode: instruction.opcode,
+                    auxcode: instruction.auxcode,
+                    message: "jump instruction did not produce a target".to_string(),
+                }
+            })?;
             Ok(format_jump_target(instruction.opcode, target, labels))
         }
         NcsOpcode::StoreState => Ok(format!(
@@ -704,7 +717,6 @@ fn extra_string_for_instruction(
         NcsOpcode::ExecuteCommand => {
             let builtin_id = read_u16_part(extra, 0, offset, instruction)?;
             let argc = read_u8_part(extra, 2, offset, instruction)?;
-            let _ = langspec;
             Ok(format!("{builtin_id}, {argc}"))
         }
         NcsOpcode::RunstackCopy | NcsOpcode::RunstackCopyBase => Ok(format!(
@@ -1256,7 +1268,19 @@ fn unescape_nwasm_string(input: &str, line: usize) -> Result<Vec<u8>, NcsAsmErro
     while let Some(ch) = chars.next() {
         if ch != '\\' {
             let mut encoded = [0_u8; 4];
-            output.extend_from_slice(ch.encode_utf8(&mut encoded).as_bytes());
+            output.extend_from_slice(
+                &nwnrs_types::encoding::encode_legacy(
+                    nwnrs_types::encoding::LegacyEncoding::Windows1252,
+                    ch.encode_utf8(&mut encoded),
+                )
+                .map_err(|error| NcsAsmError::Parse {
+                    line,
+                    message: format!(
+                        "NWScript string character {ch:?} is not representable in Windows-1252: \
+                         {error}"
+                    ),
+                })?,
+            );
             continue;
         }
         let escaped = chars.next().ok_or_else(|| NcsAsmError::Parse {
@@ -1316,7 +1340,19 @@ fn unescape_nwasm_string(input: &str, line: usize) -> Result<Vec<u8>, NcsAsmErro
                     message: format!("invalid unicode scalar value {value:#x}"),
                 })?;
                 let mut encoded = [0_u8; 4];
-                output.extend_from_slice(ch.encode_utf8(&mut encoded).as_bytes());
+                output.extend_from_slice(
+                    &nwnrs_types::encoding::encode_legacy(
+                        nwnrs_types::encoding::LegacyEncoding::Windows1252,
+                        ch.encode_utf8(&mut encoded),
+                    )
+                    .map_err(|error| NcsAsmError::Parse {
+                        line,
+                        message: format!(
+                            "NWScript string character {ch:?} is not representable in \
+                             Windows-1252: {error}"
+                        ),
+                    })?,
+                );
             }
             other => {
                 return Err(NcsAsmError::Parse {
@@ -1350,13 +1386,15 @@ fn escape_nwasm_bytes(value: &[u8]) -> String {
         .collect()
 }
 
-fn collect_jump_labels(instructions: &[NcsInstruction]) -> BTreeMap<usize, String> {
+fn collect_jump_labels(
+    instructions: &[NcsInstruction],
+) -> Result<BTreeMap<usize, String>, NcsAsmError> {
     let mut offset = 0usize;
     let mut targets = BTreeSet::new();
     let mut labels = BTreeMap::new();
 
     for instruction in instructions {
-        if let Some(target) = jump_target_for_instruction(instruction, offset) {
+        if let Some(target) = jump_target_for_instruction(instruction, offset)? {
             targets.insert((instruction.opcode as u8, target));
         }
         offset += instruction.encoded_len();
@@ -1373,25 +1411,41 @@ fn collect_jump_labels(instructions: &[NcsInstruction]) -> BTreeMap<usize, Strin
             .or_insert_with(|| format!("{prefix}_{target:04}"));
     }
 
-    labels
+    Ok(labels)
 }
 
-fn jump_target_for_instruction(instruction: &NcsInstruction, offset: usize) -> Option<usize> {
+fn jump_target_for_instruction(
+    instruction: &NcsInstruction,
+    offset: usize,
+) -> Result<Option<usize>, NcsAsmError> {
     if !matches!(
         instruction.opcode,
         NcsOpcode::Jmp | NcsOpcode::Jsr | NcsOpcode::Jz | NcsOpcode::Jnz
     ) {
-        return None;
+        return Ok(None);
     }
-    read_i32(&instruction.extra, offset, instruction)
-        .ok()
-        .map(|relative| jump_target(offset, relative))
-}
-
-fn jump_target(offset: usize, relative: i32) -> usize {
-    let base = i64::try_from(offset).ok().unwrap_or(i64::MAX);
-    let target = base.saturating_add(i64::from(relative));
-    usize::try_from(target.max(0)).ok().unwrap_or(0)
+    let relative = read_i32(&instruction.extra, offset, instruction)?;
+    let base = i64::try_from(offset).map_err(|error| NcsAsmError::InvalidExtra {
+        offset,
+        opcode: instruction.opcode,
+        auxcode: instruction.auxcode,
+        message: format!("instruction offset cannot be represented for jump calculation: {error}"),
+    })?;
+    let target =
+        base.checked_add(i64::from(relative))
+            .ok_or_else(|| NcsAsmError::InvalidExtra {
+                offset,
+                opcode: instruction.opcode,
+                auxcode: instruction.auxcode,
+                message: "jump target calculation overflowed".to_string(),
+            })?;
+    let target = usize::try_from(target).map_err(|error| NcsAsmError::InvalidExtra {
+        offset,
+        opcode: instruction.opcode,
+        auxcode: instruction.auxcode,
+        message: format!("jump target is outside the code address range: {error}"),
+    })?;
+    Ok(Some(target))
 }
 
 fn format_jump_target(
@@ -1676,7 +1730,7 @@ mod tests {
                 auxcode: NcsAuxCode::None,
                 extra:   Vec::new(),
             },
-        ]);
+        ])?;
         let spec = LangSpec {
             engine_num_structures: 0,
             engine_structures:     Vec::new(),
@@ -1723,7 +1777,7 @@ mod tests {
             opcode: NcsOpcode::Constant,
             auxcode: NcsAuxCode::TypeString,
             extra,
-        }]);
+        }])?;
         let lines = disassemble_ncs(&bytes, None, NcsDisassemblyOptions::default())?;
 
         assert_eq!(lines.len(), 1);
@@ -1753,7 +1807,7 @@ mod tests {
                 auxcode: NcsAuxCode::None,
                 extra:   Vec::new(),
             },
-        ]);
+        ])?;
 
         let rendered = render_ncs_disassembly(&bytes, None, NcsDisassemblyOptions::default())?;
         assert!(rendered.contains("0000: JZ loc_0008"));
@@ -1768,7 +1822,7 @@ mod tests {
             opcode:  NcsOpcode::Ret,
             auxcode: NcsAuxCode::None,
             extra:   Vec::new(),
-        }]);
+        }])?;
         let ndb = Ndb {
             files:     vec![NdbFile {
                 name:    "test".to_string(),
@@ -1824,7 +1878,7 @@ mod tests {
                 auxcode: NcsAuxCode::None,
                 extra:   Vec::new(),
             },
-        ]);
+        ])?;
         let ndb = Ndb {
             files:     vec![NdbFile {
                 name:    "test".to_string(),
@@ -1897,7 +1951,7 @@ mod tests {
                 auxcode: NcsAuxCode::None,
                 extra:   Vec::new(),
             },
-        ]);
+        ])?;
 
         let rendered = render_ncs_disassembly(
             &bytes,

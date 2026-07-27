@@ -100,13 +100,16 @@ pub fn read_erf_shared(stream: SharedReadSeek, filename: String) -> ErfResult<Er
     };
 
     let mut loc_strings = BTreeMap::new();
+    let mut loc_native_text = BTreeMap::new();
     io.seek(SeekFrom::Start(offset_to_loc_str))?;
     for _ in 0..loc_str_count {
         let id = read_i32(io.as_mut())?;
         let len = usize::try_from(read_i32(io.as_mut())?)
             .map_err(|e| ErfError::msg(format!("ERF loc string length is negative: {e}")))?;
         let bytes = read_bytes_or_err(io.as_mut(), len)?;
-        loc_strings.insert(id, from_nwnrs_encoding(&bytes)?);
+        let native = NwnText::decode(&bytes, localized_string_encoding(id)?);
+        loc_strings.insert(id, native.display_text());
+        loc_native_text.insert(id, native);
     }
 
     let _is_known_erf_type = VALID_ERF_TYPES.contains(&file_type.as_str());
@@ -173,7 +176,7 @@ pub fn read_erf_shared(stream: SharedReadSeek, filename: String) -> ErfResult<Er
         indexmap::IndexMap::with_hasher(RandomState::new());
     io.seek(SeekFrom::Start(offset_to_key_list))?;
     for (index, meta) in resources.iter().enumerate().take(entry_count) {
-        let res_ref_raw = trim_trailing_nuls(&read_bytes_or_err(io.as_mut(), 16)?);
+        let res_ref_raw = trim_trailing_nuls(&read_bytes_or_err(io.as_mut(), 16)?)?;
         let _id = read_i32(io.as_mut())?;
         let res_type = read_u16(io.as_mut())?;
         io.seek(SeekFrom::Current(2))?;
@@ -236,6 +239,7 @@ pub fn read_erf_shared(stream: SharedReadSeek, filename: String) -> ErfResult<Er
         build_day,
         str_ref,
         loc_strings,
+        loc_native_text,
         entries,
         oid,
         resource_list_padding: offset_to_resource_list
@@ -326,11 +330,16 @@ mod tests {
     use std::{collections::BTreeMap, io::Cursor};
 
     use nwnrs_types::{
-        checksums::prelude::sha1_digest, compressedbuf::prelude::Algorithm,
-        exo::prelude::ExoResFileCompressionType, resman::ResolvedResRef,
+        checksums::prelude::sha1_digest,
+        compressedbuf::prelude::Algorithm,
+        encoding::{LegacyEncoding, NwnText},
+        exo::prelude::ExoResFileCompressionType,
+        resman::ResolvedResRef,
     };
 
-    use super::{ErfVersion, read_erf, write_erf_with_options};
+    use super::{
+        ErfVersion, read_erf, write_erf_archive, write_erf_with_native_text, write_erf_with_options,
+    };
     use crate::erf::ErfWriteOptions;
 
     #[test]
@@ -375,6 +384,48 @@ mod tests {
             "unexpected error: {error}"
         );
     }
+
+    #[test]
+    fn localized_opaque_and_color_bytes_round_trip_exactly() {
+        let native = NwnText::decode(
+            b"Hello\x81<c\x01\x80\xff>world</c>",
+            LegacyEncoding::Windows1252,
+        );
+        let display = native.display_text();
+        let mut encoded = Cursor::new(Vec::new());
+        write_erf_with_native_text(
+            &mut encoded,
+            "ERF ",
+            ErfVersion::V1,
+            2026,
+            100,
+            ExoResFileCompressionType::None,
+            Algorithm::None,
+            &BTreeMap::from([(0, display.clone())]),
+            &BTreeMap::from([(0, native)]),
+            -1,
+            &[],
+            None,
+            ErfWriteOptions::default(),
+            |_rr, _out| unreachable!("empty archive has no payloads"),
+            |_rr| Algorithm::None,
+        )
+        .expect("encode erf");
+        let original = encoded.into_inner();
+
+        let erf = read_erf(Cursor::new(original.clone()), "opaque.erf").expect("decode erf");
+        assert_eq!(erf.loc_strings().get(&0), Some(&display));
+        assert_eq!(
+            erf.localized_native_text(0)
+                .expect("native localized text")
+                .encode(),
+            Ok(b"Hello\x81<c\x01\x80\xff>world</c>".to_vec())
+        );
+
+        let mut reencoded = Cursor::new(Vec::new());
+        write_erf_archive(&mut reencoded, &erf).expect("reencode erf");
+        assert_eq!(reencoded.into_inner(), original);
+    }
 }
 
 /// Writes an ERF-family archive with explicit preserved-layout options.
@@ -411,6 +462,55 @@ where
         exocomp,
         compalg,
         loc_strings,
+        None,
+        str_ref,
+        entries,
+        erf_oid,
+        options.resource_list_padding,
+        entry_writer,
+        entry_algorithm,
+    )
+}
+
+/// Writes an ERF-family archive while preserving the exact bytes of unchanged
+/// localized strings.
+///
+/// # Errors
+///
+/// Returns [`ErfError`] if archive metadata, localized text, or a resource
+/// payload cannot be encoded.
+#[allow(clippy::too_many_arguments)]
+pub fn write_erf_with_native_text<W, F>(
+    writer: &mut W,
+    file_type: &str,
+    file_version: ErfVersion,
+    build_year: u32,
+    build_day: u32,
+    exocomp: ExoResFileCompressionType,
+    compalg: Algorithm,
+    loc_strings: &BTreeMap<i32, String>,
+    loc_native_text: &BTreeMap<i32, NwnText>,
+    str_ref: i32,
+    entries: &[ResRef],
+    erf_oid: Option<&str>,
+    options: ErfWriteOptions,
+    entry_writer: F,
+    entry_algorithm: impl FnMut(&ResRef) -> Algorithm,
+) -> ErfResult<()>
+where
+    W: Write + Seek,
+    F: FnMut(&ResRef, &mut dyn Write) -> ErfResult<(usize, Sha1Digest)>,
+{
+    write_erf_inner(
+        writer,
+        file_type,
+        file_version,
+        build_year,
+        build_day,
+        exocomp,
+        compalg,
+        loc_strings,
+        Some(loc_native_text),
         str_ref,
         entries,
         erf_oid,
@@ -443,7 +543,7 @@ where
         algorithms.insert(rr.clone(), algorithm);
     }
 
-    write_erf_with_options(
+    write_erf_inner(
         writer,
         &value.file_type,
         value.file_version,
@@ -454,12 +554,11 @@ where
         exocomp,
         Algorithm::None,
         value.loc_strings(),
+        Some(&value.loc_native_text),
         value.str_ref,
         &entries,
         value.oid(),
-        ErfWriteOptions {
-            resource_list_padding: value.resource_list_padding(),
-        },
+        value.resource_list_padding(),
         |rr, out| {
             let bytes = payloads
                 .get(rr)
@@ -481,6 +580,7 @@ fn write_erf_inner<W, F>(
     exocomp: ExoResFileCompressionType,
     _compalg: Algorithm,
     loc_strings: &BTreeMap<i32, String>,
+    loc_native_text: Option<&BTreeMap<i32, NwnText>>,
     str_ref: i32,
     entries: &[ResRef],
     erf_oid: Option<&str>,
@@ -495,11 +595,21 @@ where
     if exocomp != ExoResFileCompressionType::None && file_version != ErfVersion::E1 {
         return Err(ErfError::msg("Compression requires E1"));
     }
+    if file_type.is_empty() || file_type.len() > 4 || !file_type.is_ascii() {
+        return Err(ErfError::msg(
+            "ERF file type must contain one through four ASCII bytes",
+        ));
+    }
 
     let mut encoded_loc_strings = Vec::with_capacity(loc_strings.len());
     let mut loc_string_size = 0_u64;
     for (id, text) in loc_strings {
-        let encoded = to_nwnrs_encoding(text)?;
+        let encoded = loc_native_text
+            .and_then(|values| values.get(id))
+            .filter(|native| native.display_text() == *text)
+            .map(NwnText::encode)
+            .transpose()?
+            .unwrap_or(encode_legacy(localized_string_encoding(*id)?, text)?);
         loc_string_size += 8 + u64::try_from(encoded.len())
             .map_err(|_error| ErfError::msg("localized string length exceeds 64-bit range"))?;
         encoded_loc_strings.push((*id, encoded));
@@ -654,6 +764,12 @@ where
     Ok(())
 }
 
+fn localized_string_encoding(id: i32) -> ErfResult<LegacyEncoding> {
+    let string_id = u32::try_from(id)
+        .map_err(|_error| ErfError::msg(format!("negative localized string id {id}")))?;
+    Ok(LegacyEncoding::for_language_id(string_id / 2))
+}
+
 fn normalize_oid(input: &str) -> ErfResult<String> {
     let normalized = input.trim().to_ascii_lowercase();
     if normalized.len() == 24 && normalized.chars().all(|ch| ch.is_ascii_hexdigit()) {
@@ -663,16 +779,27 @@ fn normalize_oid(input: &str) -> ErfResult<String> {
     }
 }
 
-fn trim_trailing_nuls(bytes: &[u8]) -> String {
+fn trim_trailing_nuls(bytes: &[u8]) -> ErfResult<String> {
     let end = bytes
         .iter()
         .position(|byte| *byte == 0)
         .unwrap_or(bytes.len());
-    String::from_utf8_lossy(bytes.get(..end).unwrap_or(bytes)).to_string()
+    let value = bytes.get(..end).unwrap_or(bytes);
+    if !value.is_ascii() {
+        return Err(ErfError::msg("ERF ResRef contains non-ASCII bytes"));
+    }
+    String::from_utf8(value.to_vec())
+        .map_err(|error| ErfError::msg(format!("invalid ASCII ERF ResRef: {error}")))
 }
 
 fn read_fixed_string<R: Read + ?Sized>(reader: &mut R, len: usize) -> io::Result<String> {
     let bytes = read_bytes_or_err(reader, len)?;
+    if !bytes.is_ascii() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "ERF fixed identifier contains non-ASCII bytes",
+        ));
+    }
     String::from_utf8(bytes).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
 }
 

@@ -10,22 +10,45 @@ use crate::{
 /// Renders one parsed script as Graphviz DOT.
 #[must_use]
 pub fn render_script_graphviz(script: &Script, source_map: Option<&SourceMap>) -> String {
-    let mut renderer = GraphvizRenderer::new(source_map);
+    let mut renderer = GraphvizRenderer::new(source_map, None);
     renderer.render_script(script);
     renderer.finish()
 }
 
+/// Renders one parsed script as Graphviz DOT while observing cancellation.
+///
+/// # Errors
+///
+/// Returns [`crate::Cancelled`] if cancellation is requested while traversing
+/// the syntax tree.
+pub fn render_script_graphviz_with_cancellation(
+    script: &Script,
+    source_map: Option<&SourceMap>,
+    cancellation: &crate::CancellationToken,
+) -> Result<String, crate::Cancelled> {
+    cancellation.check()?;
+    let mut renderer = GraphvizRenderer::new(source_map, Some(cancellation));
+    renderer.render_script(script);
+    cancellation.check()?;
+    Ok(renderer.finish())
+}
+
 struct GraphvizRenderer<'a> {
-    source_map: Option<&'a SourceMap>,
-    next_id:    usize,
-    nodes:      Vec<String>,
-    edges:      Vec<String>,
+    source_map:   Option<&'a SourceMap>,
+    cancellation: Option<&'a crate::CancellationToken>,
+    next_id:      usize,
+    nodes:        Vec<String>,
+    edges:        Vec<String>,
 }
 
 impl<'a> GraphvizRenderer<'a> {
-    fn new(source_map: Option<&'a SourceMap>) -> Self {
+    fn new(
+        source_map: Option<&'a SourceMap>,
+        cancellation: Option<&'a crate::CancellationToken>,
+    ) -> Self {
         Self {
             source_map,
+            cancellation,
             next_id: 0,
             nodes: Vec::new(),
             edges: Vec::new(),
@@ -56,8 +79,14 @@ impl<'a> GraphvizRenderer<'a> {
     }
 
     fn render_script(&mut self, script: &Script) {
+        if self.is_cancelled() {
+            return;
+        }
         let root = self.node("Script");
         for item in &script.items {
+            if self.is_cancelled() {
+                return;
+            }
             match item {
                 crate::TopLevelItem::Include(include) => {
                     let child = self.render_include(include);
@@ -75,6 +104,31 @@ impl<'a> GraphvizRenderer<'a> {
                     let child = self.render_struct(struct_decl);
                     self.edge(root, child, None);
                 }
+                crate::TopLevelItem::Enum(declaration) => {
+                    let child = self.node_with_span(
+                        format!("Enum {} : {:?}", declaration.name, declaration.backing),
+                        declaration.span,
+                    );
+                    self.edge(root, child, None);
+                    for variant in &declaration.variants {
+                        let variant_node =
+                            self.node_with_span(format!("Variant {}", variant.name), variant.span);
+                        self.edge(child, variant_node, None);
+                    }
+                }
+                crate::TopLevelItem::TypeAlias(alias) => {
+                    let child =
+                        self.node_with_span(format!("TypeAlias {}", alias.name), alias.span);
+                    self.edge(root, child, None);
+                    let target = self.render_type(&alias.target);
+                    self.edge(child, target, Some("target"));
+                }
+                crate::TopLevelItem::StaticAssert(assertion) => {
+                    let child = self.node_with_span("StaticAssert", assertion.span);
+                    self.edge(root, child, None);
+                    let condition = self.render_expr(&assertion.condition);
+                    self.edge(child, condition, Some("condition"));
+                }
             }
         }
     }
@@ -84,10 +138,16 @@ impl<'a> GraphvizRenderer<'a> {
     }
 
     fn render_function(&mut self, function: &FunctionDecl) -> usize {
+        if self.is_cancelled() {
+            return 0;
+        }
         let root = self.node_with_span(format!("Function {}", function.name), function.span);
         let return_type = self.render_type(&function.return_type);
         self.edge(root, return_type, Some("return"));
         for parameter in &function.parameters {
+            if self.is_cancelled() {
+                return root;
+            }
             let param = self.node_with_span(format!("Param {}", parameter.name), parameter.span);
             self.edge(root, param, None);
             let ty = self.render_type(&parameter.ty);
@@ -105,8 +165,14 @@ impl<'a> GraphvizRenderer<'a> {
     }
 
     fn render_struct(&mut self, struct_decl: &StructDecl) -> usize {
+        if self.is_cancelled() {
+            return 0;
+        }
         let root = self.node_with_span(format!("Struct {}", struct_decl.name), struct_decl.span);
         for field in &struct_decl.fields {
+            if self.is_cancelled() {
+                return root;
+            }
             let child = self.render_struct_field(field);
             self.edge(root, child, None);
         }
@@ -125,10 +191,16 @@ impl<'a> GraphvizRenderer<'a> {
     }
 
     fn render_declaration(&mut self, kind: &str, declaration: &Declaration) -> usize {
+        if self.is_cancelled() {
+            return 0;
+        }
         let root = self.node_with_span(kind, declaration.span);
         let ty = self.render_type(&declaration.ty);
         self.edge(root, ty, Some("type"));
         for declarator in &declaration.declarators {
+            if self.is_cancelled() {
+                return root;
+            }
             let child = self.render_declarator(declarator);
             self.edge(root, child, None);
         }
@@ -145,8 +217,14 @@ impl<'a> GraphvizRenderer<'a> {
     }
 
     fn render_block(&mut self, block: &BlockStmt) -> usize {
+        if self.is_cancelled() {
+            return 0;
+        }
         let root = self.node_with_span("Block", block.span);
         for statement in &block.statements {
+            if self.is_cancelled() {
+                return root;
+            }
             let child = self.render_stmt(statement);
             self.edge(root, child, None);
         }
@@ -154,6 +232,9 @@ impl<'a> GraphvizRenderer<'a> {
     }
 
     fn render_stmt(&mut self, statement: &Stmt) -> usize {
+        if self.is_cancelled() {
+            return 0;
+        }
         match statement {
             Stmt::Block(block) => self.render_block(block),
             Stmt::Declaration(declaration) => self.render_declaration("Declaration", declaration),
@@ -169,6 +250,12 @@ impl<'a> GraphvizRenderer<'a> {
             Stmt::Break(stmt) => self.render_simple("Break", stmt),
             Stmt::Continue(stmt) => self.render_simple("Continue", stmt),
             Stmt::Empty(stmt) => self.render_simple("Empty", stmt),
+            Stmt::StaticAssert(assertion) => {
+                let root = self.node_with_span("StaticAssert", assertion.span);
+                let condition = self.render_expr(&assertion.condition);
+                self.edge(root, condition, Some("condition"));
+                root
+            }
         }
     }
 
@@ -263,12 +350,55 @@ impl<'a> GraphvizRenderer<'a> {
     }
 
     fn render_expr(&mut self, expr: &Expr) -> usize {
+        if self.is_cancelled() {
+            return 0;
+        }
         match &expr.kind {
             ExprKind::Literal(literal) => {
                 self.node_with_span(format!("Literal {}", literal_label(literal)), expr.span)
             }
             ExprKind::Identifier(name) => {
                 self.node_with_span(format!("Identifier {}", name), expr.span)
+            }
+            ExprKind::ScopedIdentifier {
+                scope,
+                name,
+            } => self.node_with_span(format!("ScopedIdentifier {scope}::{name}"), expr.span),
+            ExprKind::Match(expression) => {
+                let root = self.node_with_span("Match", expr.span);
+                let value = self.render_expr(&expression.value);
+                self.edge(root, value, Some("value"));
+                for arm in &expression.arms {
+                    if self.is_cancelled() {
+                        return root;
+                    }
+                    let arm_node = self.node_with_span("MatchArm", arm.span);
+                    self.edge(root, arm_node, Some("arm"));
+                    if let Some(guard) = &arm.guard {
+                        let guard = self.render_expr(guard);
+                        self.edge(arm_node, guard, Some("guard"));
+                    }
+                    match &arm.body {
+                        crate::MatchArmBody::Expr(body) => {
+                            let body = self.render_expr(body);
+                            self.edge(arm_node, body, Some("body"));
+                        }
+                        crate::MatchArmBody::Block(block) => {
+                            for statement in &block.statements {
+                                if self.is_cancelled() {
+                                    return arm_node;
+                                }
+                                let statement = self.render_stmt(statement);
+                                self.edge(arm_node, statement, Some("statement"));
+                            }
+                            if let Some(tail) = &block.tail {
+                                let tail = self.render_expr(tail);
+                                self.edge(arm_node, tail, Some("tail"));
+                            }
+                        }
+                    }
+                }
+                root
             }
             ExprKind::Call {
                 callee,
@@ -278,6 +408,9 @@ impl<'a> GraphvizRenderer<'a> {
                 let callee_id = self.render_expr(callee);
                 self.edge(root, callee_id, Some("callee"));
                 for argument in arguments {
+                    if self.is_cancelled() {
+                        return root;
+                    }
                     let child = self.render_expr(argument);
                     self.edge(root, child, Some("arg"));
                 }
@@ -351,6 +484,9 @@ impl<'a> GraphvizRenderer<'a> {
     }
 
     fn node(&mut self, label: impl Into<String>) -> usize {
+        if self.is_cancelled() {
+            return 0;
+        }
         let id = self.next_id;
         self.next_id += 1;
         let label = label.into();
@@ -384,12 +520,20 @@ impl<'a> GraphvizRenderer<'a> {
     }
 
     fn edge(&mut self, from: usize, to: usize, label: Option<&str>) {
+        if self.is_cancelled() {
+            return;
+        }
         match label {
             Some(label) => self
                 .edges
                 .push(format!("n{from} -> n{to} [label=\"{}\"];", escape(label))),
             None => self.edges.push(format!("n{from} -> n{to};")),
         }
+    }
+
+    fn is_cancelled(&self) -> bool {
+        self.cancellation
+            .is_some_and(crate::CancellationToken::is_cancelled)
     }
 }
 
@@ -445,6 +589,7 @@ fn type_label(kind: &TypeKind, is_const: bool) -> String {
         TypeKind::Vector => format!("{prefix}vector"),
         TypeKind::Struct(name) => format!("{prefix}struct {name}"),
         TypeKind::EngineStructure(name) => format!("{prefix}{name}"),
+        TypeKind::Named(name) => format!("{prefix}{name}"),
     }
 }
 
@@ -517,8 +662,8 @@ fn assignment_label(op: AssignmentOp) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::render_script_graphviz;
-    use crate::{SourceId, parse_text};
+    use super::{render_script_graphviz, render_script_graphviz_with_cancellation};
+    use crate::{CancellationToken, SourceId, parse_text};
 
     #[test]
     fn renders_graphviz_for_simple_script() -> Result<(), Box<dyn std::error::Error>> {
@@ -532,6 +677,18 @@ mod tests {
         assert!(dot.contains("digraph nwscript"));
         assert!(dot.contains("Function main"));
         assert!(dot.contains("Call"));
+        Ok(())
+    }
+
+    #[test]
+    fn cancellable_renderer_rejects_precancelled_work() -> Result<(), Box<dyn std::error::Error>> {
+        let script = parse_text(SourceId::new(0), "void main() {}", None)?;
+        let cancellation = CancellationToken::new();
+        cancellation.cancel();
+
+        let error = render_script_graphviz_with_cancellation(&script, None, &cancellation)
+            .expect_err("cancelled rendering must fail");
+        assert_eq!(error.to_string(), "operation cancelled");
         Ok(())
     }
 }

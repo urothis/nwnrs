@@ -1,0 +1,86 @@
+[package]
+name = "nwnrs-runtime-sys"
+version = "0.0.1"
+edition.workspace = true
+license.workspace = true
+publish = true
+description = "Native Frida Gum and loader boundary for the nwnrs runtime"
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/nwnrs-runtime-sys"
+readme = "README.md"
+keywords = ["nwn", "neverwinter-nights", "frida", "instrumentation"]
+categories = ["external-ffi-bindings", "game-development"]
+build = "build.rs"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+arc-swap.workspace = true
+frida-gum-sys.workspace = true
+nwnrs-runtime = { path = "../runtime", version = "0.0.1" }
+serde_json.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[build-dependencies]
+cc.workspace = true
+
+[dev-dependencies]
+toml.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Dwm",
+    "Win32_Graphics_Gdi",
+    "Win32_Security",
+    "Win32_System_Diagnostics_Debug",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Memory",
+    "Win32_System_Threading",
+    "Win32_UI_Controls",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+# This is the workspace's one native boundary, so it cannot inherit the
+# workspace-wide `unsafe_code = "deny"`. Keep the remaining policy explicit.
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+dbg_macro = "deny"
+await_holding_lock = "deny"
+await_holding_refcell_ref = "deny"
+too_many_arguments = "allow"
+indexing_slicing = "warn"
+map_err_ignore = "warn"
+result_large_err = "warn"
+mem_forget = "warn"
+cast_lossless = "warn"
+cast_possible_truncation = "warn"
+manual_ok_or = "warn"
+let_and_return = "warn"
+match_like_matches_macro = "warn"
+needless_borrow = "warn"
+unused_async = "warn"
+unused_unit = "warn"
+semicolon_if_nothing_returned = "warn"
+print_stdout = "deny"
+print_stderr = "deny"
+
+[lints.rust]
+missing_docs = "deny"
+unsafe_op_in_unsafe_fn = "deny"
+
+[package.metadata.docs.rs]
+rustdoc-args = [
+    "-Zunstable-options",
+    "--generate-link-to-definition",
+    "--generate-macro-expansion",
+]

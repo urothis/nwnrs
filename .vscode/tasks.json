@@ -1,0 +1,52 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "nwnrs: TypeScript Check",
+      "type": "shell",
+      "command": "npm",
+      "args": [
+        "run",
+        "check"
+      ],
+      "problemMatcher": {
+        "base": "$tsc",
+        "owner": "typescript-nwnrs",
+        "applyTo": "allDocuments"
+      },
+      "group": {
+        "kind": "build",
+        "isDefault": false
+      },
+      "presentation": {
+        "clear": true,
+        "panel": "dedicated",
+        "reveal": "silent",
+        "showReuseMessage": false
+      }
+    },
+    {
+      "label": "nwnrs: Build Native Extension",
+      "type": "shell",
+      "command": "npm",
+      "args": [
+        "run",
+        "build:native"
+      ],
+      "problemMatcher": [
+        "$rustc",
+        "$tsc"
+      ],
+      "group": {
+        "kind": "build",
+        "isDefault": false
+      },
+      "presentation": {
+        "clear": true,
+        "panel": "dedicated",
+        "reveal": "always",
+        "showReuseMessage": false
+      }
+    }
+  ]
+}

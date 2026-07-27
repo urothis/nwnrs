@@ -1,6 +1,9 @@
-use std::{fmt, io, str::Utf8Error};
+use std::{fmt, io};
 
-use nwnrs_types::resman::{CachePolicy, Res, ResManError, ResType};
+use nwnrs_types::{
+    encoding::{EncodingConversionError, NwnText, NwnTextContext, encode_legacy},
+    resman::{CachePolicy, Res, ResManError, ResType},
+};
 
 /// NWN resource type id for `mdl`.
 pub const MODEL_RES_TYPE: ResType = ResType(2002);
@@ -20,11 +23,16 @@ impl Model {
         }
     }
 
-    /// Creates a model from UTF-8 text.
-    pub fn from_text(text: impl Into<String>) -> Self {
-        Self {
-            bytes: text.into().into_bytes(),
-        }
+    /// Creates an ASCII-model payload using an explicit native text policy.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError`] when the text is not representable in the
+    /// context's legacy encoding.
+    pub fn from_text(text: &str, context: NwnTextContext) -> ModelResult<Self> {
+        Ok(Self {
+            bytes: encode_legacy(context.encoding(), text)?,
+        })
     }
 
     /// Returns the raw model bytes.
@@ -39,13 +47,10 @@ impl Model {
         self.bytes.len()
     }
 
-    /// Returns the model as UTF-8 text when valid.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Utf8Error`] if the payload is not valid UTF-8.
-    pub fn as_text(&self) -> Result<&str, Utf8Error> {
-        std::str::from_utf8(&self.bytes)
+    /// Decodes the payload as byte-preserving native model text.
+    #[must_use]
+    pub fn native_text(&self, context: NwnTextContext) -> NwnText {
+        NwnText::decode(&self.bytes, context.encoding())
     }
 
     /// Consumes the model and returns the raw payload.
@@ -86,7 +91,6 @@ impl fmt::Debug for Model {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Model")
             .field("byte_len", &self.byte_len())
-            .field("utf8", &self.as_text().is_ok())
             .finish()
     }
 }
@@ -98,6 +102,8 @@ pub enum ModelError {
     Io(io::Error),
     /// Resource-manager access failed.
     ResMan(ResManError),
+    /// Native model text could not be encoded.
+    Encoding(EncodingConversionError),
     /// The payload did not identify a model resource.
     Message(String),
 }
@@ -113,6 +119,7 @@ impl fmt::Display for ModelError {
         match self {
             Self::Io(error) => error.fmt(f),
             Self::ResMan(error) => error.fmt(f),
+            Self::Encoding(error) => error.fmt(f),
             Self::Message(message) => f.write_str(message),
         }
     }
@@ -132,17 +139,26 @@ impl From<ResManError> for ModelError {
     }
 }
 
+impl From<EncodingConversionError> for ModelError {
+    fn from(value: EncodingConversionError) -> Self {
+        Self::Encoding(value)
+    }
+}
+
 /// Result type for model operations.
 pub type ModelResult<T> = Result<T, ModelError>;
 
 #[cfg(test)]
 mod tests {
+    use nwnrs_types::encoding::NwnTextContext;
+
     use crate::mdl::{MODEL_RES_TYPE, Model};
 
     #[test]
     fn model_text_roundtrip_preserves_bytes() {
-        let model = Model::from_text("newmodel demo\n");
-        assert_eq!(model.as_text().unwrap_or(""), "newmodel demo\n");
+        let context = NwnTextContext::english();
+        let model = Model::from_text("newmodel demo\n", context).expect("encode model text");
+        assert_eq!(model.native_text(context).display_text(), "newmodel demo\n");
         assert_eq!(model.bytes(), b"newmodel demo\n");
         assert_eq!(MODEL_RES_TYPE.0, 2002);
     }

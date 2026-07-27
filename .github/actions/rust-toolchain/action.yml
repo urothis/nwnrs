@@ -1,0 +1,189 @@
+name: "Use Provisioned Rust"
+description: "Expose and validate the preinstalled Rust toolchain"
+
+inputs:
+  components:
+    description: "Comma-separated components required on the runner"
+    required: false
+    default: ""
+  target:
+    description: "Additional target triple required on the runner"
+    required: false
+    default: ""
+
+runs:
+  using: "composite"
+  steps:
+    - name: Expose preinstalled Rust on Unix
+      if: runner.os != 'Windows'
+      shell: sh
+      run: |
+        cargo_home="${CARGO_HOME:-${HOME}/.cargo}"
+        cargo_bin="${cargo_home}/bin"
+        if [ ! -x "${cargo_bin}/rustup" ]; then
+          echo "::error::rustup is not provisioned at ${cargo_bin}/rustup"
+          exit 1
+        fi
+        printf '%s\n' "${cargo_bin}" >> "${GITHUB_PATH}"
+
+    - name: Expose preinstalled Rust on Windows
+      if: runner.os == 'Windows'
+      shell: powershell
+      run: |
+        $cargoHome = if ($env:CARGO_HOME) {
+          $env:CARGO_HOME
+        } else {
+          Join-Path $env:USERPROFILE '.cargo'
+        }
+        $cargoBin = Join-Path $cargoHome 'bin'
+        $rustup = Join-Path $cargoBin 'rustup.exe'
+        if (-not (Test-Path -LiteralPath $rustup -PathType Leaf)) {
+          throw "rustup is not provisioned at $rustup"
+        }
+        $cargoBin |
+          Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+    - name: Validate provisioned Rust on Unix
+      if: runner.os != 'Windows'
+      shell: sh
+      env:
+        REQUIRED_COMPONENTS: ${{ inputs.components }}
+        REQUIRED_TARGET: ${{ inputs.target }}
+      run: |
+        channel="$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml | head -n1)"
+        if [ -z "${channel}" ]; then
+          echo "::error::failed to resolve the pinned channel from rust-toolchain.toml"
+          exit 1
+        fi
+
+        toolchain_found=false
+        while IFS= read -r installed; do
+          installed="${installed%% *}"
+          case "${installed}" in
+            "${channel}"|"${channel}"-*) toolchain_found=true ;;
+          esac
+        done <<EOF
+        $(rustup toolchain list)
+        EOF
+        if [ "${toolchain_found}" != "true" ]; then
+          echo "::error::pinned Rust toolchain ${channel} is not provisioned"
+          exit 1
+        fi
+
+        installed_components="$(rustup component list --installed --toolchain "${channel}")"
+        old_ifs="${IFS}"
+        IFS=','
+        set -- ${REQUIRED_COMPONENTS}
+        IFS="${old_ifs}"
+        for requested in "$@"; do
+          requested="$(printf '%s' "${requested}" | tr -d '[:space:]')"
+          [ -z "${requested}" ] && continue
+          component_found=false
+          while IFS= read -r installed; do
+            case "${installed}" in
+              "${requested}"|"${requested}"-*) component_found=true ;;
+            esac
+          done <<EOF
+        ${installed_components}
+        EOF
+          if [ "${component_found}" != "true" ]; then
+            echo "::error::Rust component ${requested} is not provisioned for ${channel}"
+            exit 1
+          fi
+        done
+
+        if [ -n "${REQUIRED_TARGET}" ]; then
+          target_found=false
+          while IFS= read -r installed; do
+            [ "${installed}" = "${REQUIRED_TARGET}" ] && target_found=true
+          done <<EOF
+        $(rustup target list --installed --toolchain "${channel}")
+        EOF
+          if [ "${target_found}" != "true" ]; then
+            echo "::error::Rust target ${REQUIRED_TARGET} is not provisioned for ${channel}"
+            exit 1
+          fi
+        fi
+
+        rustup run "${channel}" rustc --version
+        rustup run "${channel}" cargo --version
+        printf 'RUSTUP_TOOLCHAIN=%s\n' "${channel}" >> "${GITHUB_ENV}"
+
+    - name: Validate provisioned Rust on Windows
+      if: runner.os == 'Windows'
+      shell: powershell
+      env:
+        REQUIRED_COMPONENTS: ${{ inputs.components }}
+        REQUIRED_TARGET: ${{ inputs.target }}
+      run: |
+        $toolchainFile = Get-Content -LiteralPath 'rust-toolchain.toml' -Raw
+        $match = [regex]::Match(
+          $toolchainFile,
+          '(?m)^\s*channel\s*=\s*"(?<channel>[^"]+)"\s*$'
+        )
+        if (-not $match.Success) {
+          throw 'Failed to resolve the pinned channel from rust-toolchain.toml'
+        }
+        $channel = $match.Groups['channel'].Value
+
+        $installedToolchains = @(
+          rustup toolchain list | ForEach-Object {
+            ($_ -split '\s+')[0]
+          }
+        )
+        if ($LASTEXITCODE -ne 0) {
+          throw 'Failed to list provisioned Rust toolchains'
+        }
+        $toolchainFound = @(
+          $installedToolchains | Where-Object {
+            $_ -eq $channel -or $_.StartsWith("$channel-")
+          }
+        ).Count -gt 0
+        if (-not $toolchainFound) {
+          throw "Pinned Rust toolchain $channel is not provisioned"
+        }
+
+        $installedComponents = @(
+          rustup component list --installed --toolchain $channel
+        )
+        if ($LASTEXITCODE -ne 0) {
+          throw "Failed to list Rust components for $channel"
+        }
+        $requiredComponents = @(
+          $env:REQUIRED_COMPONENTS -split ',' |
+            ForEach-Object { $_.Trim() } |
+            Where-Object { $_ }
+        )
+        foreach ($component in $requiredComponents) {
+          $componentFound = @(
+            $installedComponents | Where-Object {
+              $_ -eq $component -or $_.StartsWith("$component-")
+            }
+          ).Count -gt 0
+          if (-not $componentFound) {
+            throw "Rust component $component is not provisioned for $channel"
+          }
+        }
+
+        if ($env:REQUIRED_TARGET) {
+          $installedTargets = @(
+            rustup target list --installed --toolchain $channel
+          )
+          if ($LASTEXITCODE -ne 0) {
+            throw "Failed to list Rust targets for $channel"
+          }
+          if ($env:REQUIRED_TARGET -notin $installedTargets) {
+            throw "Rust target $env:REQUIRED_TARGET is not provisioned for $channel"
+          }
+        }
+
+        rustup run $channel rustc --version
+        if ($LASTEXITCODE -ne 0) {
+          throw "Failed to run rustc from $channel"
+        }
+        rustup run $channel cargo --version
+        if ($LASTEXITCODE -ne 0) {
+          throw "Failed to run cargo from $channel"
+        }
+        "RUSTUP_TOOLCHAIN=$channel" |
+          Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append

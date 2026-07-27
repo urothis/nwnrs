@@ -16,9 +16,9 @@ backends; `nwnrs-types` supplies the common lookup algebra.
 ## Example
 
 ```rust
-use nwnrs_types::resman::ResMan;
+use nwnrs_types::{encoding::NwnTextContext, resman::ResMan};
 
-let resman = ResMan::new(64);
+let resman = ResMan::new(64, NwnTextContext::english());
 assert!(resman.contents().is_empty());
 ```
 

@@ -20,6 +20,8 @@ asset_root=$1
 asset_manifest=$2
 output=$3
 nwnrs_bin=${4:-nwnrs}
+readonly package_data_version=E1
+readonly package_data_compression=zlib
 
 [[ -d "$asset_root" ]] || fail "asset root is not a directory: $asset_root"
 [[ -f "$asset_manifest" ]] || fail "asset manifest is not a file: $asset_manifest"
@@ -95,8 +97,11 @@ validate_elf_machine() {
 validate_elf_machine "$asset_root/bin/linux-x86/nwserver-linux" 3e00 x86-64
 validate_elf_machine "$asset_root/bin/linux-arm64/nwserver-linux" b700 AArch64
 
+output_name=$(basename "$output")
 output_parent=$(dirname "$output")
 mkdir -p "$output_parent"
+output_parent=$(cd "$output_parent" && pwd -P)
+output="$output_parent/$output_name"
 lock="$output.lock"
 mkdir "$lock" 2>/dev/null || fail "another preparation owns output lock: $lock"
 stage=$(mktemp -d "$output_parent/.nwserver-context.XXXXXX")
@@ -147,6 +152,8 @@ NWN_HOME="$asset_root" "$nwnrs_bin" pack \
   --root "$asset_root" \
   --user "$stage/.nwnrs-user" \
   --language english \
+  --data-version "$package_data_version" \
+  --data-compression "$package_data_compression" \
   nwn_base.key \
   "$stage/data"
 rmdir "$stage/.nwnrs-user"
@@ -188,6 +195,8 @@ jq -n \
   --arg prepared_manifest_sha256 "$prepared_manifest_sha256" \
   --arg amd64_sha256 "$amd64_sha256" \
   --arg arm64_sha256 "$arm64_sha256" \
+  --arg package_data_version "$package_data_version" \
+  --arg package_data_compression "$package_data_compression" \
   '{
     schema: 2,
     channel: $channel,
@@ -198,6 +207,10 @@ jq -n \
     server_asset_sha256: {
       "linux/amd64": $amd64_sha256,
       "linux/arm64": $arm64_sha256
+    },
+    resource_package: {
+      version: $package_data_version,
+      compression: $package_data_compression
     }
   }' > "$stage/build-info.json"
 

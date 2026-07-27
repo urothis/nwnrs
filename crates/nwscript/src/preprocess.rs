@@ -5,8 +5,15 @@ use std::{
 };
 
 use crate::{
-    Keyword, LexerError, ScriptResolver, SourceError, SourceFile, SourceId, SourceLoadOptions,
-    SourceMap, Token, TokenKind, lex_source,
+    CancellationToken, Cancelled, Keyword, LexerError, MacroExpansionError, MacroExpansionOptions,
+    MacroExpansionTrace, MacroRegistry, NwTokenStream, ScriptResolver, SourceError, SourceFile,
+    SourceId, SourceLoadOptions, SourceMap, Token, TokenKind, collect_declarative_macros,
+    collect_nwscript_macros, expand_source_macros, expand_source_macros_traced,
+    lex_source_with_limits_and_cancellation,
+    macro_expansion::{
+        collect_declarative_macros_with_cancellation, collect_nwscript_macros_with_cancellation,
+        expand_source_macros_with_cancellation,
+    },
 };
 
 /// One include relationship discovered while traversing source files.
@@ -24,13 +31,15 @@ pub struct IncludeEdge {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceBundle {
     /// All loaded source files.
-    pub source_map:    SourceMap,
+    pub source_map:      SourceMap,
     /// The root script file requested by the caller.
-    pub root_id:       SourceId,
+    pub root_id:         SourceId,
     /// Source ids in first-load order.
-    pub source_order:  Vec<SourceId>,
+    pub source_order:    Vec<SourceId>,
     /// Include relationships observed during scanning.
-    pub include_edges: Vec<IncludeEdge>,
+    pub include_edges:   Vec<IncludeEdge>,
+    /// Resource policy used while loading and processing this bundle.
+    pub resource_limits: crate::CompilerResourceLimits,
 }
 
 /// One object-like `#define` captured during preprocessing.
@@ -58,17 +67,23 @@ pub struct PreprocessedSource {
 /// Errors returned while scanning include directives across multiple files.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PreprocessError {
+    /// The caller cancelled preprocessing.
+    Cancelled(Cancelled),
     /// Source resolution or load failure.
     Source(SourceError),
     /// Lexing failure while scanning include directives.
     Lex(LexerError),
+    /// Extended macro collection or expansion failed.
+    Macro(MacroExpansionError),
 }
 
 impl fmt::Display for PreprocessError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Cancelled(error) => error.fmt(f),
             Self::Source(error) => error.fmt(f),
             Self::Lex(error) => error.fmt(f),
+            Self::Macro(error) => error.fmt(f),
         }
     }
 }
@@ -77,13 +92,28 @@ impl Error for PreprocessError {}
 
 impl From<SourceError> for PreprocessError {
     fn from(value: SourceError) -> Self {
-        Self::Source(value)
+        match value {
+            SourceError::Cancelled => Self::Cancelled(Cancelled),
+            other => Self::Source(other),
+        }
+    }
+}
+
+impl From<Cancelled> for PreprocessError {
+    fn from(value: Cancelled) -> Self {
+        Self::Cancelled(value)
     }
 }
 
 impl From<LexerError> for PreprocessError {
     fn from(value: LexerError) -> Self {
         Self::Lex(value)
+    }
+}
+
+impl From<MacroExpansionError> for PreprocessError {
+    fn from(value: MacroExpansionError) -> Self {
+        Self::Macro(value)
     }
 }
 
@@ -97,13 +127,45 @@ pub fn load_source_bundle<R: ScriptResolver + ?Sized>(
     root_name: &str,
     options: SourceLoadOptions,
 ) -> Result<SourceBundle, PreprocessError> {
-    let mut loader = SourceBundleLoader::new(resolver, options);
+    options
+        .resource_limits
+        .validate()
+        .map_err(|message| SourceError::resource_limit(root_name, message))?;
+    let mut loader = SourceBundleLoader::new(resolver, options, None);
     let root_id = loader.load_script(root_name)?;
     Ok(SourceBundle {
         source_map: loader.source_map,
         root_id,
         source_order: loader.source_order,
         include_edges: loader.include_edges,
+        resource_limits: options.resource_limits,
+    })
+}
+
+/// Loads a root script and its include graph with cooperative cancellation.
+///
+/// # Errors
+///
+/// Returns [`PreprocessError`] for source failures or after cancellation is
+/// requested.
+pub fn load_source_bundle_with_cancellation<R: ScriptResolver + ?Sized>(
+    resolver: &R,
+    root_name: &str,
+    options: SourceLoadOptions,
+    cancellation: &CancellationToken,
+) -> Result<SourceBundle, PreprocessError> {
+    options
+        .resource_limits
+        .validate()
+        .map_err(|message| SourceError::resource_limit(root_name, message))?;
+    let mut loader = SourceBundleLoader::new(resolver, options, Some(cancellation));
+    let root_id = loader.load_script(root_name)?;
+    Ok(SourceBundle {
+        source_map: loader.source_map,
+        root_id,
+        source_order: loader.source_order,
+        include_edges: loader.include_edges,
+        resource_limits: options.resource_limits,
     })
 }
 
@@ -115,9 +177,176 @@ pub fn load_source_bundle<R: ScriptResolver + ?Sized>(
 pub fn preprocess_source_bundle(
     bundle: &SourceBundle,
 ) -> Result<PreprocessedSource, PreprocessError> {
-    let mut preprocessor = BundlePreprocessor::new(bundle);
+    preprocess_source_bundle_with_macros(
+        bundle,
+        &mut MacroRegistry::new(),
+        MacroExpansionOptions::default(),
+    )
+}
+
+/// Collects compiler macros from one source bundle after resolving its
+/// includes and object-like defines.
+///
+/// Unlike full source preprocessing, this operation does not expand ordinary
+/// macro invocations or parse the remaining script. It is intended for
+/// package-level macro discovery where a source file exports `proc_macro!` or
+/// `macro_rules!` definitions alongside implementation support code.
+///
+/// # Errors
+///
+/// Returns [`PreprocessError`] when include loading, lexing, balancing, macro
+/// definition parsing, procedural-macro compilation, or duplicate-path
+/// validation fails.
+pub fn collect_source_bundle_macros(
+    bundle: &SourceBundle,
+    registry: &mut MacroRegistry,
+) -> Result<(), PreprocessError> {
+    collect_source_bundle_macros_impl(bundle, registry, None)
+}
+
+/// Collects compiler macros with cooperative cancellation.
+///
+/// # Errors
+///
+/// Returns a preprocessing diagnostic or typed cancellation failure.
+pub fn collect_source_bundle_macros_with_cancellation(
+    bundle: &SourceBundle,
+    registry: &mut MacroRegistry,
+    cancellation: &CancellationToken,
+) -> Result<(), PreprocessError> {
+    collect_source_bundle_macros_impl(bundle, registry, Some(cancellation))
+}
+
+fn collect_source_bundle_macros_impl(
+    bundle: &SourceBundle,
+    registry: &mut MacroRegistry,
+    cancellation: Option<&CancellationToken>,
+) -> Result<(), PreprocessError> {
+    let mut preprocessor = BundlePreprocessor::new(bundle, cancellation);
     preprocessor.expand_source(bundle.root_id)?;
-    preprocessor.finish(bundle.root_id)
+    let preprocessed = preprocessor.finish(bundle.root_id)?;
+    if let Some(cancellation) = cancellation {
+        cancellation.check()?;
+    }
+    let mut stream = NwTokenStream::from_tokens_with_limits_and_cancellation(
+        &preprocessed.tokens,
+        bundle.resource_limits,
+        cancellation,
+    )?;
+    match cancellation {
+        Some(cancellation) => {
+            collect_nwscript_macros_with_cancellation(&mut stream, registry, cancellation)?;
+            collect_declarative_macros_with_cancellation(&mut stream, registry, cancellation)?;
+        }
+        None => {
+            collect_nwscript_macros(&mut stream, registry)?;
+            collect_declarative_macros(&mut stream, registry)?;
+        }
+    }
+    if let Some(cancellation) = cancellation {
+        cancellation.check()?;
+    }
+    Ok(())
+}
+
+/// Preprocesses a loaded source bundle with cooperative cancellation.
+///
+/// # Errors
+///
+/// Returns [`PreprocessError`] for ordinary preprocessing failures or
+/// cancellation.
+pub fn preprocess_source_bundle_with_cancellation(
+    bundle: &SourceBundle,
+    cancellation: &CancellationToken,
+) -> Result<PreprocessedSource, PreprocessError> {
+    cancellation.check()?;
+    let mut preprocessor = BundlePreprocessor::new(bundle, Some(cancellation));
+    preprocessor.expand_source(bundle.root_id)?;
+    let mut preprocessed = preprocessor.finish(bundle.root_id)?;
+    cancellation.check()?;
+    preprocessed.tokens = expand_source_macros_with_cancellation(
+        preprocessed.tokens,
+        &mut MacroRegistry::new(),
+        MacroExpansionOptions::default(),
+        cancellation,
+    )?;
+    ensure_macro_output_limit(bundle, &preprocessed.tokens)?;
+    cancellation.check()?;
+    Ok(preprocessed)
+}
+
+/// Preprocesses one source bundle with caller-provided built-in macros.
+///
+/// Object-like `#define` and include expansion runs first. Top-level
+/// source-defined `macro_rules!` definitions are then added to `registry`
+/// before all bang-macro invocations are recursively expanded.
+///
+/// # Errors
+///
+/// Returns [`PreprocessError`] if include loading, lexing, object-like macro
+/// expansion, declarative macro collection, or bang-macro expansion fails.
+pub fn preprocess_source_bundle_with_macros(
+    bundle: &SourceBundle,
+    registry: &mut MacroRegistry,
+    options: MacroExpansionOptions,
+) -> Result<PreprocessedSource, PreprocessError> {
+    let mut preprocessor = BundlePreprocessor::new(bundle, None);
+    preprocessor.expand_source(bundle.root_id)?;
+    let mut preprocessed = preprocessor.finish(bundle.root_id)?;
+    preprocessed.tokens = expand_source_macros(preprocessed.tokens, registry, options)?;
+    ensure_macro_output_limit(bundle, &preprocessed.tokens)?;
+    Ok(preprocessed)
+}
+
+/// Preprocesses a source bundle with compiler macros and cooperative
+/// cancellation.
+///
+/// # Errors
+///
+/// Returns [`PreprocessError`] for ordinary preprocessing failures or
+/// cancellation.
+pub fn preprocess_source_bundle_with_macros_and_cancellation(
+    bundle: &SourceBundle,
+    registry: &mut MacroRegistry,
+    options: MacroExpansionOptions,
+    cancellation: &CancellationToken,
+) -> Result<PreprocessedSource, PreprocessError> {
+    cancellation.check()?;
+    let mut preprocessor = BundlePreprocessor::new(bundle, Some(cancellation));
+    preprocessor.expand_source(bundle.root_id)?;
+    let mut preprocessed = preprocessor.finish(bundle.root_id)?;
+    cancellation.check()?;
+    preprocessed.tokens = expand_source_macros_with_cancellation(
+        preprocessed.tokens,
+        registry,
+        options,
+        cancellation,
+    )?;
+    ensure_macro_output_limit(bundle, &preprocessed.tokens)?;
+    cancellation.check()?;
+    Ok(preprocessed)
+}
+
+/// Preprocesses a source bundle and records each extended macro invocation.
+///
+/// Include and object-like `#define` processing is identical to
+/// [`preprocess_source_bundle_with_macros`].
+///
+/// # Errors
+///
+/// Returns the same diagnostics as [`preprocess_source_bundle_with_macros`].
+pub fn preprocess_source_bundle_with_macro_trace(
+    bundle: &SourceBundle,
+    registry: &mut MacroRegistry,
+    options: MacroExpansionOptions,
+) -> Result<(PreprocessedSource, Vec<MacroExpansionTrace>), PreprocessError> {
+    let mut preprocessor = BundlePreprocessor::new(bundle, None);
+    preprocessor.expand_source(bundle.root_id)?;
+    let mut preprocessed = preprocessor.finish(bundle.root_id)?;
+    let (tokens, trace) = expand_source_macros_traced(preprocessed.tokens, registry, options)?;
+    preprocessed.tokens = tokens;
+    ensure_macro_output_limit(bundle, &preprocessed.tokens)?;
+    Ok((preprocessed, trace))
 }
 
 struct SourceBundleLoader<'a, R: ScriptResolver + ?Sized> {
@@ -127,10 +356,16 @@ struct SourceBundleLoader<'a, R: ScriptResolver + ?Sized> {
     source_order:  Vec<SourceId>,
     include_edges: Vec<IncludeEdge>,
     active_stack:  Vec<String>,
+    cancellation:  Option<&'a CancellationToken>,
+    total_bytes:   usize,
 }
 
 impl<'a, R: ScriptResolver + ?Sized> SourceBundleLoader<'a, R> {
-    fn new(resolver: &'a R, options: SourceLoadOptions) -> Self {
+    fn new(
+        resolver: &'a R,
+        options: SourceLoadOptions,
+        cancellation: Option<&'a CancellationToken>,
+    ) -> Self {
         Self {
             resolver,
             options,
@@ -138,10 +373,15 @@ impl<'a, R: ScriptResolver + ?Sized> SourceBundleLoader<'a, R> {
             source_order: Vec::new(),
             include_edges: Vec::new(),
             active_stack: Vec::new(),
+            cancellation,
+            total_bytes: 0,
         }
     }
 
     fn load_script(&mut self, script_name: &str) -> Result<SourceId, PreprocessError> {
+        if let Some(cancellation) = self.cancellation {
+            cancellation.check()?;
+        }
         let normalized = script_name.to_ascii_lowercase();
         if self.active_stack.contains(&normalized) {
             return Err(SourceError::include_recursive(script_name).into());
@@ -160,20 +400,60 @@ impl<'a, R: ScriptResolver + ?Sized> SourceBundleLoader<'a, R> {
             .into());
         }
 
-        let contents = self
-            .resolver
-            .resolve_script_bytes(script_name, self.options.res_type)?
+        let uncancelled = CancellationToken::new();
+        let cancellation = self.cancellation.unwrap_or(&uncancelled);
+        let resolved = self.resolver.resolve_script_bytes_with_cancellation(
+            script_name,
+            self.options.res_type,
+            self.options.resource_limits.max_source_file_bytes,
+            cancellation,
+        )?;
+        let contents = resolved
             .filter(|bytes| !bytes.is_empty())
             .ok_or_else(|| SourceError::file_not_found(script_name))?;
+        if contents.len() > self.options.resource_limits.max_source_file_bytes {
+            return Err(SourceError::resource_limit(
+                script_name,
+                format!(
+                    "source file contains {} bytes, exceeding configured maximum {}",
+                    contents.len(),
+                    self.options.resource_limits.max_source_file_bytes
+                ),
+            )
+            .into());
+        }
+        self.total_bytes = self
+            .total_bytes
+            .checked_add(contents.len())
+            .ok_or_else(|| {
+                SourceError::resource_limit(script_name, "aggregate source byte count overflowed")
+            })?;
+        if self.total_bytes > self.options.resource_limits.max_total_source_bytes {
+            return Err(SourceError::resource_limit(
+                script_name,
+                format!(
+                    "source bundle contains {} bytes, exceeding configured maximum {}",
+                    self.total_bytes, self.options.resource_limits.max_total_source_bytes
+                ),
+            )
+            .into());
+        }
 
         let source_id = self.source_map.next_id();
         let source_file = SourceFile::new(source_id, script_name, contents);
-        let include_names = scan_include_names(&source_file)?;
+        let include_names = scan_include_names(
+            &source_file,
+            self.options.resource_limits,
+            self.cancellation,
+        )?;
         self.source_map.insert_file(source_file);
         self.source_order.push(source_id);
         self.active_stack.push(normalized);
 
         for include_name in include_names {
+            if let Some(cancellation) = self.cancellation {
+                cancellation.check()?;
+            }
             let child_id = self.load_script(&include_name)?;
             self.include_edges.push(IncludeEdge {
                 from: source_id,
@@ -187,8 +467,13 @@ impl<'a, R: ScriptResolver + ?Sized> SourceBundleLoader<'a, R> {
     }
 }
 
-fn scan_include_names(source_file: &SourceFile) -> Result<Vec<String>, LexerError> {
-    let tokens = lex_source(source_file)?;
+fn scan_include_names(
+    source_file: &SourceFile,
+    limits: crate::CompilerResourceLimits,
+    cancellation: Option<&CancellationToken>,
+) -> Result<Vec<String>, PreprocessError> {
+    let tokens = lex_source_with_limits_and_cancellation(source_file, limits, cancellation)
+        .map_err(|error| map_lexer_error(error, cancellation))?;
     let mut includes = Vec::new();
     let mut index = 0;
     while index < tokens.len() {
@@ -213,16 +498,18 @@ struct BundlePreprocessor<'a> {
     define_order:   Vec<MacroDefinition>,
     expanded_files: HashSet<SourceId>,
     tokens:         Vec<Token>,
+    cancellation:   Option<&'a CancellationToken>,
 }
 
 impl<'a> BundlePreprocessor<'a> {
-    fn new(bundle: &'a SourceBundle) -> Self {
+    fn new(bundle: &'a SourceBundle, cancellation: Option<&'a CancellationToken>) -> Self {
         Self {
             bundle,
             defines: HashMap::new(),
             define_order: Vec::new(),
             expanded_files: HashSet::new(),
             tokens: Vec::new(),
+            cancellation,
         }
     }
 
@@ -244,6 +531,7 @@ impl<'a> BundlePreprocessor<'a> {
     }
 
     fn expand_source(&mut self, source_id: SourceId) -> Result<(), PreprocessError> {
+        self.check_cancellation()?;
         if !self.expanded_files.insert(source_id) {
             return Ok(());
         }
@@ -253,10 +541,16 @@ impl<'a> BundlePreprocessor<'a> {
             .source_map
             .get(source_id)
             .ok_or_else(|| SourceError::file_not_found(source_id.to_string()))?;
-        let tokens = lex_source(source)?;
+        let tokens = lex_source_with_limits_and_cancellation(
+            source,
+            self.bundle.resource_limits,
+            self.cancellation,
+        )
+        .map_err(|error| map_lexer_error(error, self.cancellation))?;
         let mut index = 0;
 
         while index < tokens.len() {
+            self.check_cancellation()?;
             let Some(token) = tokens.get(index) else {
                 break;
             };
@@ -290,7 +584,7 @@ impl<'a> BundlePreprocessor<'a> {
             }
 
             for token in tokens.get(index..line_end).unwrap_or(&[]) {
-                self.expand_token(token, &mut Vec::new());
+                self.expand_token(token, &mut Vec::new())?;
             }
             index = line_end;
         }
@@ -323,7 +617,12 @@ impl<'a> BundlePreprocessor<'a> {
         self.define_order.push(definition);
     }
 
-    fn expand_token(&mut self, token: &Token, active: &mut Vec<String>) {
+    fn expand_token(
+        &mut self,
+        token: &Token,
+        active: &mut Vec<String>,
+    ) -> Result<(), PreprocessError> {
+        self.check_cancellation()?;
         if token.kind == TokenKind::Identifier
             && let Some(definition) = self.defines.get(&token.text).cloned()
             && !active.iter().any(|name| name == &definition.name)
@@ -334,14 +633,66 @@ impl<'a> BundlePreprocessor<'a> {
                 // recognized, the replacement keeps its own typed token kind
                 // but is attributed to the call site for diagnostics.
                 let rewritten = Token::new(replacement.kind, token.span, replacement.text);
-                self.expand_token(&rewritten, active);
+                self.expand_token(&rewritten, active)?;
             }
             active.pop();
-            return;
+            return Ok(());
         }
 
+        if self.tokens.len() >= self.bundle.resource_limits.max_tokens {
+            return Err(SourceError::resource_limit(
+                self.bundle
+                    .source_map
+                    .get(token.span.source_id)
+                    .map_or_else(
+                        || token.span.source_id.to_string(),
+                        |source| source.name.clone(),
+                    ),
+                format!(
+                    "preprocessed token stream exceeded configured maximum of {} tokens",
+                    self.bundle.resource_limits.max_tokens
+                ),
+            )
+            .into());
+        }
         self.tokens.push(token.clone());
+        Ok(())
     }
+
+    fn check_cancellation(&self) -> Result<(), PreprocessError> {
+        self.cancellation
+            .map_or(Ok(()), CancellationToken::check)
+            .map_err(PreprocessError::from)
+    }
+}
+
+fn map_lexer_error(error: LexerError, cancellation: Option<&CancellationToken>) -> PreprocessError {
+    if cancellation.is_some_and(CancellationToken::is_cancelled) {
+        PreprocessError::Cancelled(Cancelled)
+    } else {
+        PreprocessError::Lex(error)
+    }
+}
+
+fn ensure_macro_output_limit(
+    bundle: &SourceBundle,
+    tokens: &[Token],
+) -> Result<(), PreprocessError> {
+    if tokens.len() > bundle.resource_limits.max_macro_output_tokens {
+        return Err(SourceError::resource_limit(
+            bundle
+                .source_map
+                .get(bundle.root_id)
+                .map_or_else(|| "root".to_string(), |source| source.name.clone()),
+            format!(
+                "macro-expanded token stream contains {} tokens, exceeding configured maximum {}",
+                tokens.len(),
+                bundle.resource_limits.max_macro_output_tokens
+            ),
+        )
+        .into());
+    }
+    Ok(())
 }
 
 fn token_line(source: &SourceFile, token: &Token) -> Option<usize> {
@@ -420,7 +771,9 @@ int UTIL = 1;"#,
         let error = load_source_bundle(&resolver, "root", SourceLoadOptions::default()).err();
         let code = error.and_then(|error| match error {
             super::PreprocessError::Source(source) => source.code(),
-            super::PreprocessError::Lex(_) => None,
+            super::PreprocessError::Cancelled(_)
+            | super::PreprocessError::Lex(_)
+            | super::PreprocessError::Macro(_) => None,
         });
 
         assert_eq!(code, Some(CompilerErrorCode::FileNotFound));
@@ -445,7 +798,9 @@ int UTIL = 1;"#,
         .err();
         let code = error.and_then(|error| match error {
             super::PreprocessError::Source(source) => source.code(),
-            super::PreprocessError::Lex(_) => None,
+            super::PreprocessError::Cancelled(_)
+            | super::PreprocessError::Lex(_)
+            | super::PreprocessError::Macro(_) => None,
         });
 
         assert_eq!(code, Some(CompilerErrorCode::IncludeTooManyLevels));
@@ -472,7 +827,9 @@ int UTIL = 1;"#,
             .err()
             .and_then(|error| match error {
                 super::PreprocessError::Source(source) => source.code(),
-                super::PreprocessError::Lex(_) => None,
+                super::PreprocessError::Cancelled(_)
+                | super::PreprocessError::Lex(_)
+                | super::PreprocessError::Macro(_) => None,
             });
 
         assert_eq!(code, Some(CompilerErrorCode::IncludeRecursive));

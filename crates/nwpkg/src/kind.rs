@@ -1,52 +1,86 @@
-#![allow(missing_docs)]
-
 use std::{fmt, str::FromStr};
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 
-/// Supported `nwproject` output kinds.
+/// Supported nwpkg project kinds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ProjectKind {
+    /// Reusable NWScript include package.
+    Include,
+    /// Two-dimensional array table.
     TwoDa,
+    /// Area geometry and tile layout.
     Are,
+    /// Player character or creature instance.
     Bic,
+    /// DirectDraw texture.
     Dds,
+    /// Conversation tree.
     Dlg,
+    /// Generic encapsulated resource archive.
     Erf,
+    /// Area instance contents.
     Git,
+    /// Hak resource archive.
     Hak,
+    /// Module metadata.
     Ifo,
+    /// Palette tree.
     Itp,
+    /// Journal data.
     Jrl,
+    /// KEY/BIF resource index.
     Key,
+    /// Aurora model.
     Mdl,
+    /// Module archive.
     Mod,
+    /// Compiled NWScript bytecode.
     Ncs,
+    /// Premium module archive.
     Nwm,
+    /// Palette texture.
     Plt,
+    /// Sound-set table.
     Ssf,
+    /// Targa texture.
     Tga,
+    /// Talk table.
     Tlk,
+    /// Creature blueprint.
     Utc,
+    /// Door blueprint.
     Utd,
+    /// Encounter blueprint.
     Ute,
+    /// Item blueprint.
     Uti,
+    /// Merchant blueprint.
     Utm,
+    /// Placeable blueprint.
     Utp,
+    /// Sound blueprint.
     Uts,
+    /// Trigger blueprint.
     Utt,
+    /// Waypoint blueprint.
     Utw,
 }
 
-/// High-level packaging layout implied by one project kind.
+/// High-level source or packaging layout implied by one project kind.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ProjectLayout {
+    /// Directory of reusable NWScript sources.
+    Include,
+    /// One editable resource file.
     Resource,
+    /// Directory packed into an ERF-family archive.
     Erf,
+    /// Directory packed into a KEY/BIF resource set.
     Key,
 }
 
-const ALL_PROJECT_KINDS: [ProjectKind; 29] = [
+const ALL_PROJECT_KINDS: [ProjectKind; 30] = [
     ProjectKind::TwoDa,
     ProjectKind::Are,
     ProjectKind::Bic,
@@ -76,6 +110,7 @@ const ALL_PROJECT_KINDS: [ProjectKind; 29] = [
     ProjectKind::Uts,
     ProjectKind::Utt,
     ProjectKind::Utw,
+    ProjectKind::Include,
 ];
 
 impl ProjectKind {
@@ -92,6 +127,7 @@ impl ProjectKind {
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::Include => "include",
             Self::TwoDa => "2da",
             Self::Are => "are",
             Self::Bic => "bic",
@@ -128,6 +164,7 @@ impl ProjectKind {
     #[must_use]
     pub const fn layout(self) -> ProjectLayout {
         match self {
+            Self::Include => ProjectLayout::Include,
             Self::Erf | Self::Hak | Self::Mod | Self::Nwm => ProjectLayout::Erf,
             Self::Key => ProjectLayout::Key,
             _ => ProjectLayout::Resource,
@@ -146,6 +183,7 @@ impl FromStr for ProjectKind {
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value.to_ascii_lowercase().as_str() {
+            "include" => Ok(Self::Include),
             "2da" => Ok(Self::TwoDa),
             "are" => Ok(Self::Are),
             "bic" => Ok(Self::Bic),

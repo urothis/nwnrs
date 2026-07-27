@@ -7,6 +7,7 @@ but owns the language pipeline itself.
 ## Scope
 
 - source loading and preprocessing
+- balanced token trees plus declarative and NWScript-implemented bang macros
 - lexing, parsing, semantic analysis, and optimization
 - emission of `NCS` and `NDB` artifacts
 - `NCS` asm and disassembly through the upstream-style `nwasm` text layer
@@ -15,7 +16,8 @@ but owns the language pipeline itself.
 
 ## Internal Structure
 
-- `source` and `preprocess`: source loading and include handling
+- `source`, `preprocess`, and `macro_expansion`: source loading, includes,
+  token trees, and compile-time macro expansion
 - `lexer`, `token`, and `parser`: tokenization and syntax construction
 - `ast`, `sema`, and `hir`: syntax, semantic analysis, and the lowered program
   form consumed directly by code generation
@@ -42,6 +44,211 @@ but owns the language pipeline itself.
 - `IncludeDirective`
 - `load_source_bundle`
 - `preprocess_source_bundle`
+- `preprocess_source_bundle_with_macros`
+- `preprocess_source_bundle_with_macro_trace`
+
+### Extended macro syntax
+
+The extended frontend recognizes balanced `name!(...)`, `name![...]`, and
+`name!{...}` invocations. Macro syntax is expanded and removed before the
+ordinary NWScript parser or NCS code generator sees it.
+
+Compiler attributes use the same erasure rule. The first project-wide NSS
+macro implements native module-load registration:
+
+```nss
+#[nwnrs::event::module_load::before]
+void ProjectStart(json jEvent)
+{
+    // Receives the immutable event snapshot from _nwnrs_onload.
+}
+```
+
+During module packaging, the `nwnrs::__build_event_dispatcher!` project macro
+receives the module source token streams, validates these attributes, and
+quotes the virtual `_nwnrs_onload.nss` source. The frontend removes the
+complete `#[...]` syntax after macro expansion, so extended text cannot leak
+into the ordinary parser or NCS.
+
+Project-wide macros are loaded generically from resolved nwpkg include
+dependencies. Exporting files may use any name and are processed through their
+normal include and object-define graph before their qualified macro paths are
+registered.
+
+Fixed declarative transformations can live directly in source:
+
+```nss
+macro_rules! make_handler {
+    ($name:ident, $($body:tokens)*) => {
+        void $name() { $($body)* }
+    };
+}
+
+make_handler!(OnGeneratedEvent, DoWork();)
+```
+
+Procedural transformations can also be implemented in NWScript. A definition
+is compiled to NCS and executed in the bounded compiler VM whenever its bang
+form is expanded:
+
+```nss
+proc_macro! project::wrap {
+    tokenstream wrap(tokenstream input) {
+        return quote! {
+            void Generated() { $input }
+        };
+    }
+}
+
+project::wrap!(DoWork();)
+```
+
+The final path segment names the required implementation function. Its exact
+signature is `tokenstream name(tokenstream input)`. `quote!` supports `$value`
+tokenstream interpolation, `$$` for a literal dollar sign, and Rust-style
+`$($value),*`, `$($value)+`, and `$($value)?` repetition. Repetitions can be
+nested; variables at the same level are zipped and must have equal lengths.
+The compiler lowers `quote!` to private VM operations, so none of the extended
+syntax is written to the resulting NCS.
+
+Declarative matchers support the same `*`, `+`, and `?` quantifiers, optional
+single-token separators, nested repetition, and zipped captures. Available
+fragment specifiers are `ident`, `literal`, `tt`, `expr`, and `tokens`.
+
+### Strong enums, aliases, matches, and assertions
+
+The extended frontend also supports strong Rust-like enums backed by native
+NWScript `int` or `string` storage. Omitting the backing type means `int`.
+Integer values auto-increment from zero; string values must be explicit.
+
+```nss
+enum LogLevel {
+    Trace,
+    Debug,
+    #[default]
+    #[alias(NWNRS_LOG_LEVEL_INFO)]
+    Info,
+}
+
+enum EventPhase : string {
+    Before = "before",
+    After = "after",
+}
+```
+
+The first variant is the default unless exactly one variant has `#[default]`.
+Default initialization applies recursively inside structures. `#[alias(NAME)]`
+emits a typed global compatibility constant so existing call sites can keep
+using an established constant name.
+
+Enums do not implicitly convert to or from their backing type. Use the enum
+name to construct a value and `int(...)` or `string(...)` to unwrap it. A
+one-argument construction must be a compile-time constant matching a declared
+variant. Dynamic backing values require an explicit enum fallback:
+
+```nss
+LogLevel level = LogLevel(NWNXPopInt(), LogLevel::Info);
+NWNXPushInt(int(level));
+```
+
+The dynamic expression is evaluated once. Invalid values produce the fallback,
+while invalid constant conversions and missing dynamic fallbacks are compiler
+errors.
+
+Equality, inequality, assignment, parameters, returns, defaults, structure
+fields, and `switch` preserve the strong enum type. Arithmetic and other
+backing-type operations require an explicit unwrap.
+
+`match` accepts qualified variants, `|` alternatives, guards, `_`, expression
+arms, and statement blocks with a final value. It is checked for duplicate and
+unreachable arms and must cover every variant unless it has an unguarded
+wildcard.
+
+```nss
+string Label(EventPhase phase)
+{
+    return match phase {
+        EventPhase::Before => "before",
+        EventPhase::After => {
+            string suffix = " event";
+            "after" + suffix
+        }
+    };
+}
+```
+
+Transparent source aliases use `type Name = ExistingType;`. They introduce no
+runtime representation or conversion:
+
+```nss
+type Severity = LogLevel;
+```
+
+Alias targets cannot contain declaration modifiers. In particular,
+`type Value = const int;` is rejected because `const` applies to a declaration,
+not to the underlying type.
+
+`static_assert(condition);` and `static_assert(condition, "message");` require
+a constant nonzero `int` expression. They are validated and erased before NCS
+generation. Enum declarations, aliases, matches, and explicit conversions are
+likewise lowered to ordinary native storage and control flow; none adds a
+runtime metadata or versioning layer.
+
+Procedural implementations receive an opaque, lossless token-tree stream. The
+compiler-only language specification exposes these operations inside a
+`proc_macro!` body:
+
+- `__NWNRS_TokenStreamLength(stream)` returns its top-level tree count.
+- `__NWNRS_TokenStreamGet(stream, index)` returns one top-level tree.
+- `__NWNRS_TokenIsGroup(tree)` distinguishes balanced groups from leaf tokens.
+- `__NWNRS_TokenKind(tree)` returns `group`, `identifier`, `keyword`, a literal
+  kind such as `integer` or `string`, or `punctuation`.
+- `__NWNRS_TokenText(tree)` returns normalized leaf text or canonical source
+  for a group.
+- `__NWNRS_TokenDelimiter(tree)` returns `0` for a leaf, `1` for parentheses,
+  `2` for brackets, or `3` for braces.
+- `__NWNRS_TokenParse(source)` lexes source into a new token stream.
+- `__NWNRS_TokenStreamListNew()`, `...Push`, `...PushList`, `...Length`,
+  `...Get`, and `...GetList` construct flat or nested collections for quoted
+  repetition.
+- `__NWNRS_TokenStreamListSort(list)` returns a deterministic text-sorted
+  collection for project finalizers.
+- `__NWNRS_TokenGroupContents(group)` exposes the inner stream of one balanced
+  delimiter group without reparsing rendered source.
+- `__NWNRS_OrderingGraphNew()`, `...AddNode`, `...Contains`, `...AddEdge`,
+  `...Sort`, and `...Cycle` provide a generic bounded directed graph. Stable
+  topological sorting uses caller-supplied source ranks; cycle output repeats
+  the first diagnostic node to expose the complete chain.
+- `__NWNRS_TokenCursorNew(stream)` creates a mutable parser cursor;
+  `...Position`, `...IsEnd`, `...Peek`, `...Next`, `...Consume`, `...Expect`,
+  and `...Remaining` provide lossless navigation.
+- Cursor parsers consume `Identifier`, `Literal`, `Tree`, `Path`, `Expression`,
+  `Type`, `Statement`, `Function`, or `Struct` fragments. `...ParseSeparated`
+  returns a `tokenstream_list`; use `0` as its maximum for no upper bound.
+- `__NWNRS_MacroError(message)` terminates expansion with a diagnostic.
+- `__NWNRS_MacroErrorAt(stream, message)` associates a diagnostic with input.
+
+Execution is deterministic and isolated from the game runtime: the compiler
+VM only registers these token operations, and enforces instruction, recursion,
+stack, expansion-depth, and output-token limits. It also caps retained token
+copies, estimated token bytes, arena handles, and aggregate token-list plus
+ordering-graph items,
+so a macro cannot bypass the output limit by accumulating compiler-only data.
+Stack growth is validated for four-byte alignment and against the configured
+cell budget before allocation. Integer edge operations use defined wrapping
+semantics, including `i32::MIN`, rather than relying on debug/release overflow
+behavior.
+
+Cancellation is cooperative through the full pipeline: source loading,
+preprocessing, macro collection and VM execution, lexing, parsing, semantic
+analysis, index construction, HIR lowering, optimization/code generation, and
+batch orchestration all observe the same token. Cancellation therefore does
+not merely stop between files.
+
+The Rust host surface consists of `NwTokenStream`, `NwTokenTree`,
+`MacroRegistry`, `BangMacro`, `NwScriptMacro`, `expand_source_macros`,
+`expand_source_macros_traced`, `register_nwscript_macro`, `quote_nwscript`, and
+`render_nwscript_tokens`.
 
 ### Lexing and parsing
 
@@ -59,6 +266,7 @@ but owns the language pipeline itself.
 - `parse_tokens`
 - `parse_source`
 - `parse_source_bundle`
+- `parse_source_bundle_with_macros`
 - `lex_bytes`
 - `lex_text`
 - `lex_source`
@@ -97,10 +305,12 @@ but owns the language pipeline itself.
 - `NamedItem`
 - `ScriptString`
 
-`ScriptString` stores the exact bytes carried by source literals, NCS
-constants, folded expressions, and VM string values. It deliberately does not
-select UTF-8 or a legacy code page; callers can request UTF-8 with
-`ScriptString::as_str` when their boundary requires text.
+`ScriptString` stores the exact Windows-1252 bytes carried by NSS source
+literals, NCS constants, folded expressions, hashes, and VM string values.
+NWScript compilation is byte-oriented: UTF-8 is never accepted as an alternate
+NSS encoding, and `\xNN` is the explicit source spelling for an arbitrary
+runtime byte. Text decoding is only a presentation boundary; it never changes
+the compiler input.
 
 ### Semantic and lowered representations
 
@@ -173,6 +383,7 @@ select UTF-8 or a legacy code page; callers can request UTF-8 with
 - `compile_script`
 - `compile_script_with_source_map`
 - `compile_source_bundle`
+- `compile_source_bundle_with_macros`
 - `compile_hir_to_ncs`
 
 The three native optimization passes can be selected independently with
@@ -252,6 +463,13 @@ This is the same public batch path consumed by the `nwnrs compile` command.
 Graphviz output can remain DOT source or be rendered through the `dot`
 executable as SVG, PNG, or PDF while preserving the same directory hierarchy.
 
+`FileSystemScriptResolver` has no implicit current-directory fallback.
+Relative names are confined to explicitly configured roots; `..` components
+are rejected; absolute requests must remain under a configured root; and the
+canonical resolved target is checked again to prevent symbolic-link escapes.
+Case-insensitive candidates use deterministic lexical tie-breaking on
+case-sensitive filesystems.
+
 ### Graphviz
 
 - `render_script_graphviz`
@@ -284,7 +502,8 @@ surface also supports single-step execution plus `step_over`, `step_out`,
 `run_until_offset`, `run_until_function`, and `run_until_line` when attached
 `NDB` metadata is available. `VmRunOptions` can bound instructions, recursion,
 and stack cells; budget failures and division by zero map back to the matching
-native `CompilerErrorCode` through `VmError::code()`.
+native `CompilerErrorCode` through `VmError::code()`. A cancellation token can
+stop long-running compiler-macro VM execution between opcodes.
 
 ## VM Spec
 

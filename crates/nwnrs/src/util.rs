@@ -131,7 +131,7 @@ pub(crate) fn sorted_dir_entries(dir: &Path) -> Result<Vec<DirEntryInfo>, String
         .map(|entry| {
             let entry =
                 entry.map_err(|error| format!("failed to read {}: {error}", dir.display()))?;
-            let file_name = entry.file_name().to_string_lossy().into_owned();
+            let file_name = nwnrs_types::native_path::display(Path::new(&entry.file_name()));
             Ok(DirEntryInfo {
                 file_name,
                 path: entry.path(),
